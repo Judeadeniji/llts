@@ -43,6 +43,7 @@ Zig implementation. The TypeScript prototype/reference is [`llts-js`](../llts-js
 
 ### Tooling
 - [x] `zig build` / `zig build test`.
+- [x] Language conformance suite under `tests/*.test.ts` (Bun runner, Zig binary).
 - [x] Runtime stack traces and source-context diagnostics on stderr.
 
 ---

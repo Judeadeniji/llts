@@ -1,0 +1,14 @@
+{
+	"name": "llts",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"build": "zig build",
+		"test": "zig build && bun test tests/",
+		"test:zig": "zig build test",
+		"test:suite": "bun test tests/"
+	},
+	"devDependencies": {
+		"@types/bun": "latest"
+	}
+}

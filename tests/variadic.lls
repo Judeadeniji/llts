@@ -1,0 +1,10 @@
+@func sum(...args) {
+    return args[0] + args[1];
+}
+
+@func join(prefix, ...rest) {
+    return prefix + rest[0] + rest[1];
+}
+
+print(sum(10, 20));
+print(join(100, 20, 3));

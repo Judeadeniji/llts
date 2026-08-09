@@ -37,7 +37,12 @@ Binary: `zig-out/bin/llts`
 ## Test
 
 ```bash
+# Zig unit + integration tests
 zig build test
+
+# Language suite (Bun runner → zig-out/bin/llts)
+zig build && bun test tests/
+# or: bun run test
 ```
 
 ## Example
@@ -62,7 +67,7 @@ zig build test
 | `src/` | Scanner → parser → compiler → VM |
 | `std/` | Standard library (`.lls`) |
 | `examples/` | Sample programs |
-| `tests/` | Zig integration tests |
+| `tests/` | Zig `integration.zig` + Bun language suite (`*.test.ts`) |
 | `TODO.MD` | Status & roadmap |
 
 See [TODO.MD](./TODO.MD) for capabilities and remaining work.
