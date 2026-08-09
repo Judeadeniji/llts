@@ -1,0 +1,60 @@
+pub @func add(a, b) {
+    return a + b;
+}
+
+pub @func sub(a, b) {
+    return a - b;
+}
+
+pub @func mul(a, b) {
+    return a * b;
+}
+
+pub @func div(a, b) {
+    return a / b;
+}
+
+pub @func mod(a, b) {
+    return a % b;
+}
+
+pub @func pow(a, b) {
+    return __pow(a, b);
+}
+
+pub @func sqr(a) {
+    return __pow(a, 2);
+}
+
+pub @func abs(a) {
+    @if (a < 0) { return -a; }
+    return a;
+}
+
+pub @func floor(a) {
+    return __floor(a);
+}
+
+pub @func ceil(a) {
+    return __ceil(a);
+}
+
+pub @func round(a) {
+    return __round(a);
+}
+
+pub @func sqrt(a) {
+    return __sqrt(a);
+}
+
+# min/max: rest args are packed into an array; host natives unpack it.
+pub @func min(...args) {
+    return __min(args);
+}
+
+pub @func max(...args) {
+    return __max(args);
+}
+
+pub @const $PI = 3.141592653589793;
+pub @const $E = 2.718281828459045;

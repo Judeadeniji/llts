@@ -1,0 +1,47 @@
+pub @func len(str) {
+    return __strlen(str);
+}
+
+pub @func concat(a, b) {
+    return __concat(a, b);
+}
+
+pub @func substr(str, start, length) {
+    return __substr(str, start, length);
+}
+
+pub @func indexOf(str, search) {
+    return __indexOf(str, search);
+}
+
+pub @func split(str, sep) {
+    return __split(str, sep);
+}
+
+pub @func toUpper(str) {
+    return __toUpper(str);
+}
+
+pub @func toLower(str) {
+    return __toLower(str);
+}
+
+pub @func trim(str) {
+    return __trim(str);
+}
+
+pub @func replace(str, search, replacement) {
+    return __replace(str, search, replacement);
+}
+
+pub @func repeat(str, count) {
+    return __repeat(str, count);
+}
+
+pub @func startsWith(str, search) {
+    return __startsWith(str, search);
+}
+
+pub @func endsWith(str, search) {
+    return __endsWith(str, search);
+}

@@ -1,0 +1,9 @@
+@const $debug = @import("std/debug");
+
+@func sqr(a) {
+ return a**2;
+}
+
+$a = 2 |> sqr;
+
+debug.printLn("a: {i}", a)

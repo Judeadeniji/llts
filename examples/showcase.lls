@@ -1,0 +1,43 @@
+@struct Player {
+    x: int;
+    y: int;
+    health: int;
+    name: string;
+
+    @func move(self, dx, dy) {
+        self.x = self.x + dx;
+        self.y = self.y + dy;
+    }
+
+    @func takeDamage(self, amount) {
+        self.health = self.health - amount;
+        @if (self.health < 0) {
+            self.health = 0;
+        }
+    }
+}
+
+@func printStatus(p: Player) {
+    print("---", p.name, "Status ---");
+    print("Position:", p.x, p.y);
+    print("Health:", p.health);
+    print("------------------");
+    return p;
+}
+
+$hero = Player { x: 0, y: 0, health: 100, name: "Antigravity" };
+
+print("Initializing Game...");
+hero |> printStatus;
+
+print("Moving hero across the map...");
+@for (0..3) |i| {
+    print("Loop", i);
+    hero.move(10, 5);
+}
+
+print("Hero was attacked by a goblin!");
+hero.takeDamage(45);
+
+
+hero |> printStatus;

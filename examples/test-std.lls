@@ -1,0 +1,20 @@
+@const $std = @import("std/index");
+
+std.debug.log(std);
+
+$input = std.io.readLine();
+std.debug.printLn("Received input: {s}", input);
+
+$a = 5;
+$b = 3;
+
+$sum = std.math.add(a, b);
+std.debug.printLn("5 + 3 = {i}", sum);
+
+$power = std.math.pow(a, b);
+std.debug.printLn("5 ^ 3 = {i}", power);
+
+$squared = std.math.sqr(a);
+std.debug.printLn("5 squared = {i}", squared);
+
+std.debug.assert(sum == 8);

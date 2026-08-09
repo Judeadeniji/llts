@@ -1,0 +1,20 @@
+@func ping(n) {
+    print("ping check", n);
+    @if (n > 0) {
+        print("ping", n);
+        return pong(n - 1);
+    }
+    return n;
+}
+
+@func pong(n) {
+    print("pong check", n);
+    @if (n > 0) {
+        print("pong", n);
+        return ping(n - 1);
+    }
+    return n;
+}
+
+print("Starting mutual recursion test...");
+ping(3);

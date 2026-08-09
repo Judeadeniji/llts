@@ -1,0 +1,25 @@
+# Memory: global bump alloc + slab Arena (Zig-style watermark).
+
+pub @func alloc(size) {
+    return __alloc(size);
+}
+
+pub @struct Arena {
+    handle: int;
+
+    @func alloc(self, n) {
+        return __arena_alloc(self.handle, n);
+    }
+
+    @func reset(self) {
+        __arena_reset(self.handle);
+    }
+
+    @func deinit(self) {
+        __arena_deinit(self.handle);
+    }
+}
+
+pub @func create(capacity) {
+    return Arena { handle: __arena_create(capacity) };
+}

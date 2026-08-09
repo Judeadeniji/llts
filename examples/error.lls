@@ -1,0 +1,2 @@
+@const $err = error("this is an error");
+print(err);

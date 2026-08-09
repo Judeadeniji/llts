@@ -1,0 +1,16 @@
+@const $std = @import("std/index");
+
+$LIMIT = 5;
+$sum = 0;
+
+@for (0..LIMIT) |i| {
+    @if (i % 2 == 0) {
+        std.debug.printLn("even {i}", i);
+        sum = sum + i;
+    } @else {
+        std.debug.printLn("odd {i}", i);
+    }
+}
+
+std.debug.printLn("sum of evens = {i}", sum);
+std.debug.assert(sum == 0 + 2 + 4);

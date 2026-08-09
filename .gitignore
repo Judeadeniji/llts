@@ -1,0 +1,13 @@
+# Zig
+.zig-cache/
+zig-out/
+
+# Local scratch / test artifacts
+*.txt
+!**/README.txt
+
+# Editor / OS
+.DS_Store
+.idea/
+.env
+.env.*

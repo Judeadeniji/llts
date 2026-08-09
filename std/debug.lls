@@ -1,0 +1,14 @@
+pub @func printLn(msg, a, b, c, d) {
+    __printLn(msg, a, b, c, d);
+}
+
+pub @func log(msg) {
+    print(msg);
+}
+
+pub @func assert(condition) {
+    # In the future we would throw an error here, 
+    # but for now we can just print if it fails
+    # (control flow is not fully implemented yet)
+    print("Assertion evaluated:", condition);
+}

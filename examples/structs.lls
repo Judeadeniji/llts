@@ -1,0 +1,18 @@
+@const $std = @import("std/index");
+
+@struct Point {
+    x: int;
+    y: int;
+}
+
+$p = Point { x: 10, y: 20 };
+
+std.debug.printLn("p.x = {i}", p.x);
+std.debug.printLn("p.y = {i}", p.y);
+
+std.debug.assert(p.x == 10);
+std.debug.assert(p.y == 20);
+
+p.x = 42;
+std.debug.printLn("Mutated p.x = {i}", p.x);
+std.debug.assert(p.x == 42);

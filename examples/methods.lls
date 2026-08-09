@@ -1,0 +1,24 @@
+@struct Vector3 {
+    x: int;
+    y: int;
+    z: int;
+
+    @func translate(self, dx, dy, dz) {
+        self.x = self.x + dx;
+        self.y = self.y + dy;
+        self.z = self.z + dz;
+    }
+
+    @func scale(self, factor) {
+        self.x = self.x * factor;
+        self.y = self.y * factor;
+        self.z = self.z * factor;
+    }
+}
+
+$v = Vector3 { x: 10, y: 20, z: 30 };
+v.translate(5, 5, 5);
+print(v.x, v.y, v.z);
+
+v.scale(2);
+print(v.x, v.y, v.z);

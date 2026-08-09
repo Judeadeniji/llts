@@ -1,0 +1,22 @@
+@const $std = @import("std/index");
+
+# Length-prefixed array literal (use len(arr) for bounds)
+$arr = [0, 0, 0, 0, 0];
+
+arr[0] = 42;
+arr[1] = 1337;
+arr[2] = 2026;
+
+std.debug.printLn("arr[0] = {i}", arr[0]);
+std.debug.printLn("arr[1] = {i}", arr[1]);
+std.debug.printLn("arr[2] = {i}", arr[2]);
+std.debug.printLn("len = {i}", len(arr));
+
+std.debug.assert(arr[0] == 42);
+std.debug.assert(arr[1] == 1337);
+std.debug.assert(arr[2] == 2026);
+std.debug.assert(len(arr) == 5);
+
+# Raw heap allocation still available via std.mem
+$raw = std.mem.alloc(3);
+std.debug.printLn("raw ptr = {i}", raw);

@@ -1,0 +1,24 @@
+@for (0..10) |i| {
+    @if (i == 5) {
+        print("Skipping 5");
+        continue;
+    }
+    @if (i == 8) {
+        print("Breaking at 8");
+        break;
+    }
+    print("i is", i);
+}
+
+print("Done with for loop.");
+
+outer: @for (0..3) |x| {
+    inner: @for (0..3) |y| {
+        @if (x == 1 && y == 1) {
+            print("Breaking outer at 1,1");
+            break :outer;
+        }
+        print("x", x, "y", y);
+    }
+}
+print("Done with nested labeled loops.");

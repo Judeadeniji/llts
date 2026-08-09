@@ -1,0 +1,11 @@
+@const $std = @import("std/index");
+
+$sum = 0;
+
+@for (0..5) |i| {
+    std.debug.printLn("i = {i}", i);
+    sum = sum + i;
+}
+
+std.debug.printLn("Sum is {i}", sum);
+std.debug.assert(sum == 10);

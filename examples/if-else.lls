@@ -1,0 +1,16 @@
+@const $std = @import("std/index");
+
+$a = 10;
+$b = 20;
+
+@if (a > b) {
+    std.debug.printLn("a is greater than b");
+} @else @if (a == b) {
+    std.debug.printLn("a is equal to b");
+} @else {
+    std.debug.printLn("a is less than b");
+}
+
+@if (a < b) {
+    std.debug.printLn("Second check passed!");
+}
