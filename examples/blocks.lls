@@ -1,0 +1,42 @@
+# Labeled blocks as expressions — result via `break :label value`
+
+$sum = compute: {
+    $a = 10;
+    $b = 32;
+    break :compute a + b;
+};
+print(sum);
+
+# Early exit from a labeled block
+$abs = absv: {
+    $n = 0 - 7;
+    @if (n < 0) {
+        break :absv 0 - n;
+    }
+    break :absv n;
+};
+print(abs);
+
+# Nested labels — break targets the named block
+$outer_val = outer: {
+    $inner_val = inner: {
+        break :inner 1;
+    };
+    break :outer inner_val + 2;
+};
+print(outer_val);
+
+# Break past the inner block to the outer label
+$skip = outer: {
+    inner: {
+        break :outer 99;
+    }
+    break :outer 0;
+};
+print(skip);
+
+# Typed result from a block
+$flag: bool = check: {
+    break :check true;
+};
+print(flag);

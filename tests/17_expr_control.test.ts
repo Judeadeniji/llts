@@ -71,6 +71,101 @@ print(z);
 	);
 });
 
+test("labeled block with locals and expression payload", () => {
+	expectOutput(
+		runSource(`
+$sum = compute: {
+    $a = 10;
+    $b = 32;
+    break :compute a + b;
+};
+print(sum);
+`),
+		["42"],
+	);
+});
+
+test("labeled block early exit via nested @if", () => {
+	expectOutput(
+		runSource(`
+$abs = absv: {
+    $n = 0 - 7;
+    @if (n < 0) {
+        break :absv 0 - n;
+    }
+    break :absv n;
+};
+print(abs);
+`),
+		["7"],
+	);
+});
+
+test("nested labeled blocks break to the named target", () => {
+	expectOutput(
+		runSource(`
+$v = outer: {
+    $inner = inner: {
+        break :inner 1;
+    };
+    break :outer inner + 2;
+};
+print(v);
+`),
+		["3"],
+	);
+});
+
+test("break :outer skips remaining inner statements", () => {
+	expectOutput(
+		runSource(`
+$v = outer: {
+    inner: {
+        break :outer 99;
+    }
+    break :outer 0;
+};
+print(v);
+`),
+		["99"],
+	);
+});
+
+test("labeled block result can be type-annotated", () => {
+	expectOutput(
+		runSource(`
+$flag: bool = check: {
+    break :check true;
+};
+print(flag);
+print(@typeOf(flag));
+`),
+		["true", "bool"],
+	);
+});
+
+test("labeled block must break a value", () => {
+	expectError(
+		runSource(`
+$x = blk: {
+    print(1);
+};
+`),
+		"must `break` a value",
+	);
+});
+
+test("break to unknown block label errors", () => {
+	expectError(
+		runSource(`
+$x = blk: {
+    break :missing 1;
+};
+`),
+		"Cannot find value expression with label",
+	);
+});
+
 test("unlabeled block cannot be a value expression", () => {
 	expectError(
 		runSource(`
