@@ -35,7 +35,7 @@ pub const VMState = struct {
     globals: std.StringHashMap(Value),
     stack: std.ArrayList(Value) = .empty,
     frames: std.ArrayList(CallFrame) = .empty,
-    memory: []i32,
+    memory: []Value,
     heap_ptr: i32 = HEAP_START,
     chunk: *Chunk,
     current_line: u32 = 1,
@@ -43,10 +43,12 @@ pub const VMState = struct {
     modules: std.ArrayList(*ModuleObject) = .empty,
     /// Cache: constant string index → heap data pointer, avoids re-allocating the same literal.
     string_cache: std.AutoHashMap(u32, i32),
+    /// Zero-alloc string arena (appended to, never freed during execution).
+    string_bytes: std.ArrayList(u8) = .empty,
 
     pub fn init(allocator: std.mem.Allocator, chunk: *Chunk) !VMState {
-        const memory = try allocator.alloc(i32, MEMORY_SIZE);
-        @memset(memory, 0);
+        const memory = try allocator.alloc(Value, MEMORY_SIZE);
+        @memset(memory, .null);
         var state: VMState = .{
             .allocator = allocator,
             .globals = std.StringHashMap(Value).init(allocator),
@@ -71,6 +73,7 @@ pub const VMState = struct {
         }
         self.modules.deinit(self.allocator);
         self.string_cache.deinit();
+        self.string_bytes.deinit(self.allocator);
         self.allocator.free(self.memory);
     }
 

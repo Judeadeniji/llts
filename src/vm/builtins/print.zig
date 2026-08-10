@@ -31,14 +31,9 @@ pub fn writeValue(vm: *VMState, out: *std.ArrayList(u8), v: Value) !void {
         .null => try out.appendSlice(vm.allocator, "null"),
         .bool => |b| try out.appendSlice(vm.allocator, if (b) "true" else "false"),
         .int => |n| {
-            // Heap loads are untyped i32s (TS parity). Interpret in-range ints as ptrs.
-            if (n >= state_mod.HEAP_START and n < vm.heap_ptr) {
-                try writePtr(vm, out, n);
-            } else {
-                var tmp: [32]u8 = undefined;
-                const s = try std.fmt.bufPrint(&tmp, "{d}", .{n});
-                try out.appendSlice(vm.allocator, s);
-            }
+            var tmp: [32]u8 = undefined;
+            const s = try std.fmt.bufPrint(&tmp, "{d}", .{n});
+            try out.appendSlice(vm.allocator, s);
         },
         .float => |n| {
             var tmp: [64]u8 = undefined;
@@ -52,6 +47,7 @@ pub fn writeValue(vm: *VMState, out: *std.ArrayList(u8), v: Value) !void {
             }
         },
         .name => |idx| try out.appendSlice(vm.allocator, vm.chunk.stringAt(idx)),
+        .slice => |s| try out.appendSlice(vm.allocator, vm.string_bytes.items[s.offset..][0..s.len]),
         .module => |m| {
             var tmp: [128]u8 = undefined;
             const s = try std.fmt.bufPrint(&tmp, "<module {s}>", .{m.name});
@@ -71,29 +67,28 @@ pub fn writeValue(vm: *VMState, out: *std.ArrayList(u8), v: Value) !void {
     }
 }
 
-fn writePtr(vm: *VMState, out: *std.ArrayList(u8), p: i32) !void {
-    // Empty strings allocate only a length header at `p-1`; data ptr may equal heap_ptr.
+fn writePtr(vm: *VMState, out: *std.ArrayList(u8), p: i32) anyerror!void {
     if (p < 1 or p - 1 >= vm.heap_ptr) {
         var tmp: [32]u8 = undefined;
         const s = try std.fmt.bufPrint(&tmp, "<ptr {d}>", .{p});
         try out.appendSlice(vm.allocator, s);
         return;
     }
-    const header = vm.memory[@intCast(p - 1)];
-    if (header == ERROR_TAG) {
-        // Match TS: `Error: {msg}` (including empty message → `Error: `)
+    const header_val = vm.memory[@intCast(p - 1)];
+    if (header_val == .int and header_val.int == ERROR_TAG) {
         try out.appendSlice(vm.allocator, "Error: ");
-        try writePtr(vm, out, vm.memory[@intCast(p)]);
+        try writeValue(vm, out, vm.memory[@intCast(p)]);
         return;
     }
-    if (header >= 0 and header < 1024 * 1024) {
-        const len: usize = @intCast(header);
-        // length === 0 is an empty string allocation (TS parity)
+    if (header_val == .int and header_val.int >= 0 and header_val.int < 1024 * 1024) {
+        const len: usize = @intCast(header_val.int);
         if (len == 0) return;
         var printable = true;
         var i: usize = 0;
         while (i < len) : (i += 1) {
-            const ch = vm.memory[@intCast(p + @as(i32, @intCast(i)))];
+            const val = vm.memory[@intCast(p + @as(i32, @intCast(i)))];
+            if (val != .int) { printable = false; break; }
+            const ch = val.int;
             if (ch < 32 or ch > 126) {
                 if (ch != '\n' and ch != '\t') {
                     printable = false;
@@ -104,7 +99,7 @@ fn writePtr(vm: *VMState, out: *std.ArrayList(u8), p: i32) !void {
         if (printable) {
             i = 0;
             while (i < len) : (i += 1) {
-                const ch: u8 = @intCast(vm.memory[@intCast(p + @as(i32, @intCast(i)))]);
+                const ch: u8 = @intCast(vm.memory[@intCast(p + @as(i32, @intCast(i)))].int);
                 try out.append(vm.allocator, ch);
             }
             return;
@@ -113,9 +108,8 @@ fn writePtr(vm: *VMState, out: *std.ArrayList(u8), p: i32) !void {
         i = 0;
         while (i < len) : (i += 1) {
             if (i > 0) try out.appendSlice(vm.allocator, ", ");
-            var tmp: [32]u8 = undefined;
-            const s = try std.fmt.bufPrint(&tmp, "{d}", .{vm.memory[@intCast(p + @as(i32, @intCast(i)))]});
-            try out.appendSlice(vm.allocator, s);
+
+            try writeValue(vm, out, vm.memory[@intCast(p + @as(i32, @intCast(i)))]);
         }
         try out.append(vm.allocator, ']');
         return;

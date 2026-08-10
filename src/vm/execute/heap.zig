@@ -24,7 +24,7 @@ pub fn getIndex(vm: *VMState) HeapError!void {
         .int => |x| x,
         else => return fail(vm, "Index must be int"),
     };
-    try stack.push(vm, heapValue(vm, p + i));
+    try stack.push(vm, vm.memory[@intCast(p + i)]);
 }
 
 pub fn setIndex(vm: *VMState) HeapError!void {
@@ -39,7 +39,7 @@ pub fn setIndex(vm: *VMState) HeapError!void {
         .int => |x| x,
         else => return fail(vm, "Index must be int"),
     };
-    vm.memory[@intCast(p + i)] = valueToI32(val);
+    vm.memory[@intCast(p + i)] = val;
     try stack.push(vm, val);
 }
 
@@ -52,11 +52,7 @@ fn asArrayPtr(vm: *VMState, v: Value) ?i32 {
     };
 }
 
-fn heapValue(vm: *VMState, slot: i32) Value {
-    const n = vm.memory[@intCast(slot)];
-    if (n >= state_mod.HEAP_START and n < vm.heap_ptr) return .{ .ptr = n };
-    return .{ .int = n };
-}
+
 
 pub fn getArray(vm: *VMState) HeapError!void {
     const idx = stack.pop(vm);
@@ -66,13 +62,14 @@ pub fn getArray(vm: *VMState) HeapError!void {
         .int => |x| x,
         else => return fail(vm, "Index must be int"),
     };
-    const len = vm.memory[@intCast(p - 1)];
+    const len_val = vm.memory[@intCast(p - 1)];
+    const len = len_val.int;
     if (i < 0 or i >= len) {
         var buf: [96]u8 = undefined;
         const msg = std.fmt.bufPrint(&buf, "Array index out of bounds: {d} (len {d}); use len(arr)", .{ i, len }) catch "Array index out of bounds";
         return fail(vm, msg);
     }
-    try stack.push(vm, heapValue(vm, p + i));
+    try stack.push(vm, vm.memory[@intCast(p + i)]);
 }
 
 pub fn setArray(vm: *VMState) HeapError!void {
@@ -84,60 +81,29 @@ pub fn setArray(vm: *VMState) HeapError!void {
         .int => |x| x,
         else => return fail(vm, "Index must be int"),
     };
-    const len = vm.memory[@intCast(p - 1)];
+    const len_val = vm.memory[@intCast(p - 1)];
+    const len = len_val.int;
     if (i < 0 or i >= len) {
         var buf: [96]u8 = undefined;
         const msg = std.fmt.bufPrint(&buf, "Array index out of bounds: {d} (len {d}); use len(arr)", .{ i, len }) catch "Array index out of bounds";
         return fail(vm, msg);
     }
-    vm.memory[@intCast(p + i)] = valueToI32(val);
+    vm.memory[@intCast(p + i)] = val;
     try stack.push(vm, val);
 }
 
-fn valueToI32(val: Value) i32 {
-    return switch (val) {
-        .int => |x| x,
-        .ptr => |x| x,
-        .bool => |b| @intFromBool(b),
-        .float => |f| @intFromFloat(f),
-        .null => 0,
-        else => 0,
-    };
-}
+
 
 pub fn makeString(vm: *VMState) HeapError!void {
     const name_val = stack.pop(vm);
-    const name_idx = switch (name_val) {
-        .name => |idx| idx,
-        else => return fail(vm, "Bad string constant"),
-    };
-    // Return cached pointer if this literal was already written to the heap.
-    if (vm.string_cache.get(name_idx)) |cached_ptr| {
-        try stack.push(vm, .{ .ptr = cached_ptr });
-        return;
-    }
-    const s = vm.chunk.stringAt(name_idx);
-    const len: i32 = @intCast(s.len);
-    const base = try vm.allocSlots(len + 1);
-    vm.memory[@intCast(base)] = len;
-    for (s, 0..) |ch, i| {
-        vm.memory[@intCast(base + 1 + @as(i32, @intCast(i)))] = ch;
-    }
-    const data_ptr = base + 1;
-    vm.string_cache.put(name_idx, data_ptr) catch {};
-    try stack.push(vm, .{ .ptr = data_ptr });
+    try stack.push(vm, name_val); // Keep as .name, zero alloc!
 }
 
 pub fn makeError(vm: *VMState) HeapError!void {
     const msg = stack.pop(vm);
-    const msg_ptr: i32 = switch (msg) {
-        .ptr => |p| p,
-        .int => |n| n,
-        else => 0,
-    };
     const p = try vm.allocSlots(2);
-    vm.memory[@intCast(p)] = ERROR_TAG;
-    vm.memory[@intCast(p + 1)] = msg_ptr;
+    vm.memory[@intCast(p)] = .{ .int = ERROR_TAG };
+    vm.memory[@intCast(p + 1)] = msg; // Store the actual Value!
     try stack.push(vm, .{ .ptr = p + 1 });
 }
 
@@ -149,7 +115,7 @@ pub fn isError(vm: *VMState) HeapError!void {
         else => null,
     };
     const ok = if (p) |ptr|
-        ptr >= state_mod.HEAP_START and vm.memory[@intCast(ptr - 1)] == ERROR_TAG
+        ptr >= state_mod.HEAP_START and vm.memory[@intCast(ptr - 1)] == .int and vm.memory[@intCast(ptr - 1)].int == ERROR_TAG
     else
         false;
     try stack.push(vm, .{ .bool = ok });
@@ -162,23 +128,19 @@ pub fn stringAdd(vm: *VMState) HeapError!void {
     defer list.deinit(vm.allocator);
     try appendStr(vm, &list, a);
     try appendStr(vm, &list, b);
-    const len: i32 = @intCast(list.items.len);
-    const base = try vm.allocSlots(len + 1);
-    vm.memory[@intCast(base)] = len;
-    for (list.items, 0..) |ch, i| {
-        vm.memory[@intCast(base + 1 + @as(i32, @intCast(i)))] = ch;
-    }
-    try stack.push(vm, .{ .ptr = base + 1 });
+    const res = @import("../builtins/util.zig").writeSlice(vm, list.items) catch return error.OutOfMemory;
+    try stack.push(vm, res);
 }
 
 fn appendStr(vm: *VMState, list: *std.ArrayList(u8), v: Value) !void {
     switch (v) {
         .name => |idx| try list.appendSlice(vm.allocator, vm.chunk.stringAt(idx)),
+        .slice => |s| try list.appendSlice(vm.allocator, vm.string_bytes.items[s.offset .. s.offset + s.len]),
         .ptr => |p| {
-            const len: usize = @intCast(vm.memory[@intCast(p - 1)]);
+            const len: usize = @intCast(vm.memory[@intCast(p - 1)].int);
             var i: usize = 0;
             while (i < len) : (i += 1) {
-                try list.append(vm.allocator, @intCast(vm.memory[@intCast(p + @as(i32, @intCast(i)))]));
+                try list.append(vm.allocator, @intCast(vm.memory[@intCast(p + @as(i32, @intCast(i)))].int));
             }
         },
         .int => |n| {

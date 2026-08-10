@@ -23,6 +23,74 @@ pub fn parseBlock(self: *Parser) ParseError!*Node {
     } });
 }
 
+pub fn parseSwitchExpression(self: *Parser) ParseError!*Node {
+    const switch_token = self.previous() orelse return error.ParseFailed;
+    _ = try self.consume(.delimiter, "Expects \"(\"", "(");
+    const cond = try expr.parseExpression(self);
+    _ = try self.consume(.delimiter, "Expects \")\"", ")");
+    _ = try self.consume(.delimiter, "Expected '{' before switch body", "{");
+
+    var prongs: std.ArrayList(ast.SwitchProng) = .empty;
+    var saw_else = false;
+    while (!self.isAtEnd() and !self.checkDelim("}")) {
+        const prong_loc = if (self.peek(0)) |t| self.locOf(t) else ast.Location{};
+        var is_else = false;
+        var patterns: std.ArrayList(*Node) = .empty;
+
+        if (self.check(.compiler_keyword)) {
+            if (self.peek(0)) |t| {
+                if (std.mem.eql(u8, t.value, "else")) {
+                    _ = self.advance();
+                    is_else = true;
+                    saw_else = true;
+                }
+            }
+        }
+
+        if (!is_else) {
+            if (saw_else) {
+                return self.failMsg("Additional switch prongs are not allowed after '@else'");
+            }
+            while (true) {
+                try patterns.append(self.arena, try expr.parseExpression(self));
+                if (self.checkDelim(",")) {
+                    _ = self.advance();
+                    // Trailing comma before `=>` is not allowed; require another pattern.
+                    if (self.check(.bin_op) and self.peek(0) != null and std.mem.eql(u8, self.peek(0).?.value, "=>")) {
+                        return self.failMsg("Expected pattern after ',' in switch prong");
+                    }
+                    continue;
+                }
+                break;
+            }
+        }
+
+        // `=>` is scanned as bin_op
+        const arrow = self.peek(0) orelse return self.failMsg("Expected '=>' in switch prong");
+        if (arrow.type != .bin_op or !std.mem.eql(u8, arrow.value, "=>")) {
+            return self.failTok(arrow, "Expected '=>' in switch prong", .{});
+        }
+        _ = self.advance();
+
+        const body = try parseBlock(self);
+        if (self.checkDelim(",")) _ = self.advance();
+
+        try prongs.append(self.arena, .{
+            .patterns = try patterns.toOwnedSlice(self.arena),
+            .is_else = is_else,
+            .body = body,
+            .loc = prong_loc,
+        });
+    }
+
+    _ = try self.consume(.delimiter, "Expected '}' after switch body", "}");
+    return self.create(.{ .switch_expr = .{
+        .condition = cond,
+        .prongs = try prongs.toOwnedSlice(self.arena),
+        .loc = self.locOf(switch_token),
+    } });
+}
+
 pub fn parseIfExpression(self: *Parser) ParseError!*Node {
     const if_token = self.previous() orelse return error.ParseFailed;
     _ = try self.consume(.delimiter, "Expects \"(\"", "(");
@@ -167,8 +235,16 @@ pub fn parseBreakStatement(self: *Parser) ParseError!*Node {
         const lab = try self.consume(.identifier, "Expected label after ':' in break statement", null);
         label = try self.dupe(lab.value);
     }
+    var value: ?*Node = null;
+    if (!self.checkDelim(";")) {
+        value = try expr.parseExpression(self);
+    }
     _ = try self.consume(.delimiter, "Expected \";\"", ";");
-    return self.create(.{ .break_expr = .{ .label = label, .loc = self.locOf(keyword) } });
+    return self.create(.{ .break_expr = .{
+        .label = label,
+        .value = value,
+        .loc = self.locOf(keyword),
+    } });
 }
 
 pub fn parseContinueStatement(self: *Parser) ParseError!*Node {

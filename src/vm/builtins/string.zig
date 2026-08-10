@@ -24,29 +24,35 @@ var char_code_at_n: NativeFunction = undefined;
 fn strlenFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
     if (args.len < 1) return error.ArityError;
-    const ptr = try util.asPtr(args[0]);
-    return .{ .int = vm.memory[@intCast(ptr - 1)] };
+    return switch (args[0]) {
+        .slice => |s| .{ .int = @intCast(s.len) },
+        .name => |idx| .{ .int = @intCast(vm.chunk.stringAt(idx).len) },
+        .ptr => |p| .{ .int = vm.memory[@intCast(p - 1)].int },
+        else => error.TypeError,
+    };
 }
 
 fn substrFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
     if (args.len < 3) return error.ArityError;
-    const str = util.valueToOwnedString(vm, args[0]) catch |err| {
-        std.debug.print("substr arg 0 failed: {any} for value {any}\n", .{err, args[0]});
-        return err;
-    };
+    
+    const start: u32 = @intCast(@max(try util.asInt(args[1]), 0));
+    const len: u32 = @intCast(@max(try util.asInt(args[2]), 0));
+    
+    // Fast path: pure zero-alloc slice over an existing slice
+    if (args[0] == .slice) {
+        const s = args[0].slice;
+        const bounded_start = @min(start, s.len);
+        const bounded_len = @min(len, s.len - bounded_start);
+        return .{ .slice = .{ .offset = s.offset + bounded_start, .len = bounded_len } };
+    }
+    
+    const str = try util.valueToOwnedString(vm, args[0]);
     defer vm.allocator.free(str);
-    const start: usize = @intCast(@max(util.asInt(args[1]) catch |err| {
-        std.debug.print("substr arg 1 failed: {any} for value {any}\n", .{err, args[1]});
-        return err;
-    }, 0));
-    const len: usize = @intCast(@max(util.asInt(args[2]) catch |err| {
-        std.debug.print("substr arg 2 failed: {any} for value {any}\n", .{err, args[2]});
-        return err;
-    }, 0));
-    const end = @min(start + len, str.len);
-    const slice = if (start >= str.len) "" else str[start..end];
-    return try util.writeString(vm, slice);
+    const bounded_start = @min(start, str.len);
+    const bounded_len = @min(len, str.len - bounded_start);
+    const slice = if (bounded_start >= str.len) "" else str[bounded_start..bounded_start + bounded_len];
+    return try util.writeSlice(vm, slice);
 }
 
 fn indexOfFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
@@ -141,7 +147,7 @@ fn concatFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     defer vm.allocator.free(b);
     const out = try std.mem.concat(vm.allocator, u8, &.{ a, b });
     defer vm.allocator.free(out);
-    return try util.writeString(vm, out);
+    return try util.writeSlice(vm, out);
 }
 
 fn repeatFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
@@ -181,9 +187,16 @@ fn endsWithFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
 fn charCodeFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
     if (args.len < 2) return error.ArityError;
+    const index: u32 = @intCast(@max(try util.asInt(args[1]), 0));
+    
+    if (args[0] == .slice) {
+        const s = args[0].slice;
+        if (index >= s.len) return .{ .int = -1 };
+        return .{ .int = vm.string_bytes.items[s.offset + index] };
+    }
+    
     const str = try util.valueToOwnedString(vm, args[0]);
     defer vm.allocator.free(str);
-    const index: usize = @intCast(@max(try util.asInt(args[1]), 0));
     if (index >= str.len) return .{ .int = -1 };
     return .{ .int = str[index] };
 }

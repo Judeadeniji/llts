@@ -25,7 +25,7 @@ fn readFileFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
         return try util.makeError(vm, msg);
     };
     defer vm.allocator.free(content);
-    return try util.writeString(vm, content);
+    return try util.writeSlice(vm, content);
 }
 
 fn readLineFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
@@ -40,7 +40,7 @@ fn readLineFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     var str = buf[0..n];
     if (std.mem.endsWith(u8, str, "\n")) str = str[0 .. str.len - 1];
     if (std.mem.endsWith(u8, str, "\r")) str = str[0 .. str.len - 1];
-    return try util.writeString(vm, str);
+    return try util.writeSlice(vm, str);
 }
 
 fn writeFileFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {

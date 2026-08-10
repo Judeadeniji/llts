@@ -126,8 +126,9 @@ fn getProperty(vm: *VMState, const_idx: u8) RuntimeError!void {
     if (std.mem.eql(u8, name, "message")) {
         switch (obj) {
             .ptr => |p| {
-                if (vm.memory[@intCast(p - 1)] == state_mod.ERROR_TAG) {
-                    try stack.push(vm, .{ .ptr = vm.memory[@intCast(p)] });
+                const tag = vm.memory[@intCast(p - 1)];
+                if (tag == .int and tag.int == state_mod.ERROR_TAG) {
+                    try stack.push(vm, vm.memory[@intCast(p)]);
                     return;
                 }
             },

@@ -39,6 +39,8 @@ pub const Value = union(enum) {
     function: LltsFunction,
     /// Interned name index into the chunk string table (for globals/properties).
     name: u32,
+    /// String view pointing into the VM's global string_bytes buffer.
+    slice: struct { offset: u32, len: u32 },
     /// Module object from OP_GET_MODULE.
     module: *ModuleObject,
 
@@ -49,6 +51,7 @@ pub const Value = union(enum) {
             .int => |n| n != 0,
             .float => |n| n != 0,
             .ptr => true,
+            .slice => |s| s.len > 0,
             .native, .function, .name, .module => true,
         };
     }

@@ -27,6 +27,7 @@ pub const FunctionDecl = struct {
 
 pub const Block = struct {
     statements: []*Node,
+    label: ?[]const u8 = null,
     loc: Location,
 };
 
@@ -42,6 +43,7 @@ pub const Defer = struct {
 
 pub const Break = struct {
     label: ?[]const u8 = null,
+    value: ?*Node = null,
     loc: Location,
 };
 
@@ -55,6 +57,7 @@ pub const If = struct {
     pipe_value: ?*Node,
     body: *Node,
     else_body: ?*Node = null,
+    label: ?[]const u8 = null,
     loc: Location,
 };
 
@@ -74,6 +77,20 @@ pub const For = struct {
     captures: []Capture,
     label: ?[]const u8 = null,
     body: *Node,
+    loc: Location,
+};
+
+pub const SwitchProng = struct {
+    patterns: []*Node,
+    is_else: bool = false,
+    body: *Node,
+    loc: Location,
+};
+
+pub const Switch = struct {
+    condition: *Node,
+    prongs: []SwitchProng,
+    label: ?[]const u8 = null,
     loc: Location,
 };
 

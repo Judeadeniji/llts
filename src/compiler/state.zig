@@ -40,6 +40,14 @@ pub const LoopTracker = struct {
     continue_jumps: std.ArrayList(usize) = .empty,
 };
 
+/// Value-producing `@if` / `@switch` / labeled block — `break <value>` targets these.
+pub const ExprTracker = struct {
+    scope_depth: i32,
+    result_slot: u8,
+    label: ?[]const u8 = null,
+    break_jumps: std.ArrayList(usize) = .empty,
+};
+
 pub const CompilerState = struct {
     allocator: std.mem.Allocator,
     chunk: chunk_mod.Chunk,

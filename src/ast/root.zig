@@ -36,6 +36,8 @@ pub const If = stmt.If;
 pub const Capture = stmt.Capture;
 pub const ForKind = stmt.ForKind;
 pub const For = stmt.For;
+pub const SwitchProng = stmt.SwitchProng;
+pub const Switch = stmt.Switch;
 pub const Import = stmt.Import;
 pub const Extern = stmt.Extern;
 pub const StructField = stmt.StructField;
@@ -61,6 +63,7 @@ pub const Node = union(enum) {
     block: Block,
     return_expr: Return,
     if_expr: If,
+    switch_expr: Switch,
     for_expr: For,
     break_expr: Break,
     continue_expr: Continue,

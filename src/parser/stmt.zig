@@ -29,9 +29,7 @@ pub fn parseStatement(self: *Parser) ParseError!*Node {
                     const label_tok = self.advance() orelse return error.ParseFailed;
                     _ = self.advance(); // ':'
                     const s = try parseStatement(self);
-                    if (s.* == .for_expr) {
-                        s.for_expr.label = try self.dupe(label_tok.value);
-                    }
+                    try applyLabel(self, s, label_tok.value);
                     return s;
                 }
             }
@@ -58,9 +56,22 @@ pub fn parseStatement(self: *Parser) ParseError!*Node {
         .delimiter => {
             if (std.mem.eql(u8, token.value, "(") or std.mem.eql(u8, token.value, "["))
                 return parseExpressionStatement(self);
+            if (std.mem.eql(u8, token.value, "{"))
+                return control.parseBlock(self);
             return self.failTok(token, "Unexpected token: {s} at line {d}", .{ token.value, token.line });
         },
         else => return self.failTok(token, "Unexpected token: {s} at line {d}", .{ token.value, token.line }),
+    }
+}
+
+fn applyLabel(self: *Parser, s: *Node, label: []const u8) ParseError!void {
+    const lab = try self.dupe(label);
+    switch (s.*) {
+        .for_expr => |*f| f.label = lab,
+        .if_expr => |*i| i.label = lab,
+        .switch_expr => |*sw| sw.label = lab,
+        .block => |*b| b.label = lab,
+        else => return self.failMsg("Labels are only allowed on @for, @if, @switch, and blocks"),
     }
 }
 

@@ -11,7 +11,7 @@ fn lenFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
     if (args.len < 1) return error.ArityError;
     return switch (args[0]) {
-        .ptr => |p| .{ .int = vm.memory[@intCast(p - 1)] },
+        .ptr => |p| .{ .int = vm.memory[@intCast(p - 1)].int },
         .name => |idx| .{ .int = @intCast(vm.chunk.stringAt(idx).len) },
         else => .{ .int = 0 },
     };

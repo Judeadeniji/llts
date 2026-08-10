@@ -14,11 +14,11 @@ fn fail(msg: []const u8) CmpError {
 pub fn compareEq(vm: *VMState, invert: bool) CmpError!void {
     const b = stack.pop(vm);
     const a = stack.pop(vm);
-    const eq = valuesEqual(a, b);
+    const eq = valuesEqual(vm, a, b);
     try stack.push(vm, .{ .bool = if (invert) !eq else eq });
 }
 
-fn valuesEqual(a: Value, b: Value) bool {
+fn valuesEqual(vm: *VMState, a: Value, b: Value) bool {
     return switch (a) {
         .null => b == .null,
         .bool => |x| switch (b) {
@@ -36,9 +36,9 @@ fn valuesEqual(a: Value, b: Value) bool {
             .int => |y| x == @as(f64, @floatFromInt(y)),
             else => false,
         },
-        .ptr => |x| switch (b) {
-            .ptr => |y| x == y,
-            .int => |y| x == y,
+        .ptr, .name, .slice => switch (b) {
+            .ptr, .name, .slice => @import("../builtins/util.zig").stringEquals(vm, a, b),
+            .int => |y| if (a == .ptr) a.ptr == y else false,
             else => false,
         },
         else => false,

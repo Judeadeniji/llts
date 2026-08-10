@@ -53,22 +53,27 @@ fn sqrtFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     return .{ .int = @intFromFloat(@sqrt(@as(f64, @floatFromInt(val)))) };
 }
 
-fn minMax(vm: *VMState, args: []Value, want_min: bool) !Value {
+fn minMax(vm: *VMState, args: []Value, find_max: bool) !Value {
     if (args.len < 1) return error.ArityError;
     const ptr = try util.asPtr(args[0]);
-    const len = vm.memory[@intCast(ptr - 1)];
-    if (len <= 0) return .{ .int = 0 };
-    var best = vm.memory[@intCast(ptr)];
+    const len = vm.memory[@intCast(ptr - 1)].int;
+    if (len == 0) return .{ .float = std.math.inf(f64) * (if (find_max) @as(f64, -1) else @as(f64, 1)) };
+    var best: f64 = switch (vm.memory[@intCast(ptr)]) {
+        .float => |f| f,
+        .int => |n| @floatFromInt(n),
+        else => return error.TypeError,
+    };
     var i: i32 = 1;
     while (i < len) : (i += 1) {
-        const n = vm.memory[@intCast(ptr + i)];
-        if (want_min) {
-            if (n < best) best = n;
-        } else {
-            if (n > best) best = n;
-        }
+        const n: f64 = switch (vm.memory[@intCast(ptr + i)]) {
+            .float => |f| f,
+            .int => |m| @floatFromInt(m),
+            else => return error.TypeError,
+        };
+        if (find_max and n > best) best = n;
+        if (!find_max and n < best) best = n;
     }
-    return .{ .int = best };
+    return .{ .float = best };
 }
 
 fn minFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {

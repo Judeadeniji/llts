@@ -27,9 +27,9 @@ fn arenaHandle(v: Value) !i32 {
 }
 
 fn arenaCheck(vm: *VMState, arena: i32, comptime op: []const u8) !void {
-    if (arena < 0 or arena >= vm.heap_ptr or vm.memory[@intCast(arena)] != ARENA_MAGIC)
-        return fail(op, "invalid arena");
-    if (vm.memory[@intCast(arena + 4)] != 1)
+    if (arena < 0 or arena >= vm.heap_ptr or vm.memory[@intCast(arena)].int != ARENA_MAGIC)
+        return error.TypeError;
+    if (vm.memory[@intCast(arena + 4)].int != 1)
         return fail(op, "arena is deinitialized");
 }
 
@@ -51,11 +51,11 @@ fn arenaCreate(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     };
     if (cap < 0) return fail("__arena_create", "invalid capacity");
     const base = try vm.allocSlots(5 + cap);
-    vm.memory[@intCast(base)] = ARENA_MAGIC;
-    vm.memory[@intCast(base + 1)] = base + 5; // data_base
-    vm.memory[@intCast(base + 2)] = base + 5 + cap; // data_end
-    vm.memory[@intCast(base + 3)] = base + 5; // watermark
-    vm.memory[@intCast(base + 4)] = 1; // alive
+    vm.memory[@intCast(base)] = .{ .int = ARENA_MAGIC };
+    vm.memory[@intCast(base + 1)] = .{ .int = base + 5 }; // data_base
+    vm.memory[@intCast(base + 2)] = .{ .int = base + 5 + cap }; // data_end
+    vm.memory[@intCast(base + 3)] = .{ .int = base + 5 }; // watermark
+    vm.memory[@intCast(base + 4)] = .{ .int = 1 }; // alive
     return .{ .ptr = base };
 }
 
@@ -68,10 +68,10 @@ fn arenaAlloc(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     };
     if (n < 0) return fail("__arena_alloc", "invalid size");
     try arenaCheck(vm, arena, "__arena_alloc");
-    const watermark = vm.memory[@intCast(arena + 3)];
-    const data_end = vm.memory[@intCast(arena + 2)];
-    if (watermark + n > data_end) return fail("__arena_alloc", "out of capacity");
-    vm.memory[@intCast(arena + 3)] = watermark + n;
+    const watermark = vm.memory[@intCast(arena + 3)].int;
+    const data_end = vm.memory[@intCast(arena + 2)].int;
+    if (watermark + n > data_end) return error.OutOfMemory;
+    vm.memory[@intCast(arena + 3)] = .{ .int = watermark + n };
     return .{ .ptr = watermark };
 }
 
@@ -86,9 +86,9 @@ fn arenaReset(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
 fn arenaDeinit(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
     const arena = try arenaHandle(args[0]);
-    if (arena < 0 or arena >= vm.heap_ptr or vm.memory[@intCast(arena)] != ARENA_MAGIC)
+    if (arena < 0 or arena >= vm.heap_ptr or vm.memory[@intCast(arena)].int != ARENA_MAGIC)
         return fail("__arena_deinit", "invalid arena");
-    vm.memory[@intCast(arena + 4)] = 0;
+    vm.memory[@intCast(arena + 4)] = .{ .int = 0 };
     return .null;
 }
 
