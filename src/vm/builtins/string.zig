@@ -80,19 +80,19 @@ fn splitFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const sep = try util.valueToOwnedString(vm, args[1]);
     defer vm.allocator.free(sep);
 
-    var ptrs: std.ArrayList(i32) = .empty;
+    var ptrs: std.ArrayList(Value) = .empty;
     defer ptrs.deinit(vm.allocator);
 
     if (sep.len == 0) {
         for (str) |ch| {
-            const part = try util.writeString(vm, &[_]u8{ch});
-            try ptrs.append(vm.allocator, part.ptr);
+            const part = try util.writeSlice(vm, &[_]u8{ch});
+            try ptrs.append(vm.allocator, part);
         }
     } else {
         var it = std.mem.splitSequence(u8, str, sep);
         while (it.next()) |part| {
-            const p = try util.writeString(vm, part);
-            try ptrs.append(vm.allocator, p.ptr);
+            const p = try util.writeSlice(vm, part);
+            try ptrs.append(vm.allocator, p);
         }
     }
     return try util.writeArray(vm, ptrs.items);
@@ -105,7 +105,7 @@ fn mapCase(vm: *VMState, args: []Value, upper: bool) !Value {
     for (str) |*c| {
         c.* = if (upper) std.ascii.toUpper(c.*) else std.ascii.toLower(c.*);
     }
-    return try util.writeString(vm, str);
+    return try util.writeSlice(vm, str);
 }
 
 fn toUpperFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
@@ -121,7 +121,7 @@ fn trimFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     if (args.len < 1) return error.ArityError;
     const str = try util.valueToOwnedString(vm, args[0]);
     defer vm.allocator.free(str);
-    return try util.writeString(vm, std.mem.trim(u8, str, &std.ascii.whitespace));
+    return try util.writeSlice(vm, std.mem.trim(u8, str, &std.ascii.whitespace));
 }
 
 fn replaceFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
@@ -135,7 +135,7 @@ fn replaceFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     defer vm.allocator.free(repl);
     const out = try std.mem.replaceOwned(u8, vm.allocator, str, search, repl);
     defer vm.allocator.free(out);
-    return try util.writeString(vm, out);
+    return try util.writeSlice(vm, out);
 }
 
 fn concatFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
@@ -161,7 +161,7 @@ fn repeatFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     try out.ensureTotalCapacity(vm.allocator, str.len * count);
     var i: usize = 0;
     while (i < count) : (i += 1) try out.appendSlice(vm.allocator, str);
-    return try util.writeString(vm, out.items);
+    return try util.writeSlice(vm, out.items);
 }
 
 fn startsWithFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {

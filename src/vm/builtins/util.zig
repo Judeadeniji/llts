@@ -49,15 +49,12 @@ pub fn makeError(vm: *VMState, msg: []const u8) !Value {
 /// Write an array of i32 values (length-prefixed); returns data pointer.
 /// Immortal: returned from natives like `__split` through LLTS wrappers.
 /// Heap addresses are stored as `.ptr` so `print` / string ops see strings, not raw ints.
-pub fn writeArray(vm: *VMState, items: []const i32) !Value {
+pub fn writeArray(vm: *VMState, items: []const Value) !Value {
     const len: i32 = @intCast(items.len);
     const base = try vm.allocImmortal(len + 1);
     vm.memory[@intCast(base)] = .{ .int = len };
     for (items, 0..) |item, i| {
-        vm.memory[@intCast(base + 1 + @as(i32, @intCast(i)))] = if (item >= state_mod.HEAP_START)
-            .{ .ptr = item }
-        else
-            .{ .int = item };
+        vm.memory[@intCast(base + 1 + @as(i32, @intCast(i)))] = item;
     }
     return .{ .ptr = base + 1 };
 }
