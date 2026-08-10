@@ -5,7 +5,29 @@ const value = @import("../../bytecode/value.zig");
 const VMState = state_mod.VMState;
 const Value = value.Value;
 const NativeFunction = value.NativeFunction;
+
+/// Control-block magic (Arena.handle → control).
 const ARENA_MAGIC: i32 = 0xa5ea;
+/// Per-chunk magic (linked bump buffers, Zig ArenaAllocator-style).
+const CHUNK_MAGIC: i32 = 0xc111;
+
+/// Default first-chunk data slots when create(0) / tiny hint.
+const DEFAULT_CHUNK: i32 = 64;
+
+// Control block layout (immortal):
+//   [0] ARENA_MAGIC
+//   [1] current_chunk
+//   [2] first_chunk
+//   [3] last_chunk_cap   (data slots in newest chunk — for 1.5× growth)
+//   [4] alive
+//
+// Chunk layout (immortal):
+//   [0] CHUNK_MAGIC
+//   [1] data_base
+//   [2] data_end
+//   [3] watermark
+//   [4] next_chunk       (0 = none)
+//   [5 ..] data
 
 var alloc_native: NativeFunction = undefined;
 var arena_create_native: NativeFunction = undefined;
@@ -18,35 +40,42 @@ fn fail(comptime op: []const u8, comptime msg: []const u8) error{TypeError} {
     return error.TypeError;
 }
 
-/// Accept either a raw slab handle or an Arena object `{ handle }` from std.mem.
-fn resolveArenaSlab(vm: *VMState, v: Value) !i32 {
-    const raw: i32 = switch (v) {
+fn asHeapPtr(v: Value) !i32 {
+    return switch (v) {
         .ptr => |p| p,
         .int => |n| n,
-        else => return error.TypeError,
+        else => error.TypeError,
     };
+}
+
+/// Resolve Arena object or raw control handle → control block base.
+fn resolveArenaControl(vm: *VMState, v: Value) !i32 {
+    const raw = try asHeapPtr(v);
     if (raw < 0 or raw >= vm.heap_ptr) return error.TypeError;
-    // Already the slab header.
     if (vm.memory[@intCast(raw)] == .int and vm.memory[@intCast(raw)].int == ARENA_MAGIC)
         return raw;
-    // Arena object: slot 0 holds slab ptr/int.
+    // Arena struct object: slot 0 = control ptr.
     const slot = vm.memory[@intCast(raw)];
-    const candidate: i32 = switch (slot) {
-        .ptr => |p| p,
-        .int => |n| n,
-        else => return error.TypeError,
-    };
+    const candidate = try asHeapPtr(slot);
     if (candidate < 0 or candidate >= vm.heap_ptr) return error.TypeError;
     if (vm.memory[@intCast(candidate)] == .int and vm.memory[@intCast(candidate)].int == ARENA_MAGIC)
         return candidate;
     return error.TypeError;
 }
 
-fn arenaCheck(vm: *VMState, arena: i32, comptime op: []const u8) !void {
-    if (arena < 0 or arena >= vm.heap_ptr or vm.memory[@intCast(arena)].int != ARENA_MAGIC)
-        return error.TypeError;
-    if (vm.memory[@intCast(arena + 4)].int != 1)
+fn arenaAlive(vm: *VMState, ctrl: i32, comptime op: []const u8) !void {
+    if (vm.memory[@intCast(ctrl + 4)].int != 1)
         return fail(op, "arena is deinitialized");
+}
+
+fn makeChunk(vm: *VMState, cap: i32) !i32 {
+    const chunk = try vm.allocImmortal(5 + cap);
+    vm.memory[@intCast(chunk)] = .{ .int = CHUNK_MAGIC };
+    vm.memory[@intCast(chunk + 1)] = .{ .int = chunk + 5 };
+    vm.memory[@intCast(chunk + 2)] = .{ .int = chunk + 5 + cap };
+    vm.memory[@intCast(chunk + 3)] = .{ .int = chunk + 5 };
+    vm.memory[@intCast(chunk + 4)] = .{ .int = 0 }; // next
+    return chunk;
 }
 
 fn allocFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
@@ -55,64 +84,98 @@ fn allocFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
         .int => |x| x,
         else => return error.TypeError,
     };
-    // Frame-local bump (rewound on return unless escape analysis forbids returning it).
     const ptr = try vm.allocSlots(n);
     return .{ .ptr = ptr };
 }
 
 fn arenaCreate(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
-    const cap = switch (args[0]) {
+    const hint = switch (args[0]) {
         .int => |x| x,
         else => return fail("__arena_create", "invalid capacity"),
     };
-    if (cap < 0) return fail("__arena_create", "invalid capacity");
-    // Immortal: std.mem.create returns this across frames; must not be rewound.
-    // Layout: slab [magic, base, end, watermark, alive, …cap] + Arena object [handle].
-    const slab = try vm.allocImmortal(5 + cap);
-    vm.memory[@intCast(slab)] = .{ .int = ARENA_MAGIC };
-    vm.memory[@intCast(slab + 1)] = .{ .int = slab + 5 };
-    vm.memory[@intCast(slab + 2)] = .{ .int = slab + 5 + cap };
-    vm.memory[@intCast(slab + 3)] = .{ .int = slab + 5 };
-    vm.memory[@intCast(slab + 4)] = .{ .int = 1 };
+    if (hint < 0) return fail("__arena_create", "invalid capacity");
+    // hint = initial chunk size (0 → DEFAULT_CHUNK). Arena grows when full (Zig-like).
+    const cap: i32 = if (hint == 0) DEFAULT_CHUNK else hint;
+
+    const chunk = try makeChunk(vm, cap);
+    const ctrl = try vm.allocImmortal(5);
+    vm.memory[@intCast(ctrl)] = .{ .int = ARENA_MAGIC };
+    vm.memory[@intCast(ctrl + 1)] = .{ .ptr = chunk }; // current
+    vm.memory[@intCast(ctrl + 2)] = .{ .ptr = chunk }; // first
+    vm.memory[@intCast(ctrl + 3)] = .{ .int = cap };
+    vm.memory[@intCast(ctrl + 4)] = .{ .int = 1 }; // alive
+
     const obj = try vm.allocImmortal(1);
-    vm.memory[@intCast(obj)] = .{ .ptr = slab };
+    vm.memory[@intCast(obj)] = .{ .ptr = ctrl };
     return .{ .ptr = obj };
+}
+
+fn bumpInChunk(vm: *VMState, chunk: i32, n: i32) ?i32 {
+    if (vm.memory[@intCast(chunk)].int != CHUNK_MAGIC) return null;
+    const watermark = vm.memory[@intCast(chunk + 3)].int;
+    const data_end = vm.memory[@intCast(chunk + 2)].int;
+    if (watermark + n > data_end) return null;
+    vm.memory[@intCast(chunk + 3)] = .{ .int = watermark + n };
+    return watermark;
 }
 
 fn arenaAlloc(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
-    const arena = try resolveArenaSlab(vm, args[0]);
+    const ctrl = try resolveArenaControl(vm, args[0]);
     const n = switch (args[1]) {
         .int => |x| x,
         else => return fail("__arena_alloc", "invalid size"),
     };
     if (n < 0) return fail("__arena_alloc", "invalid size");
-    try arenaCheck(vm, arena, "__arena_alloc");
-    const watermark = vm.memory[@intCast(arena + 3)].int;
-    const data_end = vm.memory[@intCast(arena + 2)].int;
-    if (watermark + n > data_end) {
-        std.debug.print("RuntimeError: __arena_alloc: out of capacity\n", .{});
-        return error.OutOfMemory;
-    }
-    vm.memory[@intCast(arena + 3)] = .{ .int = watermark + n };
-    return .{ .ptr = watermark };
+    try arenaAlive(vm, ctrl, "__arena_alloc");
+
+    const cur_val = vm.memory[@intCast(ctrl + 1)];
+    const cur = try asHeapPtr(cur_val);
+    if (bumpInChunk(vm, cur, n)) |ptr| return .{ .ptr = ptr };
+
+    // Grow: new chunk ≥ max(n, 1.5× last cap), like Zig ArenaAllocator.
+    const last_cap = vm.memory[@intCast(ctrl + 3)].int;
+    const grown = last_cap + @divTrunc(last_cap, 2);
+    const new_cap = @max(n, @max(grown, DEFAULT_CHUNK));
+    const new_chunk = try makeChunk(vm, new_cap);
+
+    // Append to list (from current).
+    vm.memory[@intCast(cur + 4)] = .{ .ptr = new_chunk };
+    vm.memory[@intCast(ctrl + 1)] = .{ .ptr = new_chunk };
+    vm.memory[@intCast(ctrl + 3)] = .{ .int = new_cap };
+
+    const ptr = bumpInChunk(vm, new_chunk, n) orelse return error.OutOfMemory;
+    return .{ .ptr = ptr };
 }
 
 fn arenaReset(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
-    const arena = try resolveArenaSlab(vm, args[0]);
-    try arenaCheck(vm, arena, "__arena_reset");
-    vm.memory[@intCast(arena + 3)] = vm.memory[@intCast(arena + 1)];
+    const ctrl = try resolveArenaControl(vm, args[0]);
+    try arenaAlive(vm, ctrl, "__arena_reset");
+
+    // Retain capacity: rewind every chunk watermark, resume at first (Zig .retain_capacity).
+    var chunk_v = vm.memory[@intCast(ctrl + 2)];
+    while (true) {
+        const chunk = try asHeapPtr(chunk_v);
+        if (chunk == 0) break;
+        if (vm.memory[@intCast(chunk)].int != CHUNK_MAGIC) break;
+        vm.memory[@intCast(chunk + 3)] = vm.memory[@intCast(chunk + 1)]; // watermark = data_base
+        const next = vm.memory[@intCast(chunk + 4)];
+        chunk_v = next;
+        const next_p = asHeapPtr(next) catch break;
+        if (next_p == 0) break;
+    }
+    vm.memory[@intCast(ctrl + 1)] = vm.memory[@intCast(ctrl + 2)]; // current = first
     return .null;
 }
 
 fn arenaDeinit(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
-    const arena = try resolveArenaSlab(vm, args[0]);
-    if (arena < 0 or arena >= vm.heap_ptr or vm.memory[@intCast(arena)].int != ARENA_MAGIC)
+    const ctrl = try resolveArenaControl(vm, args[0]);
+    if (vm.memory[@intCast(ctrl)].int != ARENA_MAGIC)
         return fail("__arena_deinit", "invalid arena");
-    vm.memory[@intCast(arena + 4)] = .{ .int = 0 };
+    vm.memory[@intCast(ctrl + 4)] = .{ .int = 0 };
     return .null;
 }
 

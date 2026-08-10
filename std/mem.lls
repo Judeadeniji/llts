@@ -4,13 +4,14 @@
 #   - Bare `Foo{}` / `[…]` → frame-local bump; dies on return; cannot escape.
 #   - `@new(allocator, Foo{…})` → compiler intrinsic (like Go make); allocates
 #     into a library Allocator (today: Arena). Result may be returned.
-#   - `create` → immortal Arena object for a compilation/pass phase.
+#   - `create` → growable Arena (Zig ArenaAllocator-style chunk list).
 
 pub @func alloc(size) {
     return __alloc(size);
 }
 
-# Arena is the std Allocator: fixed slab + watermark (Zig-style).
+# Growable bump arena: initial_hint sizes the first chunk (0 = default).
+# When a chunk fills, a larger chunk is appended (≈1.5×). reset retains chunks.
 pub @struct Arena {
     handle: int;
 
@@ -27,7 +28,7 @@ pub @struct Arena {
     }
 }
 
-# Returns an Arena (immortal native object). Annotated so `.alloc` / field offsets resolve.
-pub @func create(capacity): Arena {
-    return __arena_create(capacity);
+# `initial_hint` = first chunk data slots; 0 picks a small default. Not a hard cap.
+pub @func create(initial_hint): Arena {
+    return __arena_create(initial_hint);
 }

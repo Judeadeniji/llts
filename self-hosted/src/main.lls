@@ -7,7 +7,7 @@
 @func main() {
     debug.printLn("Starting main");
     # Pass arena: tokens and other heap that must outlive nextToken's frame.
-    $arena = mem.create(65536);
+    $arena = mem.create(0);
     defer arena.deinit();
 
     $src = io.readFile("self-hosted/src/main.lls");

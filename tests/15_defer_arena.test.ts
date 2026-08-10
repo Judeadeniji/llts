@@ -96,15 +96,35 @@ $mem = @import("std/mem");
 	);
 });
 
-test("Arena alloc out of capacity errors", () => {
-	expectError(
+test("Arena grows past initial hint like Zig", () => {
+	expectOutput(
 		runSource(`
 $mem = @import("std/mem");
-$arena = mem.create(2);
-arena.alloc(8);
-print(1);
+@func main() {
+    $arena = mem.create(2);
+    defer arena.deinit();
+    $a = arena.alloc(8);
+    $b = arena.alloc(8);
+    print(a > 0);
+    print(b > 0);
+}
 `),
-		"out of capacity",
+		["true", "true"],
+	);
+});
+
+test("Arena create(0) uses default chunk and grows", () => {
+	expectOutput(
+		runSource(`
+$mem = @import("std/mem");
+@func main() {
+    $arena = mem.create(0);
+    defer arena.deinit();
+    $p = arena.alloc(100);
+    print(p > 0);
+}
+`),
+		["true"],
 	);
 });
 
