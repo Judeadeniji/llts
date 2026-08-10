@@ -43,7 +43,7 @@ pub fn execute(vm: *VMState, start_ip: usize) RuntimeError!void {
     const code = vm.chunk.code.items;
     // Guard against infinite loops so the process always exits promptly.
     var steps: u64 = 0;
-    const max_steps: u64 = 2_000_000;
+    const max_steps: comptime_int = 50_000_000;
 
     while (ip < code.len) {
         steps += 1;

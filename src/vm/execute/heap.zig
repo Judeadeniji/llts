@@ -24,7 +24,7 @@ pub fn getIndex(vm: *VMState) HeapError!void {
         .int => |x| x,
         else => return fail(vm, "Index must be int"),
     };
-    try stack.push(vm, .{ .int = vm.memory[@intCast(p + i)] });
+    try stack.push(vm, heapValue(vm, p + i));
 }
 
 pub fn setIndex(vm: *VMState) HeapError!void {
@@ -107,17 +107,25 @@ fn valueToI32(val: Value) i32 {
 
 pub fn makeString(vm: *VMState) HeapError!void {
     const name_val = stack.pop(vm);
-    const s = switch (name_val) {
-        .name => |idx| vm.chunk.stringAt(idx),
+    const name_idx = switch (name_val) {
+        .name => |idx| idx,
         else => return fail(vm, "Bad string constant"),
     };
+    // Return cached pointer if this literal was already written to the heap.
+    if (vm.string_cache.get(name_idx)) |cached_ptr| {
+        try stack.push(vm, .{ .ptr = cached_ptr });
+        return;
+    }
+    const s = vm.chunk.stringAt(name_idx);
     const len: i32 = @intCast(s.len);
     const base = try vm.allocSlots(len + 1);
     vm.memory[@intCast(base)] = len;
     for (s, 0..) |ch, i| {
         vm.memory[@intCast(base + 1 + @as(i32, @intCast(i)))] = ch;
     }
-    try stack.push(vm, .{ .ptr = base + 1 });
+    const data_ptr = base + 1;
+    vm.string_cache.put(name_idx, data_ptr) catch {};
+    try stack.push(vm, .{ .ptr = data_ptr });
 }
 
 pub fn makeError(vm: *VMState) HeapError!void {

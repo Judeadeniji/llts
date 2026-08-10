@@ -35,6 +35,7 @@ pub fn compile(
 
     try modules.resolveImports(&state, doc);
     try registerFunctions(&state, doc);
+    try registerModuleDecls(&state, doc);
 
     for (doc.statements) |s| {
         if (s.* == .struct_decl) try stmt.compileStatement(&state, s);
@@ -70,21 +71,10 @@ pub fn compile(
     }
 
     emit.patchJump(&state, main_jump);
-    try scope.beginScope(&state);
 
     for (doc.statements) |s| {
         if (s.* != .function_decl and s.* != .struct_decl) {
             try stmt.compileStatement(&state, s);
-        }
-    }
-
-    if (state.functions.get("main")) |main_def| {
-        if (main_def.address) |addr| {
-            try emit.emitOp(&state, .OP_CALL_STATIC);
-            try emit.emitByte(&state, @intCast((addr >> 8) & 0xff));
-            try emit.emitByte(&state, @intCast(addr & 0xff));
-            try emit.emitByte(&state, 0);
-            try emit.emitOp(&state, .OP_POP);
         }
     }
 
@@ -283,4 +273,18 @@ fn dfsRecursive(
 
     _ = stack.remove(func_name);
     return def.is_recursive;
+}
+
+fn registerModuleDecls(state: *state_mod.CompilerState, doc: *ast.Document) !void {
+    for (doc.statements) |s| {
+        if (s.* == .declaration) {
+            const decl_node = &s.declaration;
+            if (state.global_vars.contains(decl_node.name)) {
+                std.debug.print("CompileError: Variable '{s}' already declared\n", .{decl_node.name});
+                return error.CompileError;
+            }
+            try state.global_vars.put(decl_node.name, {});
+            if (decl_node.is_const) try state.global_consts.put(decl_node.name, {});
+        }
+    }
 }

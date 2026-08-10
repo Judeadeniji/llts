@@ -19,6 +19,7 @@ var concat_n: NativeFunction = undefined;
 var repeat_n: NativeFunction = undefined;
 var starts_with_n: NativeFunction = undefined;
 var ends_with_n: NativeFunction = undefined;
+var char_code_at_n: NativeFunction = undefined;
 
 fn strlenFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
@@ -30,10 +31,19 @@ fn strlenFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
 fn substrFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
     if (args.len < 3) return error.ArityError;
-    const str = try util.valueToOwnedString(vm, args[0]);
+    const str = util.valueToOwnedString(vm, args[0]) catch |err| {
+        std.debug.print("substr arg 0 failed: {any} for value {any}\n", .{err, args[0]});
+        return err;
+    };
     defer vm.allocator.free(str);
-    const start: usize = @intCast(@max(try util.asInt(args[1]), 0));
-    const len: usize = @intCast(@max(try util.asInt(args[2]), 0));
+    const start: usize = @intCast(@max(util.asInt(args[1]) catch |err| {
+        std.debug.print("substr arg 1 failed: {any} for value {any}\n", .{err, args[1]});
+        return err;
+    }, 0));
+    const len: usize = @intCast(@max(util.asInt(args[2]) catch |err| {
+        std.debug.print("substr arg 2 failed: {any} for value {any}\n", .{err, args[2]});
+        return err;
+    }, 0));
     const end = @min(start + len, str.len);
     const slice = if (start >= str.len) "" else str[start..end];
     return try util.writeString(vm, slice);
@@ -42,9 +52,15 @@ fn substrFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
 fn indexOfFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
     if (args.len < 2) return error.ArityError;
-    const str = try util.valueToOwnedString(vm, args[0]);
+    const str = util.valueToOwnedString(vm, args[0]) catch |err| {
+        std.debug.print("indexOf arg 0 failed: {any}\n", .{err});
+        return err;
+    };
     defer vm.allocator.free(str);
-    const search = try util.valueToOwnedString(vm, args[1]);
+    const search = util.valueToOwnedString(vm, args[1]) catch |err| {
+        std.debug.print("indexOf arg 1 failed: {any} for value {any}\n", .{err, args[1]});
+        return err;
+    };
     defer vm.allocator.free(search);
     if (std.mem.indexOf(u8, str, search)) |idx| return .{ .int = @intCast(idx) };
     return .{ .int = -1 };
@@ -162,6 +178,16 @@ fn endsWithFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     return .{ .bool = std.mem.endsWith(u8, str, suffix) };
 }
 
+fn charCodeFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
+    const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
+    if (args.len < 2) return error.ArityError;
+    const str = try util.valueToOwnedString(vm, args[0]);
+    defer vm.allocator.free(str);
+    const index: usize = @intCast(@max(try util.asInt(args[1]), 0));
+    if (index >= str.len) return .{ .int = -1 };
+    return .{ .int = str[index] };
+}
+
 pub fn register(vm: *VMState) !void {
     strlen_n = .{ .name = "__strlen", .func = strlenFn, .arity = 1 };
     substr_n = .{ .name = "__substr", .func = substrFn, .arity = 3 };
@@ -175,6 +201,7 @@ pub fn register(vm: *VMState) !void {
     repeat_n = .{ .name = "__repeat", .func = repeatFn, .arity = 2 };
     starts_with_n = .{ .name = "__startsWith", .func = startsWithFn, .arity = 2 };
     ends_with_n = .{ .name = "__endsWith", .func = endsWithFn, .arity = 2 };
+    char_code_at_n = .{ .name = "__charCodeAt", .func = charCodeFn, .arity = 2 };
 
     try vm.globals.put("__strlen", .{ .native = &strlen_n });
     try vm.globals.put("__substr", .{ .native = &substr_n });
@@ -188,4 +215,5 @@ pub fn register(vm: *VMState) !void {
     try vm.globals.put("__repeat", .{ .native = &repeat_n });
     try vm.globals.put("__startsWith", .{ .native = &starts_with_n });
     try vm.globals.put("__endsWith", .{ .native = &ends_with_n });
+    try vm.globals.put("__charCodeAt", .{ .native = &char_code_at_n });
 }

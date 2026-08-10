@@ -45,3 +45,7 @@ pub @func startsWith(str, search) {
 pub @func endsWith(str, search) {
     return __endsWith(str, search);
 }
+
+pub @func charCodeAt(str, index) {
+    return __charCodeAt(str, index);
+}

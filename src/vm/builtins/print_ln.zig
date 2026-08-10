@@ -34,19 +34,31 @@ fn printLnFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
     if (args.len < 1) return error.ArityError;
 
-    const ptr = try util.asPtr(args[0]);
-    var msg = try util.readString(vm, ptr);
+    var msg = try util.valueToOwnedString(vm, args[0]);
     defer vm.allocator.free(msg);
 
     var i: usize = 1;
     while (i < args.len) : (i += 1) {
-        if (std.mem.indexOf(u8, msg, "{s}")) |_| {
+        const idx_s = std.mem.indexOf(u8, msg, "{s}");
+        const idx_i = std.mem.indexOf(u8, msg, "{i}");
+        
+        var replace_s = false;
+        if (idx_s) |s_pos| {
+            if (idx_i) |i_pos| {
+                if (s_pos < i_pos) replace_s = true;
+            } else {
+                replace_s = true;
+            }
+        }
+        
+        if (replace_s) {
             const s = try util.valueToOwnedString(vm, args[i]);
             defer vm.allocator.free(s);
+            
             const replaced = try replaceFirst(vm.allocator, msg, "{s}", s);
             vm.allocator.free(msg);
             msg = replaced;
-        } else if (std.mem.indexOf(u8, msg, "{i}")) |_| {
+        } else if (idx_i != null) {
             var ibuf: [32]u8 = undefined;
             const s = formatInt(&ibuf, args[i]);
             const replaced = try replaceFirst(vm.allocator, msg, "{i}", s);

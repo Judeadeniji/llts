@@ -145,8 +145,20 @@ pub fn resolveType(state: *state_mod.CompilerState, node: *ast.Node) ?[]const u8
             if (c.callee.* == .primary) {
                 if (state.functions.get(c.callee.primary.name)) |def| break :blk def.return_type;
             }
-            if (@import("../expr/path.zig").tryResolveStaticPath(state, c.callee) catch null) |path| {
-                if (state.functions.get(path)) |def| break :blk def.return_type;
+            if (@import("../expr/path.zig").tryResolveStaticPath(state, c.callee) catch null) |p| {
+                if (state.functions.get(p)) |def| break :blk def.return_type;
+            }
+            // Method call: obj.method() — resolve via Struct::method
+            if (c.callee.* == .member) {
+                const mem = &c.callee.member;
+                if (mem.property.* == .primary) {
+                    const prop = mem.property.primary.name;
+                    if (resolveType(state, mem.object)) |obj_type| {
+                        var buf: [256]u8 = undefined;
+                        const method_name = std.fmt.bufPrint(&buf, "{s}::{s}", .{ obj_type, prop }) catch break :blk null;
+                        if (state.functions.get(method_name)) |def| break :blk def.return_type;
+                    }
+                }
             }
             break :blk null;
         },

@@ -57,10 +57,17 @@ pub const Chunk = struct {
     }
 
     pub fn addStringConstant(self: *Chunk, s: []const u8) !u8 {
-        const owned = try self.internString(s);
-        // Store as name index into strings for now; MAKE_STRING / print resolve later.
+        // Deduplicate: reuse an existing constant slot for the same name.
+        for (self.constants.items, 0..) |c, i| {
+            if (c == .name) {
+                if (std.mem.eql(u8, self.strings.items[c.name], s)) {
+                    return @intCast(i);
+                }
+            }
+        }
+        const owned = try self.allocator.dupe(u8, s);
+        try self.strings.append(self.allocator, owned);
         const name_idx: u32 = @intCast(self.strings.items.len - 1);
-        _ = owned;
         return try self.addConstant(.{ .name = name_idx });
     }
 

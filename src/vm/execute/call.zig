@@ -1,7 +1,7 @@
 const state_mod = @import("../state.zig");
 const stack = @import("../stack.zig");
 const value = @import("../../bytecode/value.zig");
-
+const std = @import("std");
 const VMState = state_mod.VMState;
 const Value = value.Value;
 const CallFrame = state_mod.CallFrame;
@@ -36,7 +36,10 @@ pub fn callDynamic(vm: *VMState, ip: *usize, argc: u8) CallError!void {
             if (n.arity >= 0 and args.len != @as(usize, @intCast(n.arity))) {
                 return fail("Wrong arity for native");
             }
-            const result = n.func(vm, args) catch return fail("native call failed");
+            const result = n.func(vm, args) catch |err| {
+                std.debug.print("Native function '{s}' failed with error: {any}\n", .{n.name, err});
+                return fail("native call failed");
+            };
             vm.stack.shrinkRetainingCapacity(callee_idx);
             try stack.push(vm, result);
         },

@@ -1,3 +1,4 @@
+const std = @import("std");
 const state_mod = @import("../state.zig");
 const stack = @import("../stack.zig");
 const VMState = state_mod.VMState;
@@ -40,7 +41,10 @@ pub fn setLocal(vm: *VMState, slot: u8) VarError!void {
 pub fn getGlobal(vm: *VMState, const_idx: u8) VarError!void {
     const name_val = vm.chunk.constants.items[const_idx];
     const name = resolveName(vm, name_val) orelse return fail("Bad global name");
-    const g = vm.globals.get(name) orelse return fail("Undefined variable");
+    const g = vm.globals.get(name) orelse {
+        std.debug.print("RuntimeError: Undefined variable '{s}'\n", .{name});
+        return fail("Undefined variable");
+    };
     try stack.push(vm, g);
 }
 

@@ -41,6 +41,8 @@ pub const VMState = struct {
     current_line: u32 = 1,
     /// Owned module instances created by OP_GET_MODULE.
     modules: std.ArrayList(*ModuleObject) = .empty,
+    /// Cache: constant string index → heap data pointer, avoids re-allocating the same literal.
+    string_cache: std.AutoHashMap(u32, i32),
 
     pub fn init(allocator: std.mem.Allocator, chunk: *Chunk) !VMState {
         const memory = try allocator.alloc(i32, MEMORY_SIZE);
@@ -48,6 +50,7 @@ pub const VMState = struct {
         var state: VMState = .{
             .allocator = allocator,
             .globals = std.StringHashMap(Value).init(allocator),
+            .string_cache = std.AutoHashMap(u32, i32).init(allocator),
             .memory = memory,
             .chunk = chunk,
         };
@@ -67,6 +70,7 @@ pub const VMState = struct {
             self.allocator.destroy(mod);
         }
         self.modules.deinit(self.allocator);
+        self.string_cache.deinit();
         self.allocator.free(self.memory);
     }
 

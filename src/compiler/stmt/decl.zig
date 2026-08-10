@@ -80,13 +80,7 @@ pub fn compileDeclaration(state: *CompilerState, decl: *const ast.Declaration) !
             try emit.emitByte(state, @intCast(state.locals.items.len - 1));
         }
     } else {
-        if (state.global_vars.contains(decl.name)) {
-            std.debug.print("CompileError: Variable '{s}' already declared in this scope\n", .{decl.name});
-            return error.CompileError;
-        }
-        try state.global_vars.put(decl.name, {});
         if (type_name) |tn| try state.global_types.put(decl.name, tn);
-        if (decl.is_const) try state.global_consts.put(decl.name, {});
         try emit.emitNameGet(state, .OP_SET_GLOBAL, decl.name);
         try emit.emitOp(state, .OP_POP);
     }
