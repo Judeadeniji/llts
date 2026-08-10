@@ -278,13 +278,28 @@ fn inferExpr(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node:
             for (b.statements) |s| {
                 last = (try checkStmt(state, env, ta, s)) orelse ir.TUnknown;
             }
+            if (b.label != null) {
+                break :blk try joinBreakTypes(state, env, ta, node);
+            }
             break :blk last;
         },
         .if_expr => |i| blk: {
             _ = try inferExpr(state, env, ta, i.condition);
             _ = try inferExpr(state, env, ta, i.body);
             if (i.else_body) |e| _ = try inferExpr(state, env, ta, e);
+            // Value-producing if (has else) joins break payload types.
+            if (i.else_body != null) {
+                break :blk try joinBreakTypes(state, env, ta, node);
+            }
             break :blk ir.TUnknown;
+        },
+        .switch_expr => |sw| blk: {
+            _ = try inferExpr(state, env, ta, sw.condition);
+            for (sw.prongs) |prong| {
+                for (prong.patterns) |pat| _ = try inferExpr(state, env, ta, pat);
+                _ = try inferExpr(state, env, ta, prong.body);
+            }
+            break :blk try joinBreakTypes(state, env, ta, node);
         },
         .for_expr => |f| blk: {
             if (f.condition) |c| _ = try inferExpr(state, env, ta, c);
@@ -297,8 +312,53 @@ fn inferExpr(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node:
             _ = try inferExpr(state, env, ta, f.body);
             break :blk ir.TUnknown;
         },
+        .break_expr => |br| blk: {
+            if (br.value) |v| break :blk try inferExpr(state, env, ta, v);
+            break :blk ir.TUnknown;
+        },
         else => ir.TUnknown,
     };
+}
+
+fn joinBreakTypes(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node: *ast.Node) TypecheckError!ir.Type {
+    var acc: ?ir.Type = null;
+    try walkBreakValues(state, env, ta, node, &acc);
+    return acc orelse ir.TUnknown;
+}
+
+fn walkBreakValues(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node: *ast.Node, acc: *?ir.Type) TypecheckError!void {
+    switch (node.*) {
+        .break_expr => |br| {
+            if (br.value) |v| {
+                const t = try inferExpr(state, env, ta, v);
+                if (acc.*) |cur| {
+                    if (!ir.isSubtype(t, cur) and !ir.isSubtype(cur, t)) {
+                        // Gradual: widen to unknown on conflict unless either side is unknown.
+                        if (!ir.involvesUnknown(t) and !ir.involvesUnknown(cur) and !ir.typeEquals(t, cur)) {
+                            acc.* = ir.TUnknown;
+                        }
+                    } else if (ir.isSubtype(cur, t)) {
+                        acc.* = t;
+                    }
+                } else {
+                    acc.* = t;
+                }
+            }
+        },
+        .block => |b| {
+            for (b.statements) |s| try walkBreakValues(state, env, ta, s, acc);
+        },
+        .if_expr => |i| {
+            try walkBreakValues(state, env, ta, i.body, acc);
+            if (i.else_body) |e| try walkBreakValues(state, env, ta, e, acc);
+        },
+        .switch_expr => |sw| {
+            for (sw.prongs) |p| try walkBreakValues(state, env, ta, p.body, acc);
+        },
+        .for_expr => |f| try walkBreakValues(state, env, ta, f.body, acc),
+        .declaration => |d| try walkBreakValues(state, env, ta, d.value, acc),
+        else => {},
+    }
 }
 
 fn isCmpOrLogic(op: []const u8) bool {

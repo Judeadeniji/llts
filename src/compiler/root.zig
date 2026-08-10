@@ -209,6 +209,14 @@ fn analyzeBody(
             if (i.else_body) |e| try analyzeBody(state, e, calls, has_loop, has_return, return_type, full_name);
             return;
         },
+        .switch_expr => |sw| {
+            try analyzeBody(state, sw.condition, calls, has_loop, has_return, return_type, full_name);
+            for (sw.prongs) |prong| {
+                for (prong.patterns) |pat| try analyzeBody(state, pat, calls, has_loop, has_return, return_type, full_name);
+                try analyzeBody(state, prong.body, calls, has_loop, has_return, return_type, full_name);
+            }
+            return;
+        },
         .function_decl => {}, // nested not supported
         else => {},
     }
@@ -227,6 +235,9 @@ fn analyzeBody(
         },
         .return_expr => |r| {
             if (r.return_value) |v| try analyzeBody(state, v, calls, has_loop, has_return, return_type, full_name);
+        },
+        .break_expr => |br| {
+            if (br.value) |v| try analyzeBody(state, v, calls, has_loop, has_return, return_type, full_name);
         },
         .defer_stmt => |d| try analyzeBody(state, d.body, calls, has_loop, has_return, return_type, full_name),
         else => {},

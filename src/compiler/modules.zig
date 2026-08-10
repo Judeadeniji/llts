@@ -341,6 +341,16 @@ fn rewriteModuleRefs(
             try rewriteModuleRefs(state, i.body, local_map, bound);
             if (i.else_body) |e| try rewriteModuleRefs(state, e, local_map, bound);
         },
+        .switch_expr => |*sw| {
+            try rewriteModuleRefs(state, sw.condition, local_map, bound);
+            for (sw.prongs) |prong| {
+                for (prong.patterns) |pat| try rewriteModuleRefs(state, pat, local_map, bound);
+                try rewriteModuleRefs(state, prong.body, local_map, bound);
+            }
+        },
+        .break_expr => |*br| {
+            if (br.value) |v| try rewriteModuleRefs(state, v, local_map, bound);
+        },
         .binary => |*b| {
             try rewriteModuleRefs(state, b.left, local_map, bound);
             try rewriteModuleRefs(state, b.right, local_map, bound);
@@ -468,6 +478,16 @@ fn rewriteRefs(node: *ast.Node, local_map: *std.StringHashMap([]const u8)) void 
             rewriteRefs(i.condition, local_map);
             rewriteRefs(i.body, local_map);
             if (i.else_body) |e| rewriteRefs(e, local_map);
+        },
+        .switch_expr => |sw| {
+            rewriteRefs(sw.condition, local_map);
+            for (sw.prongs) |prong| {
+                for (prong.patterns) |pat| rewriteRefs(pat, local_map);
+                rewriteRefs(prong.body, local_map);
+            }
+        },
+        .break_expr => |br| {
+            if (br.value) |v| rewriteRefs(v, local_map);
         },
         .for_expr => |f| {
             if (f.condition) |c| rewriteRefs(c, local_map);

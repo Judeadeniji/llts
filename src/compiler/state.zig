@@ -58,6 +58,7 @@ pub const CompilerState = struct {
     structs: std.StringHashMap(StructDef),
     enums: std.StringHashMap(EnumDef),
     loops: std.ArrayList(LoopTracker) = .empty,
+    exprs: std.ArrayList(ExprTracker) = .empty,
     defer_stacks: std.AutoHashMap(i32, std.ArrayList(*ast.Node)),
     global_vars: std.StringHashMap(void),
     global_types: std.StringHashMap([]const u8),
@@ -120,6 +121,10 @@ pub fn deinit(self: *CompilerState) void {
         loop.continue_jumps.deinit(self.allocator);
     }
     self.loops.deinit(self.allocator);
+    for (self.exprs.items) |*ex| {
+        ex.break_jumps.deinit(self.allocator);
+    }
+    self.exprs.deinit(self.allocator);
     var fit = self.functions.iterator();
     while (fit.next()) |e| {
         e.value_ptr.calls.deinit();

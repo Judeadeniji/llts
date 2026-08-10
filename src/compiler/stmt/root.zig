@@ -20,6 +20,7 @@ pub fn compileStatement(state: *CompilerState, node: *ast.Node) anyerror!void {
         .defer_stmt => |*d| try func.compileDefer(state, d),
         .return_expr => |*r| try func.compileReturn(state, r),
         .if_expr => |*i| try control.compileIf(state, i),
+        .switch_expr => |*s| try control.compileSwitch(state, s),
         .for_expr => |*f| try control.compileFor(state, f),
         .break_expr => |*b| try control.compileBreak(state, b),
         .continue_expr => |*c| try control.compileContinue(state, c),

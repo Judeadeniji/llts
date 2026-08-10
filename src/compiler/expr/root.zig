@@ -9,6 +9,7 @@ const assign = @import("assign.zig");
 const call = @import("call.zig");
 const aggregate = @import("aggregate.zig");
 const path = @import("path.zig");
+const control = @import("../stmt/control.zig");
 
 const CompilerState = state_mod.CompilerState;
 
@@ -26,6 +27,9 @@ pub fn compileExpression(state: *CompilerState, node: *ast.Node) anyerror!void {
         .struct_init => |*s| try aggregate.compileStructInit(state, s),
         .try_expr => |*t| try aggregate.compileTry(state, t),
         .error_expr => |*e| try aggregate.compileError(state, e),
+        .if_expr => |*i| try control.compileIfValue(state, i),
+        .switch_expr => |*s| try control.compileSwitchValue(state, s),
+        .block => |*b| try control.compileBlockValue(state, b),
         else => {},
     }
 }

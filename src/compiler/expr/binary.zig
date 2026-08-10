@@ -31,9 +31,43 @@ pub fn compileBinary(state: *CompilerState, bin: *const ast.Binary) !void {
         try call.compilePipe(state, bin);
         return;
     }
+    if (try foldStringConcat(state, bin)) {
+        return;
+    }
     try expr.compileExpression(state, bin.left);
     try expr.compileExpression(state, bin.right);
     try emitBinOp(state, bin);
+}
+
+fn foldStringConcat(state: *CompilerState, bin: *const ast.Binary) !bool {
+    if (!std.mem.eql(u8, bin.operator, "+")) return false;
+    // Use an arena so that intermediate allocations don't leak, and the final string is cleaned up
+    var arena = std.heap.ArenaAllocator.init(state.allocator);
+    defer arena.deinit();
+    const str = try extractConstantString(arena.allocator(), @as(*const ast.Node, @ptrCast(bin)));
+    if (str) |s| {
+        try emit.emitString(state, s);
+        return true;
+    }
+    return false;
+}
+
+fn extractConstantString(allocator: std.mem.Allocator, node: *const ast.Node) anyerror!?[]const u8 {
+    switch (node.*) {
+        .literal => |lit| {
+            if (lit.literal_type == .string) return lit.value;
+            return null;
+        },
+        .binary => |b| {
+            if (std.mem.eql(u8, b.operator, "+")) {
+                const left = try extractConstantString(allocator, b.left) orelse return null;
+                const right = try extractConstantString(allocator, b.right) orelse return null;
+                return try std.mem.concat(allocator, u8, &.{ left, right });
+            }
+            return null;
+        },
+        else => return null,
+    }
 }
 
 fn emitBinOp(state: *CompilerState, bin: *const ast.Binary) !void {
