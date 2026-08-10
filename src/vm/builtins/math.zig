@@ -78,12 +78,12 @@ fn minMax(vm: *VMState, args: []Value, find_max: bool) !Value {
 
 fn minFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
-    return try minMax(vm, args, true);
+    return try minMax(vm, args, false);
 }
 
 fn maxFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
-    return try minMax(vm, args, false);
+    return try minMax(vm, args, true);
 }
 
 fn powFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {

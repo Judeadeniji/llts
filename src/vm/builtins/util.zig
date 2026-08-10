@@ -19,9 +19,10 @@ pub fn readString(vm: *VMState, ptr: i32) ![]u8 {
 }
 
 /// Allocate a length-prefixed string on the VM heap; returns data pointer.
+/// Immortal: results are often returned from stdlib wrappers (`string.split`, etc.).
 pub fn writeString(vm: *VMState, bytes: []const u8) !Value {
     const len: i32 = @intCast(bytes.len);
-    const base = try vm.allocSlots(len + 1);
+    const base = try vm.allocImmortal(len + 1);
     vm.memory[@intCast(base)] = .{ .int = len };
     for (bytes, 0..) |ch, i| {
         vm.memory[@intCast(base + 1 + @as(i32, @intCast(i)))] = .{ .int = ch };
@@ -39,19 +40,24 @@ pub fn writeSlice(vm: *VMState, bytes: []const u8) !Value {
 /// Allocate an error object `[ERROR_TAG, msgPtr]` and return ptr to msgPtr slot.
 pub fn makeError(vm: *VMState, msg: []const u8) !Value {
     const msg_val = try writeSlice(vm, msg);
-    const p = try vm.allocSlots(2);
+    const p = try vm.allocImmortal(2);
     vm.memory[@intCast(p)] = .{ .int = ERROR_TAG };
     vm.memory[@intCast(p + 1)] = msg_val;
     return .{ .ptr = p + 1 };
 }
 
 /// Write an array of i32 values (length-prefixed); returns data pointer.
+/// Immortal: returned from natives like `__split` through LLTS wrappers.
+/// Heap addresses are stored as `.ptr` so `print` / string ops see strings, not raw ints.
 pub fn writeArray(vm: *VMState, items: []const i32) !Value {
     const len: i32 = @intCast(items.len);
-    const base = try vm.allocSlots(len + 1);
+    const base = try vm.allocImmortal(len + 1);
     vm.memory[@intCast(base)] = .{ .int = len };
     for (items, 0..) |item, i| {
-        vm.memory[@intCast(base + 1 + @as(i32, @intCast(i)))] = .{ .int = item };
+        vm.memory[@intCast(base + 1 + @as(i32, @intCast(i)))] = if (item >= state_mod.HEAP_START)
+            .{ .ptr = item }
+        else
+            .{ .int = item };
     }
     return .{ .ptr = base + 1 };
 }

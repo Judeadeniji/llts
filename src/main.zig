@@ -45,7 +45,8 @@ fn runSmoke(allocator: std.mem.Allocator) !void {
     // print(42)
     const idx = try c.addConstant(.{ .int = 42 });
     try c.writeOp(.OP_CONSTANT);
-    try c.write(idx);
+    try c.write(@intCast((idx >> 8) & 0xff));
+    try c.write(@intCast(idx & 0xff));
     try c.writeOp(.OP_PRINT);
     try c.write(1);
 

@@ -14,23 +14,28 @@ pub fn emitOp(state: *CompilerState, op: OpCode) !void {
     try state.chunk.writeOp(op);
 }
 
+pub fn emitShort(state: *CompilerState, short: u16) !void {
+    try state.chunk.write(@intCast((short >> 8) & 0xff));
+    try state.chunk.write(@intCast(short & 0xff));
+}
+
 pub fn emitConstant(state: *CompilerState, v: Value) !void {
     const idx = try state.chunk.addConstant(v);
     try emitOp(state, .OP_CONSTANT);
-    try emitByte(state, idx);
+    try emitShort(state, idx);
 }
 
 pub fn emitString(state: *CompilerState, s: []const u8) !void {
     const idx = try state.chunk.addStringConstant(s);
     try emitOp(state, .OP_CONSTANT);
-    try emitByte(state, idx);
+    try emitShort(state, idx);
     try emitOp(state, .OP_MAKE_STRING);
 }
 
 pub fn emitNameGet(state: *CompilerState, op: OpCode, name: []const u8) !void {
     const idx = try state.chunk.addStringConstant(name);
     try emitOp(state, op);
-    try emitByte(state, idx);
+    try emitShort(state, idx);
 }
 
 pub fn emitJump(state: *CompilerState, op: OpCode) !usize {

@@ -7,6 +7,17 @@ pub const Local = struct {
     depth: i32,
     type_name: ?[]const u8 = null,
     is_const: bool = false,
+    /// Where heap data bound to this local came from (escape analysis).
+    /// `.frame` = bare struct/array literal — must not be returned.
+    /// `.pass` = `@new(allocator, …)` — may escape the frame.
+    alloc_region: AllocRegion = .unknown,
+};
+
+/// Heap lifetime color for escape checking (region model, not GC).
+pub const AllocRegion = enum {
+    unknown,
+    frame,
+    pass,
 };
 
 pub const FunctionDef = struct {

@@ -1,7 +1,7 @@
 const std = @import("std");
 
 pub const compiler_symbols = [_][]const u8{
-    "import", "const", "func", "for", "if", "else", "switch", "struct", "enum", "isError", "typeOf", "extern",
+    "import", "const", "func", "for", "if", "else", "switch", "struct", "enum", "isError", "typeOf", "extern", "new",
 };
 
 pub const keywords = [_][]const u8{

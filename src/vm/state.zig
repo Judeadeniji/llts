@@ -18,6 +18,10 @@ pub const CallFrame = struct {
     const_slots: std.AutoHashMap(u8, void),
     func_name: []const u8 = "<script>",
     line: u32 = 1,
+    /// Heap bump at call entry. On return, `heap_ptr` rewinds here so
+    /// frame-local implicit allocs (bare `Foo{}` / `[…]`) die with the frame.
+    /// Immortal allocs raise this watermark so arenas / `@new` targets survive.
+    heap_watermark: i32 = HEAP_START,
 
     pub fn init(allocator: std.mem.Allocator) CallFrame {
         return .{
@@ -58,6 +62,8 @@ pub const VMState = struct {
         };
         var frame = CallFrame.init(allocator);
         frame.func_name = "<script>";
+        // Script frame lives until process end — watermark tracks immortal growth.
+        frame.heap_watermark = HEAP_START;
         try state.frames.append(allocator, frame);
         return state;
     }
@@ -77,10 +83,21 @@ pub const VMState = struct {
         self.allocator.free(self.memory);
     }
 
+    /// Frame-local bump. Rewound when the current call returns (see `doReturn`).
     pub fn allocSlots(self: *VMState, count: i32) !i32 {
         const ptr = self.heap_ptr;
         if (ptr + count >= @as(i32, @intCast(self.memory.len))) return error.OutOfMemory;
         self.heap_ptr += count;
+        return ptr;
+    }
+
+    /// Process-/pass-lifetime bump (arenas, `error(…)`, values meant to escape a frame).
+    /// Raises every frame watermark so a later return cannot rewind past this block.
+    pub fn allocImmortal(self: *VMState, count: i32) !i32 {
+        const ptr = try self.allocSlots(count);
+        for (self.frames.items) |*f| {
+            if (f.heap_watermark < self.heap_ptr) f.heap_watermark = self.heap_ptr;
+        }
         return ptr;
     }
 

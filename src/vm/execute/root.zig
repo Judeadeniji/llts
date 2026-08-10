@@ -54,7 +54,7 @@ pub fn execute(vm: *VMState, start_ip: usize) RuntimeError!void {
         const op: OpCode = @enumFromInt(readByte(vm, &ip));
         switch (op) {
             .OP_LINE => debug_ops.line(vm, readShort(vm, &ip)),
-            .OP_CONSTANT => try stack.push(vm, vm.chunk.constants.items[readByte(vm, &ip)]),
+            .OP_CONSTANT => try stack.push(vm, vm.chunk.constants.items[readShort(vm, &ip)]),
             .OP_NULL => try stack.push(vm, .null),
             .OP_TRUE => try stack.push(vm, .{ .bool = true }),
             .OP_FALSE => try stack.push(vm, .{ .bool = false }),
@@ -77,9 +77,9 @@ pub fn execute(vm: *VMState, start_ip: usize) RuntimeError!void {
             },
             .OP_GET_LOCAL => try vars.getLocal(vm, readByte(vm, &ip)),
             .OP_SET_LOCAL => try vars.setLocal(vm, readByte(vm, &ip)),
-            .OP_GET_GLOBAL => try vars.getGlobal(vm, readByte(vm, &ip)),
-            .OP_SET_GLOBAL => try vars.setGlobal(vm, readByte(vm, &ip)),
-            .OP_GET_FUNCTION => try vars.getFunction(vm, readByte(vm, &ip)),
+            .OP_GET_GLOBAL => try vars.getGlobal(vm, readShort(vm, &ip)),
+            .OP_SET_GLOBAL => try vars.setGlobal(vm, readShort(vm, &ip)),
+            .OP_GET_FUNCTION => try vars.getFunction(vm, readShort(vm, &ip)),
             .OP_CALL => try call.callDynamic(vm, &ip, readByte(vm, &ip)),
             .OP_CALL_STATIC => {
                 const addr = readShort(vm, &ip);
@@ -99,12 +99,12 @@ pub fn execute(vm: *VMState, start_ip: usize) RuntimeError!void {
             .OP_ASSERT_TYPE => try debug_ops.assertType(vm, readByte(vm, &ip)),
             .OP_STRING_EQUAL, .OP_STRING_NOT_EQUAL => try compare.compareEq(vm, op == .OP_STRING_NOT_EQUAL),
             .OP_IMPORT => {
-                _ = readByte(vm, &ip);
+                _ = readShort(vm, &ip);
             },
-            .OP_GET_PROPERTY => try getProperty(vm, readByte(vm, &ip)),
-            .OP_SET_PROPERTY => try setProperty(vm, readByte(vm, &ip)),
+            .OP_GET_PROPERTY => try getProperty(vm, readShort(vm, &ip)),
+            .OP_SET_PROPERTY => try setProperty(vm, readShort(vm, &ip)),
             .OP_GET_MODULE => {
-                const name_val = vm.chunk.constants.items[readByte(vm, &ip)];
+                const name_val = vm.chunk.constants.items[readShort(vm, &ip)];
                 const module_name = switch (name_val) {
                     .name => |i| vm.chunk.stringAt(i),
                     else => return error.RuntimeError,
@@ -116,8 +116,9 @@ pub fn execute(vm: *VMState, start_ip: usize) RuntimeError!void {
     }
 }
 
-fn getProperty(vm: *VMState, const_idx: u8) RuntimeError!void {
-    const name = vm.chunk.stringAt(switch (vm.chunk.constants.items[const_idx]) {
+fn getProperty(vm: *VMState, const_idx: u16) RuntimeError!void {
+    const name_val = vm.chunk.constants.items[const_idx];
+    const name = vm.chunk.stringAt(switch (name_val) {
         .name => |i| i,
         else => return error.RuntimeError,
     });
@@ -149,7 +150,7 @@ fn getProperty(vm: *VMState, const_idx: u8) RuntimeError!void {
     return error.RuntimeError;
 }
 
-fn setProperty(vm: *VMState, const_idx: u8) RuntimeError!void {
+fn setProperty(vm: *VMState, const_idx: u16) RuntimeError!void {
     const name = vm.chunk.stringAt(switch (vm.chunk.constants.items[const_idx]) {
         .name => |i| i,
         else => return error.RuntimeError,

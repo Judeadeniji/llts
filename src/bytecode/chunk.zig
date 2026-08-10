@@ -43,9 +43,9 @@ pub const Chunk = struct {
         try self.write(@intFromEnum(op));
     }
 
-    pub fn addConstant(self: *Chunk, v: Value) !u8 {
+    pub fn addConstant(self: *Chunk, v: Value) !u16 {
         const idx = self.constants.items.len;
-        if (idx >= 256) return error.TooManyConstants;
+        if (idx >= 65536) return error.TooManyConstants;
         try self.constants.append(self.allocator, v);
         return @intCast(idx);
     }
@@ -56,7 +56,7 @@ pub const Chunk = struct {
         return owned;
     }
 
-    pub fn addStringConstant(self: *Chunk, s: []const u8) !u8 {
+    pub fn addStringConstant(self: *Chunk, s: []const u8) !u16 {
         // Deduplicate: reuse an existing constant slot for the same name.
         for (self.constants.items, 0..) |c, i| {
             if (c == .name) {

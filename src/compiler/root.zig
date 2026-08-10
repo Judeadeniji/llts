@@ -79,6 +79,14 @@ pub fn compile(
         }
     }
 
+    // Language entry: zero-arg `main` runs after top-level statements (tests/10_main).
+    if (state.chunk.functions.get("main")) |main_fn| {
+        if (main_fn.arity == 0) {
+            try emit.emitCallStatic(&state, @intCast(main_fn.address), 0);
+            try emit.emitOp(&state, .OP_POP); // discard main's return value
+        }
+    }
+
     try emit.emitOp(&state, .OP_NULL);
     try emit.emitOp(&state, .OP_RETURN);
 
@@ -189,6 +197,15 @@ fn analyzeBody(
             if (return_type.* == null) {
                 if (r.return_value) |v| {
                     if (v.* == .struct_init) return_type.* = v.struct_init.name;
+                    // `@new(a, Foo{…})` — return type is the struct being allocated.
+                    if (v.* == .call) {
+                        const c = v.call;
+                        if (c.callee.* == .primary and std.mem.eql(u8, c.callee.primary.name, "@new") and
+                            c.args.len == 2 and c.args[1].* == .struct_init)
+                        {
+                            return_type.* = c.args[1].struct_init.name;
+                        }
+                    }
                     if (v.* == .primary and std.mem.eql(u8, v.primary.name, "self")) {
                         if (std.mem.indexOf(u8, full_name, "::")) |idx| {
                             return_type.* = full_name[0..idx];

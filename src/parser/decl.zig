@@ -48,7 +48,12 @@ pub fn parseCompilerKeyword(self: *Parser) ParseError!*Node {
 
     if (std.mem.eql(u8, keyword.value, "import")) return parseCompilerImport(self);
     if (std.mem.eql(u8, keyword.value, "const")) return parseDeclaration(self, true);
-    if (std.mem.eql(u8, keyword.value, "typeOf") or std.mem.eql(u8, keyword.value, "isError")) {
+    // Expression-form `@` intrinsics (not statements): parse as expression statements.
+    // `@new` is Go-make-style — compiler-visible alloc into a library Allocator.
+    if (std.mem.eql(u8, keyword.value, "typeOf") or
+        std.mem.eql(u8, keyword.value, "isError") or
+        std.mem.eql(u8, keyword.value, "new"))
+    {
         self.current -= 1;
         return stmt_mod.parseExpressionStatement(self);
     }
@@ -60,6 +65,7 @@ pub fn parseCompilerKeyword(self: *Parser) ParseError!*Node {
     if (std.mem.eql(u8, keyword.value, "enum")) return enums.parseCompilerEnum(self);
     if (std.mem.eql(u8, keyword.value, "extern")) return parseCompilerExtern(self);
 
+    std.debug.print("DEBUG FALLTHROUGH: '{s}' (len: {d})\n", .{keyword.value, keyword.value.len});
     return self.failTok(keyword, "Unhandled compiler keyword: {s}", .{keyword.value});
 }
 

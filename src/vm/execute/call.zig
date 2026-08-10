@@ -21,6 +21,8 @@ pub fn callStatic(vm: *VMState, ip: *usize, addr: u16, argc: u8) CallError!void 
     frame.base_slot = vm.stack.items.len - argc;
     frame.arg_count = argc;
     frame.func_name = functionNameAt(vm, addr);
+    // Region: frame. Implicit `Foo{}` / `[…]` allocs between here and return are rewound.
+    frame.heap_watermark = vm.heap_ptr;
     try vm.frames.append(vm.allocator, frame);
     ip.* = addr;
 }
@@ -62,6 +64,10 @@ pub fn doReturn(vm: *VMState, ip: *usize) CallError!bool {
     var frame = vm.frames.pop() orelse return fail("Return with no frame");
     const ret_ip = frame.return_ip;
     const base = frame.base_slot;
+    // End of frame region: drop implicit heap allocs from this call.
+    // Escape analysis must reject returning pointers into this range; `@new(arena,…)`
+    // and immortal allocs raise watermarks / live in arena slabs so they survive.
+    vm.heap_ptr = frame.heap_watermark;
     frame.deinit();
     if (vm.frames.items.len == 0) {
         vm.stack.shrinkRetainingCapacity(0);

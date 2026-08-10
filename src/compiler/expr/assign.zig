@@ -104,6 +104,8 @@ fn assignPrimary(state: *CompilerState, prim: *const ast.Primary, right: *ast.No
     }
     const arg = scope.resolveLocal(state, prim.name);
     if (arg != -1) {
+        // Track region so `return t` after `$t = Foo{}` vs `@new(a, Foo{})` is checked.
+        state.locals.items[@intCast(arg)].alloc_region = @import("../escape.zig").regionOfRhs(state, right);
         try emit.emitOp(state, .OP_SET_LOCAL);
         try emit.emitByte(state, @intCast(arg));
     } else {

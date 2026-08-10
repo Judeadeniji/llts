@@ -38,7 +38,7 @@ pub fn setLocal(vm: *VMState, slot: u8) VarError!void {
     vm.stack.items[idx] = val;
 }
 
-pub fn getGlobal(vm: *VMState, const_idx: u8) VarError!void {
+pub fn getGlobal(vm: *VMState, const_idx: u16) VarError!void {
     const name_val = vm.chunk.constants.items[const_idx];
     const name = resolveName(vm, name_val) orelse return fail("Bad global name");
     const g = vm.globals.get(name) orelse {
@@ -48,13 +48,13 @@ pub fn getGlobal(vm: *VMState, const_idx: u8) VarError!void {
     try stack.push(vm, g);
 }
 
-pub fn setGlobal(vm: *VMState, const_idx: u8) VarError!void {
+pub fn setGlobal(vm: *VMState, const_idx: u16) VarError!void {
     const name_val = vm.chunk.constants.items[const_idx];
     const name = resolveName(vm, name_val) orelse return fail("Bad global name");
     try vm.globals.put(name, stack.peek(vm, 0));
 }
 
-pub fn getFunction(vm: *VMState, const_idx: u8) VarError!void {
+pub fn getFunction(vm: *VMState, const_idx: u16) VarError!void {
     const name_val = vm.chunk.constants.items[const_idx];
     const name = resolveName(vm, name_val) orelse return fail("Bad function name");
     const f = vm.chunk.functions.get(name) orelse return fail("Undefined function");

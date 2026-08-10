@@ -101,9 +101,10 @@ pub fn makeString(vm: *VMState) HeapError!void {
 
 pub fn makeError(vm: *VMState) HeapError!void {
     const msg = stack.pop(vm);
-    const p = try vm.allocSlots(2);
+    // Immortal: `return error(…)` must survive the frame (escape policy allows error returns).
+    const p = try vm.allocImmortal(2);
     vm.memory[@intCast(p)] = .{ .int = ERROR_TAG };
-    vm.memory[@intCast(p + 1)] = msg; // Store the actual Value!
+    vm.memory[@intCast(p + 1)] = msg;
     try stack.push(vm, .{ .ptr = p + 1 });
 }
 

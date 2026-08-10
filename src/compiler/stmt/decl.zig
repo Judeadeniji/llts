@@ -74,6 +74,7 @@ pub fn compileDeclaration(state: *CompilerState, decl: *const ast.Declaration) !
             .depth = state.scope_depth,
             .type_name = type_name,
             .is_const = decl.is_const,
+            .alloc_region = @import("../escape.zig").regionOfRhs(state, decl.value),
         });
         if (decl.is_const) {
             try emit.emitOp(state, .OP_MARK_CONST);

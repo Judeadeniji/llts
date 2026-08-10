@@ -393,6 +393,14 @@ fn inferCall(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, call_
         try state.type_of_results.put(call_node, disp);
         return ir.TString;
     }
+    if (c.callee.* == .primary and std.mem.eql(u8, c.callee.primary.name, "@new")) {
+        if (c.args.len != 2) {
+            std.debug.print("CompileError: @new expects (allocator, value)\n", .{});
+            return error.CompileError;
+        }
+        _ = try inferExpr(state, env, ta, c.args[0]);
+        return try inferExpr(state, env, ta, c.args[1]);
+    }
 
     const name = resolveCalleeName(state, c);
     if (name == null) {

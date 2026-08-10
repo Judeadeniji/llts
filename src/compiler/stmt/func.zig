@@ -20,6 +20,8 @@ pub fn compileDefer(state: *CompilerState, def: *const ast.Defer) !void {
 
 pub fn compileReturn(state: *CompilerState, ret: *const ast.Return) !void {
     if (ret.return_value) |v| {
+        // Region escape: frame-local heap cannot be returned (compile error).
+        try @import("../escape.zig").checkReturnValue(state, v);
         try expr.compileExpression(state, v);
     } else {
         try emit.emitOp(state, .OP_NULL);

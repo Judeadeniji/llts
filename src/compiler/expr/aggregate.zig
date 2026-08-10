@@ -40,11 +40,81 @@ pub fn compileTry(state: *CompilerState, try_expr: *const ast.TryExpr) !void {
 }
 
 pub fn compileArray(state: *CompilerState, arr: *const ast.ArrayLiteral) !void {
+    // Frame-local: uses `__alloc` (rewound on return). Prefer `@new(a, […])` to escape.
     const length: i32 = @intCast(arr.elements.len);
     try emit.emitNameGet(state, .OP_GET_GLOBAL, "__alloc");
     try emit.emitConstant(state, .{ .int = length + 1 });
     try emit.emitOp(state, .OP_CALL);
     try emit.emitByte(state, 1);
+    try fillArray(state, arr);
+}
+
+pub fn compileStructInit(state: *CompilerState, init: *const ast.StructInit) !void {
+    const struct_def = try resolveStructDef(state, init);
+    // Frame-local bump — cannot be returned (escape.zig). Use `@new(arena, …)` to escape.
+    try emit.emitNameGet(state, .OP_GET_GLOBAL, "__alloc");
+    try emit.emitConstant(state, .{ .int = struct_def.size });
+    try emit.emitOp(state, .OP_CALL);
+    try emit.emitByte(state, 1);
+    try fillStruct(state, init, struct_def);
+}
+
+/// `@new(allocator, Foo{…}|[…])` — allocate into a library Allocator (Arena).
+/// Result is Pass-colored and may be returned from the frame.
+pub fn compileNew(state: *CompilerState, c: *const ast.Call) !void {
+    if (c.args.len != 2) {
+        std.debug.print("CompileError: @new expects (allocator, value) — like Go make\n", .{});
+        return error.CompileError;
+    }
+    const value = c.args[1];
+    switch (value.*) {
+        .struct_init => |*init| {
+            const struct_def = try resolveStructDef(state, init);
+            // stack: __arena_alloc, allocator, size → call → ptr
+            try emit.emitNameGet(state, .OP_GET_GLOBAL, "__arena_alloc");
+            try expr.compileExpression(state, c.args[0]);
+            try emit.emitConstant(state, .{ .int = struct_def.size });
+            try emit.emitOp(state, .OP_CALL);
+            try emit.emitByte(state, 2);
+            try fillStruct(state, init, struct_def);
+        },
+        .array_literal => |*arr| {
+            const length: i32 = @intCast(arr.elements.len);
+            try emit.emitNameGet(state, .OP_GET_GLOBAL, "__arena_alloc");
+            try expr.compileExpression(state, c.args[0]);
+            try emit.emitConstant(state, .{ .int = length + 1 });
+            try emit.emitOp(state, .OP_CALL);
+            try emit.emitByte(state, 2);
+            try fillArray(state, arr);
+        },
+        else => {
+            std.debug.print("CompileError: @new value must be a struct or array literal\n", .{});
+            return error.CompileError;
+        },
+    }
+}
+
+fn resolveStructDef(state: *CompilerState, init: *const ast.StructInit) !state_mod.StructDef {
+    var struct_name = init.name;
+    if (std.mem.indexOfScalar(u8, struct_name, '.') != null) {
+        struct_name = try path.resolveModuleType(state, struct_name);
+        if (!state.chunk.exports.contains(struct_name)) {
+            if (std.mem.indexOfScalar(u8, init.name, '.')) |dot| {
+                std.debug.print("CompileError: '{s}' has no export '{s}'\n", .{ init.name[0..dot], init.name[dot + 1 ..] });
+            } else {
+                std.debug.print("CompileError: Unknown struct: {s}\n", .{init.name});
+            }
+            return error.CompileError;
+        }
+    }
+    return state.structs.get(struct_name) orelse {
+        std.debug.print("CompileError: Unknown struct: {s}\n", .{init.name});
+        return error.CompileError;
+    };
+}
+
+fn fillArray(state: *CompilerState, arr: *const ast.ArrayLiteral) !void {
+    const length: i32 = @intCast(arr.elements.len);
     try emit.emitOp(state, .OP_DUP);
     try emit.emitConstant(state, .{ .int = 0 });
     try emit.emitConstant(state, .{ .int = length });
@@ -61,28 +131,7 @@ pub fn compileArray(state: *CompilerState, arr: *const ast.ArrayLiteral) !void {
     }
 }
 
-pub fn compileStructInit(state: *CompilerState, init: *const ast.StructInit) !void {
-    var struct_name = init.name;
-    if (std.mem.indexOfScalar(u8, struct_name, '.') != null) {
-        struct_name = try path.resolveModuleType(state, struct_name);
-        if (!state.chunk.exports.contains(struct_name)) {
-            // Match TS: only accept exported structs through module alias.
-            if (std.mem.indexOfScalar(u8, init.name, '.')) |dot| {
-                std.debug.print("CompileError: '{s}' has no export '{s}'\n", .{ init.name[0..dot], init.name[dot + 1 ..] });
-            } else {
-                std.debug.print("CompileError: Unknown struct: {s}\n", .{init.name});
-            }
-            return error.CompileError;
-        }
-    }
-    const struct_def = state.structs.get(struct_name) orelse {
-        std.debug.print("CompileError: Unknown struct: {s}\n", .{init.name});
-        return error.CompileError;
-    };
-    try emit.emitNameGet(state, .OP_GET_GLOBAL, "__alloc");
-    try emit.emitConstant(state, .{ .int = struct_def.size });
-    try emit.emitOp(state, .OP_CALL);
-    try emit.emitByte(state, 1);
+fn fillStruct(state: *CompilerState, init: *const ast.StructInit, struct_def: state_mod.StructDef) !void {
     for (init.fields) |field| {
         const offset = struct_def.offsets.get(field.name) orelse {
             std.debug.print("CompileError: Unknown field {s}\n", .{field.name});
