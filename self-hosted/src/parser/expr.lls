@@ -3,9 +3,92 @@
 @const $debug = @import("std/debug.lls");
 @const $string = @import("std/string.lls");
 
-pub @func parseExpression(a, p) {
-    # stub for now
-    $node = ast.createNode(a, ast.NodeKind.LITERAL, p.current.line, p.current.column);
-    p.advance();
+pub @func getPrecedence(tok_type, value) {
+    @if (tok_type == scanner.TokenType.BIN_OP) {
+        @switch (value) {
+            "||" => { return 10; },
+            "&&" => { return 20; },
+            "==", "!=" => { return 30; },
+            "<", ">", "<=", ">=" => { return 40; },
+            "+", "-" => { return 50; },
+            "*", "/", "%" => { return 60; },
+            "^", "**" => { return 70; },
+            "|>" => { return 80; },
+            @else => { return -1; }
+        }
+    }
+    return -1;
+}
+
+pub @func parsePrimary(a, p) {
+    $tok = p.current;
+    
+    $node = ast.createNode(a, ast.NodeKind.LITERAL, tok.line, tok.column);
+    
+    @switch (tok.type) {
+        scanner.TokenType.NUMBER => {
+            node.literal_kind = ast.LiteralKind.NUMBER;
+            node.value = tok.value;
+            p.advance();
+        },
+        scanner.TokenType.STRING => {
+            node.literal_kind = ast.LiteralKind.STRING;
+            node.value = tok.value;
+            p.advance();
+        },
+        scanner.TokenType.BOOLEAN => {
+            node.literal_kind = ast.LiteralKind.BOOLEAN;
+            node.value = tok.value;
+            p.advance();
+        },
+        scanner.TokenType.IDENTIFIER => {
+            node.kind = ast.NodeKind.PRIMARY;
+            node.primary_kind = ast.PrimaryKind.IDENTIFIER;
+            node.name = tok.value;
+            p.advance();
+        },
+        scanner.TokenType.V_REGISTER => {
+            node.kind = ast.NodeKind.PRIMARY;
+            node.primary_kind = ast.PrimaryKind.REGISTER;
+            node.name = tok.value;
+            p.advance();
+        },
+        @else => {
+            # fallback/error
+            p.advance();
+        }
+    }
     return node;
+}
+
+pub @func parseBinary(a, p, min_prec) {
+    $left = parsePrimary(a, p);
+    
+    @for (!p.isAtEnd()) {
+        $tok = p.current;
+        $prec = getPrecedence(tok.type, tok.value);
+        @if (prec < 0 || prec < min_prec) {
+            break;
+        }
+        
+        $op = tok.value;
+        $loc_line = tok.line;
+        $loc_column = tok.column;
+        p.advance();
+        
+        $right = parseBinary(a, p, prec + 1);
+        
+        $bin = ast.createNode(a, ast.NodeKind.BINARY, loc_line, loc_column);
+        bin.left = left;
+        bin.right = right;
+        bin.operator = op;
+        
+        left = bin;
+    }
+    
+    return left;
+}
+
+pub @func parseExpression(a, p) {
+    return parseBinary(a, p, 0);
 }

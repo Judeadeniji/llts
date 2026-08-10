@@ -3,15 +3,68 @@
 @const $debug = @import("std/debug.lls");
 @const $expr = @import("expr.lls");
 
+pub @func parseBlock(a, p) {
+    p.advance(); # consume {
+    $stmts = [];
+    @for (!p.isAtEnd() && !(p.current.type == scanner.TokenType.DELIMITER && p.current.value == "}")) {
+        $s = parseStatement(a, p);
+        @if (s != null) {
+            stmts = stmts + [s];
+        }
+    }
+    @if (p.current.type == scanner.TokenType.DELIMITER && p.current.value == "}") {
+        p.advance(); # consume }
+    }
+    
+    $node = ast.createNode(a, ast.NodeKind.BLOCK, p.current.line, p.current.column);
+    node.body = stmts;
+    return node;
+}
+
 pub @func parseStatement(a, p) {
     $node = parse: {
+        @if (p.current.type == scanner.TokenType.DELIMITER && p.current.value == "{") {
+            break :parse parseBlock(a, p);
+        }
+        
+        @if (p.current.type == scanner.TokenType.COMPILER_KEYWORD) {
+            $kw = p.current.value;
+            @switch (kw) {
+                "if" => {
+                    # TODO: parseIfStatement
+                    p.advance();
+                    break :parse ast.createNode(a, ast.NodeKind.IF_EXPR, p.current.line, p.current.column);
+                },
+                "for" => {
+                    p.advance();
+                    break :parse ast.createNode(a, ast.NodeKind.FOR_EXPR, p.current.line, p.current.column);
+                },
+                @else => {}
+            }
+        }
+        
         @if (p.current.type == scanner.TokenType.KEYWORD) {
             $kw = p.current.value;
             @switch (kw) {
                 "return" => {
-                    # TODO: parseReturnStatement
                     p.advance();
-                    break :parse ast.createNode(a, ast.NodeKind.RETURN_EXPR, p.current.line, p.current.column);
+                    $ret = ast.createNode(a, ast.NodeKind.RETURN_EXPR, p.current.line, p.current.column);
+                    @if (!(p.current.type == scanner.TokenType.DELIMITER && p.current.value == ";")) {
+                        ret.value = expr.parseExpression(a, p);
+                    }
+                    break :parse ret;
+                },
+                "break" => {
+                    p.advance();
+                    $brk = ast.createNode(a, ast.NodeKind.BREAK_EXPR, p.current.line, p.current.column);
+                    @if (p.current.type == scanner.TokenType.IDENTIFIER || p.current.type == scanner.TokenType.V_REGISTER) {
+                        # label? simplified for now
+                        p.advance();
+                    }
+                    @if (!(p.current.type == scanner.TokenType.DELIMITER && p.current.value == ";")) {
+                        brk.value = expr.parseExpression(a, p);
+                    }
+                    break :parse brk;
                 },
                 @else => {}
             }

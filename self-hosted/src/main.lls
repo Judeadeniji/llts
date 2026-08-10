@@ -10,7 +10,7 @@
     $arena = mem.create(0);
     defer arena.deinit();
 
-    $src = io.readFile("self-hosted/src/main.lls");
+    $src = io.readFile("examples/hello-world.lls");
     debug.printLn("Read file, length = {i}", string.len(src));
     $sc = scanner.Scanner {
         source: src,
