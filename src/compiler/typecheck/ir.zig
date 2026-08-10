@@ -179,12 +179,14 @@ pub fn displayType(t: Type) []const u8 {
 pub fn typeEquals(a: Type, b: Type) bool {
     if (std.meta.activeTag(a) != std.meta.activeTag(b)) {
         if (a == .union_ or b == .union_) {
-            // Fall through to structural compare via tags only when both unions handled below
+            // Fall through to structural compare
+        } else if ((a == .struct_ or a == .enum_) and (b == .struct_ or b == .enum_)) {
+            // Fall through to allow struct/enum name comparison
         } else return false;
     }
     return switch (a) {
-        .struct_ => |n| b == .struct_ and std.mem.eql(u8, n, b.struct_),
-        .enum_ => |n| b == .enum_ and std.mem.eql(u8, n, b.enum_),
+        .struct_ => |n| (b == .struct_ and std.mem.eql(u8, n, b.struct_)) or (b == .enum_ and std.mem.eql(u8, n, b.enum_)),
+        .enum_ => |n| (b == .enum_ and std.mem.eql(u8, n, b.enum_)) or (b == .struct_ and std.mem.eql(u8, n, b.struct_)),
         .array => |aa| b == .array and aa.length == b.array.length and typeEquals(aa.elem.*, b.array.elem.*),
         .union_ => |arms| blk: {
             if (b != .union_) break :blk false;

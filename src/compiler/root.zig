@@ -34,6 +34,7 @@ pub fn compile(
     state.chunk.source = doc.source;
 
     try modules.resolveImports(&state, doc);
+    try registerStructNames(&state, doc);
     try registerFunctions(&state, doc);
     try registerModuleDecls(&state, doc);
 
@@ -108,6 +109,24 @@ fn fnVariadic(node: *ast.Node) bool {
         },
         else => false,
     };
+}
+
+fn registerStructNames(state: *state_mod.CompilerState, doc: *ast.Document) !void {
+    for (doc.statements) |s| {
+        if (s.* == .struct_decl) {
+            try state.structs.put(s.struct_decl.name, .{
+                .name = s.struct_decl.name,
+                .size = 0,
+                .offsets = std.StringHashMap(i32).init(state.allocator),
+                .types = std.StringHashMap([]const u8).init(state.allocator),
+            });
+        } else if (s.* == .enum_decl) {
+            try state.enums.put(s.enum_decl.name, .{
+                .name = s.enum_decl.name,
+                .variants = std.StringHashMap(i32).init(state.allocator),
+            });
+        }
+    }
 }
 
 fn registerFunctions(state: *state_mod.CompilerState, doc: *ast.Document) !void {

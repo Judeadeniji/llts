@@ -5,15 +5,22 @@
 
 @func main() {
     debug.printLn("Starting main");
-    $src = io.readFile("self-hosted/src/scanner/root.lls");
+    $src = io.readFile("examples/vars.lls");
     debug.printLn("Read file, length = {i}", string.len(src));
-    $sc = scanner.Scanner { source: src, pos: 0, len: string.len(src) };
-    $count = 0;
+    $sc = scanner.Scanner {
+        source: src,
+        pos: 0,
+        len: string.len(src),
+        line: 1,
+        column: 1
+    };
 
+    $count = 0;
     @for (true) {
         $t = sc.nextToken();
+        # debug.printLn("Token: {i}, Value: {s}", t.type, t.value);
         count = count + 1;
-        @if (t.type == scanner.TOK_EOF) {
+        @if (t.type == scanner.TokenType.EOF) {
             break;
         }
     }

@@ -2,16 +2,16 @@
 @const $debug = @import("std/debug.lls");
 @const $math = @import("std/math.lls");
 
-pub @const $TOK_EOF = 0;
-pub @const $TOK_ID = 1;
-pub @const $TOK_NUM = 2;
-pub @const $TOK_STR = 3;
-pub @const $TOK_PUNCT = 4;
+pub @enum TokenType {
+    KEYWORD, IDENTIFIER, V_REGISTER, COMPILER_KEYWORD,
+    STRING, NUMBER, HEX, OCTAL, BINARY, BOOLEAN, DELIMITER,
+    TYPE_DECL, BIN_OP, UNARY_OP, ASSIGN_OP, EOF
+}
 
 pub @func isAlpha(c) {
     @if (string.len(c) == 0) { return false; }
     $code = string.charCodeAt(c, 0);
-    return (code >= 97 && code <= 122) || (code >= 65 && code <= 90) || code == 95 || code == 36;
+    return (code >= 97 && code <= 122) || (code >= 65 && code <= 90) || code == 95;
 }
 
 pub @func isDigit(c) {
@@ -24,7 +24,21 @@ pub @func isAlphaNum(c) {
     return isAlpha(c) || isDigit(c);
 }
 
-@const $io = @import("std/io.lls");
+pub @func isHexDigit(c) {
+    @if (string.len(c) == 0) { return false; }
+    $code = string.charCodeAt(c, 0);
+    return (code >= 48 && code <= 57) || (code >= 97 && code <= 102) || (code >= 65 && code <= 70);
+}
+
+pub @func isOctalDigit(c) {
+    @if (string.len(c) == 0) { return false; }
+    $code = string.charCodeAt(c, 0);
+    return code >= 48 && code <= 55;
+}
+
+pub @func isBinaryDigit(c) {
+    return c == "0" || c == "1";
+}
 
 pub @func isWhitespace(c) {
     @if (string.len(c) == 0) { return false; }
@@ -32,26 +46,63 @@ pub @func isWhitespace(c) {
     return code == 32 || (code >= 9 && code <= 13);
 }
 
+pub @func isCompilerSymbol(w) {
+    return w == "import" || w == "const" || w == "func" || w == "for" || w == "if" || w == "else" || w == "switch" || w == "struct" || w == "enum" || w == "isError" || w == "typeOf" || w == "extern";
+}
+
+pub @func isKeyword(w) {
+    return w == "return" || w == "pub" || w == "break" || w == "continue" || w == "defer" || w == "error" || w == "null";
+}
+
+pub @func isDelimiter(c) {
+    return c == "," || c == ";" || c == ":" || c == "(" || c == ")" || c == "{" || c == "}" || c == "[" || c == "]" || c == "." || c == "|" || c == "?";
+}
+
+pub @func isAssignOp(s) {
+    return s == "=" || s == "+=" || s == "-=" || s == "*=" || s == "/=" || s == "%=" || s == "^=" || s == "&&=" || s == "||=";
+}
+
+pub @func isBinOp(s) {
+    return s == "+" || s == "-" || s == "*" || s == "/" || s == "%" || s == "^" || s == "==" || s == "!=" || s == ">" || s == ">=" || s == "<" || s == "<=" || s == "&&" || s == "||" || s == "**" || s == "|>" || s == ".." || s == "=>";
+}
+
+pub @func isUnaryOp(s) {
+    return s == "!" || s == "-";
+}
+
 pub @struct Token {
-    type: int;
+    type: TokenType;
     value: string;
+    line: int;
+    column: int;
 }
 
 pub @struct Scanner {
     source: string;
     pos: int;
     len: int;
+    line: int;
+    column: int;
 
     @func peek(self) {
-        @if (self.pos >= self.len) {
-            return "";
-        }
+        @if (self.pos >= self.len) { return ""; }
         return string.substr(self.source, self.pos, 1);
+    }
+
+    @func peekOffset(self, offset) {
+        @if (self.pos + offset >= self.len) { return ""; }
+        return string.substr(self.source, self.pos + offset, 1);
     }
 
     @func advance(self) {
         $c = self.peek();
         self.pos = self.pos + 1;
+        @if (c == "\n") {
+            self.line = self.line + 1;
+            self.column = 1;
+        } @else {
+            self.column = self.column + 1;
+        }
         return c;
     }
 
@@ -60,58 +111,177 @@ pub @struct Scanner {
             self.advance();
         }
     }
+    
+    @func makeToken(self, t_type, val, line, col): Token {
+        return Token { type: t_type, value: val, line: line, column: col };
+    }
 
-    @func nextToken(self) {
+    @func scanString(self) {
+        $col = self.column;
+        $line = self.line;
+        $quote = self.advance();
+        $start = self.pos;
+        @for (self.peek() != "" && self.peek() != quote) {
+            self.advance();
+        }
+        $val_len = self.pos - start;
+        $val = string.substr(self.source, start, val_len);
+        self.advance(); # skip closing quote
+        return self.makeToken(TokenType.STRING, val, line, col);
+    }
+
+    @func scanNumber(self) {
+        $col = self.column;
+        $line = self.line;
+        $start = self.pos;
+        
+        $c = self.peek();
+        @if (c == "0") {
+            $next = self.peekOffset(1);
+            @if (next == "x" || next == "X") {
+                self.advance(); self.advance();
+                @for (isHexDigit(self.peek())) { self.advance(); }
+                return self.makeToken(TokenType.HEX, string.substr(self.source, start, self.pos - start), line, col);
+            } @else @if (next == "o" || next == "O") {
+                self.advance(); self.advance();
+                @for (isOctalDigit(self.peek())) { self.advance(); }
+                return self.makeToken(TokenType.OCTAL, string.substr(self.source, start, self.pos - start), line, col);
+            } @else @if (next == "b" || next == "B") {
+                self.advance(); self.advance();
+                @for (isBinaryDigit(self.peek())) { self.advance(); }
+                return self.makeToken(TokenType.BINARY, string.substr(self.source, start, self.pos - start), line, col);
+            }
+        }
+        
+        @for (isDigit(self.peek())) {
+            self.advance();
+        }
+        @if (self.peek() == ".") {
+            $next = self.peekOffset(1);
+            @if (isDigit(next)) {
+                self.advance(); # consume .
+                @for (isDigit(self.peek())) {
+                    self.advance();
+                }
+            }
+        }
+        return self.makeToken(TokenType.NUMBER, string.substr(self.source, start, self.pos - start), line, col);
+    }
+
+    @func scanIdentifier(self) {
+        $col = self.column;
+        $line = self.line;
+        $start = self.pos;
+        @for (isAlphaNum(self.peek())) {
+            self.advance();
+        }
+        $val = string.substr(self.source, start, self.pos - start);
+        @if (val == "true" || val == "false") {
+            return self.makeToken(TokenType.BOOLEAN, val, line, col);
+        }
+        $typ = TokenType.IDENTIFIER;
+        @if (isKeyword(val)) {
+            typ = TokenType.KEYWORD;
+        }
+        return self.makeToken(typ, val, line, col);
+    }
+    
+    @func scanCompilerKeyword(self) {
+        $col = self.column;
+        $line = self.line;
+        self.advance(); # @
+        $start = self.pos;
+        @for (isAlphaNum(self.peek())) {
+            self.advance();
+        }
+        $val = string.substr(self.source, start, self.pos - start);
+        return self.makeToken(TokenType.COMPILER_KEYWORD, val, line, col);
+    }
+    
+    @func scanRegister(self) {
+        $col = self.column;
+        $line = self.line;
+        self.advance(); # $
+        $start = self.pos;
+        @for (isAlphaNum(self.peek())) {
+            self.advance();
+        }
+        $val = string.substr(self.source, start, self.pos - start);
+        return self.makeToken(TokenType.V_REGISTER, val, line, col);
+    }
+
+    @func nextToken(self): Token {
         self.skipWhitespace();
         $c = self.peek();
+        
+        $col = self.column;
+        $line = self.line;
 
         @if (c == "") {
-            return Token { type: TOK_EOF, value: "" };
+            return self.makeToken(TokenType.EOF, "", line, col);
         }
 
         @if (c == "#") {
-            # skip comment
             @for (self.peek() != "" && self.peek() != "\n") {
                 self.advance();
             }
             return self.nextToken();
         }
 
-        @if (isAlpha(c) || c == "@") {
-            $start = self.pos;
-            self.advance();
-            @for (isAlphaNum(self.peek())) {
-                self.advance();
-            }
-            $len = self.pos - start;
-            $val = string.substr(self.source, start, len);
-            return Token { type: TOK_ID, value: val };
+        @if (c == "\"" || c == "'") {
+            return self.scanString();
+        }
+
+        @if (c == "$") {
+            return self.scanRegister();
+        }
+
+        @if (c == "@") {
+            return self.scanCompilerKeyword();
         }
 
         @if (isDigit(c)) {
-            $start = self.pos;
-            @for (isDigit(self.peek())) {
-                self.advance();
-            }
-            $len = self.pos - start;
-            $val = string.substr(self.source, start, len);
-            return Token { type: TOK_NUM, value: val };
+            return self.scanNumber();
         }
 
-        @if (c == "\"" || c == "'") {
-            $quote = self.advance();
-            $start = self.pos;
-            @for (self.peek() != "" && self.peek() != quote) {
-                self.advance();
-            }
-            $len = self.pos - start;
-            $val = string.substr(self.source, start, len);
-            self.advance(); # skip closing quote
-            return Token { type: TOK_STR, value: val };
+        @if (isAlpha(c)) {
+            return self.scanIdentifier();
         }
 
-        $val = self.advance();
-        return Token { type: TOK_PUNCT, value: val };
+        @if (c == "." && self.peekOffset(1) == "." && self.peekOffset(2) == ".") {
+            self.advance(); self.advance(); self.advance();
+            return self.makeToken(TokenType.DELIMITER, "...", line, col);
+        }
+
+        $c2 = self.peekOffset(1);
+        @if (c2 != "") {
+            $two = string.concat(c, c2);
+            @if (isAssignOp(two)) {
+                self.advance(); self.advance();
+                return self.makeToken(TokenType.ASSIGN_OP, two, line, col);
+            }
+            @if (isBinOp(two)) {
+                self.advance(); self.advance();
+                return self.makeToken(TokenType.BIN_OP, two, line, col);
+            }
+        }
+
+        @if (isAssignOp(c) || isBinOp(c) || isUnaryOp(c)) {
+            self.advance();
+            $typ = TokenType.UNARY_OP;
+            @if (isBinOp(c)) { typ = TokenType.BIN_OP; }
+            @if (isAssignOp(c)) { typ = TokenType.ASSIGN_OP; }
+            return self.makeToken(typ, c, line, col);
+        }
+
+        @if (isDelimiter(c)) {
+            self.advance();
+            return self.makeToken(TokenType.DELIMITER, c, line, col);
+        }
+
+        # Unexpected character
+        self.advance();
+        return self.makeToken(TokenType.EOF, c, line, col);
     }
 }
 
