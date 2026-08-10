@@ -87,9 +87,12 @@ Zig implementation. The TypeScript prototype/reference is [`llts-js`](../llts-js
 
 ### P5 — Memory
 
-- [x] **Arenas + allocators** — `Arena` create / alloc / reset / deinit.
+- [x] **Arenas + allocators** — `Arena` create / alloc / reset / deinit (library).
 - [x] **`defer`** — LIFO scope-exit cleanup; `errdefer` later if needed.
 - [x] **No tracing GC** — ownership is explicit (allocator + defer).
+- [x] **Frame regions** — VM rewinds heap bump on return; bare `Foo{}` / `[…]` are frame-local.
+- [x] **Escape = compile error** — cannot return frame-local heap; use `@new(allocator, …)`.
+- [x] **`@new`** — compiler intrinsic (Go `make`-style); Allocator comes from `std.mem`.
 
 ### P6 — Tooling
 

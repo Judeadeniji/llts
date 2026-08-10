@@ -1,0 +1,28 @@
+@const $scanner = @import("../scanner/root.lls");
+@const $ast = @import("../ast/root.lls");
+@const $debug = @import("std/debug.lls");
+@const $expr = @import("expr.lls");
+
+pub @func parseStatement(a, p) {
+    $node = parse: {
+        @if (p.current.type == scanner.TokenType.KEYWORD) {
+            $kw = p.current.value;
+            @switch (kw) {
+                "return" => {
+                    # TODO: parseReturnStatement
+                    p.advance();
+                    break :parse ast.createNode(a, ast.NodeKind.RETURN_EXPR, p.current.line, p.current.column);
+                },
+                @else => {}
+            }
+        }
+        
+        # default to expression statement
+        break :parse expr.parseExpression(a, p);
+    };
+    
+    @if (p.current.type == scanner.TokenType.DELIMITER && p.current.value == ";") {
+        p.advance();
+    }
+    return node;
+}

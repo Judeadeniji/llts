@@ -1,0 +1,83 @@
+@const $scanner = @import("../scanner/root.lls");
+
+pub @enum NodeKind {
+    DECLARATION,
+    LITERAL,
+    PRIMARY,
+    BINARY,
+    UNARY,
+    ASSIGNMENT,
+    CALL,
+    MEMBER,
+    INDEX,
+    ARRAY_LITERAL,
+    FUNCTION_DECL,
+    PARAMS,
+    BLOCK,
+    RETURN_EXPR,
+    IF_EXPR,
+    SWITCH_EXPR,
+    FOR_EXPR,
+    BREAK_EXPR,
+    CONTINUE_EXPR,
+    DEFER_STMT,
+    IMPORT,
+    STRUCT_DECL,
+    ENUM_DECL,
+    STRUCT_INIT,
+    TRY_EXPR,
+    ERROR_EXPR,
+    EXTERN_DECL,
+    ARRAY_TYPE,
+    UNION_TYPE
+}
+
+pub @enum LiteralKind {
+    STRING, NUMBER, BOOLEAN, NONE
+}
+
+pub @enum PrimaryKind {
+    IDENTIFIER, REGISTER
+}
+
+# Untagged AST node: kind selects which fields are meaningful.
+# Tree links (`left`, `right`, …) are Node ptrs or null.
+pub @struct Node {
+    kind: NodeKind;
+    loc_line: int;
+    loc_column: int;
+
+    name: unknown;
+    value: unknown;
+    operator: unknown;
+    is_const: unknown;
+    is_public: unknown;
+
+    left: unknown;
+    right: unknown;
+    body: unknown;
+    condition: unknown;
+
+    literal_kind: unknown;
+    primary_kind: unknown;
+}
+
+# `a` is the caller's Pass arena — returned Node must outlive this frame.
+pub @func createNode(a, kind, line, col): Node {
+    return @new(a, Node {
+        kind: kind,
+        loc_line: line,
+        loc_column: col,
+        name: "",
+        value: "",
+        operator: "",
+        is_const: false,
+        is_public: false,
+        left: null,
+        right: null,
+        body: null,
+        condition: null,
+        literal_kind: LiteralKind.NONE,
+        primary_kind: PrimaryKind.IDENTIFIER
+    });
+}

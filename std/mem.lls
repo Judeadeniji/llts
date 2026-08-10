@@ -1,9 +1,16 @@
-# Memory: global bump alloc + slab Arena (Zig-style watermark).
+# Memory: Allocator lives in the library (not language syntax).
+#
+# Region model (see compiler escape checks + VM frame watermarks):
+#   - Bare `Foo{}` / `[…]` → frame-local bump; dies on return; cannot escape.
+#   - `@new(allocator, Foo{…})` → compiler intrinsic (like Go make); allocates
+#     into a library Allocator (today: Arena). Result may be returned.
+#   - `create` → immortal Arena object for a compilation/pass phase.
 
 pub @func alloc(size) {
     return __alloc(size);
 }
 
+# Arena is the std Allocator: fixed slab + watermark (Zig-style).
 pub @struct Arena {
     handle: int;
 
@@ -20,6 +27,7 @@ pub @struct Arena {
     }
 }
 
-pub @func create(capacity) {
-    return Arena { handle: __arena_create(capacity) };
+# Returns an Arena (immortal native object). Annotated so `.alloc` / field offsets resolve.
+pub @func create(capacity): Arena {
+    return __arena_create(capacity);
 }

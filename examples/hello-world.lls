@@ -1,4 +1,9 @@
 @const $std = @import("std/index");
+@const $mem = @import("std/mem");
+
+# Pass arena for values that escape functions (`@new`). Allocator is library-side;
+# `@new` is the compiler intrinsic that allocates into it.
+$heap = mem.create(256);
 
 @func add(x: i32, y: i32): i32 {
     return x + y;
@@ -24,7 +29,7 @@
 }
 
 @func factory() {
-    return Builder { value: 10 };
+    return @new(heap, Builder { value: 10 });
 }
 
 @struct Iter {
@@ -36,7 +41,7 @@
 }
 
 @func get() {
-    return Iter { value: 0 };
+    return @new(heap, Iter { value: 0 });
 }
 
 # literals + registers

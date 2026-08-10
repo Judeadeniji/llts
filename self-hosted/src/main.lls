@@ -1,11 +1,16 @@
 @const $io = @import("std/io.lls");
 @const $string = @import("std/string.lls");
 @const $debug = @import("std/debug.lls");
+@const $mem = @import("std/mem.lls");
 @const $scanner = @import("scanner/root.lls");
 
 @func main() {
     debug.printLn("Starting main");
-    $src = io.readFile("examples/vars.lls");
+    # Pass arena: tokens and other heap that must outlive nextToken's frame.
+    $arena = mem.create(65536);
+    defer arena.deinit();
+
+    $src = io.readFile("self-hosted/src/main.lls");
     debug.printLn("Read file, length = {i}", string.len(src));
     $sc = scanner.Scanner {
         source: src,
@@ -17,8 +22,7 @@
 
     $count = 0;
     @for (true) {
-        $t = sc.nextToken();
-        # debug.printLn("Token: {i}, Value: {s}", t.type, t.value);
+        $t = sc.nextToken(arena);
         count = count + 1;
         @if (t.type == scanner.TokenType.EOF) {
             break;
@@ -26,5 +30,3 @@
     }
     debug.printLn("Done. Token count = {i}", count);
 }
-
-main();

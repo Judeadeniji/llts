@@ -47,7 +47,7 @@ pub @func isWhitespace(c) {
 }
 
 pub @func isCompilerSymbol(w) {
-    return w == "import" || w == "const" || w == "func" || w == "for" || w == "if" || w == "else" || w == "switch" || w == "struct" || w == "enum" || w == "isError" || w == "typeOf" || w == "extern";
+    return w == "import" || w == "const" || w == "func" || w == "for" || w == "if" || w == "else" || w == "switch" || w == "struct" || w == "enum" || w == "isError" || w == "typeOf" || w == "extern" || w == "new";
 }
 
 pub @func isKeyword(w) {
@@ -112,11 +112,12 @@ pub @struct Scanner {
         }
     }
     
-    @func makeToken(self, t_type, val, line, col): Token {
-        return Token { type: t_type, value: val, line: line, column: col };
+    @func makeToken(self, a, t_type, val, line, col): Token {
+        # `@new` = compiler intrinsic (Pass region). `a` is a std.mem.Arena from the caller.
+        return @new(a, Token { type: t_type, value: val, line: line, column: col });
     }
 
-    @func scanString(self) {
+    @func scanString(self, a) {
         $col = self.column;
         $line = self.line;
         $quote = self.advance();
@@ -127,10 +128,10 @@ pub @struct Scanner {
         $val_len = self.pos - start;
         $val = string.substr(self.source, start, val_len);
         self.advance(); # skip closing quote
-        return self.makeToken(TokenType.STRING, val, line, col);
+        return self.makeToken(a, TokenType.STRING, val, line, col);
     }
 
-    @func scanNumber(self) {
+    @func scanNumber(self, a) {
         $col = self.column;
         $line = self.line;
         $start = self.pos;
@@ -141,15 +142,15 @@ pub @struct Scanner {
             @if (next == "x" || next == "X") {
                 self.advance(); self.advance();
                 @for (isHexDigit(self.peek())) { self.advance(); }
-                return self.makeToken(TokenType.HEX, string.substr(self.source, start, self.pos - start), line, col);
+                return self.makeToken(a, TokenType.HEX, string.substr(self.source, start, self.pos - start), line, col);
             } @else @if (next == "o" || next == "O") {
                 self.advance(); self.advance();
                 @for (isOctalDigit(self.peek())) { self.advance(); }
-                return self.makeToken(TokenType.OCTAL, string.substr(self.source, start, self.pos - start), line, col);
+                return self.makeToken(a, TokenType.OCTAL, string.substr(self.source, start, self.pos - start), line, col);
             } @else @if (next == "b" || next == "B") {
                 self.advance(); self.advance();
                 @for (isBinaryDigit(self.peek())) { self.advance(); }
-                return self.makeToken(TokenType.BINARY, string.substr(self.source, start, self.pos - start), line, col);
+                return self.makeToken(a, TokenType.BINARY, string.substr(self.source, start, self.pos - start), line, col);
             }
         }
         
@@ -165,10 +166,10 @@ pub @struct Scanner {
                 }
             }
         }
-        return self.makeToken(TokenType.NUMBER, string.substr(self.source, start, self.pos - start), line, col);
+        return self.makeToken(a, TokenType.NUMBER, string.substr(self.source, start, self.pos - start), line, col);
     }
 
-    @func scanIdentifier(self) {
+    @func scanIdentifier(self, a) {
         $col = self.column;
         $line = self.line;
         $start = self.pos;
@@ -177,16 +178,16 @@ pub @struct Scanner {
         }
         $val = string.substr(self.source, start, self.pos - start);
         @if (val == "true" || val == "false") {
-            return self.makeToken(TokenType.BOOLEAN, val, line, col);
+            return self.makeToken(a, TokenType.BOOLEAN, val, line, col);
         }
         $typ = TokenType.IDENTIFIER;
         @if (isKeyword(val)) {
             typ = TokenType.KEYWORD;
         }
-        return self.makeToken(typ, val, line, col);
+        return self.makeToken(a, typ, val, line, col);
     }
     
-    @func scanCompilerKeyword(self) {
+    @func scanCompilerKeyword(self, a) {
         $col = self.column;
         $line = self.line;
         self.advance(); # @
@@ -195,10 +196,10 @@ pub @struct Scanner {
             self.advance();
         }
         $val = string.substr(self.source, start, self.pos - start);
-        return self.makeToken(TokenType.COMPILER_KEYWORD, val, line, col);
+        return self.makeToken(a, TokenType.COMPILER_KEYWORD, val, line, col);
     }
     
-    @func scanRegister(self) {
+    @func scanRegister(self, a) {
         $col = self.column;
         $line = self.line;
         self.advance(); # $
@@ -207,10 +208,11 @@ pub @struct Scanner {
             self.advance();
         }
         $val = string.substr(self.source, start, self.pos - start);
-        return self.makeToken(TokenType.V_REGISTER, val, line, col);
+        return self.makeToken(a, TokenType.V_REGISTER, val, line, col);
     }
 
-    @func nextToken(self): Token {
+    # `a` is the caller's Pass arena — tokens must outlive this frame.
+    @func nextToken(self, a): Token {
         self.skipWhitespace();
         $c = self.peek();
         
@@ -218,39 +220,39 @@ pub @struct Scanner {
         $line = self.line;
 
         @if (c == "") {
-            return self.makeToken(TokenType.EOF, "", line, col);
+            return self.makeToken(a, TokenType.EOF, "", line, col);
         }
 
         @if (c == "#") {
             @for (self.peek() != "" && self.peek() != "\n") {
                 self.advance();
             }
-            return self.nextToken();
+            return self.nextToken(a);
         }
 
         @if (c == "\"" || c == "'") {
-            return self.scanString();
+            return self.scanString(a);
         }
 
         @if (c == "$") {
-            return self.scanRegister();
+            return self.scanRegister(a);
         }
 
         @if (c == "@") {
-            return self.scanCompilerKeyword();
+            return self.scanCompilerKeyword(a);
         }
 
         @if (isDigit(c)) {
-            return self.scanNumber();
+            return self.scanNumber(a);
         }
 
         @if (isAlpha(c)) {
-            return self.scanIdentifier();
+            return self.scanIdentifier(a);
         }
 
         @if (c == "." && self.peekOffset(1) == "." && self.peekOffset(2) == ".") {
             self.advance(); self.advance(); self.advance();
-            return self.makeToken(TokenType.DELIMITER, "...", line, col);
+            return self.makeToken(a, TokenType.DELIMITER, "...", line, col);
         }
 
         $c2 = self.peekOffset(1);
@@ -258,11 +260,11 @@ pub @struct Scanner {
             $two = string.concat(c, c2);
             @if (isAssignOp(two)) {
                 self.advance(); self.advance();
-                return self.makeToken(TokenType.ASSIGN_OP, two, line, col);
+                return self.makeToken(a, TokenType.ASSIGN_OP, two, line, col);
             }
             @if (isBinOp(two)) {
                 self.advance(); self.advance();
-                return self.makeToken(TokenType.BIN_OP, two, line, col);
+                return self.makeToken(a, TokenType.BIN_OP, two, line, col);
             }
         }
 
@@ -271,17 +273,17 @@ pub @struct Scanner {
             $typ = TokenType.UNARY_OP;
             @if (isBinOp(c)) { typ = TokenType.BIN_OP; }
             @if (isAssignOp(c)) { typ = TokenType.ASSIGN_OP; }
-            return self.makeToken(typ, c, line, col);
+            return self.makeToken(a, typ, c, line, col);
         }
 
         @if (isDelimiter(c)) {
             self.advance();
-            return self.makeToken(TokenType.DELIMITER, c, line, col);
+            return self.makeToken(a, TokenType.DELIMITER, c, line, col);
         }
 
         # Unexpected character
         self.advance();
-        return self.makeToken(TokenType.EOF, c, line, col);
+        return self.makeToken(a, TokenType.EOF, c, line, col);
     }
 }
 

@@ -1,0 +1,86 @@
+@const $scanner = @import("../scanner/root.lls");
+@const $ast = @import("../ast/root.lls");
+@const $debug = @import("std/debug.lls");
+@const $string = @import("std/string.lls");
+@const $stmt = @import("stmt.lls");
+
+pub @struct Document {
+    path: string;
+    source: string;
+    statements: unknown; # Will hold an array of Nodes
+}
+
+pub @struct Parser {
+    scan: unknown;
+    current: unknown;
+    previous: unknown;
+    has_error: bool;
+    path: string;
+
+    @func isAtEnd(self) {
+        return self.current.type == scanner.TokenType.EOF;
+    }
+
+    @func advance(self) {
+        self.previous = self.current;
+        self.current = self.scan.nextToken();
+    }
+
+    @func check(self, type) {
+        return self.current.type == type;
+    }
+
+    @func match(self, type) {
+        @if (self.check(type)) {
+            self.advance();
+            return true;
+        }
+        return false;
+    }
+
+    @func matchKeyword(self, kw) {
+        @if (self.current.type == scanner.TokenType.KEYWORD && self.current.value == kw) {
+            self.advance();
+            return true;
+        }
+        return false;
+    }
+}
+
+pub @func createParser(a, source, path): Parser {
+    $scan = @new(a, scanner.Scanner {
+        source: source,
+        pos: 0,
+        len: string.len(source),
+        line: 1,
+        column: 1
+    });
+    $p = @new(a, Parser {
+        scan: scan,
+        current: null,
+        previous: null,
+        has_error: false,
+        path: path
+    });
+    p.advance(); # load first token
+    return p;
+}
+
+pub @func parse(a, source, path): Document {
+    $p = createParser(a, source, path);
+    $statements = [];
+    
+    # Parse statements until EOF
+    @for (!p.isAtEnd()) {
+        $s = stmt.parseStatement(a, p);
+        @if (s != null) {
+            statements = statements + [s];
+        }
+    }
+    
+    return @new(a, Document {
+        path: path,
+        source: source,
+        statements: statements
+    });
+}

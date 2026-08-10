@@ -1,0 +1,11 @@
+@const $scanner = @import("../scanner/root.lls");
+@const $ast = @import("../ast/root.lls");
+@const $debug = @import("std/debug.lls");
+@const $string = @import("std/string.lls");
+
+pub @func parseExpression(a, p) {
+    # stub for now
+    $node = ast.createNode(a, ast.NodeKind.LITERAL, p.current.line, p.current.column);
+    p.advance();
+    return node;
+}
