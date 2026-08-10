@@ -1,0 +1,35 @@
+$x = @if (true) {
+    break 1;
+} @else {
+    break 2;
+};
+print(x);
+
+$n = 2;
+$y = @if (n == 1) {
+    break 10;
+} @else @if (n == 2) {
+    break 20;
+} @else {
+    break 30;
+};
+print(y);
+
+$z = blk: {
+    $t = 40;
+    break :blk t + 2;
+};
+print(z);
+
+@enum Color { Red, Green, Blue }
+$c = @switch (Color.Green) {
+    Color.Red => { break 100; },
+    Color.Green, Color.Blue => { break 200; },
+    @else => { break 0; },
+};
+print(c);
+
+@switch (Color.Red) {
+    Color.Red => { print(Color.Red); },
+    @else => { print(-1); },
+}

@@ -1,0 +1,23 @@
+@const $io = @import("std/io.lls");
+@const $string = @import("std/string.lls");
+@const $debug = @import("std/debug.lls");
+@const $scanner = @import("scanner/root.lls");
+
+@func main() {
+    debug.printLn("Starting main");
+    $src = io.readFile("self-hosted/src/scanner/root.lls");
+    debug.printLn("Read file, length = {i}", string.len(src));
+    $sc = scanner.Scanner { source: src, pos: 0, len: string.len(src) };
+    $count = 0;
+
+    @for (true) {
+        $t = sc.nextToken();
+        count = count + 1;
+        @if (t.type == scanner.TOK_EOF) {
+            break;
+        }
+    }
+    debug.printLn("Done. Token count = {i}", count);
+}
+
+main();

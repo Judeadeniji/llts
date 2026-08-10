@@ -1,0 +1,118 @@
+@const $string = @import("std/string.lls");
+@const $debug = @import("std/debug.lls");
+@const $math = @import("std/math.lls");
+
+pub @const $TOK_EOF = 0;
+pub @const $TOK_ID = 1;
+pub @const $TOK_NUM = 2;
+pub @const $TOK_STR = 3;
+pub @const $TOK_PUNCT = 4;
+
+pub @func isAlpha(c) {
+    @if (string.len(c) == 0) { return false; }
+    $code = string.charCodeAt(c, 0);
+    return (code >= 97 && code <= 122) || (code >= 65 && code <= 90) || code == 95 || code == 36;
+}
+
+pub @func isDigit(c) {
+    @if (string.len(c) == 0) { return false; }
+    $code = string.charCodeAt(c, 0);
+    return code >= 48 && code <= 57;
+}
+
+pub @func isAlphaNum(c) {
+    return isAlpha(c) || isDigit(c);
+}
+
+@const $io = @import("std/io.lls");
+
+pub @func isWhitespace(c) {
+    @if (string.len(c) == 0) { return false; }
+    $code = string.charCodeAt(c, 0);
+    return code == 32 || (code >= 9 && code <= 13);
+}
+
+pub @struct Token {
+    type: int;
+    value: string;
+}
+
+pub @struct Scanner {
+    source: string;
+    pos: int;
+    len: int;
+
+    @func peek(self) {
+        @if (self.pos >= self.len) {
+            return "";
+        }
+        return string.substr(self.source, self.pos, 1);
+    }
+
+    @func advance(self) {
+        $c = self.peek();
+        self.pos = self.pos + 1;
+        return c;
+    }
+
+    @func skipWhitespace(self) {
+        @for (self.peek() != "" && isWhitespace(self.peek())) {
+            self.advance();
+        }
+    }
+
+    @func nextToken(self) {
+        self.skipWhitespace();
+        $c = self.peek();
+
+        @if (c == "") {
+            return Token { type: TOK_EOF, value: "" };
+        }
+
+        @if (c == "#") {
+            # skip comment
+            @for (self.peek() != "" && self.peek() != "\n") {
+                self.advance();
+            }
+            return self.nextToken();
+        }
+
+        @if (isAlpha(c) || c == "@") {
+            $start = self.pos;
+            self.advance();
+            @for (isAlphaNum(self.peek())) {
+                self.advance();
+            }
+            $len = self.pos - start;
+            $val = string.substr(self.source, start, len);
+            return Token { type: TOK_ID, value: val };
+        }
+
+        @if (isDigit(c)) {
+            $start = self.pos;
+            @for (isDigit(self.peek())) {
+                self.advance();
+            }
+            $len = self.pos - start;
+            $val = string.substr(self.source, start, len);
+            return Token { type: TOK_NUM, value: val };
+        }
+
+        @if (c == "\"" || c == "'") {
+            $quote = self.advance();
+            $start = self.pos;
+            @for (self.peek() != "" && self.peek() != quote) {
+                self.advance();
+            }
+            $len = self.pos - start;
+            $val = string.substr(self.source, start, len);
+            self.advance(); # skip closing quote
+            return Token { type: TOK_STR, value: val };
+        }
+
+        $val = self.advance();
+        return Token { type: TOK_PUNCT, value: val };
+    }
+}
+
+
