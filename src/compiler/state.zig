@@ -27,6 +27,11 @@ pub const StructDef = struct {
     types: std.StringHashMap([]const u8),
 };
 
+pub const EnumDef = struct {
+    name: []const u8,
+    variants: std.StringHashMap(i32),
+};
+
 pub const LoopTracker = struct {
     start: usize = 0,
     scope_depth: i32,
@@ -43,6 +48,7 @@ pub const CompilerState = struct {
     scope_depth: i32 = 0,
     functions: std.StringHashMap(FunctionDef),
     structs: std.StringHashMap(StructDef),
+    enums: std.StringHashMap(EnumDef),
     loops: std.ArrayList(LoopTracker) = .empty,
     defer_stacks: std.AutoHashMap(i32, std.ArrayList(*ast.Node)),
     global_vars: std.StringHashMap(void),
@@ -63,6 +69,7 @@ pub fn create(allocator: std.mem.Allocator) !CompilerState {
         .chunk = chunk_mod.Chunk.init(allocator),
         .functions = std.StringHashMap(FunctionDef).init(allocator),
         .structs = std.StringHashMap(StructDef).init(allocator),
+        .enums = std.StringHashMap(EnumDef).init(allocator),
         .defer_stacks = std.AutoHashMap(i32, std.ArrayList(*ast.Node)).init(allocator),
         .global_vars = std.StringHashMap(void).init(allocator),
         .global_types = std.StringHashMap([]const u8).init(allocator),
@@ -117,6 +124,11 @@ pub fn deinit(self: *CompilerState) void {
         e.value_ptr.types.deinit();
     }
     self.structs.deinit();
+    var eit = self.enums.iterator();
+    while (eit.next()) |e| {
+        e.value_ptr.variants.deinit();
+    }
+    self.enums.deinit();
     var dit = self.defer_stacks.iterator();
     while (dit.next()) |e| e.value_ptr.deinit(self.allocator);
     self.defer_stacks.deinit();

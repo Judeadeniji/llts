@@ -43,7 +43,7 @@ pub fn compileDeclaration(state: *CompilerState, decl: *const ast.Declaration) !
         // Assignability is enforced in typecheck; keep a defensive check for emit-only paths.
         if (types.resolveType(state, decl.value)) |got| {
             if (type_name) |expected| {
-                if (!typesAssignable(got, expected)) {
+                if (!typesAssignable(state, got, expected)) {
                     std.debug.print(
                         "CompileError: declaration of '{s}': type '{s}' is not assignable to '{s}'\n",
                         .{ decl.name, got, expected },
@@ -86,10 +86,13 @@ pub fn compileDeclaration(state: *CompilerState, decl: *const ast.Declaration) !
     }
 }
 
-fn typesAssignable(got: []const u8, expected: []const u8) bool {
+fn typesAssignable(state: *CompilerState, got: []const u8, expected: []const u8) bool {
     if (std.mem.eql(u8, got, expected)) return true;
     if (std.mem.eql(u8, expected, "unknown") or std.mem.eql(u8, got, "unknown")) return true;
     if (std.mem.indexOf(u8, got, "unknown") != null or std.mem.indexOf(u8, expected, "unknown") != null) return true;
+    // Enum ↔ int (runtime values are ints)
+    if (std.mem.eql(u8, got, "int") and state.enums.contains(expected)) return true;
+    if (std.mem.eql(u8, expected, "int") and state.enums.contains(got)) return true;
     // string aliases / [N]byte <: []byte
     if (types.isStringyType(got) and types.isStringyType(expected)) {
         // Sized [N]byte is not assignable to [M]byte when N != M
@@ -174,6 +177,7 @@ fn inferDeclType(state: *CompilerState, value: *ast.Node) ?[]const u8 {
             break :blk types.resolveType(state, value);
         },
         .primary => types.resolveType(state, value),
+        .member => types.resolveType(state, value),
         else => null,
     };
 }
@@ -235,4 +239,24 @@ pub fn compileStruct(state: *CompilerState, s: *const ast.StructDecl) !void {
             m.function_decl.name = q;
         }
     }
+}
+
+pub fn compileEnum(state: *CompilerState, e: *const ast.EnumDecl) !void {
+    var variants = std.StringHashMap(i32).init(state.allocator);
+    for (e.variants, 0..) |name, i| {
+        if (variants.contains(name)) {
+            std.debug.print("CompileError: Duplicate enum variant '{s}' in '{s}'\n", .{ name, e.name });
+            variants.deinit();
+            return error.CompileError;
+        }
+        try variants.put(name, @intCast(i));
+    }
+    if (state.enums.fetchRemove(e.name)) |kv| {
+        var old = kv.value;
+        old.variants.deinit();
+    }
+    try state.enums.put(e.name, .{
+        .name = e.name,
+        .variants = variants,
+    });
 }

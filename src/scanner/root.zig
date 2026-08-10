@@ -207,8 +207,9 @@ test "scan hex binary octal" {
 }
 
 test "scan compiler keywords" {
-    var result = try scan(std.testing.allocator, "@func @if @for", "t.lls");
+    var result = try scan(std.testing.allocator, "@func @if @for @enum", "t.lls");
     defer deinitScanResult(&result);
     try std.testing.expect(result.tokens.items[0].type == .compiler_keyword);
     try std.testing.expectEqualStrings("func", result.tokens.items[0].value);
+    try std.testing.expectEqualStrings("enum", result.tokens.items[3].value);
 }

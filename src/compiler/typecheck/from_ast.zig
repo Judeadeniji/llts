@@ -26,13 +26,12 @@ pub fn typeFromAst(node: ?*ast.Node, state: ?*state_mod.CompilerState, ta: ir.Ty
 
 pub fn resolveNamedType(name: []const u8, state: ?*state_mod.CompilerState) FromAstError!ir.Type {
     const t = ir.namedType(name);
-    if (t == .struct_) {
-        if (state) |st| {
-            if (!st.structs.contains(t.struct_)) {
-                std.debug.print("CompileError: Unknown type '{s}'\n", .{name});
-                return error.CompileError;
-            }
-        }
+    if (t != .struct_) return t;
+    if (state) |st| {
+        if (st.enums.contains(name)) return .{ .enum_ = name };
+        if (st.structs.contains(name)) return .{ .struct_ = name };
+        std.debug.print("CompileError: Unknown type '{s}'\n", .{name});
+        return error.CompileError;
     }
     return t;
 }
@@ -133,11 +132,17 @@ pub fn resolveType(state: *state_mod.CompilerState, node: *ast.Node) ?[]const u8
             break :blk type_name;
         },
         .member => |m| blk: {
+            if (m.property.* != .primary) break :blk null;
+            if (resolveEnumName(state, m.object)) |ename| {
+                if (state.enums.get(ename)) |ed| {
+                    if (ed.variants.contains(m.property.primary.name)) break :blk ename;
+                }
+                break :blk null;
+            }
             var object_type = resolveType(state, m.object) orelse break :blk null;
             if (std.mem.indexOfScalar(u8, object_type, '.') != null) {
                 object_type = @import("../expr/path.zig").resolveModuleType(state, object_type) catch object_type;
             }
-            if (m.property.* != .primary) break :blk null;
             const struct_def = state.structs.get(object_type) orelse break :blk null;
             break :blk struct_def.types.get(m.property.primary.name);
         },
@@ -197,4 +202,26 @@ pub fn isStringyType(t: ?[]const u8) bool {
     const s = t orelse return false;
     if (std.mem.eql(u8, s, "string") or std.mem.eql(u8, s, "[]byte")) return true;
     return std.mem.startsWith(u8, s, "[") and std.mem.endsWith(u8, s, "]byte");
+}
+
+/// If `node` names an enum type (`Tok` or `lib.Tok`), return the (possibly module-qualified) enum name.
+pub fn resolveEnumName(state: *state_mod.CompilerState, node: *ast.Node) ?[]const u8 {
+    switch (node.*) {
+        .primary => |p| {
+            if (p.kind != .identifier and p.kind != .register) return null;
+            if (state.enums.contains(p.name)) return p.name;
+            return null;
+        },
+        .member => |m| {
+            if (m.object.* != .primary or m.property.* != .primary) return null;
+            const alias = m.object.primary.name;
+            const short = m.property.primary.name;
+            var buf: [256]u8 = undefined;
+            const dotted = std.fmt.bufPrint(&buf, "{s}.{s}", .{ alias, short }) catch return null;
+            const q = @import("../expr/path.zig").resolveModuleType(state, dotted) catch return null;
+            if (state.enums.contains(q)) return q;
+            return null;
+        },
+        else => return null,
+    }
 }

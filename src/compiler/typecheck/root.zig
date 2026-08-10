@@ -197,6 +197,17 @@ fn inferExpr(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node:
         },
         .call => |*c| try inferCall(state, env, ta, node, c),
         .member => |m| blk: {
+            if (m.property.* == .primary) {
+                if (from_ast.resolveEnumName(state, m.object)) |ename| {
+                    if (state.enums.get(ename)) |ed| {
+                        if (!ed.variants.contains(m.property.primary.name)) {
+                            std.debug.print("CompileError: Unknown enum variant '{s}' on '{s}'\n", .{ m.property.primary.name, ename });
+                            return error.CompileError;
+                        }
+                        break :blk .{ .enum_ = ename };
+                    }
+                }
+            }
             const obj = try inferExpr(state, env, ta, m.object);
             if (obj == .struct_ and m.property.* == .primary) {
                 break :blk try fieldTypeFromStruct(state, ta, obj.struct_, m.property.primary.name);
@@ -466,6 +477,9 @@ fn checkStmt(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node:
             } else if (value_type == .struct_) {
                 try env.define(d.name, value_type);
                 try state.global_types.put(d.name, value_type.struct_);
+            } else if (value_type == .enum_) {
+                try env.define(d.name, value_type);
+                try state.global_types.put(d.name, value_type.enum_);
             } else {
                 try env.define(d.name, value_type);
             }
@@ -483,7 +497,7 @@ fn checkStmt(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node:
             _ = try checkStmt(state, env, ta, d.body);
             return null;
         },
-        .function_decl, .struct_decl, .extern_decl => return null,
+        .function_decl, .struct_decl, .enum_decl, .extern_decl => return null,
         .block => return try inferExpr(state, env, ta, node),
         else => {
             _ = try inferExpr(state, env, ta, node);
@@ -619,6 +633,10 @@ pub fn typecheck(state: *state_mod.CompilerState, doc: *ast.Document) TypecheckE
         if (std.mem.startsWith(u8, k, "$")) continue;
         if (std.mem.startsWith(u8, v, "module:")) {
             try env.globals.put(k, .{ .struct_ = v });
+        } else if (state.enums.contains(v)) {
+            try env.globals.put(k, .{ .enum_ = v });
+        } else if (state.structs.contains(v)) {
+            try env.globals.put(k, .{ .struct_ = v });
         } else {
             try env.globals.put(k, try ir.parseDisplayType(ta, v));
         }
@@ -626,7 +644,7 @@ pub fn typecheck(state: *state_mod.CompilerState, doc: *ast.Document) TypecheckE
 
     for (doc.statements) |s| {
         switch (s.*) {
-            .function_decl, .struct_decl, .extern_decl => continue,
+            .function_decl, .struct_decl, .enum_decl, .extern_decl => continue,
             else => _ = try checkStmt(state, &env, ta, s),
         }
     }

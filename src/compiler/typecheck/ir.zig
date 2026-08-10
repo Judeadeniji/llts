@@ -21,6 +21,7 @@ pub const Type = union(enum) {
     unknown,
     never,
     struct_: []const u8,
+    enum_: []const u8,
     array: struct { elem: *Type, length: ?usize },
     union_: []Type,
 };
@@ -97,7 +98,7 @@ pub fn namedType(name: []const u8) Type {
     return .{ .struct_ = name };
 }
 
-/// Builtin / primitive type names (not structs).
+/// Builtin / primitive type names (not structs/enums).
 pub fn isBuiltinTypeName(name: []const u8) bool {
     return switch (namedType(name)) {
         .struct_ => false,
@@ -115,6 +116,7 @@ pub fn displayTypeAlloc(allocator: std.mem.Allocator, t: Type) ![]const u8 {
         .unknown => try allocator.dupe(u8, "unknown"),
         .never => try allocator.dupe(u8, "never"),
         .struct_ => |n| try allocator.dupe(u8, n),
+        .enum_ => |n| try allocator.dupe(u8, n),
         .array => |a| blk: {
             const elem = try displayTypeAlloc(allocator, a.elem.*);
             defer allocator.free(elem);
@@ -163,6 +165,7 @@ pub fn displayTypeSimple(t: Type) ?[]const u8 {
         .unknown => "unknown",
         .never => "never",
         .struct_ => |n| n,
+        .enum_ => |n| n,
         .array => |a| if (a.elem.* == .byte and a.length == null) "[]byte" else null,
         .union_ => null,
     };
@@ -181,6 +184,7 @@ pub fn typeEquals(a: Type, b: Type) bool {
     }
     return switch (a) {
         .struct_ => |n| b == .struct_ and std.mem.eql(u8, n, b.struct_),
+        .enum_ => |n| b == .enum_ and std.mem.eql(u8, n, b.enum_),
         .array => |aa| b == .array and aa.length == b.array.length and typeEquals(aa.elem.*, b.array.elem.*),
         .union_ => |arms| blk: {
             if (b != .union_) break :blk false;
@@ -225,6 +229,9 @@ pub fn isSubtype(a: Type, b: Type) bool {
         if (a.array.length == null) return false;
         return a.array.length.? == b.array.length.?;
     }
+    // Enums are int-backed: allow enum ↔ int for gradual interop with literals.
+    if (a == .enum_ and b == .int) return true;
+    if (a == .int and b == .enum_) return true;
     return false;
 }
 
@@ -288,6 +295,7 @@ pub fn typeTag(t: Type) ?TypeTag {
         .error_ => .error_,
         .array => |a| if (a.elem.* == .byte) .string else .array,
         .struct_ => .struct_,
+        .enum_ => .int, // runtime values are ints
         .union_ => if (isErrorUnion(t)) .error_union else null,
         else => null,
     };

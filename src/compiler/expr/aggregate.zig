@@ -97,6 +97,8 @@ pub fn compileStructInit(state: *CompilerState, init: *const ast.StructInit) !vo
 }
 
 pub fn compileMember(state: *CompilerState, mem: *const ast.Member, node: *ast.Node) !void {
+    if (try compileEnumVariant(state, mem)) return;
+
     if (try path.tryResolveStaticPath(state, node)) |static_path| {
         if (std.mem.indexOf(u8, static_path, "::") != null) {
             var buf: [512]u8 = undefined;
@@ -135,4 +137,31 @@ pub fn compileMember(state: *CompilerState, mem: *const ast.Member, node: *ast.N
     if (mem.property.* == .primary) {
         try emit.emitNameGet(state, .OP_GET_PROPERTY, mem.property.primary.name);
     }
+}
+
+fn compileEnumVariant(state: *CompilerState, mem: *const ast.Member) !bool {
+    if (mem.property.* != .primary) return false;
+    const variant = mem.property.primary.name;
+    const ename = types.resolveEnumName(state, mem.object) orelse return false;
+    const ed = state.enums.get(ename) orelse return false;
+
+    // Module-qualified enum access requires a public export.
+    if (std.mem.indexOf(u8, ename, "::") != null and mem.object.* == .member) {
+        if (!state.chunk.exports.contains(ename)) {
+            const mod_name = if (mem.object.member.object.* == .primary)
+                mem.object.member.object.primary.name
+            else
+                "Module";
+            const short = if (std.mem.lastIndexOf(u8, ename, "::")) |idx| ename[idx + 2 ..] else ename;
+            std.debug.print("CompileError: '{s}' has no export '{s}'\n", .{ mod_name, short });
+            return error.CompileError;
+        }
+    }
+
+    const value = ed.variants.get(variant) orelse {
+        std.debug.print("CompileError: Unknown enum variant '{s}' on '{s}'\n", .{ variant, ename });
+        return error.CompileError;
+    };
+    try emit.emitConstant(state, .{ .int = value });
+    return true;
 }

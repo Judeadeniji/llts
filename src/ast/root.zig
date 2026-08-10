@@ -40,6 +40,7 @@ pub const Import = stmt.Import;
 pub const Extern = stmt.Extern;
 pub const StructField = stmt.StructField;
 pub const StructDecl = stmt.StructDecl;
+pub const EnumDecl = stmt.EnumDecl;
 
 pub const ArrayType = types.ArrayType;
 pub const UnionType = types.UnionType;
@@ -66,6 +67,7 @@ pub const Node = union(enum) {
     defer_stmt: Defer,
     import: Import,
     struct_decl: StructDecl,
+    enum_decl: EnumDecl,
     struct_init: StructInit,
     try_expr: TryExpr,
     error_expr: ErrorExpr,

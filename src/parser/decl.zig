@@ -5,6 +5,7 @@ const stmt_mod = @import("stmt.zig");
 const types = @import("types.zig");
 const control = @import("control.zig");
 const structs = @import("structs.zig");
+const enums = @import("enums.zig");
 
 const Parser = ctx.Parser;
 const ParseError = ctx.ParseError;
@@ -55,6 +56,7 @@ pub fn parseCompilerKeyword(self: *Parser) ParseError!*Node {
     if (std.mem.eql(u8, keyword.value, "for")) return control.parseForExpression(self);
     if (std.mem.eql(u8, keyword.value, "if")) return control.parseIfExpression(self);
     if (std.mem.eql(u8, keyword.value, "struct")) return structs.parseCompilerStruct(self);
+    if (std.mem.eql(u8, keyword.value, "enum")) return enums.parseCompilerEnum(self);
     if (std.mem.eql(u8, keyword.value, "extern")) return parseCompilerExtern(self);
 
     return self.failTok(keyword, "Unhandled compiler keyword: {s}", .{keyword.value});

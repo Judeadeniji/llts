@@ -12,6 +12,7 @@ const expr = @import("expr.zig");
 const control = @import("control.zig");
 const types = @import("types.zig");
 const structs = @import("structs.zig");
+const enums = @import("enums.zig");
 
 pub fn parse(
     allocator: std.mem.Allocator,
@@ -54,6 +55,7 @@ pub const parseType = types.parseType;
 pub const parseBlock = control.parseBlock;
 pub const parseDeclaration = decl.parseDeclaration;
 pub const parseCompilerStruct = structs.parseCompilerStruct;
+pub const parseCompilerEnum = enums.parseCompilerEnum;
 
 test "parse simple declaration" {
     const scanner = @import("../scanner/root.zig");
@@ -85,4 +87,17 @@ test "parse func if for and reject dollar" {
     var bad_scan = try scanner.scan(std.testing.allocator, bad, "t.lls");
     defer scanner.deinitScanResult(&bad_scan);
     try std.testing.expectError(error.ParseFailed, parse(std.testing.allocator, bad_scan.tokens.items, "t.lls", bad));
+}
+
+test "parse enum declaration" {
+    const scanner = @import("../scanner/root.zig");
+    const src = "@enum Color { Red, Green, Blue }\n";
+    var scan_result = try scanner.scan(std.testing.allocator, src, "t.lls");
+    defer scanner.deinitScanResult(&scan_result);
+    var doc = try parse(std.testing.allocator, scan_result.tokens.items, "t.lls", src);
+    defer doc.deinit();
+    try std.testing.expect(doc.statements.len == 1);
+    try std.testing.expect(doc.statements[0].* == .enum_decl);
+    try std.testing.expectEqual(@as(usize, 3), doc.statements[0].enum_decl.variants.len);
+    try std.testing.expectEqualStrings("Red", doc.statements[0].enum_decl.variants[0]);
 }

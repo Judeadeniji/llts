@@ -161,6 +161,7 @@ fn collectLocalBindings(
     for (statements) |s| {
         const name: ?[]const u8 = switch (s.*) {
             .struct_decl => |st| st.name,
+            .enum_decl => |e| e.name,
             .function_decl => |f| f.name,
             .declaration => |d| d.name,
             .extern_decl => |e| e.name,
@@ -179,6 +180,7 @@ fn collectLocalBindings(
 fn isOwnDecl(node: *ast.Node, mod_key: []const u8) bool {
     const name: ?[]const u8 = switch (node.*) {
         .struct_decl => |st| st.name,
+        .enum_decl => |e| e.name,
         .function_decl => |f| f.name,
         .declaration => |d| d.name,
         .extern_decl => |e| e.name,
@@ -253,6 +255,16 @@ fn qualifyNode(
                 }
             }
         },
+        .enum_decl => |*en| {
+            if (std.mem.indexOf(u8, en.name, "::") != null) return;
+            const short = en.name;
+            en.name = local_map.get(short) orelse blk: {
+                const q = try std.fmt.allocPrint(state.allocator, "{s}::{s}", .{ mod_key, short });
+                try state.owned.append(state.allocator, q);
+                break :blk q;
+            };
+            if (en.is_public) try state.chunk.exports.put(en.name, {});
+        },
         else => {},
     }
 }
@@ -289,6 +301,7 @@ fn rewriteModuleRefs(
             }
             for (st.methods) |m| try rewriteModuleRefs(state, m, local_map, bound);
         },
+        .enum_decl => {},
         .block => |*b| {
             const mark = bound.items.len;
             for (b.statements) |s| try rewriteModuleRefs(state, s, local_map, bound);
@@ -395,6 +408,13 @@ fn collectLocal(state: *CompilerState, node: *ast.Node, mod_key: []const u8, map
                 try map.put(st.name, q);
             }
         },
+        .enum_decl => |en| {
+            if (std.mem.indexOf(u8, en.name, "::") == null) {
+                const q = try std.fmt.allocPrint(state.allocator, "{s}::{s}", .{ mod_key, en.name });
+                try state.owned.append(state.allocator, q);
+                try map.put(en.name, q);
+            }
+        },
         else => {},
     }
 }
@@ -459,6 +479,7 @@ fn rewriteRefs(node: *ast.Node, local_map: *std.StringHashMap([]const u8)) void 
         .struct_decl => |st| {
             for (st.methods) |m| rewriteRefs(m, local_map);
         },
+        .enum_decl => {},
         .try_expr => |t| rewriteRefs(t.expression, local_map),
         .error_expr => |e| rewriteRefs(e.message, local_map),
         else => {},

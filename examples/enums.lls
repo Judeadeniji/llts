@@ -1,0 +1,17 @@
+@enum Color {
+    Red,
+    Green,
+    Blue,
+}
+
+$x: Color = Color.Red;
+print(x);
+print(Color.Green);
+print(Color.Blue);
+print(Color.Red == 0);
+print(@typeOf(Color.Blue));
+
+@func paint(c: Color) {
+    print(c);
+}
+paint(Color.Green);
