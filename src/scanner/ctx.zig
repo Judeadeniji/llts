@@ -43,10 +43,9 @@ pub const Scanner = struct {
     }
 
     pub fn pushToken(self: *Scanner, typ: TokenType, value: []const u8, col: u32, line: u32) !void {
-        const owned = try self.allocator.dupe(u8, value);
         try self.tokens.append(self.allocator, .{
             .type = typ,
-            .value = owned,
+            .value = value,
             .line = line,
             .column = col,
         });

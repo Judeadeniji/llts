@@ -25,7 +25,9 @@ pub fn scan(allocator: std.mem.Allocator, source: []const u8, path: []const u8) 
 
 pub fn deinitScanResult(result: *ScanResult) void {
     for (result.tokens.items) |t| {
-        result.allocator.free(t.value);
+        if (t.type == .string) {
+            result.allocator.free(t.value);
+        }
     }
     result.tokens.deinit(result.allocator);
 }
@@ -87,17 +89,19 @@ fn scanNext(self: *ctx.Scanner) ScanError!void {
         if (ops.isAssignOp(two[0..])) {
             const col = self.column;
             const line = self.line;
+            const val = self.source[self.pos .. self.pos + 2];
             _ = self.advance();
             _ = self.advance();
-            try self.pushToken(.assign_op, two[0..], col, line);
+            try self.pushToken(.assign_op, val, col, line);
             return;
         }
         if (ops.isBinOp(two[0..])) {
             const col = self.column;
             const line = self.line;
+            const val = self.source[self.pos .. self.pos + 2];
             _ = self.advance();
             _ = self.advance();
-            try self.pushToken(.bin_op, two[0..], col, line);
+            try self.pushToken(.bin_op, val, col, line);
             return;
         }
     }

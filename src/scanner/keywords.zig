@@ -1,25 +1,21 @@
 const std = @import("std");
 
-pub const compiler_symbols = [_][]const u8{
-    "import", "const", "func", "for", "if", "else", "switch", "struct", "enum", "isError", "typeOf", "extern", "new",
-};
+const compiler_map = std.StaticStringMap(void).initComptime(.{
+    .{ "import", {} }, .{ "const", {} }, .{ "func", {} }, .{ "for", {} }, .{ "if", {} }, .{ "else", {} }, 
+    .{ "switch", {} }, .{ "struct", {} }, .{ "enum", {} }, .{ "isError", {} }, .{ "typeOf", {} }, .{ "extern", {} }, .{ "new", {} }
+});
 
-pub const keywords = [_][]const u8{
-    "true", "false", "return", "pub", "break", "continue", "defer", "error", "null",
-};
+const keyword_map = std.StaticStringMap(void).initComptime(.{
+    .{ "true", {} }, .{ "false", {} }, .{ "return", {} }, .{ "pub", {} }, .{ "break", {} }, 
+    .{ "continue", {} }, .{ "defer", {} }, .{ "error", {} }, .{ "null", {} }
+});
 
 pub fn isCompilerSymbol(w: []const u8) bool {
-    for (compiler_symbols) |s| {
-        if (std.mem.eql(u8, s, w)) return true;
-    }
-    return false;
+    return compiler_map.has(w);
 }
 
 pub fn isKeyword(w: []const u8) bool {
-    for (keywords) |s| {
-        if (std.mem.eql(u8, s, w)) return true;
-    }
-    return false;
+    return keyword_map.has(w);
 }
 
 pub fn isDelimiter(c: u8) bool {

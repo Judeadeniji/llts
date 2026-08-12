@@ -46,11 +46,7 @@ pub fn execute(vm: *VMState, start_ip: usize) RuntimeError!void {
     const max_steps: comptime_int = 50_000_000;
 
     while (ip < code.len) {
-        steps += 1;
-        if (steps > max_steps) {
-            std.debug.print("RuntimeError: instruction limit exceeded ({d})\n", .{max_steps});
-            return error.RuntimeError;
-        }
+
         const op: OpCode = @enumFromInt(readByte(vm, &ip));
         switch (op) {
             .OP_LINE => debug_ops.line(vm, readShort(vm, &ip)),
@@ -71,7 +67,11 @@ pub fn execute(vm: *VMState, start_ip: usize) RuntimeError!void {
             .OP_LESS, .OP_LESS_EQUAL, .OP_GREATER, .OP_GREATER_EQUAL => try compare.compareOrd(vm, op),
             .OP_JUMP => control.jump(&ip, readShort(vm, &ip)),
             .OP_JUMP_IF_FALSE => control.jumpIfFalse(vm, &ip, readShort(vm, &ip)),
-            .OP_LOOP => control.loop(&ip, readShort(vm, &ip)),
+            .OP_LOOP => {
+                steps += 1;
+                if (steps > max_steps) return error.RuntimeError;
+                control.loop(&ip, readShort(vm, &ip));
+            },
             .OP_RETURN => {
                 if (try call.doReturn(vm, &ip)) return;
             },
@@ -80,7 +80,11 @@ pub fn execute(vm: *VMState, start_ip: usize) RuntimeError!void {
             .OP_GET_GLOBAL => try vars.getGlobal(vm, readShort(vm, &ip)),
             .OP_SET_GLOBAL => try vars.setGlobal(vm, readShort(vm, &ip)),
             .OP_GET_FUNCTION => try vars.getFunction(vm, readShort(vm, &ip)),
-            .OP_CALL => try call.callDynamic(vm, &ip, readByte(vm, &ip)),
+            .OP_CALL => {
+                steps += 1;
+                if (steps > max_steps) return error.RuntimeError;
+                try call.callDynamic(vm, &ip, readByte(vm, &ip));
+            },
             .OP_CALL_STATIC => {
                 const addr = readShort(vm, &ip);
                 const argc = readByte(vm, &ip);

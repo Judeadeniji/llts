@@ -65,6 +65,7 @@ pub const VMState = struct {
         // Script frame lives until process end — watermark tracks immortal growth.
         frame.heap_watermark = HEAP_START;
         try state.frames.append(allocator, frame);
+        try state.stack.ensureTotalCapacity(allocator, 1024);
         return state;
     }
 

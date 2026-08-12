@@ -303,9 +303,12 @@ fn dfsRecursive(
         if (state.functions.contains(call_name.*)) try targets.append(state.allocator, call_name.*);
         var kit = state.functions.keyIterator();
         while (kit.next()) |k| {
-            const suffix = try std.fmt.allocPrint(state.allocator, "::{s}", .{call_name.*});
-            defer state.allocator.free(suffix);
-            if (std.mem.endsWith(u8, k.*, suffix)) try targets.append(state.allocator, k.*);
+            if (std.mem.endsWith(u8, k.*, call_name.*)) {
+                const prefix_len = k.*.len - call_name.*.len;
+                if (prefix_len >= 2 and std.mem.eql(u8, k.*[prefix_len - 2 .. prefix_len], "::")) {
+                    try targets.append(state.allocator, k.*);
+                }
+            }
         }
         for (targets.items) |target| {
             if (try dfsRecursive(state, target, visited, stack)) {

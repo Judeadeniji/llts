@@ -125,12 +125,11 @@ pub fn isError(vm: *VMState) HeapError!void {
 pub fn stringAdd(vm: *VMState) HeapError!void {
     const b = stack.pop(vm);
     const a = stack.pop(vm);
-    var list: std.ArrayList(u8) = .empty;
-    defer list.deinit(vm.allocator);
-    try appendStr(vm, &list, a);
-    try appendStr(vm, &list, b);
-    const res = @import("../builtins/util.zig").writeSlice(vm, list.items) catch return error.OutOfMemory;
-    try stack.push(vm, res);
+    const offset: u32 = @intCast(vm.string_bytes.items.len);
+    try appendStr(vm, &vm.string_bytes, a);
+    try appendStr(vm, &vm.string_bytes, b);
+    const total_len = vm.string_bytes.items.len - offset;
+    try stack.push(vm, .{ .slice = .{ .offset = offset, .len = @intCast(total_len) } });
 }
 
 fn appendStr(vm: *VMState, list: *std.ArrayList(u8), v: Value) !void {

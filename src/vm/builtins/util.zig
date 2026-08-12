@@ -88,6 +88,26 @@ pub fn valueToOwnedString(vm: *VMState, v: Value) ![]u8 {
     };
 }
 
+/// Zero-allocation slice getter. Returns a reference to existing contiguous memory if possible, 
+/// otherwise populates the fallback ArrayList.
+pub fn valueToStr(vm: *VMState, v: Value, buf: *std.ArrayList(u8)) ![]const u8 {
+    switch (v) {
+        .name => |idx| return vm.chunk.stringAt(idx),
+        .slice => |s| return vm.string_bytes.items[s.offset .. s.offset + s.len],
+        .ptr => |p| {
+            buf.clearRetainingCapacity();
+            const len: usize = @intCast(vm.memory[@intCast(p - 1)].int);
+            try buf.ensureTotalCapacity(vm.allocator, len);
+            var i: usize = 0;
+            while (i < len) : (i += 1) {
+                buf.appendAssumeCapacity(@intCast(vm.memory[@intCast(p + @as(i32, @intCast(i)))].int));
+            }
+            return buf.items;
+        },
+        else => return error.TypeError,
+    }
+}
+
 /// Zero-alloc deep string equality check across all string representations.
 pub fn stringEquals(vm: *VMState, a: Value, b: Value) bool {
     const is_str_a = a == .name or a == .slice or a == .ptr;

@@ -47,18 +47,20 @@ pub fn resolveVariable(state: *CompilerState, name: []const u8) !void {
         return;
     }
     // `__` natives are provided by the runtime without an explicit listing.
-    const is_native = std.mem.startsWith(u8, name, "__");
-    var buf: [256]u8 = undefined;
-    const type_key = std.fmt.bufPrint(&buf, "${s}", .{name}) catch "";
-    const is_known = is_native or
+    if (std.mem.startsWith(u8, name, "__") or
         state.global_vars.contains(name) or
         state.global_consts.contains(name) or
         state.functions.contains(name) or
-        state.native_globals.contains(name) or
-        state.global_types.contains(type_key);
-    if (!is_known) {
-        std.debug.print("CompileError: Unknown identifier '{s}'\n", .{name});
-        return error.CompileError;
+        state.native_globals.contains(name))
+    {
+        // Variable is known
+    } else {
+        var buf: [256]u8 = undefined;
+        const type_key = std.fmt.bufPrint(&buf, "${s}", .{name}) catch "";
+        if (!state.global_types.contains(type_key)) {
+            std.debug.print("CompileError: Unknown identifier '{s}'\n", .{name});
+            return error.CompileError;
+        }
     }
     if (state.functions.contains(name)) {
         try emit.emitNameGet(state, .OP_GET_FUNCTION, name);

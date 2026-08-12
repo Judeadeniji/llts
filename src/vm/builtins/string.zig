@@ -39,7 +39,6 @@ fn substrFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const start: u32 = @intCast(@max(try util.asInt(args[1]), 0));
     const len: u32 = @intCast(@max(try util.asInt(args[2]), 0));
     
-    // Fast path: pure zero-alloc slice over an existing slice
     if (args[0] == .slice) {
         const s = args[0].slice;
         const bounded_start = @min(start, s.len);
@@ -47,8 +46,9 @@ fn substrFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
         return .{ .slice = .{ .offset = s.offset + bounded_start, .len = bounded_len } };
     }
     
-    const str = try util.valueToOwnedString(vm, args[0]);
-    defer vm.allocator.free(str);
+    var buf: std.ArrayList(u8) = .empty; defer buf.deinit(vm.allocator);
+    const str = try util.valueToStr(vm, args[0], &buf);
+    
     const bounded_start = @min(start, str.len);
     const bounded_len = @min(len, str.len - bounded_start);
     const slice = if (bounded_start >= str.len) "" else str[bounded_start..bounded_start + bounded_len];
@@ -58,16 +58,12 @@ fn substrFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
 fn indexOfFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
     if (args.len < 2) return error.ArityError;
-    const str = util.valueToOwnedString(vm, args[0]) catch |err| {
-        std.debug.print("indexOf arg 0 failed: {any}\n", .{err});
-        return err;
-    };
-    defer vm.allocator.free(str);
-    const search = util.valueToOwnedString(vm, args[1]) catch |err| {
-        std.debug.print("indexOf arg 1 failed: {any} for value {any}\n", .{err, args[1]});
-        return err;
-    };
-    defer vm.allocator.free(search);
+    var buf1: std.ArrayList(u8) = .empty; defer buf1.deinit(vm.allocator);
+    var buf2: std.ArrayList(u8) = .empty; defer buf2.deinit(vm.allocator);
+    
+    const str = try util.valueToStr(vm, args[0], &buf1);
+    const search = try util.valueToStr(vm, args[1], &buf2);
+    
     if (std.mem.indexOf(u8, str, search)) |idx| return .{ .int = @intCast(idx) };
     return .{ .int = -1 };
 }
@@ -75,10 +71,12 @@ fn indexOfFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
 fn splitFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
     if (args.len < 2) return error.ArityError;
-    const str = try util.valueToOwnedString(vm, args[0]);
-    defer vm.allocator.free(str);
-    const sep = try util.valueToOwnedString(vm, args[1]);
-    defer vm.allocator.free(sep);
+    
+    var buf1: std.ArrayList(u8) = .empty; defer buf1.deinit(vm.allocator);
+    var buf2: std.ArrayList(u8) = .empty; defer buf2.deinit(vm.allocator);
+    
+    const str = try util.valueToStr(vm, args[0], &buf1);
+    const sep = try util.valueToStr(vm, args[1], &buf2);
 
     var ptrs: std.ArrayList(Value) = .empty;
     defer ptrs.deinit(vm.allocator);
@@ -100,12 +98,15 @@ fn splitFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
 
 fn mapCase(vm: *VMState, args: []Value, upper: bool) !Value {
     if (args.len < 1) return error.ArityError;
-    const str = try util.valueToOwnedString(vm, args[0]);
-    defer vm.allocator.free(str);
-    for (str) |*c| {
-        c.* = if (upper) std.ascii.toUpper(c.*) else std.ascii.toLower(c.*);
+    var buf: std.ArrayList(u8) = .empty; defer buf.deinit(vm.allocator);
+    const str = try util.valueToStr(vm, args[0], &buf);
+    
+    const offset: u32 = @intCast(vm.string_bytes.items.len);
+    try vm.string_bytes.ensureUnusedCapacity(vm.allocator, str.len);
+    for (str) |c| {
+        vm.string_bytes.appendAssumeCapacity(if (upper) std.ascii.toUpper(c) else std.ascii.toLower(c));
     }
-    return try util.writeSlice(vm, str);
+    return .{ .slice = .{ .offset = offset, .len = @intCast(str.len) } };
 }
 
 fn toUpperFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
@@ -119,68 +120,89 @@ fn toLowerFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
 fn trimFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
     if (args.len < 1) return error.ArityError;
-    const str = try util.valueToOwnedString(vm, args[0]);
-    defer vm.allocator.free(str);
+    var buf: std.ArrayList(u8) = .empty; defer buf.deinit(vm.allocator);
+    const str = try util.valueToStr(vm, args[0], &buf);
+    
     return try util.writeSlice(vm, std.mem.trim(u8, str, &std.ascii.whitespace));
 }
 
 fn replaceFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
     if (args.len < 3) return error.ArityError;
-    const str = try util.valueToOwnedString(vm, args[0]);
-    defer vm.allocator.free(str);
-    const search = try util.valueToOwnedString(vm, args[1]);
-    defer vm.allocator.free(search);
-    const repl = try util.valueToOwnedString(vm, args[2]);
-    defer vm.allocator.free(repl);
-    const out = try std.mem.replaceOwned(u8, vm.allocator, str, search, repl);
-    defer vm.allocator.free(out);
-    return try util.writeSlice(vm, out);
+    var buf1: std.ArrayList(u8) = .empty; defer buf1.deinit(vm.allocator);
+    var buf2: std.ArrayList(u8) = .empty; defer buf2.deinit(vm.allocator);
+    var buf3: std.ArrayList(u8) = .empty; defer buf3.deinit(vm.allocator);
+    
+    const str = try util.valueToStr(vm, args[0], &buf1);
+    const search = try util.valueToStr(vm, args[1], &buf2);
+    const repl = try util.valueToStr(vm, args[2], &buf3);
+    
+    const out_len = std.mem.replacementSize(u8, str, search, repl);
+    const offset: u32 = @intCast(vm.string_bytes.items.len);
+    try vm.string_bytes.ensureUnusedCapacity(vm.allocator, out_len);
+    
+    const out_slice = vm.string_bytes.unusedCapacitySlice()[0..out_len];
+    _ = std.mem.replace(u8, str, search, repl, out_slice);
+    vm.string_bytes.items.len += out_len;
+    
+    return .{ .slice = .{ .offset = offset, .len = @intCast(out_len) } };
 }
 
 fn concatFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
     if (args.len < 2) return error.ArityError;
-    const a = try util.valueToOwnedString(vm, args[0]);
-    defer vm.allocator.free(a);
-    const b = try util.valueToOwnedString(vm, args[1]);
-    defer vm.allocator.free(b);
-    const out = try std.mem.concat(vm.allocator, u8, &.{ a, b });
-    defer vm.allocator.free(out);
-    return try util.writeSlice(vm, out);
+    var buf1: std.ArrayList(u8) = .empty; defer buf1.deinit(vm.allocator);
+    var buf2: std.ArrayList(u8) = .empty; defer buf2.deinit(vm.allocator);
+    
+    const a = try util.valueToStr(vm, args[0], &buf1);
+    const b = try util.valueToStr(vm, args[1], &buf2);
+    
+    const offset: u32 = @intCast(vm.string_bytes.items.len);
+    try vm.string_bytes.appendSlice(vm.allocator, a);
+    try vm.string_bytes.appendSlice(vm.allocator, b);
+    return .{ .slice = .{ .offset = offset, .len = @intCast(a.len + b.len) } };
 }
 
 fn repeatFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
     if (args.len < 2) return error.ArityError;
-    const str = try util.valueToOwnedString(vm, args[0]);
-    defer vm.allocator.free(str);
+    
+    var buf: std.ArrayList(u8) = .empty; defer buf.deinit(vm.allocator);
+    const str = try util.valueToStr(vm, args[0], &buf);
     const count: usize = @intCast(@max(try util.asInt(args[1]), 0));
-    var out: std.ArrayList(u8) = .empty;
-    defer out.deinit(vm.allocator);
-    try out.ensureTotalCapacity(vm.allocator, str.len * count);
+    
+    const offset: u32 = @intCast(vm.string_bytes.items.len);
+    try vm.string_bytes.ensureUnusedCapacity(vm.allocator, str.len * count);
+    
     var i: usize = 0;
-    while (i < count) : (i += 1) try out.appendSlice(vm.allocator, str);
-    return try util.writeSlice(vm, out.items);
+    while (i < count) : (i += 1) vm.string_bytes.appendSliceAssumeCapacity(str);
+    
+    return .{ .slice = .{ .offset = offset, .len = @intCast(str.len * count) } };
 }
 
 fn startsWithFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
     if (args.len < 2) return error.ArityError;
-    const str = try util.valueToOwnedString(vm, args[0]);
-    defer vm.allocator.free(str);
-    const prefix = try util.valueToOwnedString(vm, args[1]);
-    defer vm.allocator.free(prefix);
+    
+    var buf1: std.ArrayList(u8) = .empty; defer buf1.deinit(vm.allocator);
+    var buf2: std.ArrayList(u8) = .empty; defer buf2.deinit(vm.allocator);
+    
+    const str = try util.valueToStr(vm, args[0], &buf1);
+    const prefix = try util.valueToStr(vm, args[1], &buf2);
+    
     return .{ .bool = std.mem.startsWith(u8, str, prefix) };
 }
 
 fn endsWithFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
     if (args.len < 2) return error.ArityError;
-    const str = try util.valueToOwnedString(vm, args[0]);
-    defer vm.allocator.free(str);
-    const suffix = try util.valueToOwnedString(vm, args[1]);
-    defer vm.allocator.free(suffix);
+    
+    var buf1: std.ArrayList(u8) = .empty; defer buf1.deinit(vm.allocator);
+    var buf2: std.ArrayList(u8) = .empty; defer buf2.deinit(vm.allocator);
+    
+    const str = try util.valueToStr(vm, args[0], &buf1);
+    const suffix = try util.valueToStr(vm, args[1], &buf2);
+    
     return .{ .bool = std.mem.endsWith(u8, str, suffix) };
 }
 
@@ -195,8 +217,9 @@ fn charCodeFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
         return .{ .int = vm.string_bytes.items[s.offset + index] };
     }
     
-    const str = try util.valueToOwnedString(vm, args[0]);
-    defer vm.allocator.free(str);
+    var buf: std.ArrayList(u8) = .empty; defer buf.deinit(vm.allocator);
+    const str = try util.valueToStr(vm, args[0], &buf);
+    
     if (index >= str.len) return .{ .int = -1 };
     return .{ .int = str[index] };
 }

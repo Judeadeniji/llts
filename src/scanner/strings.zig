@@ -30,5 +30,6 @@ pub fn scanString(self: *ctx.Scanner) ctx.ScanError!void {
     }
     if (self.peek(0) == null) return error.UnterminatedString;
     _ = self.advance();
-    try self.pushToken(.string, buf.items, col, line);
+    const final_str = try buf.toOwnedSlice(self.allocator);
+    try self.pushToken(.string, final_str, col, line);
 }
