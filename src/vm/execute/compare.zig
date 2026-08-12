@@ -58,24 +58,24 @@ fn isErrorPtr(vm: *VMState, p: i32) bool {
 pub fn compareOrd(vm: *VMState, op: OpCode) CmpError!void {
     const b = stack.pop(vm);
     const a = stack.pop(vm);
-    const ai = asOrdInt(a) orelse return fail("Operands must be numbers");
-    const bi = asOrdInt(b) orelse return fail("Operands must be numbers");
+    const af = asOrdFloat(a) orelse return fail("Operands must be numbers");
+    const bf = asOrdFloat(b) orelse return fail("Operands must be numbers");
     const result = switch (op) {
-        .OP_LESS => ai < bi,
-        .OP_LESS_EQUAL => ai <= bi,
-        .OP_GREATER => ai > bi,
-        .OP_GREATER_EQUAL => ai >= bi,
+        .OP_LESS => af < bf,
+        .OP_LESS_EQUAL => af <= bf,
+        .OP_GREATER => af > bf,
+        .OP_GREATER_EQUAL => af >= bf,
         else => unreachable,
     };
     try stack.push(vm, .{ .bool = result });
 }
 
-fn asOrdInt(v: Value) ?i32 {
+fn asOrdFloat(v: Value) ?f64 {
     return switch (v) {
-        .int => |n| n,
-        .ptr => |p| p,
-        .bool => |b| @intFromBool(b),
-        .float => |n| @intFromFloat(n),
+        .int => |n| @floatFromInt(n),
+        .ptr => |p| @floatFromInt(p),
+        .bool => |b| @floatFromInt(@intFromBool(b)),
+        .float => |n| n,
         else => null,
     };
 }
