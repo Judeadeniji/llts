@@ -16,6 +16,7 @@ pub @struct Parser {
     previous: unknown;
     has_error: bool;
     path: string;
+    arena: unknown;
 
     @func isAtEnd(self) {
         return self.current.type == scanner.TokenType.EOF;
@@ -23,7 +24,7 @@ pub @struct Parser {
 
     @func advance(self) {
         self.previous = self.current;
-        self.current = self.scan.nextToken();
+        self.current = self.scan.nextToken(self.arena);
     }
 
     @func check(self, type) {
@@ -60,7 +61,8 @@ pub @func createParser(a, source, path): Parser {
         current: null,
         previous: null,
         has_error: false,
-        path: path
+        path: path,
+        arena: a
     });
     p.advance(); # load first token
     return p;
@@ -68,7 +70,7 @@ pub @func createParser(a, source, path): Parser {
 
 pub @func parse(a, source, path): Document {
     $p = createParser(a, source, path);
-    $statements = [];
+    $statements = @new(a, []);
     
     # Parse statements until EOF
     @for (!p.isAtEnd()) {

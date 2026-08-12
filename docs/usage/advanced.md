@@ -1,0 +1,59 @@
+# LLTS Advanced Usage Guide
+
+This document is designed for AI agents operating within the llts-zig codebase. It covers advanced language features, standard library usage, and complex idioms based on the core `.lls` examples (`pipe-ops.lls`, `test-std.lls`, and `showcase.lls`).
+
+## Standard Library Usage
+
+LLTS provides a modular standard library system that can be accessed via the `@import` directive.
+
+### Importing Modules
+Use `@import("path")` to include modules, binding them to constants via `@const`. Note the LLTS requirement that new variables and constants must be prefixed with `$` at the time of declaration.
+
+```lls
+// Import a whole index or specific module
+@const $std = @import("std/index");
+@const $debug = @import("std/debug");
+```
+
+### Core `std` Modules
+*   **`std.debug`**: For logging, formatted printing, and testing logic.
+    *   `std.debug.log(value)`: Emits raw representation of the variable (useful for objects/structs).
+    *   `std.debug.printLn("Result: {i}", val)`: Formatted string printing. Use `{s}` for strings and `{i}` for integers.
+    *   `std.debug.assert(condition)`: Validates state during execution (e.g., `std.debug.assert(sum == 8);`).
+*   **`std.io`**: System input/output.
+    *   `std.io.readLine()`: Synchronous terminal input capture.
+*   **`std.math`**: Mathematical utilities.
+    *   `std.math.add(a, b)`
+    *   `std.math.pow(a, b)`
+    *   `std.math.sqr(a)`
+
+## Pipe Operators (`|>`)
+
+The pipe operator (`|>`) is a functional idiom that forwards the evaluated result of the left-hand expression as the *first argument* to the function on the right. This allows readable function chaining.
+
+```lls
+@func sqr(a) {
+    return a**2; // Built-in exponentiation
+}
+
+// 2 is piped as the argument 'a' to sqr
+$a = 2 |> sqr; 
+
+// Passing an object as the first parameter to a global function
+@func printStatus(p: Player) { ... }
+$hero = Player { x: 0, y: 0, health: 100, name: "Antigravity" };
+
+// Equivalent to printStatus(hero)
+hero |> printStatus; 
+```
+
+## Structs and Object-Oriented Idioms
+*See [Structs and Methods](structs_and_methods.md) for full details on this topic.*
+
+## Control Flow
+*See [Control Flow](control_flow.md) and [Loops](loops.md) for full details on conditionals and iteration.*
+
+## Syntax Quick Reference for Agents
+*   **Declarations:** `@func`, `@const`, `@struct`, `@if`, `@for`.
+*   **Variable Binding:** Newly initialized variables must have the `$` prefix (e.g., `$my_var = 1;`), but subsequent usages must NOT use it (e.g., `my_var = 2;`).
+*   **Mathematical Operators:** Contains standard operators + exponentiation (`**`).

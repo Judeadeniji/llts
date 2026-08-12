@@ -1,23 +1,5 @@
+# Stdio — stdin helpers. File I/O lives in std.fs.
+
 pub @func readLine() {
     return __readLine();
-}
-
-pub @func readFile(path) {
-    return __readFile(path);
-}
-
-pub @func writeFile(path, content) {
-    return __writeFile(path, content);
-}
-
-pub @func appendFile(path, content) {
-    return __appendFile(path, content);
-}
-
-pub @func deleteFile(path) {
-    return __deleteFile(path);
-}
-
-pub @func exists(path) {
-    return __exists(path);
 }

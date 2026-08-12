@@ -61,8 +61,43 @@ pub @func parsePrimary(a, p) {
     return node;
 }
 
-pub @func parseBinary(a, p, min_prec) {
+pub @func parsePostfix(a, p) {
     $left = parsePrimary(a, p);
+    
+    @for (!p.isAtEnd()) {
+        @if (p.current.type == scanner.TokenType.DELIMITER && p.current.value == "(") {
+            $loc_line = p.current.line;
+            $loc_column = p.current.column;
+            p.advance(); # consume (
+            
+            $args = @new(a, []);
+            @for (!p.isAtEnd() && !(p.current.type == scanner.TokenType.DELIMITER && p.current.value == ")")) {
+                $arg = parseExpression(a, p);
+                @if (arg != null) {
+                    args = args + [arg];
+                }
+                @if (p.current.type == scanner.TokenType.DELIMITER && p.current.value == ",") {
+                    p.advance();
+                }
+            }
+            @if (p.current.type == scanner.TokenType.DELIMITER && p.current.value == ")") {
+                p.advance(); # consume )
+            }
+            
+            $call = ast.createNode(a, ast.NodeKind.CALL, loc_line, loc_column);
+            call.left = left;
+            call.body = args; # Store arguments in body
+            left = call;
+        } @else {
+            break;
+        }
+    }
+    
+    return left;
+}
+
+pub @func parseBinary(a, p, min_prec) {
+    $left = parsePostfix(a, p);
     
     @for (!p.isAtEnd()) {
         $tok = p.current;

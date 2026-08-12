@@ -1,8 +1,9 @@
-@const $io = @import("std/io.lls");
+@const $fs = @import("std/fs.lls");
 @const $string = @import("std/string.lls");
 @const $debug = @import("std/debug.lls");
 @const $mem = @import("std/mem.lls");
 @const $scanner = @import("scanner/root.lls");
+@const $parser = @import("parser/root.lls");
 
 @func main() {
     debug.printLn("Starting main");
@@ -10,23 +11,9 @@
     $arena = mem.create(0);
     defer arena.deinit();
 
-    $src = io.readFile("examples/hello-world.lls");
+    $src = fs.readFile("examples/hello-world.lls");
     debug.printLn("Read file, length = {i}", string.len(src));
-    $sc = scanner.Scanner {
-        source: src,
-        pos: 0,
-        len: string.len(src),
-        line: 1,
-        column: 1
-    };
-
-    $count = 0;
-    @for (true) {
-        $t = sc.nextToken(arena);
-        count = count + 1;
-        @if (t.type == scanner.TokenType.EOF) {
-            break;
-        }
-    }
-    debug.printLn("Done. Token count = {i}", count);
+    
+    $doc = parser.parse(arena, src, "examples/hello-world.lls");
+    debug.printLn("Parsed document. It has {i} statements.", len(doc.statements));
 }

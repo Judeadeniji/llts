@@ -4,8 +4,8 @@
 @const $expr = @import("expr.lls");
 
 pub @func parseBlock(a, p) {
-    p.advance(); # consume {
-    $stmts = [];
+    p.advance(); # consume "{"
+    $stmts = @new(a, []);
     @for (!p.isAtEnd() && !(p.current.type == scanner.TokenType.DELIMITER && p.current.value == "}")) {
         $s = parseStatement(a, p);
         @if (s != null) {
@@ -13,7 +13,7 @@ pub @func parseBlock(a, p) {
         }
     }
     @if (p.current.type == scanner.TokenType.DELIMITER && p.current.value == "}") {
-        p.advance(); # consume }
+        p.advance(); # consume "}"
     }
     
     $node = ast.createNode(a, ast.NodeKind.BLOCK, p.current.line, p.current.column);

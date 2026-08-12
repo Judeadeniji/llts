@@ -1,0 +1,52 @@
+# Filesystem — Zig-shaped, pure LLS over host `__*` natives.
+#
+# Module functions are cwd-relative (what Zig does via `std.fs.cwd().*`).
+# `Dir` methods work on a local value: `$d = fs.Dir{ kind: 0 }; d.readFile(path)`.
+# Cross-module `fs.cwd.readFile` is not typed as Dir yet.
+
+pub @struct Dir {
+    # 0 = cwd. Real fd later.
+    kind: int;
+
+    @func readFile(self, path) {
+        return __readFile(path);
+    }
+
+    @func writeFile(self, path, content) {
+        return __writeFile(path, content);
+    }
+
+    @func appendFile(self, path, content) {
+        return __appendFile(path, content);
+    }
+
+    @func deleteFile(self, path) {
+        return __deleteFile(path);
+    }
+
+    @func exists(self, path) {
+        return __exists(path);
+    }
+}
+
+# --- cwd-relative convenience (primary API across imports) ---
+
+pub @func readFile(path) {
+    return __readFile(path);
+}
+
+pub @func writeFile(path, content) {
+    return __writeFile(path, content);
+}
+
+pub @func appendFile(path, content) {
+    return __appendFile(path, content);
+}
+
+pub @func deleteFile(path) {
+    return __deleteFile(path);
+}
+
+pub @func exists(path) {
+    return __exists(path);
+}
