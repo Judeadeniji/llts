@@ -9,6 +9,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    llts_mod.link_libc = true;
 
     const exe = b.addExecutable(.{
         .name = "llts",
@@ -21,6 +22,7 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
+    exe.linkLibC();
 
     b.installArtifact(exe);
 
