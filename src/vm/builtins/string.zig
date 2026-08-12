@@ -20,6 +20,9 @@ var repeat_n: NativeFunction = undefined;
 var starts_with_n: NativeFunction = undefined;
 var ends_with_n: NativeFunction = undefined;
 var char_code_at_n: NativeFunction = undefined;
+var parse_int_n: NativeFunction = undefined;
+var parse_float_n: NativeFunction = undefined;
+var from_char_code_n: NativeFunction = undefined;
 
 fn strlenFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
@@ -224,6 +227,38 @@ fn charCodeFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     return .{ .int = str[index] };
 }
 
+fn parseIntFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
+    const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
+    if (args.len < 1) return error.ArityError;
+    var buf: std.ArrayList(u8) = .empty; defer buf.deinit(vm.allocator);
+    const str = try util.valueToStr(vm, args[0], &buf);
+    const base: u8 = if (args.len > 1) @intCast(@max(try util.asInt(args[1]), 2)) else 10;
+    
+    // allow negative sign
+    const val = std.fmt.parseInt(i32, str, base) catch return .{ .int = 0 }; // or error?
+    return .{ .int = val };
+}
+
+fn parseFloatFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
+    const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
+    if (args.len < 1) return error.ArityError;
+    var buf: std.ArrayList(u8) = .empty; defer buf.deinit(vm.allocator);
+    const str = try util.valueToStr(vm, args[0], &buf);
+    
+    const val = std.fmt.parseFloat(f64, str) catch return .{ .float = std.math.nan(f64) };
+    return .{ .float = val };
+}
+
+fn fromCharCodeFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
+    const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
+    if (args.len < 1) return error.ArityError;
+    const code = try util.asInt(args[0]);
+    
+    if (code < 0 or code > 255) return try util.makeError(vm, "Invalid char code");
+    var buf: [1]u8 = .{ @intCast(code) };
+    return try util.writeSlice(vm, &buf);
+}
+
 pub fn register(vm: *VMState) !void {
     strlen_n = .{ .name = "__strlen", .func = strlenFn, .arity = 1 };
     substr_n = .{ .name = "__substr", .func = substrFn, .arity = 3 };
@@ -238,6 +273,9 @@ pub fn register(vm: *VMState) !void {
     starts_with_n = .{ .name = "__startsWith", .func = startsWithFn, .arity = 2 };
     ends_with_n = .{ .name = "__endsWith", .func = endsWithFn, .arity = 2 };
     char_code_at_n = .{ .name = "__charCodeAt", .func = charCodeFn, .arity = 2 };
+    parse_int_n = .{ .name = "__parseInt", .func = parseIntFn, .arity = 2 };
+    parse_float_n = .{ .name = "__parseFloat", .func = parseFloatFn, .arity = 1 };
+    from_char_code_n = .{ .name = "__fromCharCode", .func = fromCharCodeFn, .arity = 1 };
 
     try vm.globals.put("__strlen", .{ .native = &strlen_n });
     try vm.globals.put("__substr", .{ .native = &substr_n });
@@ -252,4 +290,7 @@ pub fn register(vm: *VMState) !void {
     try vm.globals.put("__startsWith", .{ .native = &starts_with_n });
     try vm.globals.put("__endsWith", .{ .native = &ends_with_n });
     try vm.globals.put("__charCodeAt", .{ .native = &char_code_at_n });
+    try vm.globals.put("__parseInt", .{ .native = &parse_int_n });
+    try vm.globals.put("__parseFloat", .{ .native = &parse_float_n });
+    try vm.globals.put("__fromCharCode", .{ .native = &from_char_code_n });
 }

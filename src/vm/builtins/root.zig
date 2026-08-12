@@ -7,6 +7,10 @@ const mem_mod = @import("mem.zig");
 const math_mod = @import("math.zig");
 const string_mod = @import("string.zig");
 const io_mod = @import("io.zig");
+const time_mod = @import("time.zig");
+const os_mod = @import("os.zig");
+const http_mod = @import("http.zig");
+const json_mod = @import("json_builtin.zig");
 
 pub fn registerBuiltins(vm: *state_mod.VMState) !void {
     try print_mod.register(vm);
@@ -16,4 +20,8 @@ pub fn registerBuiltins(vm: *state_mod.VMState) !void {
     try math_mod.register(vm);
     try string_mod.register(vm);
     try io_mod.register(vm);
+    try time_mod.register(vm);
+    try os_mod.register(vm);
+    try http_mod.register(vm);
+    try json_mod.register(vm);
 }

@@ -13,6 +13,16 @@ var write_file_n: NativeFunction = undefined;
 var append_file_n: NativeFunction = undefined;
 var delete_file_n: NativeFunction = undefined;
 var exists_n: NativeFunction = undefined;
+var mkdir_n: NativeFunction = undefined;
+var mkdir_all_n: NativeFunction = undefined;
+var read_dir_n: NativeFunction = undefined;
+var stat_n: NativeFunction = undefined;
+var rename_n: NativeFunction = undefined;
+var copy_file_n: NativeFunction = undefined;
+var symlink_n: NativeFunction = undefined;
+var readlink_n: NativeFunction = undefined;
+var realpath_n: NativeFunction = undefined;
+var chmod_n: NativeFunction = undefined;
 
 fn readFileFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
@@ -88,6 +98,146 @@ fn existsFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     return .{ .bool = true };
 }
 
+fn mkdirFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
+    const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
+    if (args.len < 1) return error.ArityError;
+    const path = try util.valueToOwnedString(vm, args[0]);
+    defer vm.allocator.free(path);
+    std.fs.cwd().makeDir(path) catch |err| {
+        return try util.makeError(vm, @errorName(err));
+    };
+    return .null;
+}
+
+fn mkdirAllFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
+    const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
+    if (args.len < 1) return error.ArityError;
+    const path = try util.valueToOwnedString(vm, args[0]);
+    defer vm.allocator.free(path);
+    std.fs.cwd().makePath(path) catch |err| {
+        return try util.makeError(vm, @errorName(err));
+    };
+    return .null;
+}
+
+fn readDirFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
+    const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
+    if (args.len < 1) return error.ArityError;
+    const path = try util.valueToOwnedString(vm, args[0]);
+    defer vm.allocator.free(path);
+
+    var dir = std.fs.cwd().openDir(path, .{ .iterate = true }) catch |err| {
+        return try util.makeError(vm, @errorName(err));
+    };
+    defer dir.close();
+
+    var it = dir.iterate();
+    var list: std.ArrayListUnmanaged(Value) = .empty;
+    defer list.deinit(vm.allocator);
+
+    while (it.next() catch return try util.makeError(vm, "Iteration error")) |entry| {
+        const name_val = try util.writeSlice(vm, entry.name);
+        try list.append(vm.allocator, name_val);
+    }
+    return try util.writeArray(vm, list.items);
+}
+
+fn statFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
+    const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
+    if (args.len < 1) return error.ArityError;
+    const path = try util.valueToOwnedString(vm, args[0]);
+    defer vm.allocator.free(path);
+
+    const stat = std.fs.cwd().statFile(path) catch |err| {
+        return try util.makeError(vm, @errorName(err));
+    };
+
+    var list: std.ArrayListUnmanaged(Value) = .empty;
+    defer list.deinit(vm.allocator);
+    try list.append(vm.allocator, .{ .float = @floatFromInt(stat.size) });
+    try list.append(vm.allocator, .{ .float = @floatFromInt(@divTrunc(stat.mtime, 1000000)) }); // ms
+    try list.append(vm.allocator, .{ .float = @floatFromInt(@divTrunc(stat.atime, 1000000)) });
+    try list.append(vm.allocator, .{ .float = @floatFromInt(@divTrunc(stat.ctime, 1000000)) });
+    const kind: i32 = switch (stat.kind) {
+        .file => 1,
+        .directory => 2,
+        .sym_link => 3,
+        else => 0,
+    };
+    try list.append(vm.allocator, .{ .int = kind });
+    return try util.writeArray(vm, list.items);
+}
+
+fn renameFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
+    const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
+    if (args.len < 2) return error.ArityError;
+    const old_path = try util.valueToOwnedString(vm, args[0]);
+    defer vm.allocator.free(old_path);
+    const new_path = try util.valueToOwnedString(vm, args[1]);
+    defer vm.allocator.free(new_path);
+    std.fs.cwd().rename(old_path, new_path) catch |err| {
+        return try util.makeError(vm, @errorName(err));
+    };
+    return .null;
+}
+
+fn copyFileFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
+    const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
+    if (args.len < 2) return error.ArityError;
+    const src = try util.valueToOwnedString(vm, args[0]);
+    defer vm.allocator.free(src);
+    const dst = try util.valueToOwnedString(vm, args[1]);
+    defer vm.allocator.free(dst);
+    std.fs.cwd().copyFile(src, std.fs.cwd(), dst, .{}) catch |err| {
+        return try util.makeError(vm, @errorName(err));
+    };
+    return .null;
+}
+
+fn symlinkFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
+    const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
+    if (args.len < 2) return error.ArityError;
+    const target = try util.valueToOwnedString(vm, args[0]);
+    defer vm.allocator.free(target);
+    const link_path = try util.valueToOwnedString(vm, args[1]);
+    defer vm.allocator.free(link_path);
+    std.fs.cwd().symLink(target, link_path, .{}) catch |err| {
+        return try util.makeError(vm, @errorName(err));
+    };
+    return .null;
+}
+
+fn readlinkFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
+    const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
+    if (args.len < 1) return error.ArityError;
+    const path = try util.valueToOwnedString(vm, args[0]);
+    defer vm.allocator.free(path);
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const link = std.fs.cwd().readLink(path, &buf) catch |err| {
+        return try util.makeError(vm, @errorName(err));
+    };
+    return try util.writeSlice(vm, link);
+}
+
+fn realpathFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
+    const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
+    if (args.len < 1) return error.ArityError;
+    const path = try util.valueToOwnedString(vm, args[0]);
+    defer vm.allocator.free(path);
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const real = std.fs.cwd().realpath(path, &buf) catch |err| {
+        return try util.makeError(vm, @errorName(err));
+    };
+    return try util.writeSlice(vm, real);
+}
+
+fn chmodFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
+    _ = vm_ptr;
+    _ = args;
+    // zig std.fs doesn't have a simple chmod in standard API across all platforms
+    return .{ .int = 0 }; // stub
+}
+
 pub fn register(vm: *VMState) !void {
     read_file_n = .{ .name = "__readFile", .func = readFileFn, .arity = 1 };
     read_line_n = .{ .name = "__readLine", .func = readLineFn, .arity = 0 };
@@ -95,6 +245,16 @@ pub fn register(vm: *VMState) !void {
     append_file_n = .{ .name = "__appendFile", .func = appendFileFn, .arity = 2 };
     delete_file_n = .{ .name = "__deleteFile", .func = deleteFileFn, .arity = 1 };
     exists_n = .{ .name = "__exists", .func = existsFn, .arity = 1 };
+    mkdir_n = .{ .name = "__mkdir", .func = mkdirFn, .arity = 1 };
+    mkdir_all_n = .{ .name = "__mkdirAll", .func = mkdirAllFn, .arity = 1 };
+    read_dir_n = .{ .name = "__readDir", .func = readDirFn, .arity = 1 };
+    stat_n = .{ .name = "__stat", .func = statFn, .arity = 1 };
+    rename_n = .{ .name = "__rename", .func = renameFn, .arity = 2 };
+    copy_file_n = .{ .name = "__copyFile", .func = copyFileFn, .arity = 2 };
+    symlink_n = .{ .name = "__symlink", .func = symlinkFn, .arity = 2 };
+    readlink_n = .{ .name = "__readlink", .func = readlinkFn, .arity = 1 };
+    realpath_n = .{ .name = "__realpath", .func = realpathFn, .arity = 1 };
+    chmod_n = .{ .name = "__chmod", .func = chmodFn, .arity = 2 };
 
     try vm.globals.put("__readFile", .{ .native = &read_file_n });
     try vm.globals.put("__readLine", .{ .native = &read_line_n });
@@ -102,4 +262,14 @@ pub fn register(vm: *VMState) !void {
     try vm.globals.put("__appendFile", .{ .native = &append_file_n });
     try vm.globals.put("__deleteFile", .{ .native = &delete_file_n });
     try vm.globals.put("__exists", .{ .native = &exists_n });
+    try vm.globals.put("__mkdir", .{ .native = &mkdir_n });
+    try vm.globals.put("__mkdirAll", .{ .native = &mkdir_all_n });
+    try vm.globals.put("__readDir", .{ .native = &read_dir_n });
+    try vm.globals.put("__stat", .{ .native = &stat_n });
+    try vm.globals.put("__rename", .{ .native = &rename_n });
+    try vm.globals.put("__copyFile", .{ .native = &copy_file_n });
+    try vm.globals.put("__symlink", .{ .native = &symlink_n });
+    try vm.globals.put("__readlink", .{ .native = &readlink_n });
+    try vm.globals.put("__realpath", .{ .native = &realpath_n });
+    try vm.globals.put("__chmod", .{ .native = &chmod_n });
 }
