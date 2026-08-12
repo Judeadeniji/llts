@@ -330,7 +330,7 @@ fn registerModuleDecls(state: *state_mod.CompilerState, doc: *ast.Document) !voi
         if (s.* == .declaration) {
             const decl_node = &s.declaration;
             if (state.global_vars.contains(decl_node.name)) {
-                std.debug.print("CompileError: Variable '{s}' already declared\n", .{decl_node.name});
+                std.debug.print("CompileError: Variable '{s}' already declared in this scope\n", .{decl_node.name});
                 return error.CompileError;
             }
             try state.global_vars.put(decl_node.name, {});

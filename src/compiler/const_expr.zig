@@ -16,7 +16,7 @@ pub fn createConstEnv(state: *CompilerState) !ConstEnv {
     var env: ConstEnv = .{
         .const_names = std.StringHashMap(void).init(state.allocator),
     };
-    var it = state.global_consts.keyIterator();
+    var it = state.ready_global_consts.keyIterator();
     while (it.next()) |name| {
         try env.const_names.put(name.*, {});
     }

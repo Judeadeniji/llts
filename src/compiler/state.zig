@@ -74,6 +74,7 @@ pub const CompilerState = struct {
     global_vars: std.StringHashMap(void),
     global_types: std.StringHashMap([]const u8),
     global_consts: std.StringHashMap(void),
+    ready_global_consts: std.StringHashMap(void),
     native_globals: std.StringHashMap(void),
     inline_return_jumps: std.ArrayList(std.ArrayList(usize)) = .empty,
     owned: std.ArrayList([]const u8) = .empty,
@@ -94,6 +95,7 @@ pub fn create(allocator: std.mem.Allocator) !CompilerState {
         .global_vars = std.StringHashMap(void).init(allocator),
         .global_types = std.StringHashMap([]const u8).init(allocator),
         .global_consts = std.StringHashMap(void).init(allocator),
+        .ready_global_consts = std.StringHashMap(void).init(allocator),
         .native_globals = std.StringHashMap(void).init(allocator),
         .type_of_results = std.AutoHashMap(*ast.Node, []const u8).init(allocator),
     };
@@ -161,6 +163,7 @@ pub fn deinit(self: *CompilerState) void {
     self.global_vars.deinit();
     self.global_types.deinit();
     self.global_consts.deinit();
+    self.ready_global_consts.deinit();
     self.native_globals.deinit();
     self.type_of_results.deinit();
 }

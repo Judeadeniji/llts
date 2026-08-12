@@ -84,6 +84,7 @@ pub fn compileDeclaration(state: *CompilerState, decl: *const ast.Declaration) !
         if (type_name) |tn| try state.global_types.put(decl.name, tn);
         try emit.emitNameGet(state, .OP_SET_GLOBAL, decl.name);
         try emit.emitOp(state, .OP_POP);
+        if (decl.is_const) try state.ready_global_consts.put(decl.name, {});
     }
 }
 
