@@ -37,12 +37,22 @@ fn valuesEqual(vm: *VMState, a: Value, b: Value) bool {
             else => false,
         },
         .ptr, .name, .slice => switch (b) {
-            .ptr, .name, .slice => @import("../builtins/util.zig").stringEquals(vm, a, b),
+            .ptr, .name, .slice => blk: {
+                if (a == .ptr and isErrorPtr(vm, a.ptr)) break :blk if (b == .ptr) a.ptr == b.ptr else false;
+                if (b == .ptr and isErrorPtr(vm, b.ptr)) break :blk false;
+                break :blk @import("../builtins/util.zig").stringEquals(vm, a, b);
+            },
             .int => |y| if (a == .ptr) a.ptr == y else false,
             else => false,
         },
         else => false,
     };
+}
+
+fn isErrorPtr(vm: *VMState, p: i32) bool {
+    if (p < 1 or p - 1 >= vm.heap_ptr) return false;
+    const tag = vm.memory[@intCast(p - 1)];
+    return tag == .int and tag.int == state_mod.ERROR_TAG;
 }
 
 pub fn compareOrd(vm: *VMState, op: OpCode) CmpError!void {
