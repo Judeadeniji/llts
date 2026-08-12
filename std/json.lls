@@ -1,0 +1,7 @@
+pub @func parse(str) {
+    return __jsonParse(str);
+}
+
+pub @func stringify(val) {
+    return __jsonStringify(val);
+}

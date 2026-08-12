@@ -4,6 +4,14 @@
 # `Dir` methods work on a local value: `$d = fs.Dir{ kind: 0 }; d.readFile(path)`.
 # Cross-module `fs.cwd.readFile` is not typed as Dir yet.
 
+pub @struct Stat {
+    size: int;
+    mtime: int;
+    atime: int;
+    ctime: int;
+    kind: int;
+}
+
 pub @struct Dir {
     # 0 = cwd. Real fd later.
     kind: int;
@@ -27,6 +35,46 @@ pub @struct Dir {
     @func exists(self, path) {
         return __exists(path);
     }
+
+    @func mkdir(self, path) {
+        return __mkdir(path);
+    }
+
+    @func mkdirAll(self, path) {
+        return __mkdirAll(path);
+    }
+
+    @func readDir(self, path) {
+        return __readDir(path);
+    }
+
+    @func stat(self, path) {
+        return __stat(path);
+    }
+
+    @func rename(self, old, new) {
+        return __rename(old, new);
+    }
+
+    @func copyFile(self, src, dst) {
+        return __copyFile(src, dst);
+    }
+
+    @func symlink(self, target, path) {
+        return __symlink(target, path);
+    }
+
+    @func readlink(self, path) {
+        return __readlink(path);
+    }
+
+    @func realpath(self, path) {
+        return __realpath(path);
+    }
+
+    @func chmod(self, path, mode) {
+        return __chmod(path, mode);
+    }
 }
 
 # --- cwd-relative convenience (primary API across imports) ---
@@ -49,4 +97,44 @@ pub @func deleteFile(path) {
 
 pub @func exists(path) {
     return __exists(path);
+}
+
+pub @func mkdir(path) {
+    return __mkdir(path);
+}
+
+pub @func mkdirAll(path) {
+    return __mkdirAll(path);
+}
+
+pub @func readDir(path) {
+    return __readDir(path);
+}
+
+pub @func stat(path) {
+    return __stat(path);
+}
+
+pub @func rename(old, new) {
+    return __rename(old, new);
+}
+
+pub @func copyFile(src, dst) {
+    return __copyFile(src, dst);
+}
+
+pub @func symlink(target, path) {
+    return __symlink(target, path);
+}
+
+pub @func readlink(path) {
+    return __readlink(path);
+}
+
+pub @func realpath(path) {
+    return __realpath(path);
+}
+
+pub @func chmod(path, mode) {
+    return __chmod(path, mode);
 }

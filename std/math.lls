@@ -58,3 +58,290 @@ pub @func max(...args) {
 
 pub @const $PI = 3.141592653589793;
 pub @const $E = 2.718281828459045;
+
+pub @func random() {
+    return __random();
+}
+
+pub @func sin(a) {
+    return __sin(a);
+}
+
+pub @func cos(a) {
+    return __cos(a);
+}
+
+pub @func tan(a) {
+    return __tan(a);
+}
+
+pub @func asin(a) {
+    return __asin(a);
+}
+
+pub @func acos(a) {
+    return __acos(a);
+}
+
+pub @func atan(a) {
+    return __atan(a);
+}
+
+pub @func atan2(y, x) {
+    return __atan2(y, x);
+}
+
+pub @func log(a) {
+    return __log(a);
+}
+
+pub @func log10(a) {
+    return __log10(a);
+}
+
+pub @func log2(a) {
+    return __log2(a);
+}
+
+pub @func exp(a) {
+    return __exp(a);
+}
+
+pub @func cbrt(a) {
+    return __cbrt(a);
+}
+
+pub @func trunc(a) {
+    return __trunc(a);
+}
+
+pub @func sign(a) {
+    return __sign(a);
+}
+
+# C math mappings
+pub @func acosh(a0) {
+    return __acosh(a0);
+}
+
+pub @func asinh(a0) {
+    return __asinh(a0);
+}
+
+pub @func atanh(a0) {
+    return __atanh(a0);
+}
+
+pub @func copysign(a0, a1) {
+    return __copysign(a0, a1);
+}
+
+pub @func cosh(a0) {
+    return __cosh(a0);
+}
+
+pub @func erf(a0) {
+    return __erf(a0);
+}
+
+pub @func erfc(a0) {
+    return __erfc(a0);
+}
+
+pub @func exp2(a0) {
+    return __exp2(a0);
+}
+
+pub @func expm1(a0) {
+    return __expm1(a0);
+}
+
+pub @func fabs(a0) {
+    return __fabs(a0);
+}
+
+pub @func fdim(a0, a1) {
+    return __fdim(a0, a1);
+}
+
+pub @func fma(a0, a1, a2) {
+    return __fma(a0, a1, a2);
+}
+
+pub @func fmax(a0, a1) {
+    return __fmax(a0, a1);
+}
+
+pub @func fmin(a0, a1) {
+    return __fmin(a0, a1);
+}
+
+pub @func fmod(a0, a1) {
+    return __fmod(a0, a1);
+}
+
+pub @func frexp(a0) {
+    return __frexp(a0);
+}
+
+pub @func hypot(a0, a1) {
+    return __hypot(a0, a1);
+}
+
+pub @func ilogb(a0) {
+    return __ilogb(a0);
+}
+
+pub @func ldexp(a0, a1) {
+    return __ldexp(a0, a1);
+}
+
+pub @func lgamma(a0) {
+    return __lgamma(a0);
+}
+
+pub @func llrint(a0) {
+    return __llrint(a0);
+}
+
+pub @func llround(a0) {
+    return __llround(a0);
+}
+
+pub @func log1p(a0) {
+    return __log1p(a0);
+}
+
+pub @func logb(a0) {
+    return __logb(a0);
+}
+
+pub @func lrint(a0) {
+    return __lrint(a0);
+}
+
+pub @func lround(a0) {
+    return __lround(a0);
+}
+
+pub @func modf(a0) {
+    return __modf(a0);
+}
+
+pub @func nan(s) {
+    return __nan(s);
+}
+
+pub @func nearbyint(a0) {
+    return __nearbyint(a0);
+}
+
+pub @func nextafter(a0, a1) {
+    return __nextafter(a0, a1);
+}
+
+pub @func nexttoward(a0, a1) {
+    return __nexttoward(a0, a1);
+}
+
+pub @func remainder(a0, a1) {
+    return __remainder(a0, a1);
+}
+
+pub @func remquo(a0, a1) {
+    return __remquo(a0, a1);
+}
+
+pub @func rint(a0) {
+    return __rint(a0);
+}
+
+pub @func scalbln(a0, a1) {
+    return __scalbln(a0, a1);
+}
+
+pub @func scalbn(a0, a1) {
+    return __scalbn(a0, a1);
+}
+
+pub @func sinh(a0) {
+    return __sinh(a0);
+}
+
+pub @func tanh(a0) {
+    return __tanh(a0);
+}
+
+pub @func tgamma(a0) {
+    return __tgamma(a0);
+}
+
+pub @func fpclassify(a0) {
+    return __fpclassify(a0);
+}
+
+pub @func isfinite(a0) {
+    return __isfinite(a0);
+}
+
+pub @func isgreater(a0, a1) {
+    return __isgreater(a0, a1);
+}
+
+pub @func isgreaterequal(a0, a1) {
+    return __isgreaterequal(a0, a1);
+}
+
+pub @func isinf(a0) {
+    return __isinf(a0);
+}
+
+pub @func isless(a0, a1) {
+    return __isless(a0, a1);
+}
+
+pub @func islessequal(a0, a1) {
+    return __islessequal(a0, a1);
+}
+
+pub @func islessgreater(a0, a1) {
+    return __islessgreater(a0, a1);
+}
+
+pub @func isnan(a0) {
+    return __isnan(a0);
+}
+
+pub @func isnormal(a0) {
+    return __isnormal(a0);
+}
+
+pub @func isunordered(a0, a1) {
+    return __isunordered(a0, a1);
+}
+
+pub @func signbit(a0) {
+    return __signbit(a0);
+}
+
+# C math.h classification / error constants (glibc values).
+pub @const $FP_NAN = 0;
+pub @const $FP_INFINITE = 1;
+pub @const $FP_ZERO = 2;
+pub @const $FP_SUBNORMAL = 3;
+pub @const $FP_NORMAL = 4;
+pub @const $MATH_ERRNO = 1;
+pub @const $MATH_ERREXCEPT = 2;
+pub @const $math_errhandling = 3;
+
+pub @func hugeVal() {
+    return __hugeVal();
+}
+
+pub @func infinity() {
+    return __infinity();
+}
+
+pub @func nanValue() {
+    return __nanValue();
+}

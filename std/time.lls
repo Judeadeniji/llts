@@ -1,0 +1,99 @@
+# Duration and Time are both unix/span nanoseconds as float
+# (i32 cannot hold 3*Second; bare structs cannot escape frames).
+#
+#   $start = time.Now();
+#   time.Sleep(100 * time.Millisecond);
+#   $ms = time.Milliseconds(time.Since(start));
+
+# --- Duration units (nanoseconds) ---
+
+pub @const $Nanosecond = 1.0;
+pub @const $Microsecond = 1000.0;
+pub @const $Millisecond = 1000000.0;
+pub @const $Second = 1000000000.0;
+pub @const $Minute = 60000000000.0;
+pub @const $Hour = 3600000000000.0;
+
+# --- Clock ---
+
+pub @func Now() {
+    return __now();
+}
+
+pub @func Sleep(d) {
+    return __sleep(d);
+}
+
+pub @func Since(t) {
+    return __now() - t;
+}
+
+pub @func Until(t) {
+    return t - __now();
+}
+
+# --- Time constructors ---
+
+pub @func Unix(sec, nsec) {
+    return sec * Second + nsec;
+}
+
+pub @func UnixMilli(msec) {
+    return msec * Millisecond;
+}
+
+pub @func UnixNano(nsec) {
+    return nsec;
+}
+
+# --- Time arithmetic / comparison (Go Time methods as package funcs) ---
+
+pub @func Add(t, d) {
+    return t + d;
+}
+
+pub @func Sub(t, u) {
+    return t - u;
+}
+
+pub @func Before(t, u) {
+    return t < u;
+}
+
+pub @func After(t, u) {
+    return t > u;
+}
+
+pub @func Equal(t, u) {
+    return t == u;
+}
+
+pub @func IsZero(t) {
+    return t == 0.0;
+}
+
+# --- Duration unit conversion (also Time→unix: Seconds(Now()) ≈ Now().Unix()) ---
+
+pub @func Nanoseconds(d) {
+    return d;
+}
+
+pub @func Microseconds(d) {
+    return d / Microsecond;
+}
+
+pub @func Milliseconds(d) {
+    return d / Millisecond;
+}
+
+pub @func Seconds(d) {
+    return d / Second;
+}
+
+pub @func Minutes(d) {
+    return d / Minute;
+}
+
+pub @func Hours(d) {
+    return d / Hour;
+}

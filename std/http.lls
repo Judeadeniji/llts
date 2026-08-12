@@ -1,0 +1,8 @@
+pub @struct Response {
+    status: int;
+    body: string;
+}
+
+pub @func fetch(url) {
+    return __fetch(url);
+}

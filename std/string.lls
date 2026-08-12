@@ -49,3 +49,15 @@ pub @func endsWith(str, search) {
 pub @func charCodeAt(str, index) {
     return __charCodeAt(str, index);
 }
+
+pub @func parseInt(str, base) {
+    return __parseInt(str, base);
+}
+
+pub @func parseFloat(str) {
+    return __parseFloat(str);
+}
+
+pub @func fromCharCode(code) {
+    return __fromCharCode(code);
+}
