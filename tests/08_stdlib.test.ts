@@ -181,7 +181,7 @@ test("io operations", () => {
   fs.writeFileSync("test.txt", "hello io");
   expectOutput(
     runSource(`
-@const $io = @import("std/io");
+@const $io = @import("std/fs");
 print(io.readFile("test.txt"));
 `),
     ["hello io"],
@@ -191,7 +191,7 @@ print(io.readFile("test.txt"));
 
 test("io.writeFile creates a file with the given content", () => {
   runSource(`
-@const $io = @import("std/io");
+@const $io = @import("std/fs");
 io.writeFile("write_test.txt", "written by lls");
 `);
   const content = fs.readFileSync("write_test.txt", "utf8");
@@ -205,7 +205,7 @@ test("io.exists returns true for an existing file and false otherwise", () => {
   fs.writeFileSync("exists_test.txt", "x");
   expectOutput(
     runSource(`
-@const $io = @import("std/io");
+@const $io = @import("std/fs");
 print(io.exists("exists_test.txt"));
 print(io.exists("definitely_missing_file.txt"));
 `),
@@ -217,7 +217,7 @@ print(io.exists("definitely_missing_file.txt"));
 test("io.readFile on a missing file returns an error rather than throwing", () => {
   expectOutput(
     runSource(`
-@const $io = @import("std/io");
+@const $io = @import("std/fs");
 $r = io.readFile("does_not_exist_anywhere.txt");
 print(@isError(r));
 `),
@@ -228,7 +228,7 @@ print(@isError(r));
 test("io.deleteFile removes a file", () => {
   fs.writeFileSync("delete_test.txt", "bye");
   runSource(`
-@const $io = @import("std/io");
+@const $io = @import("std/fs");
 io.deleteFile("delete_test.txt");
 `);
   if (fs.existsSync("delete_test.txt")) {
@@ -239,7 +239,7 @@ io.deleteFile("delete_test.txt");
 test("io.appendFile appends rather than overwrites", () => {
   fs.writeFileSync("append_test.txt", "first-");
   runSource(`
-@const $io = @import("std/io");
+@const $io = @import("std/fs");
 io.appendFile("append_test.txt", "second");
 `);
   const content = fs.readFileSync("append_test.txt", "utf8");
@@ -305,7 +305,7 @@ print(math.max(string.len(s), 3));
 
 test("io.writeFile followed by io.readFile round-trips content built from string module", () => {
   runSource(`
-@const $io = @import("std/io");
+@const $io = @import("std/fs");
 @const $string = @import("std/string");
 $msg = string.concat("round", "trip");
 io.writeFile("roundtrip_test.txt", msg);
