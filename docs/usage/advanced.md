@@ -17,9 +17,9 @@ Use `@import("path")` to include modules, binding them to constants via `@const`
 
 ### Core `std` Modules
 *   **`std.debug`**: For logging, formatted printing, and testing logic.
-    *   `std.debug.log(value)`: Emits raw representation of the variable (useful for objects/structs).
+    *   **Logging Methods**: `trace(msg)`, `debug(msg)`, `info(msg)`, `warn(msg)`, `err(msg)`, and `log(msg)` (alias for `info`). Output levels can be configured via the `--log-level <LEVEL>` CLI flag or `LLTS_LOG_LEVEL` environment variable.
     *   `std.debug.printLn("Result: {i}", val)`: Formatted string printing. Use `{s}` for strings and `{i}` for integers.
-    *   `std.debug.assert(condition)`: Validates state during execution (e.g., `std.debug.assert(sum == 8);`).
+    *   `std.debug.assert(condition)`: Validates state during execution (e.g., `std.debug.assert(sum == 8);`). If the condition is false, it returns an error `error("AssertFailed", condition)`.
 *   **`std.io`**: System input/output.
     *   `std.io.readLine()`: Synchronous terminal input capture.
 *   **`std.math`**: Mathematical utilities.
@@ -52,6 +52,13 @@ hero |> printStatus;
 
 ## Control Flow
 *See [Control Flow](control_flow.md) and [Loops](loops.md) for full details on conditionals and iteration.*
+
+## Error Handling and Diagnostics
+
+The language and VM feature an advanced diagnostic subsystem (`src/errors/`) and a robust IO subsystem (`src/io/`):
+*   **Error Payloads**: Error values can carry an optional payload via `error(code, payload)`. The error object exposes `.code`, `.message`, and `.payload` properties.
+*   **Rich Traces**: Both compile-time and runtime errors produce precise, cross-module stack traces (e.g., `--> file.lls:line:col`), including full module import chains when resolving dependencies.
+*   **Error Path Cleanup**: The `@errdefer` keyword executes deferred statements in LIFO order during error unwinds.
 
 ## Syntax Quick Reference for Agents
 *   **Declarations:** `@func`, `@const`, `@struct`, `@if`, `@for`.

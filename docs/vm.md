@@ -55,3 +55,23 @@ The primary execution loop is `execute(vm: *VMState, start_ip: usize)` inside `e
   * Arithmetic & Comparisons: Dispatch to typed helpers in `arith.zig` and `compare.zig`.
   * Function Invocation: `OP_CALL_STATIC` executes directly if the address is known. `OP_CALL` handles dynamic dispatch, validating the target (native or bytecode) and reorganizing stack variables before initiating the call (`call.zig`).
   * Properties: Structs use statically compiled `OP_GET_INDEX` offsets. Dynamic module or error properties use `OP_GET_PROPERTY`, doing string lookups at runtime.
+
+## 5. Error Handling & Diagnostics
+
+The VM uses a dedicated subsystem (`src/errors/`) to report issues robustly.
+* **`diag.zig` & `report.zig`**: Provide functions for formatting contextual source errors, showing the file, line, column, and a precise snippet of the code where the error occurred.
+* **`runtime.zig` & `stack_trace.zig`**: Handle runtime failures by printing a diagnostic source context followed by a full stack trace. When `runtimeFail` is triggered (e.g., from a watchdog timeout or an explicit `RuntimeError`), it unwinds `VMState.frames`, mapping each frame to its source location using the metadata stored in `CallFrame`.
+* **Integration**: The VM and Compiler both funnel errors through this API to ensure users receive consistent, colorized, and detailed diagnostic output rather than raw panics.
+
+## 6. IO & Logging Subsystem
+
+The IO subsystem (`src/io/`) replaces direct standard library print calls with a structured, robust I/O pipeline:
+* **Logging (`log.zig`)**: Provides leveled logging (`.trace`, `.debug`, `.info`, `.warn`, `.err`). The minimum log level can be configured via environment variables (e.g., `LLTS_LOG_LEVEL`).
+* **Output (`out.zig`)**: Manages low-level writes to `STDOUT` and `STDERR`, specifically handling short writes and `EINTR` signals gracefully through POSIX bindings. It replaces `std.debug.print` in the VM's execution path.
+* **Colors (`color.zig`)**: Supplies ANSI color formatting for both the logger and the diagnostic error reporter.
+
+## 7. Module Resolution
+
+Module instances and global variables are resolved via hash maps in the VM (`VMState.modules` and `VMState.globals`).
+* The compiler and VM work together to manage cross-module dependencies, utilizing the new diagnostic system if a module fails to load or resolve.
+* Global constants and module exports are resolved at compile/load time and inserted into these maps, ensuring that dynamic property lookups (`OP_GET_PROPERTY`) and module accesses are handled efficiently and deterministically at runtime.

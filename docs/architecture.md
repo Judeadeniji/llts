@@ -6,7 +6,7 @@ LLTS (Low Level TypeScript) is a small, gradually typed language featuring Zig-i
 
 The architecture of LLTS is built upon a few key pillars, emphasizing explicit control, performance, and simplicity:
 
-- **Custom Pipeline**: The toolchain consists of a hand-written scanner (lexer), a recursive-descent parser, an Abstract Syntax Tree (AST), a bytecode compiler, and a Stack Virtual Machine (VM).
+- **Custom Pipeline**: The toolchain consists of a hand-written scanner (lexer), a recursive-descent parser, an Abstract Syntax Tree (AST), a bytecode compiler with robust module resolution, and a Stack Virtual Machine (VM).
 - **Explicit Memory Management**: LLTS eschews tracing Garbage Collection (GC) in favor of explicit ownership. It introduces a frame-local heap (where bare initializations like `Foo{}` or `[...]` are bump-allocated and automatically rewound when the frame returns). Returning or escaping frame-local data results in a compile error. Persistent allocations are done via the `@new` intrinsic using `std.mem.Arena` combined with the `defer` keyword for cleanup.
 - **Gradual Typing & Static Analysis**: The compiler includes a gradual typecheck pass before bytecode emission. It supports annotations (e.g., `$name: T`, `[]T`) and tracks types internally, validating returns, structural fields, and array bounds. Debug type assertions are injected, which can be stripped in release builds.
 - **Explicit Error Handling**: Following Zig's philosophy, errors are explicit (using `error(...)` and `?`). 
@@ -58,6 +58,8 @@ zig build && bun test tests/
 ```
 
 ### 4.3 Diagnostics and Safety
-- **Stack Traces**: The VM maintains rigorous runtime tracking to emit full stack traces and source-context diagnostics directly to `stderr` upon fatal errors.
+- **Diagnostics API (`src/errors/`)**: A dedicated subsystem provides rich, source-contextual error reporting for compile-time failures, runtime panics, and stack traces.
+- **IO and Logging (`src/io/`)**: A robust IO layer centralizes standard file descriptor writes, ANSI terminal colors, and environmental logging (e.g., via `--log-level`).
+- **Stack Traces**: The VM leverages the diagnostics API and IO subsystem to maintain rigorous runtime tracking, emitting full stack traces directly to `stderr` upon fatal errors.
 - **Type Checking Asserts**: During normal execution, type asserts are validated. Compiling with `--release` will strip these assertions for performance benchmarking.
 - **Safety**: Standard safety guarantees (such as array bounds checking and `@const` immutability) are baked into both the typechecker (at compile-time) and the VM (at runtime).

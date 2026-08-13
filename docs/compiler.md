@@ -37,6 +37,7 @@ The entire compilation process shares a mutable `CompilerState` (`state.zig`), w
 - **Defer Stacks (`defer_stacks`)**: Maps a scope depth to a list of deferred AST nodes. These nodes are stored during traversal and compiled immediately before the scope exits.
 - **Control Flow Trackers (`loops`, `exprs`)**: Stacks that track metadata for loops and block expressions to facilitate correct `break` and `continue` jump offsets.
 - **Symbol Tables**: Maps strings to rich metadata definitions (`functions`, `structs`, `enums`, `global_vars`).
+- **Diagnostics State (`diag_path`, `diag_line`, `diag_column`)**: Tracks the physical source location of the AST node currently being compiled or typechecked. This state is fed into the `src/errors/` subsystem to produce rich, contextual compile errors.
 
 ## Code Generation Strategy
 
@@ -56,6 +57,12 @@ For forward jumps (like `if`, `while`, or jumping over function bodies), the com
 The compiler uses an implicit stack machine. When a scope ends (`endScope` in `scope.zig`):
 1. **Defers**: `emitScopeDefers` compiles all `defer` statements registered for the current depth.
 2. **Pops**: `emitPopsAtDepth` emits `OP_POP` instructions to discard local variables that are going out of scope, keeping the runtime stack clean.
+
+## Diagnostics and IO
+
+The compiler and VM utilize dedicated subsystems for reporting and logging:
+- **Errors (`src/errors/`)**: A rich diagnostic API that formats and prints context-aware error messages. It uses the `diag_path`, `diag_line`, and `diag_column` from the compiler state (or instruction pointer during runtime) to point directly to the offending source code. It includes components like `report.zig` for formatting and `stack_trace.zig` for VM panics.
+- **Logging and Output (`src/io/`)**: Replaces standard `std.debug.print` with robust posix-level logging (`io.printStderr`, `io.printStdout`). It supports ansi-colored log levels (`trace`, `debug`, `info`, `warn`, `err`) driven by the `LLTS_LOG_LEVEL` environment variable.
 
 ## Input / Output
 

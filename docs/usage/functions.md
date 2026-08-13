@@ -68,6 +68,29 @@ The `return` keyword is used to return a value from a function. If the function 
 }
 ```
 
+## Error Handling and Cleanup
+Functions can return error objects and manage cleanup using `defer` and `errdefer`.
+
+*   **Error Objects:** Created via `error("Code")` or `error("Code", payload)`. They expose `.code`, `.message`, and `.payload` properties.
+*   **`defer`:** Executes a statement at the end of the current block, regardless of success or failure.
+*   **`errdefer`:** Executes a statement **only** if the block exits via an error (e.g., an explicit `return error(...)` or stack unwinding via the `?` operator). Cleanups run in LIFO order.
+
+```llts
+@func process() {
+    defer print("Cleanup always runs");
+    errdefer print("Only runs on error");
+    
+    // If something fails, the `?` operator unwinds the stack, 
+    // triggering errdefer (and defer) in LIFO order.
+    mightFail() ?;
+    
+    return true; // Normal return: errdefer is skipped
+}
+```
+
+## Diagnostics and Output
+If an error occurs at runtime or compile-time (e.g., unresolved module imports, type errors, out-of-bounds access), LLTS will output rich diagnostics to `stderr` showing the exact source line and call stack frame (e.g., `--> file.lls:10:5`).
+
 ## Constraints and Rules for Agents
 *   **Keyword Requirement:** ALWAYS use the `@func` keyword when defining a new function.
 *   **Prefix Variables on Declaration:** ALWAYS use the `$` prefix when declaring/assigning a new local variable.

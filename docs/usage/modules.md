@@ -16,10 +16,13 @@ $mutable_module = @import("path/to/other_module.lls");
 ```
 
 ### Constraints & Rules
-- **Path format**: The path provided to `@import` is a string literal representing the file path (e.g., `"examples/import_test_lib.lls"`). 
+- **Path format**: The path provided to `@import` is a string literal representing the file path (e.g., `"examples/import_test_lib.lls"`, `"./mid.lls"`, or `"../lib/utils.lls"`). The compiler automatically normalizes paths (resolving `.` and `..`) for reliable relative imports.
 - **Return Type**: `@import` evaluates to a module object containing all of the module's exported members.
 - **Assignment**: The module object must be bound to a variable (`$var = ...`) or a constant (`@const $var = ...`) to be used.
 - **Member Access**: Access exported members using dot notation on the assigned module variable (e.g., `module_name.ExportedMember`).
+
+### Diagnostics
+When an error (such as a syntax error or file-not-found) occurs in an imported module, the compiler's diagnostic engine produces an `@import` stack trace. This visualizes the exact chain of imports (e.g., `main.lls` → `mid.lls` → `leaf.lls`) that led to the faulting module, making it easy to track down broken dependencies in nested hierarchies.
 
 ### Example
 ```lls

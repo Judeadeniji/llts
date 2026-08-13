@@ -23,8 +23,9 @@ This document provides a technical overview of arrays in the `llts` language, in
 ## 3. Built-in Functions
 - **`len()`**: Retrieves the length (bounds) of an array literal.
   ```llts
-  std.debug.assert(len(arr) == 5);
+  $ok = std.debug.assert(len(arr) == 5);
   ```
+  *(Note: `std.debug.assert` returns `null` on success and an error value on failure.)*
 
 ## 4. Advanced / Low-Level Allocation
 - **Raw Heap Allocation**: If you need raw heap memory without length-prefixing overhead, use `std.mem.alloc`.

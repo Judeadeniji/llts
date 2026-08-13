@@ -74,13 +74,40 @@ $instance = @new(heap, Builder { value: 10 });
 For detailed information on struct methods, see [Structs and Methods](structs_and_methods.md).
 
 ## 5. Built-in Directives & Intrinsics
-- `@import("path")`: Imports a module.
+- `@import("path")`: Imports a module. Module resolution handles relative paths (`.`, `..`) and provides full stack traces on import failures.
 - `@const`: Declares a constant.
 - `@func`: Declares a function.
 - `@struct`: Declares a struct.
 - `@new(heap, instance)`: Allocates an instance on the given heap.
+- `error(code, payload)`: Creates an error value with an optional payload.
 
-## 6. Example: Hello World Program
+## 6. Error Handling, Diagnostics, and Logging
+
+### 6.1 Error Values
+Errors are first-class values created via `error(code, payload)`. They carry a `.code` string and an optional `.payload`.
+```llts
+$err = error("FileNotFound", "missing.txt");
+std.debug.printLn("Error: {s}", err.code);
+```
+
+### 6.2 Error-Path Cleanup (errdefer)
+The `errdefer` statement runs cleanup code only if the current scope exits via an error return or an unwind. It is skipped on normal exits, `break`, or `continue`.
+```llts
+errdefer std.debug.info("An error occurred!");
+```
+
+### 6.3 Logging
+The `std/debug` module provides leveled logging backed by a robust IO subsystem. Log output is written to stderr, optionally colored, and respects the `LLTS_LOG_LEVEL` environment variable (`trace`, `debug`, `info`, `warn`, `error`).
+```llts
+@const $debug = @import("std/debug");
+debug.info("System initialized");
+debug.err(error("FailCode", "Details")); # Auto-formats error objects
+```
+
+### 6.4 Assertions
+The `std.debug.assert(condition)` function ensures invariants. It returns `null` on success and `error("AssertFailed", condition)` on failure.
+
+## 7. Example: Hello World Program
 
 Below is a minimal but feature-complete program demonstrating imports, constants, function definition, structs, and printing output.
 
@@ -117,6 +144,8 @@ $sum = add(start, offset);
 std.debug.printLn("Message: {s}", msg);
 std.debug.printLn("Initial sum: {i}", sum);
 
+std.debug.info("Performing heap allocation...");
+
 # Heap allocation and method chaining
 $counter = @new(heap, Counter { value: sum });
 $final_val = counter.increment().increment().value;
@@ -124,9 +153,10 @@ $final_val = counter.increment().increment().value;
 std.debug.printLn("Final counter value: {i}", final_val);
 ```
 
-## 7. Key Rules & Constraints for AI Agents
+## 8. Key Rules & Constraints for AI Agents
 1. **Declaration vs Usage:** NEVER use the `$` prefix when referencing an already declared variable (e.g., `$x = 10; $y = x + 5;` NOT `$y = $x + 5;`).
 2. **Scoping & Mutability:** Use `@const $name` for imports and immutable values. Use `$name` for standard variable declaration.
 3. **Escaping Local Scope:** If a struct instance is returned from a function, you MUST use `@new(heap, ...)` to allocate it on the heap.
 4. **Method Receivers:** Struct methods MUST explicitly declare `self` as their first parameter.
 5. **Formatting:** `std.debug.printLn` supports format strings (e.g., `{i}` for integers, `{s}` for strings).
+6. **Error Handling & Logging:** Use `error(code, payload)` for structured error objects. Use `std.debug.info()`, `warn()`, and `err()` instead of `printLn` for diagnostic logging.

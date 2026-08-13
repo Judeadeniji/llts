@@ -56,6 +56,27 @@ outer: @for (0..3) |x| {
 }
 ```
 
+## 4. Loop Cleanup (`defer` and `errdefer`)
+
+Loop blocks fully support `defer` and `errdefer` for scoped cleanup:
+
+- **`defer`**: Always runs at the end of the iteration, including when jumping via `continue` or exiting via `break`.
+- **`errdefer`**: Exclusively runs on error paths (e.g., `return error(...)` or unwinding via the `?` try operator). It **does not** execute on normal exits, `break`, or `continue`.
+
+```llts
+@for (0..3) |i| {
+    defer print("End of iteration");
+    errdefer print("Error occurred in iteration");
+    
+    @if (i == 1) {
+        continue; // Triggers 'defer', skips 'errdefer'
+    }
+    @if (i == 2) {
+        break;    // Triggers 'defer', skips 'errdefer'
+    }
+}
+```
+
 ## Agent Constraints & Checks
 
 - **Prefixes:** Verify that `for` is always prefixed with `@` (`@for`).

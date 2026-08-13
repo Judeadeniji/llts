@@ -80,6 +80,8 @@ The scanner returns standard Zig errors via the `ScanError` set, which includes:
 - `InvalidCompilerKeyword`: Recognized an `@` token, but the identifier does not match valid compiler symbols.
 - `InvalidMember`: Encountered an invalid base or property during a `.` member expression scan.
 
+Internally, when a lexical error occurs, the scanner uses `errors/report.zig` (specifically `reportSourceErrorWithFrame`) to emit rich, context-aware diagnostics. This output is routed through the robust `src/io/` subsystem for accurate POSIX terminal coloring. It also hooks into `errors/diag.zig` to ensure the compiler's CLI does not print duplicate generic error messages upon failure.
+
 ## Usage Example
 
 ```zig

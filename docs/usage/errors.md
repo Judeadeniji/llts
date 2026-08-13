@@ -9,10 +9,40 @@ The language provides an `error` builtin function to construct explicit error va
 ### Syntax
 ```llts
 @const $err = error("this is an error");
+@const $err_with_payload = error("FileNotFound", "missing.txt");
 print(err);
 ```
-- **Behavior**: Instantiates an error object with the provided message string.
-- **Usage**: Error objects can be assigned to variables, printed, and returned to the host environment.
+- **Behavior**: Instantiates an error object with a message string and an optional payload string.
+- **Usage**: Error objects can be assigned to variables, printed, returned to the host environment, or passed to the logging subsystem.
+
+## Logging
+
+LLTS provides a robust leveled logging subsystem via the standard library (`std/debug`), which outputs to `stderr`.
+
+```llts
+@const $debug = @import("std/debug");
+
+@func main() {
+    debug.info("Application starting");
+    debug.warn("Disk space low");
+    
+    @const $err = error("FileNotFound", "missing.txt");
+    debug.err(err);
+}
+```
+- **Levels**: `debug.info()`, `debug.warn()`, `debug.err()`.
+- **Environment Controls**:
+  - `LLTS_LOG_LEVEL`: Set the minimum log level (e.g., `info`, `warn`, `error`).
+  - `NO_COLOR` / `FORCE_COLOR`: Control ANSI color output.
+- **Error Formatting**: Passing an `error()` object to `debug.err()` automatically formats it as a structured log without redundant `Error:` prefixes, displaying both the error code and its payload.
+- **Assertions**: `debug.assert(condition)` is available and returns an `AssertFailed` error value if the condition is false.
+
+## Diagnostics and Stack Traces
+
+LLTS features an enhanced diagnostic reporting API:
+- **Source Context**: Syntax, compile, and runtime errors print a visual source snippet with a caret (`-->`) pointing to the exact column of the fault.
+- **LLTS Call Stacks**: Runtime errors display native LLTS call frames (e.g., `at func_name (file.lls)`), hiding internal host VM traces.
+- **Import Tracing**: Errors originating from imported files print the full chain of `@import()` statements, tracing the module resolution path.
 
 ## Type System and Compile Errors
 

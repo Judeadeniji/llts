@@ -13,6 +13,7 @@ A `Chunk` represents a compiled unit of code. It contains the executable bytecod
 *   **`strings: std.ArrayList([]const u8)`**: Parallel string storage for interned strings (e.g., variable and property names).
 *   **`functions: std.StringHashMap(LltsFunction)`**: A map of declared functions within the chunk.
 *   **`exports: std.StringHashMap(void)`**: A map tracking exported module symbols.
+*   **`sources: std.ArrayList(SourceFile)`**: Tracks the entry script and all imported modules. Used by the diagnostics subsystem for precise file path and source text resolution in error reporting.
 
 ### Operations
 
@@ -29,15 +30,18 @@ The VM operates on a tagged union, `Value`, which can represent various primitiv
 *   **Primitives**: 
     *   `null`: Represents absence of value.
     *   `bool`: Boolean (`true` or `false`).
-    *   `int`: 32-bit signed integer (`i32`).
+    *   `int`: 64-bit signed integer (`i64`).
     *   `float`: 64-bit floating point (`f64`).
 *   **Heap/References**: 
     *   `ptr: i32`: A pointer into a separate `i32` heap, representing arrays, strings, errors, and struct instances.
+    *   `list: *ListObject`: Growable dynamic list (`std/list`).
+    *   `map: *MapObject`: Growable hash map (`std/map`).
+    *   `buffer: *BufferObject`: Byte buffer for binary IO operations (`std/buffer`).
 *   **Strings & Identifiers**:
     *   `name: u32`: An interned name index pointing into the chunk's `strings` table (used for globals and properties).
     *   `slice: { offset: u32, len: u32 }`: A string view pointing into the VM's global `string_bytes` buffer.
 *   **Execution Entities**:
-    *   `function: LltsFunction`: A user-defined LLTS function.
+    *   `function: LltsFunction`: A user-defined LLTS function. Tracks its `source_index` to map execution back to the correct file for diagnostics.
     *   `native: *const NativeFunction`: A binding to a Zig native function.
     *   `module: *ModuleObject`: A module object created by imports, containing a hash map of dynamic properties.
 

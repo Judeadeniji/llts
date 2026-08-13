@@ -61,8 +61,11 @@ All concrete node structures require a `loc: Location` field, which the `.loc()`
 pub const Location = struct {
     line: u32 = 0,
     column: u32 = 0,
+    path: []const u8 = "",
 };
 ```
+
+The `path` field is leveraged by the diagnostics API (`src/errors/diag.zig`) to print precise error traces pointing back to the correct source file across multiple imports.
 
 ---
 

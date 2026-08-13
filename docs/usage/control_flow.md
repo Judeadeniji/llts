@@ -18,11 +18,11 @@ $a = 10;
 $b = 20;
 
 @if (a > b) {
-    std.debug.printLn("a is greater than b");
+    print("a is greater than b");
 } @else @if (a == b) {
-    std.debug.printLn("a is equal to b");
+    print("a is equal to b");
 } @else {
-    std.debug.printLn("a is less than b");
+    print("a is less than b");
 }
 ```
 
