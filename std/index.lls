@@ -9,3 +9,5 @@ pub @const $time = @import("std/time.lls");
 pub @const $os = @import("std/os.lls");
 pub @const $http = @import("std/http.lls");
 pub @const $json = @import("std/json.lls");
+pub @const $list = @import("std/list.lls");
+pub @const $map = @import("std/map.lls");

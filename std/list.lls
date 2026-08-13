@@ -1,0 +1,23 @@
+pub @func create() {
+    return __listCreate();
+}
+
+pub @func push(lst, item) {
+    return __listPush(lst, item);
+}
+
+pub @func pop(lst) {
+    return __listPop(lst);
+}
+
+pub @func get(lst, index) {
+    return __listGet(lst, index);
+}
+
+pub @func set(lst, index, item) {
+    return __listSet(lst, index, item);
+}
+
+pub @func len(lst) {
+    return __listLen(lst);
+}

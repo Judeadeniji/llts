@@ -27,6 +27,24 @@ pub const ModuleObject = struct {
     }
 };
 
+pub const MapObject = struct {
+    entries: std.StringHashMap(Value),
+
+    pub fn deinit(self: *MapObject, allocator: std.mem.Allocator) void {
+        var it = self.entries.keyIterator();
+        while (it.next()) |k| allocator.free(k.*);
+        self.entries.deinit();
+    }
+};
+
+pub const ListObject = struct {
+    items: std.ArrayList(Value),
+
+    pub fn deinit(self: *ListObject, allocator: std.mem.Allocator) void {
+        self.items.deinit(allocator);
+    }
+};
+
 /// Tagged runtime value. Heap objects (arrays, strings, errors, structs) use `.ptr`.
 pub const Value = union(enum) {
     null,
@@ -43,6 +61,10 @@ pub const Value = union(enum) {
     slice: struct { offset: u32, len: u32 },
     /// Module object from OP_GET_MODULE.
     module: *ModuleObject,
+    /// Growable List (std/list).
+    list: *ListObject,
+    /// Growable Map (std/map).
+    map: *MapObject,
 
     pub fn isTruthy(self: Value) bool {
         return switch (self) {
@@ -52,7 +74,7 @@ pub const Value = union(enum) {
             .float => |n| n != 0,
             .ptr => true,
             .slice => |s| s.len > 0,
-            .native, .function, .name, .module => true,
+            .native, .function, .name, .module, .list, .map => true,
         };
     }
 };

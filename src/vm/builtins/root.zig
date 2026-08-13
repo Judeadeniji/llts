@@ -11,6 +11,8 @@ const time_mod = @import("time.zig");
 const os_mod = @import("os.zig");
 const http_mod = @import("http.zig");
 const json_mod = @import("json_builtin.zig");
+const list_mod = @import("list.zig");
+const map_mod = @import("map.zig");
 
 pub fn registerBuiltins(vm: *state_mod.VMState) !void {
     try print_mod.register(vm);
@@ -24,4 +26,6 @@ pub fn registerBuiltins(vm: *state_mod.VMState) !void {
     try os_mod.register(vm);
     try http_mod.register(vm);
     try json_mod.register(vm);
+    try list_mod.register(vm);
+    try map_mod.register(vm);
 }

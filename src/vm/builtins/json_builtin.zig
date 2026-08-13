@@ -89,6 +89,27 @@ fn stringifyNode(vm: *VMState, val: Value, out: *std.io.Writer.Allocating) !void
             }
             try out.writer.writeAll("]");
         },
+        .list => |lst| {
+            try out.writer.writeAll("[");
+            for (lst.items.items, 0..) |item, i| {
+                if (i > 0) try out.writer.writeAll(",");
+                try stringifyNode(vm, item, out);
+            }
+            try out.writer.writeAll("]");
+        },
+        .map => |mp| {
+            try out.writer.writeAll("{");
+            var it = mp.entries.iterator();
+            var first = true;
+            while (it.next()) |entry| {
+                if (!first) try out.writer.writeAll(",");
+                try out.writer.print("{f}", .{std.json.fmt(entry.key_ptr.*, .{})});
+                try out.writer.writeAll(":");
+                try stringifyNode(vm, entry.value_ptr.*, out);
+                first = false;
+            }
+            try out.writer.writeAll("}");
+        },
         else => try out.writer.writeAll("\"[Object]\""),
     }
 }

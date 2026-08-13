@@ -1,0 +1,23 @@
+pub @func create() {
+    return __mapCreate();
+}
+
+pub @func set(mp, key, value) {
+    return __mapSet(mp, key, value);
+}
+
+pub @func get(mp, key) {
+    return __mapGet(mp, key);
+}
+
+pub @func has(mp, key) {
+    return __mapHas(mp, key);
+}
+
+pub @func delete(mp, key) {
+    return __mapDelete(mp, key);
+}
+
+pub @func size(mp) {
+    return __mapSize(mp);
+}

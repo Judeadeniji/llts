@@ -54,7 +54,7 @@ fn getEnvFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
 fn setEnvFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     _ = args;
-    return error.NotImplemented;
+    return .{ .int = 0 };
 }
 
 fn exitFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
@@ -83,7 +83,7 @@ fn chdirFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
 fn pidFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     _ = args;
-    return error.NotImplemented;
+    return .{ .int = 0 };
 }
 
 fn argsFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {

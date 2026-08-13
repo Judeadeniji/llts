@@ -5,6 +5,8 @@ const value = @import("../bytecode/value.zig");
 pub const Value = value.Value;
 pub const Chunk = chunk_mod.Chunk;
 pub const ModuleObject = value.ModuleObject;
+pub const ListObject = value.ListObject;
+pub const MapObject = value.MapObject;
 
 pub const MEMORY_SIZE: usize = 1024 * 1024;
 pub const HEAP_START: i32 = 1024;
@@ -45,6 +47,8 @@ pub const VMState = struct {
     current_line: u32 = 1,
     /// Owned module instances created by OP_GET_MODULE.
     modules: std.ArrayList(*ModuleObject) = .empty,
+    lists: std.ArrayList(*ListObject) = .empty,
+    maps: std.ArrayList(*MapObject) = .empty,
     /// Cache: constant string index → heap data pointer, avoids re-allocating the same literal.
     string_cache: std.AutoHashMap(u32, i32),
     /// Zero-alloc string arena (appended to, never freed during execution).
@@ -79,6 +83,16 @@ pub const VMState = struct {
             self.allocator.destroy(mod);
         }
         self.modules.deinit(self.allocator);
+        for (self.lists.items) |lst| {
+            lst.deinit(self.allocator);
+            self.allocator.destroy(lst);
+        }
+        self.lists.deinit(self.allocator);
+        for (self.maps.items) |mp| {
+            mp.deinit(self.allocator);
+            self.allocator.destroy(mp);
+        }
+        self.maps.deinit(self.allocator);
         self.string_cache.deinit();
         self.string_bytes.deinit(self.allocator);
         self.allocator.free(self.memory);
@@ -110,5 +124,19 @@ pub const VMState = struct {
         };
         try self.modules.append(self.allocator, mod);
         return mod;
+    }
+
+    pub fn allocList(self: *VMState) !*ListObject {
+        const lst = try self.allocator.create(ListObject);
+        lst.* = .{ .items = .empty };
+        try self.lists.append(self.allocator, lst);
+        return lst;
+    }
+
+    pub fn allocMap(self: *VMState) !*MapObject {
+        const mp = try self.allocator.create(MapObject);
+        mp.* = .{ .entries = std.StringHashMap(Value).init(self.allocator) };
+        try self.maps.append(self.allocator, mp);
+        return mp;
     }
 };
