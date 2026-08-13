@@ -3,8 +3,8 @@
 # Easy path ops are pure LLS over `std/syscall` + `std/buffer`.
 # `readDir` / `stat` / `mkdirAll` / `realpath` still use host `__*` natives.
 #
-# Module functions are cwd-relative. `Dir` methods work on a local value:
-# `$d = fs.Dir{ kind: 0 }; d.readFile(path)`.
+# Bodies live on `Dir`. Module functions forward to `fs.cwd`:
+#   fs.readFile(path)  ==  fs.cwd.readFile(path)
 
 @const $syscall = @import("std/syscall.lls");
 @const $buffer = @import("std/buffer.lls");
@@ -56,167 +56,95 @@ pub @struct Stat {
     return out;
 }
 
-@func doReadFileBuffer(path) {
-    $fd = syscall.open(path, syscall.O_RDONLY);
-    @if (@isError(fd)) {
-        return mapIo(path, fd);
-    }
-    $out = readAllFd(fd, path);
-    closeFd(fd);
-    return out;
-}
-
-@func doReadFile(path) {
-    $buf = doReadFileBuffer(path);
-    @if (@isError(buf)) {
-        return buf;
-    }
-    return buffer.readString(buf, 0, buffer.len(buf));
-}
-
-@func doWriteFile(path, content) {
-    $flags = syscall.O_CREAT | syscall.O_WRONLY | syscall.O_TRUNC;
-    $fd = syscall.open(path, flags, 0o644);
-    @if (@isError(fd)) {
-        return mapIo(path, fd);
-    }
-    $n = syscall.write(fd, content);
-    @if (@isError(n)) {
-        closeFd(fd);
-        return mapIo(path, n);
-    }
-    closeFd(fd);
-    return null;
-}
-
-@func doWriteFileBuffer(path, buf) {
-    $flags = syscall.O_CREAT | syscall.O_WRONLY | syscall.O_TRUNC;
-    $fd = syscall.open(path, flags, 0o644);
-    @if (@isError(fd)) {
-        return mapIo(path, fd);
-    }
-    $n = syscall.write(fd, buf);
-    @if (@isError(n)) {
-        closeFd(fd);
-        return mapIo(path, n);
-    }
-    closeFd(fd);
-    return null;
-}
-
-@func doAppendFile(path, content) {
-    $flags = syscall.O_CREAT | syscall.O_WRONLY | syscall.O_APPEND;
-    $fd = syscall.open(path, flags, 0o644);
-    @if (@isError(fd)) {
-        return mapIo(path, fd);
-    }
-    $n = syscall.write(fd, content);
-    @if (@isError(n)) {
-        closeFd(fd);
-        return mapIo(path, n);
-    }
-    closeFd(fd);
-    return null;
-}
-
-@func doDeleteFile(path) {
-    $rc = syscall.unlink(path);
-    @if (@isError(rc)) {
-        return mapIo(path, rc);
-    }
-    return null;
-}
-
-@func doExists(path) {
-    $rc = syscall.access(path, syscall.F_OK);
-    @if (@isError(rc)) {
-        return false;
-    }
-    return true;
-}
-
-@func doMkdir(path) {
-    $rc = syscall.mkdir(path);
-    @if (@isError(rc)) {
-        return mapIo(path, rc);
-    }
-    return null;
-}
-
-@func doRename(old, new) {
-    $rc = syscall.rename(old, new);
-    @if (@isError(rc)) {
-        return mapIo(old, rc);
-    }
-    return null;
-}
-
-@func doCopyFile(src, dst) {
-    $data = doReadFileBuffer(src);
-    @if (@isError(data)) {
-        return data;
-    }
-    return doWriteFileBuffer(dst, data);
-}
-
-@func doSymlink(target, path) {
-    $rc = syscall.symlink(target, path);
-    @if (@isError(rc)) {
-        return mapIo(path, rc);
-    }
-    return null;
-}
-
-@func doReadlink(path) {
-    $rc = syscall.readlink(path);
-    @if (@isError(rc)) {
-        return mapIo(path, rc);
-    }
-    return rc;
-}
-
-@func doChmod(path, mode) {
-    $rc = syscall.chmod(path, mode);
-    @if (@isError(rc)) {
-        return mapIo(path, rc);
-    }
-    return null;
-}
-
 pub @struct Dir {
     # 0 = cwd. Real fd later.
     kind: int;
 
-    @func readFile(self, path) {
-        return doReadFile(path);
+    @func readFileBuffer(self, path) {
+        $fd = syscall.open(path, syscall.O_RDONLY);
+        @if (@isError(fd)) {
+            return mapIo(path, fd);
+        }
+        $out = readAllFd(fd, path);
+        closeFd(fd);
+        return out;
     }
 
-    @func readFileBuffer(self, path) {
-        return doReadFileBuffer(path);
+    @func readFile(self, path) {
+        $buf = self.readFileBuffer(path);
+        @if (@isError(buf)) {
+            return buf;
+        }
+        return buffer.readString(buf, 0, buffer.len(buf));
     }
 
     @func writeFile(self, path, content) {
-        return doWriteFile(path, content);
+        $flags = syscall.O_CREAT | syscall.O_WRONLY | syscall.O_TRUNC;
+        $fd = syscall.open(path, flags, 0o644);
+        @if (@isError(fd)) {
+            return mapIo(path, fd);
+        }
+        $n = syscall.write(fd, content);
+        @if (@isError(n)) {
+            closeFd(fd);
+            return mapIo(path, n);
+        }
+        closeFd(fd);
+        return null;
     }
 
     @func writeFileBuffer(self, path, buf) {
-        return doWriteFileBuffer(path, buf);
+        $flags = syscall.O_CREAT | syscall.O_WRONLY | syscall.O_TRUNC;
+        $fd = syscall.open(path, flags, 0o644);
+        @if (@isError(fd)) {
+            return mapIo(path, fd);
+        }
+        $n = syscall.write(fd, buf);
+        @if (@isError(n)) {
+            closeFd(fd);
+            return mapIo(path, n);
+        }
+        closeFd(fd);
+        return null;
     }
 
     @func appendFile(self, path, content) {
-        return doAppendFile(path, content);
+        $flags = syscall.O_CREAT | syscall.O_WRONLY | syscall.O_APPEND;
+        $fd = syscall.open(path, flags, 0o644);
+        @if (@isError(fd)) {
+            return mapIo(path, fd);
+        }
+        $n = syscall.write(fd, content);
+        @if (@isError(n)) {
+            closeFd(fd);
+            return mapIo(path, n);
+        }
+        closeFd(fd);
+        return null;
     }
 
     @func deleteFile(self, path) {
-        return doDeleteFile(path);
+        $rc = syscall.unlink(path);
+        @if (@isError(rc)) {
+            return mapIo(path, rc);
+        }
+        return null;
     }
 
     @func exists(self, path) {
-        return doExists(path);
+        $rc = syscall.access(path, syscall.F_OK);
+        @if (@isError(rc)) {
+            return false;
+        }
+        return true;
     }
 
     @func mkdir(self, path) {
-        return doMkdir(path);
+        $rc = syscall.mkdir(path);
+        @if (@isError(rc)) {
+            return mapIo(path, rc);
+        }
+        return null;
     }
 
     @func mkdirAll(self, path) {
@@ -232,19 +160,35 @@ pub @struct Dir {
     }
 
     @func rename(self, old, new) {
-        return doRename(old, new);
+        $rc = syscall.rename(old, new);
+        @if (@isError(rc)) {
+            return mapIo(old, rc);
+        }
+        return null;
     }
 
     @func copyFile(self, src, dst) {
-        return doCopyFile(src, dst);
+        $data = self.readFileBuffer(src);
+        @if (@isError(data)) {
+            return data;
+        }
+        return self.writeFileBuffer(dst, data);
     }
 
     @func symlink(self, target, path) {
-        return doSymlink(target, path);
+        $rc = syscall.symlink(target, path);
+        @if (@isError(rc)) {
+            return mapIo(path, rc);
+        }
+        return null;
     }
 
     @func readlink(self, path) {
-        return doReadlink(path);
+        $rc = syscall.readlink(path);
+        @if (@isError(rc)) {
+            return mapIo(path, rc);
+        }
+        return rc;
     }
 
     @func realpath(self, path) {
@@ -252,76 +196,82 @@ pub @struct Dir {
     }
 
     @func chmod(self, path, mode) {
-        return doChmod(path, mode);
+        $rc = syscall.chmod(path, mode);
+        @if (@isError(rc)) {
+            return mapIo(path, rc);
+        }
+        return null;
     }
 }
+
+pub $cwd = Dir{ kind: 0 };
 
 # --- cwd-relative convenience (primary API) ---
 
 pub @func readFile(path) {
-    return doReadFile(path);
+    return cwd.readFile(path);
 }
 
 pub @func readFileBuffer(path) {
-    return doReadFileBuffer(path);
+    return cwd.readFileBuffer(path);
 }
 
 pub @func writeFile(path, content) {
-    return doWriteFile(path, content);
+    return cwd.writeFile(path, content);
 }
 
 pub @func writeFileBuffer(path, buf) {
-    return doWriteFileBuffer(path, buf);
+    return cwd.writeFileBuffer(path, buf);
 }
 
 pub @func appendFile(path, content) {
-    return doAppendFile(path, content);
+    return cwd.appendFile(path, content);
 }
 
 pub @func deleteFile(path) {
-    return doDeleteFile(path);
+    return cwd.deleteFile(path);
 }
 
 pub @func exists(path) {
-    return doExists(path);
+    return cwd.exists(path);
 }
 
 pub @func mkdir(path) {
-    return doMkdir(path);
+    return cwd.mkdir(path);
 }
 
 pub @func mkdirAll(path) {
-    return __mkdirAll(path);
+    return cwd.mkdirAll(path);
 }
 
 pub @func readDir(path) {
-    return __readDir(path);
+    return cwd.readDir(path);
 }
 
 pub @func stat(path) {
-    return __stat(path);
+    return cwd.stat(path);
 }
 
 pub @func rename(old, new) {
-    return doRename(old, new);
+    return cwd.rename(old, new);
 }
 
 pub @func copyFile(src, dst) {
-    return doCopyFile(src, dst);
+    return cwd.copyFile(src, dst);
 }
 
 pub @func symlink(target, path) {
-    return doSymlink(target, path);
+    return cwd.symlink(target, path);
 }
 
 pub @func readlink(path) {
-    return doReadlink(path);
+    return cwd.readlink(path);
 }
 
 pub @func realpath(path) {
-    return __realpath(path);
+    return cwd.realpath(path);
 }
 
 pub @func chmod(path, mode) {
-    return doChmod(path, mode);
+    return cwd.chmod(path, mode);
 }

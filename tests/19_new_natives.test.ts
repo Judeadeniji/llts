@@ -426,3 +426,17 @@ fs.deleteFile("test_llts_ren_c.txt");
 		["src", "false", "src"],
 	);
 });
+
+test("fs: cwd.readFile matches module readFile", () => {
+	expectOutput(
+		runSource(`
+@const $fs = @import("std/fs");
+fs.writeFile("test_llts_cwd_smoke.txt", "via-cwd");
+print(fs.cwd.readFile("test_llts_cwd_smoke.txt"));
+print(fs.readFile("test_llts_cwd_smoke.txt"));
+fs.cwd.deleteFile("test_llts_cwd_smoke.txt");
+print(fs.exists("test_llts_cwd_smoke.txt"));
+`),
+		["via-cwd", "via-cwd", "false"],
+	);
+});

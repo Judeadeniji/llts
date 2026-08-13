@@ -1,7 +1,13 @@
 # fs
 
-The `fs` module provides a cross-platform filesystem API. It allows reading, writing, and manipulating files and directories. 
-Currently, all filesystem operations are performed relative to the current working directory (`cwd`).
+The `fs` module provides a cross-platform filesystem API. It allows reading, writing, and manipulating files and directories.
+
+Implementations live on [`Dir`](#dir). Module-level helpers are thin forwards to **`fs.cwd`** (Zig-flavored):
+
+```llts
+fs.readFile(path);       # primary API
+fs.cwd.readFile(path);   # same
+```
 
 Most path helpers (`readFile`, `writeFile`, `appendFile`, `deleteFile`, `exists`, `mkdir`, `rename`, `copyFile`, `symlink`, `readlink`, `chmod`) are implemented in LLS on top of [`std/syscall`](syscall.md) and [`std/buffer`](buffer.md). `readDir`, `stat`, `mkdirAll`, and `realpath` still use host natives.
 
@@ -27,18 +33,22 @@ pub @struct Stat {
 * **kind**: The type of the file. `1` for file, `2` for directory, `3` for symlink, `0` for unknown.
 
 ### `Dir`
-Represents a directory handle. Currently, it acts as a wrapper around the current working directory (`kind: 0`).
+Directory handle. Today `kind: 0` means cwd-relative paths (a real directory fd may come later).
 
 ```llts
 pub @struct Dir {
     kind: int;
-    // Methods (matches top-level functions)
+    # methods: readFile, writeFile, … (see Functions)
 }
+
+pub $cwd = Dir{ kind: 0 };
 ```
+
+Use `fs.cwd` for the default handle, or construct `Dir{ kind: 0 }` locally.
 
 ## Functions
 
-All functions below are available as both top-level functions in the `fs` module and as methods on a `Dir` instance.
+All functions below are available as both top-level functions in the `fs` module and as methods on a `Dir` instance. Top-level forms call through `cwd`.
 
 ### `readFile(path)`
 Reads the entire contents of a file into a string.
@@ -128,31 +138,23 @@ Changes the permissions of a file (stubbed across platforms currently).
 ## Examples
 
 ```llts
-import std.fs;
+@const $fs = @import("std/fs");
 
-# Write to a file
+# Write to a file (module or cwd)
 fs.writeFile("test.txt", "Hello World!\n");
+fs.cwd.appendFile("test.txt", "Appended line.\n");
 
-# Append to the file
-fs.appendFile("test.txt", "Appended line.\n");
-
-# Read the file
 $content = fs.readFile("test.txt");
 print(content);
 
-# Check if a file exists
 $does_exist = fs.exists("test.txt");
-print("Exists:", does_exist);
+print(does_exist);
 
-# Read directory contents
 $files = fs.readDir(".");
 print(files);
 
-# Get file status
 $file_stat = fs.stat("test.txt");
-print("File size:", file_stat[0]);
-print("Kind:", file_stat[4]);
+print(file_stat[0]);
 
-# Cleanup
 fs.deleteFile("test.txt");
 ```

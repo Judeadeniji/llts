@@ -81,9 +81,9 @@ print(@typeOf(grid));  # [2][2]int
 | `int` / `float` | `8` |
 | `bool` | `1` |
 | `null` | `0` |
-| `string` / `[]byte` | `16` (header: ptr + len) |
-| struct type / value | `field_count * 16` |
-| runtime value (no static type) | measured from the live value |
+| `string` / `[]byte` (type name) | `16` (header: ptr + len) |
+| struct type / typed struct value | `field_count * 16` |
+| runtime fallback (`OP_SIZEOF`) | by value tag (`int`/`float`→8, `bool`→1, heap `ptr`→4, …) |
 
 ```llts
 print(@sizeOf(int));       # 8
@@ -92,12 +92,12 @@ $p = Point { x: 1, y: 2, z: 3 };
 print(@sizeOf(p));         # same as @sizeOf(Point)
 
 $x = 100;
-print(@sizeOf(x));         # 8
+print(@sizeOf(x));         # 8 when typed/inferred as int
 $arr = [1, 2, 3, 4];
-print(@sizeOf(arr));       # runtime measure
+print(@sizeOf(arr));       # runtime tag size if no static layout
 ```
 
-Expects exactly one argument. Covered by `tests/26_sizeof.test.ts`.
+Expects exactly one argument. Covered by `tests/26_sizeof.test.ts` (picked up by `bun test tests/` / `bun run test`).
 
 ## Key Safety Constraints
 1. **Strong Typing on Assignment**: Variables initialized with explicit types (`$var: type = ...`) will reject incompatible runtime or compile-time assignments.
