@@ -150,9 +150,9 @@ test("http.fetch: returns 200 and body for example.com", () => {
 @const $http = @import("std/http");
 @const $s = @import("std/string");
 $res = http.fetch("http://example.com");
-print(res[0]);
-print(s.indexOf(res[1], "Example") >= 0);
-print(s.len(res[1]) > 0);
+print(res.status);
+print(s.indexOf(res.body, "Example") >= 0);
+print(s.len(res.body) > 0);
 `),
 		["200", "true", "true"],
 	);
@@ -164,8 +164,9 @@ test("http.fetch: invalid URL returns an error value", () => {
 @const $http = @import("std/http");
 $err = http.fetch("not-a-url");
 print(@isError(err));
+print(err.code);
 `),
-		["true"],
+		["true", "HttpError"],
 	);
 });
 
@@ -177,5 +178,16 @@ print(@isError(http.fetch("")));
 print(@isError(http.fetch("://")));
 `),
 		["true", "true"],
+	);
+});
+
+test("http.request: POST request", () => {
+	expectOutput(
+		runSource(`
+@const $http = @import("std/http");
+$res = http.request("https://httpbin.org/post", "POST", "hello");
+print(res.status);
+`),
+		["200"],
 	);
 });

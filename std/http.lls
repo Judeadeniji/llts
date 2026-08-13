@@ -1,3 +1,15 @@
-pub @func fetch(url) {
-    return __fetch(url);
+# HTTP client — fetch returns a Response-like object: { status, body }.
+
+pub @struct Response {
+    status: int;
+    body: string;
 }
+
+pub @func fetch(url) {
+    return __fetch(url, "GET", null);
+}
+
+pub @func request(url, method, body) {
+    return __fetch(url, method, body);
+}
+
