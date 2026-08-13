@@ -26,7 +26,7 @@ pub fn compileStatement(state: *CompilerState, node: *ast.Node) anyerror!void {
         .for_expr => |*f| try control.compileFor(state, f),
         .break_expr => |*b| try control.compileBreak(state, b),
         .continue_expr => |*c| try control.compileContinue(state, c),
-        .import => {},
+
         else => {
             try expr.compileExpression(state, node);
             try emit.emitOp(state, .OP_POP);

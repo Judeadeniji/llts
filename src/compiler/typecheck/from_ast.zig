@@ -13,7 +13,17 @@ pub fn typeFromAst(node: ?*ast.Node, state: ?*state_mod.CompilerState, ta: ir.Ty
         .primary => |p| try resolveNamedType(p.name, state),
         .array_type => |a| blk: {
             const elem = try typeFromAst(a.elem, state, ta);
-            break :blk try ta.arrayType(elem, a.length);
+            var length: ?usize = null;
+            if (a.length_text) |text| {
+                const parsed_len = parseArrayLengthString(text) catch |err| {
+                    if (state) |st| {
+                        return @import("../../errors/compile.zig").compileFailFmt(st, "Invalid array length '{s}'", .{text});
+                    }
+                    return err;
+                };
+                length = parsed_len;
+            }
+            break :blk try ta.arrayType(elem, length);
         },
         .union_type => |u| blk: {
             const left = try typeFromAst(u.left, state, ta);
@@ -34,6 +44,20 @@ pub fn resolveNamedType(name: []const u8, state: ?*state_mod.CompilerState) From
     }
     return t;
 }
+
+pub fn parseArrayLengthString(raw: []const u8) FromAstError!usize {
+    const n: i64 = if (std.mem.startsWith(u8, raw, "0x"))
+        std.fmt.parseInt(i64, raw[2..], 16) catch return error.CompileError
+    else if (std.mem.startsWith(u8, raw, "0b"))
+        std.fmt.parseInt(i64, raw[2..], 2) catch return error.CompileError
+    else if (std.mem.startsWith(u8, raw, "0o"))
+        std.fmt.parseInt(i64, raw[2..], 8) catch return error.CompileError
+    else
+        std.fmt.parseInt(i64, raw, 10) catch return error.CompileError;
+    if (n < 0) return error.CompileError;
+    return @intCast(n);
+}
+
 
 /// Display string for a type AST node. Validates unknown types when state is provided.
 pub fn typeAstToDisplay(node: ?*ast.Node, state: ?*state_mod.CompilerState) FromAstError!?[]const u8 {
@@ -207,7 +231,7 @@ pub fn resolveType(state: *state_mod.CompilerState, node: *ast.Node) ?[]const u8
             state.owned.append(state.allocator, s) catch {};
             break :blk s;
         },
-        .struct_init => |s| s.name,
+        .struct_init => |s| resolveStructName(state, s.type_expr),
         .unary => |u| resolveType(state, u.arg),
         else => null,
     };
@@ -239,4 +263,40 @@ pub fn resolveEnumName(state: *state_mod.CompilerState, node: *ast.Node) ?[]cons
         },
         else => return null,
     }
+}
+
+pub fn resolveStructName(state: *state_mod.CompilerState, node: *ast.Node) ?[]const u8 {
+    switch (node.*) {
+        .primary => |p| {
+            if (p.kind != .identifier) return null;
+            if (state.structs.contains(p.name)) return p.name;
+            var buf: [256]u8 = undefined;
+            const re_key = std.fmt.bufPrint(&buf, "${s}", .{p.name}) catch return null;
+            if (state.global_types.get(re_key)) |rt| {
+                if (!std.mem.startsWith(u8, rt, "module:")) return rt;
+            }
+            return p.name; // unresolved base name
+        },
+        .member => |m| {
+            if (m.property.* != .primary) return null;
+            const obj_path = @import("../expr/path.zig").tryResolveStaticPath(state, m.object) catch null orelse return null;
+            const q = std.fmt.allocPrint(state.allocator, "{s}::{s}", .{ obj_path, m.property.primary.name }) catch return null;
+            state.owned.append(state.allocator, q) catch {};
+            return q;
+        },
+        else => return null,
+    }
+}
+
+/// Reject `mod.Private { … }` when `Private` is not exported from the imported module.
+pub fn checkStructInitExport(state: *state_mod.CompilerState, type_expr: *ast.Node, qualified: []const u8) FromAstError!void {
+    if (type_expr.* != .member) return;
+    const mem = type_expr.member;
+    if (mem.object.* != .primary or mem.property.* != .primary) return;
+    if (std.mem.indexOf(u8, qualified, "::") == null) return;
+    if (state.chunk.exports.contains(qualified)) return;
+    return @import("../../errors/compile.zig").compileFailFmt(state, "'{s}' has no export '{s}'", .{
+        mem.object.primary.name,
+        mem.property.primary.name,
+    });
 }

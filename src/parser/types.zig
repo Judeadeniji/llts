@@ -12,16 +12,16 @@ pub fn parseType(self: *Parser) ParseError!*Node {
     if (self.checkDelim("[")) {
         const start = self.peek(0).?;
         _ = self.advance();
-        var length: ?usize = null;
+        var length_text: ?[]const u8 = null;
         if (self.check(.number) or self.check(.hex) or self.check(.octal) or self.check(.binary)) {
             const num_tok = self.advance().?;
-            length = try parseArrayLength(self, num_tok);
+            length_text = try self.dupe(num_tok.value);
         }
         _ = try self.consume(.delimiter, "Expected ']' in array type", "]");
         const elem = try parseType(self);
         left = try self.create(.{ .array_type = .{
             .elem = elem,
-            .length = length,
+            .length_text = length_text,
             .loc = self.locOf(start),
         } });
     } else {
@@ -39,26 +39,6 @@ pub fn parseType(self: *Parser) ParseError!*Node {
         } });
     }
     return left;
-}
-
-fn parseArrayLength(self: *Parser, num_tok: ctx.Token) ParseError!usize {
-    const raw = num_tok.value;
-    const n: i64 = switch (num_tok.type) {
-        .hex => std.fmt.parseInt(i64, raw[2..], 16) catch {
-            return self.failTok(num_tok, "Invalid array length '{s}'", .{raw});
-        },
-        .binary => std.fmt.parseInt(i64, raw[2..], 2) catch {
-            return self.failTok(num_tok, "Invalid array length '{s}'", .{raw});
-        },
-        .octal => std.fmt.parseInt(i64, raw[2..], 8) catch {
-            return self.failTok(num_tok, "Invalid array length '{s}'", .{raw});
-        },
-        else => std.fmt.parseInt(i64, raw, 10) catch {
-            return self.failTok(num_tok, "Invalid array length '{s}'", .{raw});
-        },
-    };
-    if (n < 0) return self.failTok(num_tok, "Invalid array length '{s}'", .{raw});
-    return @intCast(n);
 }
 
 fn parseTypeAtom(self: *Parser) ParseError!*Node {

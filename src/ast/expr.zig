@@ -82,8 +82,7 @@ pub const TryExpr = struct {
 };
 
 pub const ErrorExpr = struct {
-    message: *Node,
-    payload: ?*Node = null,
+    args: []*Node,
     loc: Location,
 };
 
@@ -93,7 +92,7 @@ pub const StructFieldInit = struct {
 };
 
 pub const StructInit = struct {
-    name: []const u8,
+    type_expr: *Node,
     fields: []StructFieldInit,
     loc: Location,
 };

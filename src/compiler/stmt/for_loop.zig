@@ -15,10 +15,14 @@ pub fn compileFor(state: *CompilerState, for_expr: *const ast.For) !void {
         .scope_depth = state.scope_depth,
     });
 
-    switch (for_expr.kind) {
-        .condition => try compileCondFor(state, for_expr),
-        .range => try compileRangeFor(state, for_expr),
-        .iterable => try compileIterFor(state, for_expr),
+    if (for_expr.captures.len > 0) {
+        if (for_expr.expr.* == .binary and std.mem.eql(u8, for_expr.expr.binary.operator, "..")) {
+            try compileRangeFor(state, for_expr);
+        } else {
+            try compileIterFor(state, for_expr);
+        }
+    } else {
+        try compileCondFor(state, for_expr);
     }
 
     try scope.endScope(state);
@@ -36,18 +40,14 @@ fn compileCondFor(state: *CompilerState, for_expr: *const ast.For) !void {
     var exit_jump: ?usize = null;
 
     var is_infinite = false;
-    if (for_expr.condition) |cond| {
-        if (cond.* == .literal and std.mem.eql(u8, cond.literal.value, "true")) {
-            is_infinite = true;
-        }
+    if (for_expr.expr.* == .literal and std.mem.eql(u8, for_expr.expr.literal.value, "true")) {
+        is_infinite = true;
     }
 
     if (!is_infinite) {
-        if (for_expr.condition) |cond| {
-            try expr.compileExpression(state, cond);
-            exit_jump = try emit.emitJump(state, .OP_JUMP_IF_FALSE);
-            try emit.emitOp(state, .OP_POP);
-        }
+        try expr.compileExpression(state, for_expr.expr);
+        exit_jump = try emit.emitJump(state, .OP_JUMP_IF_FALSE);
+        try emit.emitOp(state, .OP_POP);
     }
 
     try scope.beginScope(state);
@@ -69,8 +69,11 @@ fn compileCondFor(state: *CompilerState, for_expr: *const ast.For) !void {
 }
 
 fn compileRangeFor(state: *CompilerState, for_expr: *const ast.For) !void {
-    const start = for_expr.range_start orelse return fail(state, "Range loops must have a start and end.");
-    const end = for_expr.range_end orelse return fail(state, "Range loops must have a start and end.");
+    if (for_expr.expr.* != .binary or !std.mem.eql(u8, for_expr.expr.binary.operator, "..")) {
+        return fail(state, "Range loops must have a start and end.");
+    }
+    const start = for_expr.expr.binary.left;
+    const end = for_expr.expr.binary.right;
     if (for_expr.captures.len == 0) return fail(state, "Range loop missing capture");
 
     try expr.compileExpression(state, start);
@@ -120,7 +123,7 @@ fn compileRangeFor(state: *CompilerState, for_expr: *const ast.For) !void {
 }
 
 fn compileIterFor(state: *CompilerState, for_expr: *const ast.For) !void {
-    const iterable = for_expr.iterable orelse return fail(state, "Iterable for missing iterable");
+    const iterable = for_expr.expr;
     try expr.compileExpression(state, iterable);
 
     const iterable_idx: u8 = @intCast(state.locals.items.len);

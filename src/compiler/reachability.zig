@@ -23,7 +23,7 @@ pub const Result = struct {
     pub fn shouldEmitTopLevel(self: *const Result, doc: *ast.Document, node: *ast.Node) bool {
         switch (node.*) {
             .declaration => |d| {
-                if (d.value.* == .import) return false;
+                if (d.value.* == .call and d.value.call.callee.* == .primary and std.mem.eql(u8, d.value.call.callee.primary.name, "@import")) return false;
                 if (std.mem.indexOf(u8, d.name, "::") == null) return true;
                 return self.globals.contains(d.name);
             },
@@ -215,10 +215,7 @@ fn collectRefs(
             }
         },
         .for_expr => |f| {
-            if (f.condition) |c| try collectRefs(state, func_name, c, result, work);
-            if (f.range_start) |s| try collectRefs(state, func_name, s, result, work);
-            if (f.range_end) |e| try collectRefs(state, func_name, e, result, work);
-            if (f.iterable) |it| try collectRefs(state, func_name, it, result, work);
+            try collectRefs(state, func_name, f.expr, result, work);
             try collectRefs(state, func_name, f.body, result, work);
         },
         .binary => |b| {
@@ -255,11 +252,11 @@ fn collectRefs(
             for (a.elements) |e| try collectRefs(state, func_name, e, result, work);
         },
         .struct_init => |init| {
-            if (init.name.len > 0) try noteGlobalRead(state, init.name, result);
+            try collectRefs(state, func_name, init.type_expr, result, work);
             for (init.fields) |field| try collectRefs(state, func_name, field.value, result, work);
         },
         .try_expr => |t| try collectRefs(state, func_name, t.expression, result, work),
-        .error_expr => |e| try collectRefs(state, func_name, e.message, result, work),
+        .error_expr => |e| try collectRefs(state, func_name, e.args[0], result, work),
         .primary => |p| {
             if (p.kind == .identifier) try noteGlobalRead(state, p.name, result);
         },

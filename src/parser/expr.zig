@@ -2,6 +2,8 @@ const std = @import("std");
 const ctx = @import("ctx.zig");
 const ast = @import("../ast/root.zig");
 const precedence = @import("../shared/precedence.zig");
+const types = @import("types.zig");
+const control = @import("control.zig");
 
 const Parser = ctx.Parser;
 const ParseError = ctx.ParseError;
@@ -119,7 +121,7 @@ fn parsePostfix(self: *Parser) ParseError!*Node {
     return e;
 }
 
-fn finishStructInit(self: *Parser, name_expr: *Node, tok: ctx.Token) ParseError!*Node {
+fn finishStructInit(self: *Parser, type_expr: *Node, tok: ctx.Token) ParseError!*Node {
     _ = self.advance(); // '{'
     var fields: std.ArrayList(ast.StructFieldInit) = .empty;
     while (!self.isAtEnd() and !self.checkDelim("}")) {
@@ -135,45 +137,19 @@ fn finishStructInit(self: *Parser, name_expr: *Node, tok: ctx.Token) ParseError!
         } else break;
     }
     _ = try self.consume(.delimiter, "Expected '}' after struct initialization", "}");
-    const name = try exprToString(self, name_expr);
     return self.create(.{ .struct_init = .{
-        .name = name,
+        .type_expr = type_expr,
         .fields = try fields.toOwnedSlice(self.arena),
         .loc = self.locOf(tok),
     } });
 }
 
-fn exprToString(self: *Parser, e: *Node) ParseError![]const u8 {
-    switch (e.*) {
-        .primary => |p| return try self.dupe(p.name),
-        .member => |m| {
-            if (m.property.* != .primary) {
-                const l = e.loc();
-                return self.failTok(.{ .type = .identifier, .value = "", .line = l.line, .column = l.column }, "Invalid struct name expression", .{});
-            }
-            const left = try exprToString(self, m.object);
-            const right = m.property.primary.name;
-            const joined = try std.fmt.allocPrint(self.arena, "{s}.{s}", .{ left, right });
-            return joined;
-        },
-        else => {
-            const l = e.loc();
-            return self.failTok(.{ .type = .identifier, .value = "", .line = l.line, .column = l.column }, "Invalid struct name expression", .{});
-        },
-    }
-}
-
 fn finishCall(self: *Parser, callee: *Node) ParseError!*Node {
     _ = try self.consume(.delimiter, "Expected '('", "(");
     var args: std.ArrayList(*Node) = .empty;
-    const is_new = callee.* == .primary and std.mem.eql(u8, callee.primary.name, "@new");
     if (!self.checkDelim(")")) {
         while (true) {
-            if (is_new and args.items.len == 1) {
-                try args.append(self.arena, try parseNewSecondArg(self));
-            } else {
-                try args.append(self.arena, try parseExpression(self));
-            }
+            try args.append(self.arena, try parseExpression(self));
             if (self.checkDelim(",")) {
                 _ = self.advance();
             } else break;
@@ -187,30 +163,6 @@ fn finishCall(self: *Parser, callee: *Node) ParseError!*Node {
     } });
 }
 
-/// `@new(a, Type)` — second arg may be a type (`[N]T`, `[]T`, `Point`) or a value literal (`Point{}`, `[…]`).
-fn parseNewSecondArg(self: *Parser) ParseError!*Node {
-    if (looksLikeArrayType(self)) {
-        return @import("types.zig").parseType(self);
-    }
-    return parseExpression(self);
-}
-
-fn looksLikeArrayType(self: *const Parser) bool {
-    const t0 = self.peek(0) orelse return false;
-    if (t0.type != .delimiter or !std.mem.eql(u8, t0.value, "[")) return false;
-    const t1 = self.peek(1) orelse return false;
-    // `[]T`
-    if (t1.type == .delimiter and std.mem.eql(u8, t1.value, "]")) {
-        const t2 = self.peek(2) orelse return false;
-        return t2.type == .identifier or (t2.type == .keyword and std.mem.eql(u8, t2.value, "error"));
-    }
-    // `[N]T`
-    if (t1.type != .number and t1.type != .hex and t1.type != .octal and t1.type != .binary) return false;
-    const t2 = self.peek(2) orelse return false;
-    if (t2.type != .delimiter or !std.mem.eql(u8, t2.value, "]")) return false;
-    const t3 = self.peek(3) orelse return false;
-    return t3.type == .identifier or (t3.type == .keyword and std.mem.eql(u8, t3.value, "error"));
-}
 
 pub fn parsePrimary(self: *Parser) ParseError!*Node {
     const token = self.peek(0) orelse return self.failMsg("Unexpected end of expression");
@@ -220,18 +172,20 @@ pub fn parsePrimary(self: *Parser) ParseError!*Node {
             if (std.mem.eql(u8, token.value, "error")) {
                 _ = self.advance();
                 _ = try self.consume(.delimiter, "Expected '(' after error", "(");
-                const msg = try parseExpression(self);
-                var payload: ?*ast.Node = null;
-                if (self.checkDelim(",")) {
-                    _ = self.advance();
-                    payload = try parseExpression(self);
-                    if (self.checkDelim(",")) {
-                        const extra = self.peek(0) orelse return self.failMsg("error() takes at most 2 arguments (message, payload)");
-                        return self.failTok(extra, "error() takes at most 2 arguments (message, payload)", .{});
+                var args: std.ArrayList(*Node) = .empty;
+                if (!self.checkDelim(")")) {
+                    while (true) {
+                        try args.append(self.arena, try parseExpression(self));
+                        if (self.checkDelim(",")) {
+                            _ = self.advance();
+                        } else break;
                     }
                 }
                 _ = try self.consume(.delimiter, "Expected ')' after error(...)", ")");
-                return self.create(.{ .error_expr = .{ .message = msg, .payload = payload, .loc = self.locOf(token) } });
+                return self.create(.{ .error_expr = .{
+                    .args = try args.toOwnedSlice(self.arena),
+                    .loc = self.locOf(token),
+                } });
             }
             if (std.mem.eql(u8, token.value, "null")) {
                 _ = self.advance();
@@ -243,6 +197,18 @@ pub fn parsePrimary(self: *Parser) ParseError!*Node {
             }
         },
         .compiler_keyword => {
+            if (std.mem.eql(u8, token.value, "if")) {
+                _ = self.advance();
+                return control.parseIfExpression(self);
+            }
+            if (std.mem.eql(u8, token.value, "switch")) {
+                _ = self.advance();
+                return control.parseSwitchExpression(self);
+            }
+            if (std.mem.eql(u8, token.value, "for")) {
+                _ = self.advance();
+                return control.parseForExpression(self);
+            }
             _ = self.advance();
             const name = try std.fmt.allocPrint(self.arena, "@{s}", .{token.value});
             return self.create(.{ .primary = .{
@@ -252,6 +218,18 @@ pub fn parsePrimary(self: *Parser) ParseError!*Node {
             } });
         },
         .identifier => {
+            if (self.peek(1)) |n| {
+                if (n.type == .delimiter and std.mem.eql(u8, n.value, ":")) {
+                    if (self.peek(2)) |n2| {
+                        if (n2.type == .delimiter and std.mem.eql(u8, n2.value, "{")) {
+                            const label = token.value;
+                            _ = self.advance();
+                            _ = self.advance();
+                            return control.parseLabeledBlock(self, label);
+                        }
+                    }
+                }
+            }
             _ = self.advance();
             return self.create(.{ .primary = .{
                 .kind = .identifier,
@@ -267,11 +245,44 @@ pub fn parsePrimary(self: *Parser) ParseError!*Node {
                 _ = try self.consume(.delimiter, "Expected ')'", ")");
                 return inner;
             }
-            if (std.mem.eql(u8, token.value, "[")) return parseArrayLiteral(self, token);
+            if (std.mem.eql(u8, token.value, "[")) return parseBracketPrimary(self, token);
+            if (std.mem.eql(u8, token.value, "{")) return control.parseBlock(self);
         },
         else => {},
     }
     return self.failTok(token, "Unexpected token in expression: {s} at line {d}", .{ token.value, token.line });
+}
+
+/// `[` … `]` in expression position: array type (`[]T`, `[N]T`) or array literal (`[1, 2]`).
+fn parseBracketPrimary(self: *Parser, token: ctx.Token) ParseError!*Node {
+    const t1 = self.peek(1) orelse return parseArrayLiteral(self, token);
+
+    // `[]T` vs `[]`
+    if (t1.type == .delimiter and std.mem.eql(u8, t1.value, "]")) {
+        if (looksLikeTypeContinuation(self.peek(2))) return types.parseType(self);
+        return parseArrayLiteral(self, token);
+    }
+
+    // `[N]T` vs `[N]` / `[N, …]`
+    if (isArrayLengthToken(t1)) {
+        const t2 = self.peek(2) orelse return parseArrayLiteral(self, token);
+        if (t2.type == .delimiter and std.mem.eql(u8, t2.value, "]")) {
+            if (looksLikeTypeContinuation(self.peek(3))) return types.parseType(self);
+        }
+    }
+
+    return parseArrayLiteral(self, token);
+}
+
+fn isArrayLengthToken(tok: ctx.Token) bool {
+    return tok.type == .number or tok.type == .hex or tok.type == .binary or tok.type == .octal;
+}
+
+fn looksLikeTypeContinuation(tok: ?ctx.Token) bool {
+    const t = tok orelse return false;
+    if (t.type == .delimiter and std.mem.eql(u8, t.value, "[")) return true;
+    if (t.type == .identifier) return true;
+    return t.type == .keyword and std.mem.eql(u8, t.value, "error");
 }
 
 fn parseArrayLiteral(self: *Parser, token: ctx.Token) ParseError!*Node {

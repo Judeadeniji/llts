@@ -5,7 +5,7 @@ const Location = @import("root.zig").Location;
 pub const ArrayType = struct {
     elem: *Node,
     /// null = unsized slice `[]T`.
-    length: ?usize = null,
+    length_text: ?[]const u8 = null,
     loc: Location,
 };
 

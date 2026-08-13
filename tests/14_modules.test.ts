@@ -108,6 +108,43 @@ print(u.id(7));
 	expectOutput(runFile(entry), ["7"]);
 });
 
+test("inline @import with member call and member access", () => {
+	const { entry } = withTempModules(
+		{
+			"lib.lls": `
+pub @const $version = 3;
+
+pub @func answer(): int {
+    return 42;
+}
+`,
+			"main.lls": `
+print(@import("./lib.lls").answer());
+print(@import("./lib.lls").version);
+`,
+		},
+		"main.lls",
+	);
+	expectOutput(runFile(entry), ["42", "3"]);
+});
+
+test("inline @import cannot access private export", () => {
+	const { entry } = withTempModules(
+		{
+			"lib.lls": `
+@func secret(): int {
+    return 1;
+}
+`,
+			"main.lls": `
+print(@import("./lib.lls").secret());
+`,
+		},
+		"main.lls",
+	);
+	expectError(runFile(entry), "has no export 'secret'");
+});
+
 test("existing examples/import_test_main still works", () => {
 	expectOutput(runFile(path.join(ROOT, "examples/import_test_main.lls")), [
 		"Hello!",

@@ -27,7 +27,8 @@ pub fn parseDeclaration(self: *Parser, is_const: bool) ParseError!*Node {
     var msg_buf: [128]u8 = undefined;
     const eq_msg = std.fmt.bufPrint(&msg_buf, "Expected \"=\" after \"{s}\"", .{register.value}) catch "Expected \"=\" after register";
     _ = try self.consume(.assign_op, eq_msg, "=");
-    const value = try stmt_mod.parseStatement(self);
+    const expr = @import("expr.zig");
+    const value = try expr.parseExpression(self);
 
     if (self.checkDelim(";")) _ = self.advance();
 
@@ -46,17 +47,7 @@ pub fn parseCompilerKeyword(self: *Parser) ParseError!*Node {
         return self.failTok(keyword, "Expected compiler keyword", .{});
     }
 
-    if (std.mem.eql(u8, keyword.value, "import")) return parseCompilerImport(self);
     if (std.mem.eql(u8, keyword.value, "const")) return parseDeclaration(self, true);
-    // Expression-form `@` intrinsics (not statements): parse as expression statements.
-    // `@new` is Go-make-style — compiler-visible alloc into a library Allocator.
-    if (std.mem.eql(u8, keyword.value, "typeOf") or
-        std.mem.eql(u8, keyword.value, "isError") or
-        std.mem.eql(u8, keyword.value, "new"))
-    {
-        self.current -= 1;
-        return stmt_mod.parseExpressionStatement(self);
-    }
     if (std.mem.eql(u8, keyword.value, "func")) return parseCompilerFunc(self);
     if (std.mem.eql(u8, keyword.value, "for")) return control.parseForExpression(self);
     if (std.mem.eql(u8, keyword.value, "if")) return control.parseIfExpression(self);
@@ -65,7 +56,9 @@ pub fn parseCompilerKeyword(self: *Parser) ParseError!*Node {
     if (std.mem.eql(u8, keyword.value, "enum")) return enums.parseCompilerEnum(self);
     if (std.mem.eql(u8, keyword.value, "extern")) return parseCompilerExtern(self);
 
-    return self.failTok(keyword, "Unhandled compiler keyword: {s}", .{keyword.value});
+    // Any other `@name(...)` parses as a statement-level expression call
+    self.current -= 1;
+    return stmt_mod.parseExpressionStatement(self);
 }
 
 fn parseCompilerExtern(self: *Parser) ParseError!*Node {
@@ -107,7 +100,7 @@ pub fn parseCompilerFunc(self: *Parser) ParseError!*Node {
     } });
 }
 
-const ParamsResult = struct { elements: []*Node, is_variadic: bool };
+const ParamsResult = struct { elements: []ast.Param, is_variadic: bool };
 
 fn parseParamsList(self: *Parser) ParseError!ParamsResult {
     if (self.checkDelim(")")) {
@@ -115,11 +108,12 @@ fn parseParamsList(self: *Parser) ParseError!ParamsResult {
         return .{ .elements = &.{}, .is_variadic = false };
     }
 
-    var params: std.ArrayList(*Node) = .empty;
+    var params: std.ArrayList(ast.Param) = .empty;
     var is_variadic = false;
 
     while (true) {
-        if (self.checkDelim("...")) {
+        const is_rest = self.checkDelim("...");
+        if (is_rest) {
             _ = self.advance();
             is_variadic = true;
         }
@@ -131,21 +125,12 @@ fn parseParamsList(self: *Parser) ParseError!ParamsResult {
             type_node = try types.parseType(self);
         }
 
-        const dummy = try self.create(.{ .literal = .{
-            .literal_type = .number,
-            .value = try self.dupe("0"),
-            .loc = self.locOf(name),
-        } });
-        try params.append(self.arena, try self.create(.{ .declaration = .{
+        try params.append(self.arena, .{
             .name = try self.dupe(name.value),
-            .value = dummy,
             .type_annotation = type_node,
+            .is_rest = is_rest,
             .loc = self.locOf(name),
-        } }));
-
-        if (is_variadic and self.checkDelim(",")) {
-            return self.failTok(self.peek(0).?, "Rest parameter must be the last parameter", .{});
-        }
+        });
 
         if (self.match(.delimiter)) {
             const prev = self.previous() orelse break;
@@ -162,28 +147,3 @@ fn parseParamsList(self: *Parser) ParseError!ParamsResult {
     };
 }
 
-fn parseCompilerImport(self: *Parser) ParseError!*Node {
-    const left_paren = self.peek(0) orelse return error.ParseFailed;
-    if (!std.mem.eql(u8, left_paren.value, "(")) {
-        return self.failTok(left_paren, "Expected \"(\" after import", .{});
-    }
-    _ = self.advance();
-
-    const path_tok = self.peek(0) orelse return error.ParseFailed;
-    if (path_tok.type != .string) {
-        return self.failTok(path_tok, "Unexpected import value \"{s}\". Expected a valid path.", .{path_tok.value});
-    }
-    const import_path = self.advance() orelse return error.ParseFailed;
-
-    const rp = self.peek(0) orelse return error.ParseFailed;
-    if (!std.mem.eql(u8, rp.value, ")")) {
-        return self.failTok(rp, "Expected \")\" after import path", .{});
-    }
-    _ = self.advance();
-    _ = try self.consume(.delimiter, "Expected ';' after import statement", ";");
-
-    return self.create(.{ .import = .{
-        .import_path = try self.dupe(import_path.value),
-        .loc = self.locOf(import_path),
-    } });
-}

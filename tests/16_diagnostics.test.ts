@@ -246,7 +246,7 @@ test("import parse error prints import chain", () => {
 	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "llts_imp_parse_"));
 	const bad = path.join(dir, "bad.lls");
 	const main = path.join(dir, "main.lls");
-	fs.writeFileSync(bad, `@const $e = error("a", "b", "c");\n`, "utf-8");
+	fs.writeFileSync(bad, `$x = (;\n`, "utf-8");
 	fs.writeFileSync(
 		main,
 		`@const $b = @import("./bad.lls");
@@ -258,7 +258,7 @@ test("import parse error prints import chain", () => {
 		const result = spawnSync([ENTRY, "-i", main], { cwd: ROOT });
 		const stderr = result.stderr.toString();
 		if ((result.exitCode ?? 1) === 0) throw new Error(`expected failure\n${stderr}`);
-		if (!stderr.includes("at most 2 arguments")) throw new Error(`wrong message:\n${stderr}`);
+		if (!stderr.includes("Unexpected token in expression")) throw new Error(`wrong message:\n${stderr}`);
 		if (!stderr.includes("at <parse> (")) throw new Error(`missing parse frame:\n${stderr}`);
 		if (!stderr.includes('@import("./bad.lls")')) throw new Error(`missing import frame:\n${stderr}`);
 	} finally {

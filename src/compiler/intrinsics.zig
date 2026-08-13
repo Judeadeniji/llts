@@ -1,0 +1,189 @@
+const std = @import("std");
+const ast = @import("../ast/root.zig");
+const state_mod = @import("state.zig");
+const CompilerState = state_mod.CompilerState;
+
+const typecheck_root = @import("typecheck/root.zig");
+const ir = @import("typecheck/ir.zig");
+const from_ast = @import("typecheck/from_ast.zig");
+
+const emit = @import("emit.zig");
+const expr = @import("expr/root.zig");
+const aggregate = @import("expr/aggregate.zig");
+const path = @import("expr/path.zig");
+const modules = @import("modules.zig");
+const compile_errors = @import("../errors/compile.zig");
+
+pub const Intrinsic = enum {
+    import,
+    typeOf,
+    isError,
+    sizeOf,
+    new,
+};
+
+pub fn match(callee: []const u8) ?Intrinsic {
+    if (std.mem.eql(u8, callee, "@import")) return .import;
+    if (std.mem.eql(u8, callee, "@typeOf")) return .typeOf;
+    if (std.mem.eql(u8, callee, "@isError")) return .isError;
+    if (std.mem.eql(u8, callee, "@sizeOf")) return .sizeOf;
+    if (std.mem.eql(u8, callee, "@new")) return .new;
+    return null;
+}
+
+pub const Arity = union(enum) {
+    exact: u8,
+    range: struct { min: u8, max: u8 },
+};
+
+pub fn arity(intr: Intrinsic) Arity {
+    return switch (intr) {
+        .import => .{ .exact = 1 },
+        .typeOf => .{ .exact = 1 },
+        .isError => .{ .exact = 1 },
+        .sizeOf => .{ .exact = 1 },
+        .new => .{ .range = .{ .min = 2, .max = 3 } },
+    };
+}
+
+pub fn checkArity(state: *CompilerState, intr: Intrinsic, name: []const u8, got: usize) !void {
+    const a = arity(intr);
+    switch (a) {
+        .exact => |e| {
+            if (got != e) {
+                return compile_errors.compileFailFmt(state, "{s} expects exactly {d} argument(s)", .{ name, e });
+            }
+        },
+        .range => |r| {
+            if (got < r.min or got > r.max) {
+                return compile_errors.compileFailFmt(state, "{s} expects between {d} and {d} arguments", .{ name, r.min, r.max });
+            }
+        },
+    }
+}
+
+pub fn typecheck(state: *CompilerState, env: *typecheck_root.Env, ta: ir.TypeAlloc, intr: Intrinsic, call_node: *ast.Node, c: *const ast.Call) !ir.Type {
+    const name = c.callee.primary.name;
+    try checkArity(state, intr, name, c.args.len);
+
+    switch (intr) {
+        .import => {
+            const arg = c.args[0];
+            const arg_type = try typecheck_root.inferExpr(state, env, ta, arg);
+            try typecheck_root.requireAssign(state, arg_type, ir.TString, "@import path");
+            if (arg.* != .literal or arg.literal.literal_type != .string) return ir.TUnknown;
+            const from = if (state.diag_path.len > 0) state.diag_path else state.chunk.file;
+            const key = modules.resolveImportKey(state, from, arg.literal.value) catch return ir.TUnknown;
+            const mod_val = try std.fmt.allocPrint(state.allocator, "module:{s}", .{key});
+            try state.owned.append(state.allocator, mod_val);
+            return .{ .struct_ = mod_val };
+        },
+        .isError => {
+            _ = try typecheck_root.inferExpr(state, env, ta, c.args[0]);
+            return ir.TBool;
+        },
+        .typeOf => {
+            const arg_type = try typecheck_root.inferExpr(state, env, ta, c.args[0]);
+            const disp = try typecheck_root.ownDisplay(state, arg_type);
+            try state.type_of_results.put(call_node, disp);
+            return ir.TString;
+        },
+        .sizeOf => {
+            _ = try typecheck_root.inferExpr(state, env, ta, c.args[0]);
+            return ir.TInt;
+        },
+        .new => {
+            _ = try typecheck_root.inferExpr(state, env, ta, c.args[0]);
+            const v = c.args[1];
+            if (c.args.len == 3) _ = try typecheck_root.inferExpr(state, env, ta, c.args[2]);
+            switch (v.*) {
+                .array_type, .union_type => return try from_ast.typeFromAst(v, state, ta),
+                .primary => |p| {
+                    if (p.kind == .identifier) {
+                        if (std.mem.eql(u8, p.name, "string") or std.mem.eql(u8, p.name, "[]byte")) {
+                            return ir.TString;
+                        }
+                        if (state.structs.contains(p.name) or state.enums.contains(p.name)) {
+                            return try from_ast.typeFromAst(v, state, ta);
+                        }
+                        const named = ir.namedType(p.name);
+                        if (named != .struct_) return named;
+                    }
+                    return try typecheck_root.inferExpr(state, env, ta, v);
+                },
+                else => return try typecheck_root.inferExpr(state, env, ta, v),
+            }
+        },
+    }
+}
+
+pub fn compile(state: *CompilerState, intr: Intrinsic, node: *ast.Node, c: *const ast.Call) !void {
+    const name = c.callee.primary.name;
+    // We assume arity was checked in typecheck, but we can assert or just check again.
+    // In debug builds we could assert. For now let's just do it.
+    try checkArity(state, intr, name, c.args.len);
+
+    switch (intr) {
+        .import => {
+            // side-effect import or bound import; in Phase 1 this might not be called directly
+            // since parser still splits @import, but for uniformity we add it.
+            // Do nothing if it's just a call, or we could compile the arg.
+            try expr.compileExpression(state, c.args[0]);
+            try emit.emitOp(state, .OP_POP);
+        },
+        .isError => {
+            try expr.compileExpression(state, c.args[0]);
+            try emit.emitOp(state, .OP_IS_ERROR);
+        },
+        .typeOf => {
+            const disp = state.type_of_results.get(node) orelse
+                from_ast.resolveType(state, c.args[0]) orelse "unknown";
+            try expr.compileExpression(state, c.args[0]);
+            try emit.emitOp(state, .OP_POP);
+            try emit.emitString(state, disp);
+        },
+        .sizeOf => {
+            var static_type: ?[]const u8 = null;
+            if (c.args[0].* == .primary and c.args[0].primary.kind == .identifier) {
+                static_type = c.args[0].primary.name;
+            } else if (try path.tryResolveStaticPath(state, c.args[0])) |p| {
+                static_type = p;
+            }
+            
+            if (static_type) |st| {
+                var is_type = false;
+                var size: i32 = 0;
+                if (std.mem.eql(u8, st, "int") or std.mem.eql(u8, st, "float")) {
+                    is_type = true; size = 8;
+                } else if (std.mem.eql(u8, st, "bool")) {
+                    is_type = true; size = 1;
+                } else if (std.mem.eql(u8, st, "null")) {
+                    is_type = true; size = 0;
+                } else if (std.mem.eql(u8, st, "string") or std.mem.eql(u8, st, "[]byte")) {
+                    is_type = true; size = 16;
+                } else if (state.structs.get(st)) |sd| {
+                    is_type = true; size = sd.size * 16;
+                }
+                if (is_type) {
+                    try emit.emitConstant(state, .{ .int = size });
+                    return;
+                }
+            }
+            
+            if (from_ast.resolveType(state, c.args[0])) |type_name| {
+                if (state.structs.get(type_name)) |sd| {
+                    try expr.compileExpression(state, c.args[0]);
+                    try emit.emitOp(state, .OP_POP);
+                    try emit.emitConstant(state, .{ .int = sd.size * 16 });
+                    return;
+                }
+            }
+
+            try expr.compileExpression(state, c.args[0]);
+            try emit.emitOp(state, .OP_SIZEOF);
+        },
+        .new => {
+            try aggregate.compileNew(state, c);
+        },
+    }
+}

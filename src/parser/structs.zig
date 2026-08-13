@@ -22,14 +22,6 @@ pub fn parseCompilerStruct(self: *Parser) ParseError!*Node {
                 if (std.mem.eql(u8, t.value, "func")) {
                     _ = self.advance();
                     const func = try decl.parseCompilerFunc(self);
-                    if (func.* == .function_decl) {
-                        const mangled = try std.fmt.allocPrint(
-                            self.arena,
-                            "{s}::{s}",
-                            .{ name.value, func.function_decl.name },
-                        );
-                        func.function_decl.name = mangled;
-                    }
                     try methods.append(self.arena, func);
                     continue;
                 }

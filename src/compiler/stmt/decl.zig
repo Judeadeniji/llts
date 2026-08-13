@@ -12,7 +12,7 @@ const const_expr = @import("../const_expr.zig");
 const CompilerState = state_mod.CompilerState;
 
 pub fn compileDeclaration(state: *CompilerState, decl: *const ast.Declaration) !void {
-    if (decl.value.* == .import) return;
+    if (decl.value.* == .call and decl.value.call.callee.* == .primary and std.mem.eql(u8, decl.value.call.callee.primary.name, "@import")) return;
 
     if (decl.is_const) {
         var cenv = try const_expr.createConstEnv(state);
@@ -139,12 +139,7 @@ fn arrayElemSuffix(display: []const u8) ?[]const u8 {
 
 fn inferDeclType(state: *CompilerState, value: *ast.Node) ?[]const u8 {
     return switch (value.*) {
-        .struct_init => |s| blk: {
-            if (std.mem.indexOfScalar(u8, s.name, '.') != null) {
-                break :blk @import("../expr/path.zig").resolveModuleType(state, s.name) catch s.name;
-            }
-            break :blk s.name;
-        },
+        .struct_init => |s| types.resolveStructName(state, s.type_expr),
         .array_literal => |a| blk: {
             if (a.elements.len == 0) {
                 const s = std.fmt.allocPrint(state.allocator, "[0]unknown", .{}) catch break :blk null;

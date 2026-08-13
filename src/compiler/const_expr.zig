@@ -56,13 +56,15 @@ pub fn isConstantExpr(state: *CompilerState, env: *const ConstEnv, node: ?*ast.N
             }
             break :blk true;
         },
-        .import => true,
         .call => |c| blk: {
-            if (c.callee.* == .primary and std.mem.eql(u8, c.callee.primary.name, "@typeOf"))
-                break :blk true;
+            if (c.callee.* == .primary) {
+                if (std.mem.eql(u8, c.callee.primary.name, "@typeOf") or std.mem.eql(u8, c.callee.primary.name, "@import")) {
+                    break :blk true;
+                }
+            }
             break :blk false;
         },
-        .error_expr => |e| isConstantExpr(state, env, e.message),
+        .error_expr => |e| isConstantExpr(state, env, e.args[0]),
         .member => |m| blk: {
             if (m.property.* != .primary) break :blk false;
             // Enum.Variant is a compile-time int constant.

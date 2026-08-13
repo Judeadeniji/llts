@@ -10,8 +10,15 @@ pub const Declaration = struct {
     loc: Location,
 };
 
+pub const Param = struct {
+    name: []const u8,
+    type_annotation: ?*Node = null,
+    is_rest: bool = false,
+    loc: Location,
+};
+
 pub const Params = struct {
-    params: []*Node,
+    params: []Param,
     is_variadic: bool = false,
     loc: Location,
 };
@@ -67,14 +74,8 @@ pub const Capture = struct {
     by_ref: bool = false,
 };
 
-pub const ForKind = enum { condition, range, iterable };
-
 pub const For = struct {
-    kind: ForKind,
-    condition: ?*Node = null,
-    range_start: ?*Node = null,
-    range_end: ?*Node = null,
-    iterable: ?*Node = null,
+    expr: *Node,
     captures: []Capture,
     label: ?[]const u8 = null,
     body: *Node,
@@ -95,10 +96,6 @@ pub const Switch = struct {
     loc: Location,
 };
 
-pub const Import = struct {
-    import_path: []const u8,
-    loc: Location,
-};
 
 pub const Extern = struct {
     name: []const u8,

@@ -176,7 +176,6 @@ fn scanCompilerKeyword(self: *ctx.Scanner) ScanError!void {
     }
     if (self.pos == start) return failScan(self, error.ExpectedCompilerKeyword, "Expected compiler keyword after @");
     const kw = self.source[start..self.pos];
-    if (!keywords.isCompilerSymbol(kw)) return failScan(self, error.InvalidCompilerKeyword, "Invalid compiler keyword");
     try self.pushToken(.compiler_keyword, kw, col, line);
 }
 

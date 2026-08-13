@@ -164,7 +164,7 @@ fn registerStructNames(state: *state_mod.CompilerState, doc: *ast.Document) !voi
 }
 
 fn registerFunctions(state: *state_mod.CompilerState, doc: *ast.Document) !void {
-    for (doc.statements) |s| try collectFuncs(state, s);
+    for (doc.statements) |s| try collectFuncs(state, s, null);
 
     var visited = std.StringHashMap(void).init(state.allocator);
     defer visited.deinit();
@@ -190,9 +190,17 @@ fn sourceTextForPath(state: *state_mod.CompilerState, path: []const u8) []const 
     return state.chunk.source;
 }
 
-fn collectFuncs(state: *state_mod.CompilerState, node: *ast.Node) !void {
+fn collectFuncs(state: *state_mod.CompilerState, node: *ast.Node, struct_name: ?[]const u8) !void {
     switch (node.*) {
         .function_decl => |*fn_decl| {
+            if (struct_name) |sn| {
+                if (std.mem.indexOf(u8, fn_decl.name, "::") == null) {
+                    const mangled = try std.fmt.allocPrint(state.allocator, "{s}::{s}", .{ sn, fn_decl.name });
+                    try state.owned.append(state.allocator, mangled);
+                    fn_decl.name = mangled;
+                }
+            }
+
             var calls = std.StringHashMap(void).init(state.allocator);
             var has_loop = false;
             var has_return = false;
@@ -216,10 +224,10 @@ fn collectFuncs(state: *state_mod.CompilerState, node: *ast.Node) !void {
             });
         },
         .struct_decl => |s| {
-            for (s.methods) |m| try collectFuncs(state, m);
+            for (s.methods) |m| try collectFuncs(state, m, s.name);
         },
-        .block => |b| for (b.statements) |s| try collectFuncs(state, s),
-        .declaration => |d| try collectFuncs(state, d.value),
+        .block => |b| for (b.statements) |s| try collectFuncs(state, s, null),
+        .declaration => |d| try collectFuncs(state, d.value, null),
         else => {},
     }
 }
@@ -239,14 +247,14 @@ fn analyzeBody(
             has_return.* = true;
             if (return_type.* == null) {
                 if (r.return_value) |v| {
-                    if (v.* == .struct_init) return_type.* = v.struct_init.name;
+                    if (v.* == .struct_init) return_type.* = types.resolveStructName(state, v.struct_init.type_expr);
                     // `@new(a, Foo{…}|Foo|[N]T)` — return type from value or type arg.
                     if (v.* == .call) {
                         const c = v.call;
                         if (c.callee.* == .primary and std.mem.eql(u8, c.callee.primary.name, "@new") and c.args.len == 2) {
                             const arg = c.args[1];
                             if (arg.* == .struct_init) {
-                                return_type.* = arg.struct_init.name;
+                                return_type.* = types.resolveStructName(state, arg.struct_init.type_expr);
                             } else if (arg.* == .primary and arg.primary.kind == .identifier) {
                                 return_type.* = arg.primary.name;
                             }
@@ -338,10 +346,7 @@ fn analyzeBody(
             try analyzeBody(state, a.right, calls, has_loop, has_return, return_type, full_name);
         },
         .for_expr => |f| {
-            if (f.condition) |c| try analyzeBody(state, c, calls, has_loop, has_return, return_type, full_name);
-            if (f.range_start) |s| try analyzeBody(state, s, calls, has_loop, has_return, return_type, full_name);
-            if (f.range_end) |e| try analyzeBody(state, e, calls, has_loop, has_return, return_type, full_name);
-            if (f.iterable) |it| try analyzeBody(state, it, calls, has_loop, has_return, return_type, full_name);
+            try analyzeBody(state, f.expr, calls, has_loop, has_return, return_type, full_name);
             try analyzeBody(state, f.body, calls, has_loop, has_return, return_type, full_name);
         },
         .return_expr => |r| {

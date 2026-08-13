@@ -94,33 +94,17 @@ pub fn compileFunction(state: *CompilerState, node: *ast.FunctionDecl, ast_node:
     state.defer_stacks = outer_defers;
 }
 
-fn pushParam(state: *CompilerState, p: *ast.Node, method_struct: ?[]const u8) !void {
-    switch (p.*) {
-        .declaration => |d| {
-            var p_type: ?[]const u8 = null;
-            if (std.mem.eql(u8, d.name, "self")) p_type = method_struct;
-            if (d.type_annotation) |ta| {
-                if (ta.* == .primary) p_type = ta.primary.name;
-            }
-            try state.locals.append(state.allocator, .{
-                .name = d.name,
-                .depth = state.scope_depth,
-                .type_name = p_type,
-            });
-        },
-        .primary => |prim| {
-            var p_type: ?[]const u8 = null;
-            if (prim.kind == .identifier and std.mem.eql(u8, prim.name, "self")) {
-                p_type = method_struct;
-            }
-            try state.locals.append(state.allocator, .{
-                .name = prim.name,
-                .depth = state.scope_depth,
-                .type_name = p_type,
-            });
-        },
-        else => {},
+fn pushParam(state: *CompilerState, p: ast.Param, method_struct: ?[]const u8) !void {
+    var p_type: ?[]const u8 = null;
+    if (std.mem.eql(u8, p.name, "self")) p_type = method_struct;
+    if (p.type_annotation) |ta| {
+        if (ta.* == .primary) p_type = ta.primary.name;
     }
+    try state.locals.append(state.allocator, .{
+        .name = p.name,
+        .depth = state.scope_depth,
+        .type_name = p_type,
+    });
 }
 
 fn fail(state: *CompilerState, msg: []const u8) error{CompileError} {

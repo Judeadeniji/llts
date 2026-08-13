@@ -6,6 +6,7 @@ const state_mod = @import("../state.zig");
 const expr = @import("root.zig");
 const path = @import("path.zig");
 const types = @import("../typecheck/from_ast.zig");
+const compiler_errors = @import("../../errors/compile.zig");
 
 const CompilerState = state_mod.CompilerState;
 
@@ -16,9 +17,9 @@ pub fn compileIndex(state: *CompilerState, idx: *const ast.Index) !void {
 }
 
 pub fn compileError(state: *CompilerState, err: *const ast.ErrorExpr) !void {
-    try expr.compileExpression(state, err.message);
-    if (err.payload) |p| {
-        try expr.compileExpression(state, p);
+    try expr.compileExpression(state, err.args[0]);
+    if (err.args.len == 2) {
+        try expr.compileExpression(state, err.args[1]);
         try emit.emitOp(state, .OP_MAKE_ERROR_PAYLOAD);
     } else {
         try emit.emitOp(state, .OP_MAKE_ERROR);
@@ -29,7 +30,7 @@ pub fn compileTry(state: *CompilerState, try_expr: *const ast.TryExpr) !void {
     // Compile-time: '?' requires an error-union (or unknown) operand.
     if (types.resolveType(state, try_expr.expression)) |disp| {
         if (!types.typeAllowsError(disp)) {
-                        return @import("../../errors/compile.zig").compileFailFmt(state, "'?' operator used on non-error-union type '{s}'", .{disp});
+            return compiler_errors.compileFailFmt(state, "'?' operator used on non-error-union type '{s}'", .{disp});
         }
     }
     try expr.compileExpression(state, try_expr.expression);
@@ -70,13 +71,13 @@ pub fn compileStructInit(state: *CompilerState, init: *const ast.StructInit) !vo
 /// Runtime-sized: `@new(a, []T, n)` or `@new(a, string, n)`.
 pub fn compileNew(state: *CompilerState, c: *const ast.Call) !void {
     if (c.args.len != 2 and c.args.len != 3) {
-        return @import("../../errors/compile.zig").compileFailFmt(state, "@new expects (allocator, type_or_value) or (allocator, []T|string, length)", .{});
+        return compiler_errors.compileFailFmt(state, "@new expects (allocator, type_or_value) or (allocator, []T|string, length)", .{});
     }
     const value = c.args[1];
     switch (value.*) {
         .struct_init => |*init| {
             if (c.args.len != 2) {
-                return @import("../../errors/compile.zig").compileFailFmt(state, "@new struct literal takes (allocator, value)", .{});
+                return compiler_errors.compileFailFmt(state, "@new struct literal takes (allocator, value)", .{});
             }
             const struct_def = try resolveStructDef(state, init);
             try emitArenaAlloc(state, c.args[0], struct_def.size);
@@ -84,22 +85,25 @@ pub fn compileNew(state: *CompilerState, c: *const ast.Call) !void {
         },
         .array_literal => |*arr| {
             if (c.args.len != 2) {
-                return @import("../../errors/compile.zig").compileFailFmt(state, "@new array literal takes (allocator, value)", .{});
+                return compiler_errors.compileFailFmt(state, "@new array literal takes (allocator, value)", .{});
             }
             const length: i32 = @intCast(arr.elements.len);
             try emitArenaAlloc(state, c.args[0], length + 1);
             try fillArray(state, arr);
         },
         .array_type => |*at| {
-            if (at.length) |length| {
+            if (at.length_text) |text| {
+                const length = types.parseArrayLengthString(text) catch {
+                    return compiler_errors.compileFailFmt(state, "Invalid array length '{s}'", .{text});
+                };
                 if (c.args.len != 2) {
-                    return @import("../../errors/compile.zig").compileFailFmt(state, "@new([N]T) takes (allocator, [N]T) — length is in the type", .{});
+                    return compiler_errors.compileFailFmt(state, "@new([N]T) takes (allocator, [N]T) — length is in the type", .{});
                 }
                 try emitArenaAlloc(state, c.args[0], @intCast(length + 1));
                 try zeroFillArray(state, @intCast(length), at.elem);
             } else {
                 if (c.args.len != 3) {
-                    return @import("../../errors/compile.zig").compileFailFmt(state, "@new slice type needs a length: @new(allocator, []T, n)", .{});
+                    return compiler_errors.compileFailFmt(state, "@new slice type needs a length: @new(allocator, []T, n)", .{});
                 }
                 try requireSimpleElemType(state, at.elem);
                 try emitArenaAllocArray(state, c.args[0], c.args[2]);
@@ -107,30 +111,30 @@ pub fn compileNew(state: *CompilerState, c: *const ast.Call) !void {
         },
         .primary => |p| {
             if (p.kind != .identifier) {
-                return @import("../../errors/compile.zig").compileFailFmt(state, "@new type must be a struct, string, or array type", .{});
+                return compiler_errors.compileFailFmt(state, "@new type must be a struct, string, or array type", .{});
             }
             if (isStringyTypeName(p.name)) {
                 if (c.args.len != 3) {
-                    return @import("../../errors/compile.zig").compileFailFmt(state, "@new string/[]byte needs a length: @new(allocator, string, n)", .{});
+                    return compiler_errors.compileFailFmt(state, "@new string/[]byte needs a length: @new(allocator, string, n)", .{});
                 }
                 try emitArenaAllocArray(state, c.args[0], c.args[2]);
                 return;
             }
             if (c.args.len != 2) {
-                return @import("../../errors/compile.zig").compileFailFmt(state, "@new struct type takes (allocator, Type)", .{});
+                return compiler_errors.compileFailFmt(state, "@new struct type takes (allocator, Type)", .{});
             }
             var struct_name = p.name;
             if (std.mem.indexOfScalar(u8, struct_name, '.') != null) {
                 struct_name = try path.resolveModuleType(state, struct_name);
             }
             const struct_def = state.structs.get(struct_name) orelse {
-                return @import("../../errors/compile.zig").compileFailFmt(state, "@new unknown type '{s}'", .{p.name});
+                return compiler_errors.compileFailFmt(state, "@new unknown type '{s}'", .{p.name});
             };
             try emitArenaAlloc(state, c.args[0], struct_def.size);
             try zeroFillStruct(state, struct_def);
         },
         else => {
-            return @import("../../errors/compile.zig").compileFailFmt(state, "@new expects a type, struct literal, or array literal", .{});
+            return compiler_errors.compileFailFmt(state, "@new expects a type, struct literal, or array literal", .{});
         },
     }
 }
@@ -145,10 +149,10 @@ fn requireSimpleElemType(state: *CompilerState, elem_type: *ast.Node) !void {
             if (std.mem.eql(u8, p.name, "byte") or std.mem.eql(u8, p.name, "int") or
                 std.mem.eql(u8, p.name, "i32") or std.mem.eql(u8, p.name, "number"))
                 return;
-            return @import("../../errors/compile.zig").compileFailFmt(state, "@new([]T, n) currently supports byte/int elements, got '{s}'", .{p.name});
+            return compiler_errors.compileFailFmt(state, "@new([]T, n) currently supports byte/int elements, got '{s}'", .{p.name});
         },
         else => {
-            return @import("../../errors/compile.zig").compileFailFmt(state, "@new([]T, n) element type must be a simple name", .{});
+            return compiler_errors.compileFailFmt(state, "@new([]T, n) element type must be a simple name", .{});
         },
     }
 }
@@ -204,7 +208,7 @@ fn emitZeroForElemType(state: *CompilerState, elem_type: *ast.Node) !void {
     switch (elem_type.*) {
         .primary => |p| try emitZeroForTypeName(state, p.name),
         else => {
-            return @import("../../errors/compile.zig").compileFailFmt(state, "@new element type must be a simple named type", .{});
+            return compiler_errors.compileFailFmt(state, "@new element type must be a simple named type", .{});
         },
     }
 }
@@ -224,25 +228,22 @@ fn emitZeroForTypeName(state: *CompilerState, name: []const u8) !void {
     }
     // int / byte / stringy headers / unknown scalars → 0
     if (state.structs.contains(name)) {
-        return @import("../../errors/compile.zig").compileFailFmt(state, "@new cannot zero nested struct field of type '{s}' yet", .{name});
+        return compiler_errors.compileFailFmt(state, "@new cannot zero nested struct field of type '{s}' yet", .{name});
     }
     try emit.emitConstant(state, .{ .int = 0 });
 }
 
 fn resolveStructDef(state: *CompilerState, init: *const ast.StructInit) !state_mod.StructDef {
-    var struct_name = init.name;
+    const sn = types.resolveStructName(state, init.type_expr) orelse {
+        return compiler_errors.compileFailFmt(state, "Invalid struct initialization type", .{});
+    };
+    var struct_name = sn;
     if (std.mem.indexOfScalar(u8, struct_name, '.') != null) {
         struct_name = try path.resolveModuleType(state, struct_name);
-        if (!state.chunk.exports.contains(struct_name)) {
-            if (std.mem.indexOfScalar(u8, init.name, '.')) |dot| {
-                return @import("../../errors/compile.zig").compileFailFmt(state, "'{s}' has no export '{s}'", .{ init.name[0..dot], init.name[dot + 1 ..] });
-            } else {
-                return @import("../../errors/compile.zig").compileFailFmt(state, "Unknown struct: {s}", .{init.name});
-            }
-        }
     }
+    try types.checkStructInitExport(state, init.type_expr, struct_name);
     return state.structs.get(struct_name) orelse {
-        return @import("../../errors/compile.zig").compileFailFmt(state, "Unknown struct: {s}", .{init.name});
+        return compiler_errors.compileFailFmt(state, "Unknown struct: {s}", .{sn});
     };
 }
 
@@ -267,7 +268,7 @@ fn fillArray(state: *CompilerState, arr: *const ast.ArrayLiteral) !void {
 fn fillStruct(state: *CompilerState, init: *const ast.StructInit, struct_def: state_mod.StructDef) !void {
     for (init.fields) |field| {
         const offset = struct_def.offsets.get(field.name) orelse {
-                        return @import("../../errors/compile.zig").compileFailFmt(state, "Unknown field {s}", .{field.name});
+            return compiler_errors.compileFailFmt(state, "Unknown field {s}", .{field.name});
         };
         try emit.emitOp(state, .OP_DUP);
         try emit.emitConstant(state, .{ .int = offset });
@@ -289,7 +290,7 @@ pub fn compileMember(state: *CompilerState, mem: *const ast.Member, node: *ast.N
             if (!state.chunk.exports.contains(static_path) and !is_reexport) {
                 const mod_name = if (mem.object.* == .primary) mem.object.primary.name else "Module";
                 const prop_name = if (mem.property.* == .primary) mem.property.primary.name else "property";
-                                return @import("../../errors/compile.zig").compileFailFmt(state, "'{s}' has no export '{s}'", .{ mod_name, prop_name });
+                return compiler_errors.compileFailFmt(state, "'{s}' has no export '{s}'", .{ mod_name, prop_name });
             }
         }
         if (state.functions.contains(static_path)) {
@@ -333,12 +334,12 @@ fn compileEnumVariant(state: *CompilerState, mem: *const ast.Member) !bool {
             else
                 "Module";
             const short = if (std.mem.lastIndexOf(u8, ename, "::")) |idx| ename[idx + 2 ..] else ename;
-                        return @import("../../errors/compile.zig").compileFailFmt(state, "'{s}' has no export '{s}'", .{ mod_name, short });
+            return compiler_errors.compileFailFmt(state, "'{s}' has no export '{s}'", .{ mod_name, short });
         }
     }
 
     const value = ed.variants.get(variant) orelse {
-                return @import("../../errors/compile.zig").compileFailFmt(state, "Unknown enum variant '{s}' on '{s}'", .{ variant, ename });
+        return compiler_errors.compileFailFmt(state, "Unknown enum variant '{s}' on '{s}'", .{ variant, ename });
     };
     try emit.emitConstant(state, .{ .int = value });
     return true;

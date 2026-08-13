@@ -28,6 +28,7 @@ pub const StructInit = expr.StructInit;
 
 pub const Declaration = stmt.Declaration;
 pub const Params = stmt.Params;
+pub const Param = stmt.Param;
 pub const FunctionDecl = stmt.FunctionDecl;
 pub const Block = stmt.Block;
 pub const Return = stmt.Return;
@@ -36,11 +37,10 @@ pub const Break = stmt.Break;
 pub const Continue = stmt.Continue;
 pub const If = stmt.If;
 pub const Capture = stmt.Capture;
-pub const ForKind = stmt.ForKind;
 pub const For = stmt.For;
 pub const SwitchProng = stmt.SwitchProng;
 pub const Switch = stmt.Switch;
-pub const Import = stmt.Import;
+
 pub const Extern = stmt.Extern;
 pub const StructField = stmt.StructField;
 pub const StructDecl = stmt.StructDecl;
@@ -70,7 +70,7 @@ pub const Node = union(enum) {
     break_expr: Break,
     continue_expr: Continue,
     defer_stmt: Defer,
-    import: Import,
+
     struct_decl: StructDecl,
     enum_decl: EnumDecl,
     struct_init: StructInit,

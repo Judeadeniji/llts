@@ -102,5 +102,5 @@ fn functionNameAt(vm: *VMState, address: u16) []const u8 {
     while (it.next()) |e| {
         if (e.value_ptr.address == address) return e.key_ptr.*;
     }
-    return "<script>";
+    return "<anonymous>";
 }

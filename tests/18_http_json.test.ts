@@ -185,7 +185,7 @@ test("http.request: POST request", () => {
 	expectOutput(
 		runSource(`
 @const $http = @import("std/http");
-$res = http.request("https://httpbin.org/post", "POST", "hello");
+$res = http.request("https://httpbingo.org/post", "POST", "hello");
 print(res.status);
 `),
 		["200"],

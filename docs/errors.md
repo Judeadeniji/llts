@@ -28,7 +28,7 @@ Handles the visual formatting of diagnostics and source context.
 Handles unwinding and formatting the VM's call stack.
 
 - **`formatVmStackTrace(frames: []const state_mod.CallFrame) void`**
-  - **Purpose**: Iterates over an array of `CallFrame`s backwards (from top of stack down to `<script>`). Extracts file, line, and column from each frame.
+  - **Purpose**: Iterates over an array of `CallFrame`s backwards (from top of stack down to `<anonymous>`). Extracts file, line, and column from each frame.
 
 - **`reportStackTrace(frames: []const state_mod.CallFrame) void`**
   - Alias/wrapper for `formatVmStackTrace`.
@@ -53,7 +53,7 @@ The error module relies heavily on VM state representations from `src/vm/state.z
 // Required Context from `vm/state.zig`
 
 pub const CallFrame = struct {
-    func_name: []const u8 = "<script>",
+    func_name: []const u8 = "<anonymous>",
     file: []const u8 = "",
     line: u32 = 1,
     column: u32 = 1,

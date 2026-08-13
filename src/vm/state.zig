@@ -18,7 +18,7 @@ pub const CallFrame = struct {
     base_slot: usize = 0,
     arg_count: u8 = 0,
     const_slots: std.AutoHashMap(u8, void),
-    func_name: []const u8 = "<script>",
+    func_name: []const u8 = "<anonymous>",
     /// Borrowed path from chunk.sources.
     file: []const u8 = "",
     line: u32 = 1,
@@ -74,7 +74,7 @@ pub const VMState = struct {
             .chunk = chunk,
         };
         var frame = CallFrame.init(allocator);
-        frame.func_name = "<script>";
+        frame.func_name = "<anonymous>";
         frame.file = if (chunk.file.len > 0) chunk.file else "<anonymous>";
         frame.source_index = 0;
         // Script frame lives until process end — watermark tracks immortal growth.

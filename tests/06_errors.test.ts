@@ -332,8 +332,8 @@ print(final.message);
 test("error() rejects more than 2 arguments with a clear message", () => {
   const res = runSource(`$e = error("a", "b", "c");`);
   expectError(res, "at most 2 arguments");
-  if (!res.stderr.includes("at <parse>")) {
-    throw new Error(`missing parse frame:\n${res.stderr}`);
+  if (!res.stderr.includes("at <compile>")) {
+    throw new Error(`missing compile frame:\n${res.stderr}`);
   }
 });
 

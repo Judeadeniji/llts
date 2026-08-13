@@ -23,6 +23,12 @@ pub fn parseBlock(self: *Parser) ParseError!*Node {
     } });
 }
 
+pub fn parseLabeledBlock(self: *Parser, label: []const u8) ParseError!*Node {
+    const block = try parseBlock(self);
+    block.block.label = try self.dupe(label);
+    return block;
+}
+
 pub fn parseSwitchExpression(self: *Parser) ParseError!*Node {
     const switch_token = self.previous() orelse return error.ParseFailed;
     _ = try self.consume(.delimiter, "Expects \"(\"", "(");
@@ -169,32 +175,8 @@ pub fn parseForExpression(self: *Parser) ParseError!*Node {
     const body = try parseBlock(self);
     const caps = try captures.toOwnedSlice(self.arena);
 
-    var kind: ast.ForKind = .condition;
-    var condition: ?*Node = null;
-    var range_start: ?*Node = null;
-    var range_end: ?*Node = null;
-    var iterable: ?*Node = null;
-
-    if (caps.len > 0) {
-        if (expr1.* == .binary and std.mem.eql(u8, expr1.binary.operator, "..")) {
-            kind = .range;
-            range_start = expr1.binary.left;
-            range_end = expr1.binary.right;
-        } else {
-            kind = .iterable;
-            iterable = expr1;
-        }
-    } else {
-        kind = .condition;
-        condition = expr1;
-    }
-
     return self.create(.{ .for_expr = .{
-        .kind = kind,
-        .condition = condition,
-        .range_start = range_start,
-        .range_end = range_end,
-        .iterable = iterable,
+        .expr = expr1,
         .captures = caps,
         .label = null,
         .body = body,

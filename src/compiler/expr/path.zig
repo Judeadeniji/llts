@@ -1,6 +1,7 @@
 const std = @import("std");
 const ast = @import("../../ast/root.zig");
 const state_mod = @import("../state.zig");
+const modules = @import("../modules.zig");
 
 const CompilerState = state_mod.CompilerState;
 
@@ -31,6 +32,15 @@ pub fn tryResolveStaticPath(state: *CompilerState, node: *ast.Node) !?[]const u8
             const key = try std.fmt.bufPrint(&buf, "${s}", .{p.name});
             if (state.global_types.get(key)) |mod| {
                 if (std.mem.startsWith(u8, mod, "module:")) return mod["module:".len..];
+            }
+            return null;
+        },
+        .call => |c| {
+            if (c.callee.* == .primary and std.mem.eql(u8, c.callee.primary.name, "@import")) {
+                if (c.args.len == 1 and c.args[0].* == .literal and c.args[0].literal.literal_type == .string) {
+                    const from = if (state.diag_path.len > 0) state.diag_path else state.chunk.file;
+                    return modules.resolveImportKey(state, from, c.args[0].literal.value) catch null;
+                }
             }
             return null;
         },

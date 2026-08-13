@@ -4,12 +4,14 @@ const state_mod = @import("../state.zig");
 const from_ast = @import("from_ast.zig");
 const ir = @import("ir.zig");
 const path = @import("../expr/path.zig");
+const intrinsics = @import("../intrinsics.zig");
+const compiler_errors = @import("../../errors/compile.zig");
 
 pub const typeAstToDisplay = from_ast.typeAstToDisplay;
 
 pub const TypecheckError = error{ OutOfMemory, CompileError, Overflow, InvalidCharacter };
 
-const Env = struct {
+pub const Env = struct {
     locals: std.ArrayList(std.StringHashMap(ir.Type)),
     globals: std.StringHashMap(ir.Type),
     expected_return: ?ir.Type = null,
@@ -61,7 +63,7 @@ const Env = struct {
     }
 };
 
-fn ownDisplay(state: *state_mod.CompilerState, t: ir.Type) ![]const u8 {
+pub fn ownDisplay(state: *state_mod.CompilerState, t: ir.Type) ![]const u8 {
     const s = try ir.displayTypeAlloc(state.allocator, t);
     try state.owned.append(state.allocator, s);
     return s;
@@ -74,7 +76,7 @@ fn sourceFor(state: *state_mod.CompilerState, file_path: []const u8) []const u8 
     return state.chunk.source;
 }
 
-fn requireAssign(state: *state_mod.CompilerState, got: ir.Type, expected: ir.Type, ctx: []const u8) TypecheckError!void {
+pub fn requireAssign(state: *state_mod.CompilerState, got: ir.Type, expected: ir.Type, ctx: []const u8) TypecheckError!void {
     try requireAssignAt(state, got, expected, ctx, .{});
 }
 
@@ -87,7 +89,7 @@ fn requireAssignAt(state: *state_mod.CompilerState, got: ir.Type, expected: ir.T
             const file_path = if (loc.path.len > 0) loc.path else state.chunk.file;
             const line = if (loc.line > 0) loc.line else 1;
             const col = if (loc.column > 0) loc.column else 1;
-            return @import("../../errors/compile.zig").compileFailAt(
+            return compiler_errors.compileFailAt(
                 state,
                 file_path,
                 sourceFor(state, file_path),
@@ -97,7 +99,7 @@ fn requireAssignAt(state: *state_mod.CompilerState, got: ir.Type, expected: ir.T
                 .{ ctx, g, e },
             );
         }
-        return @import("../../errors/compile.zig").compileFailFmt(state, "{s}: type '{s}' is not assignable to '{s}'", .{ ctx, g, e });
+        return compiler_errors.compileFailFmt(state, "{s}: type '{s}' is not assignable to '{s}'", .{ ctx, g, e });
     }
 }
 
@@ -105,7 +107,7 @@ fn inferLiteral(ta: ir.TypeAlloc, lit: ast.Literal) !ir.Type {
     return switch (lit.literal_type) {
         .string => try ta.arrayType(ir.TByte, lit.value.len),
         .boolean => ir.TBool,
-        .@"null" => ir.TNull,
+        .null => ir.TNull,
         else => ir.TInt,
     };
 }
@@ -143,12 +145,16 @@ fn fnParamTypes(state: *state_mod.CompilerState, ta: ir.TypeAlloc, func_name: []
     out_variadic.* = is_variadic;
     out_rest.* = null;
     for (plist, 0..) |pnode, i| {
-        if (pnode.* != .declaration) continue;
-        const d = &pnode.declaration;
         var t: ir.Type = ir.TUnknown;
-        if (d.type_annotation) |ann| {
+        if (pnode.type_annotation) |ann| {
             t = try from_ast.typeFromAst(ann, state, ta);
         }
+
+        const is_rest = pnode.is_rest;
+        if (is_rest and i != plist.len - 1) {
+            return compiler_errors.compileFailFmt(state, "Rest parameter must be the last parameter", .{});
+        }
+
         if (is_variadic and i == plist.len - 1) {
             if (t == .array) {
                 out_rest.* = t;
@@ -176,7 +182,7 @@ fn noteDiag(state: *state_mod.CompilerState, node: *ast.Node) void {
     if (loc.path.len > 0) state.diag_path = loc.path;
 }
 
-fn inferExpr(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node: *ast.Node) TypecheckError!ir.Type {
+pub fn inferExpr(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node: *ast.Node) TypecheckError!ir.Type {
     noteDiag(state, node);
     return switch (node.*) {
         .literal => |lit| try inferLiteral(ta, lit),
@@ -233,7 +239,7 @@ fn inferExpr(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node:
                 if (from_ast.resolveEnumName(state, m.object)) |ename| {
                     if (state.enums.get(ename)) |ed| {
                         if (!ed.variants.contains(m.property.primary.name)) {
-                                                        return @import("../../errors/compile.zig").compileFailFmt(state, "Unknown enum variant '{s}' on '{s}'", .{ m.property.primary.name, ename });
+                            return compiler_errors.compileFailFmt(state, "Unknown enum variant '{s}' on '{s}'", .{ m.property.primary.name, ename });
                         }
                         break :blk .{ .enum_ = ename };
                     }
@@ -252,15 +258,21 @@ fn inferExpr(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node:
             if (obj == .array) break :blk obj.array.elem.*;
             if (!ir.involvesUnknown(obj) and obj != .unknown) {
                 const d = try ownDisplay(state, obj);
-                                return @import("../../errors/compile.zig").compileFailFmt(state, "Cannot index type '{s}'", .{d});
+                return compiler_errors.compileFailFmt(state, "Cannot index type '{s}'", .{d});
             }
             break :blk ir.TUnknown;
         },
         .array_literal => |a| try inferArrayLiteral(state, env, ta, a),
         .struct_init => |init| try inferStructInit(state, env, ta, init),
         .error_expr => |e| blk: {
-            const msg = try inferExpr(state, env, ta, e.message);
+            if (e.args.len == 0 or e.args.len > 2) {
+                return compiler_errors.compileFailFmt(state, "error() takes at most 2 arguments (message, payload)", .{});
+            }
+            const msg = try inferExpr(state, env, ta, e.args[0]);
             try requireAssign(state, msg, ir.TString, "error(...)");
+            if (e.args.len == 2) {
+                _ = try inferExpr(state, env, ta, e.args[1]);
+            }
             break :blk ir.TError;
         },
         .try_expr => |t| blk: {
@@ -269,13 +281,13 @@ fn inferExpr(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node:
                 if (inner != .error_ and !ir.isErrorUnion(inner) and inner != .unknown) {
                     if (!ir.allowsError(inner)) {
                         const d = try ownDisplay(state, inner);
-                                                return @import("../../errors/compile.zig").compileFailFmt(state, "'?' operator used on non-error-union type '{s}'", .{d});
+                        return compiler_errors.compileFailFmt(state, "'?' operator used on non-error-union type '{s}'", .{d});
                     }
                 }
                 if (env.annotated_return) |ar| {
                     if (!ir.allowsError(ar)) {
                         const d = try ownDisplay(state, ar);
-                                                return @import("../../errors/compile.zig").compileFailFmt(state, "Cannot use '?' here: enclosing function return type '{s}' does not allow error", .{d});
+                        return compiler_errors.compileFailFmt(state, "Cannot use '?' here: enclosing function return type '{s}' does not allow error", .{d});
                     }
                 }
             }
@@ -330,13 +342,20 @@ fn inferExpr(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node:
             break :blk try joinBreakTypes(state, env, ta, node);
         },
         .for_expr => |f| blk: {
-            if (f.condition) |c| _ = try inferExpr(state, env, ta, c);
-            if (f.range_start) |s| _ = try inferExpr(state, env, ta, s);
-            if (f.range_end) |e| _ = try inferExpr(state, env, ta, e);
-            if (f.iterable) |it| _ = try inferExpr(state, env, ta, it);
+            const expr_type = try inferExpr(state, env, ta, f.expr);
             try env.pushScope();
             defer env.popScope();
-            for (f.captures) |cap| try env.define(cap.name, ir.TInt);
+            if (f.captures.len > 0) {
+                if (f.expr.* == .binary and std.mem.eql(u8, f.expr.binary.operator, "..")) {
+                    for (f.captures) |cap| try env.define(cap.name, ir.TInt);
+                } else {
+                    const elem_type = if (expr_type == .array) expr_type.array.elem.* else ir.TUnknown;
+                    try env.define(f.captures[0].name, elem_type);
+                    if (f.captures.len > 1) {
+                        try env.define(f.captures[1].name, ir.TInt);
+                    }
+                }
+            }
             _ = try inferExpr(state, env, ta, f.body);
             break :blk ir.TUnknown;
         },
@@ -403,46 +422,12 @@ fn isArith(op: []const u8) bool {
 }
 
 fn inferCall(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, call_node: *ast.Node, c: *const ast.Call) TypecheckError!ir.Type {
-    if (c.callee.* == .primary and std.mem.eql(u8, c.callee.primary.name, "@isError")) {
-        if (c.args.len != 1) {
-                        return @import("../../errors/compile.zig").compileFailFmt(state, "@isError expects exactly 1 argument", .{});
+    if (c.callee.* == .primary and std.mem.startsWith(u8, c.callee.primary.name, "@")) {
+        const name = c.callee.primary.name;
+        if (intrinsics.match(name)) |i| {
+            return try intrinsics.typecheck(state, env, ta, i, call_node, c);
         }
-        _ = try inferExpr(state, env, ta, c.args[0]);
-        return ir.TBool;
-    }
-    if (c.callee.* == .primary and std.mem.eql(u8, c.callee.primary.name, "@typeOf")) {
-        if (c.args.len != 1) {
-                        return @import("../../errors/compile.zig").compileFailFmt(state, "@typeOf expects exactly 1 argument", .{});
-        }
-        const arg_type = try inferExpr(state, env, ta, c.args[0]);
-        const disp = try ownDisplay(state, arg_type);
-        try state.type_of_results.put(call_node, disp);
-        return ir.TString;
-    }
-    if (c.callee.* == .primary and std.mem.eql(u8, c.callee.primary.name, "@new")) {
-        if (c.args.len != 2 and c.args.len != 3) {
-            return @import("../../errors/compile.zig").compileFailFmt(state, "@new expects (allocator, type_or_value) or (allocator, []T|string, length)", .{});
-        }
-        _ = try inferExpr(state, env, ta, c.args[0]);
-        const v = c.args[1];
-        if (c.args.len == 3) _ = try inferExpr(state, env, ta, c.args[2]);
-        switch (v.*) {
-            .array_type, .union_type => return try from_ast.typeFromAst(v, state, ta),
-            .primary => |p| {
-                if (p.kind == .identifier) {
-                    if (std.mem.eql(u8, p.name, "string") or std.mem.eql(u8, p.name, "[]byte")) {
-                        return ir.TString;
-                    }
-                    if (state.structs.contains(p.name) or state.enums.contains(p.name)) {
-                        return try from_ast.typeFromAst(v, state, ta);
-                    }
-                    const named = ir.namedType(p.name);
-                    if (named != .struct_) return named;
-                }
-                return try inferExpr(state, env, ta, v);
-            },
-            else => return try inferExpr(state, env, ta, v),
-        }
+        return compiler_errors.compileFailFmt(state, "unknown intrinsic '{s}'", .{name});
     }
 
     const name = resolveCalleeName(state, c);
@@ -469,7 +454,7 @@ fn inferCall(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, call_
             break :blk false;
         };
         if (!variadic and rest == null and any_annotated and c.args.len != named_count) {
-                        return @import("../../errors/compile.zig").compileFailFmt(state, "Function '{s}' expected {d} arguments, got {d}", .{ name.?, named_count, c.args.len });
+            return compiler_errors.compileFailFmt(state, "Function '{s}' expected {d} arguments, got {d}", .{ name.?, named_count, c.args.len });
         }
         const ncheck = @min(c.args.len, named_count);
         var i: usize = 0;
@@ -505,14 +490,16 @@ fn inferArrayLiteral(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAllo
         }
         if (elem == .array and ti == .array) {
             if (elem.array.length != null and ti.array.length != null and elem.array.length.? != ti.array.length.?) {
-                return @import("../../errors/compile.zig").compileFailFmt(state, "Array elements have inconsistent lengths [{d}] vs [{d}]",
+                return compiler_errors.compileFailFmt(
+                    state,
+                    "Array elements have inconsistent lengths [{d}] vs [{d}]",
                     .{ elem.array.length.?, ti.array.length.? },
                 );
             }
             if (!ir.isSubtype(ti.array.elem.*, elem.array.elem.*) and !ir.isSubtype(elem.array.elem.*, ti.array.elem.*)) {
                 const d1 = try ownDisplay(state, elem);
                 const d2 = try ownDisplay(state, ti);
-                                return @import("../../errors/compile.zig").compileFailFmt(state, "Array elements have inconsistent types '{s}' and '{s}'", .{ d1, d2 });
+                return compiler_errors.compileFailFmt(state, "Array elements have inconsistent types '{s}' and '{s}'", .{ d1, d2 });
             }
             const len = if (elem.array.length != null) elem.array.length else ti.array.length;
             const inner = if (ir.isSubtype(ti.array.elem.*, elem.array.elem.*)) elem.array.elem.* else ti.array.elem.*;
@@ -522,7 +509,7 @@ fn inferArrayLiteral(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAllo
         if (!ir.isSubtype(ti, elem) and !ir.isSubtype(elem, ti)) {
             const d1 = try ownDisplay(state, elem);
             const d2 = try ownDisplay(state, ti);
-                        return @import("../../errors/compile.zig").compileFailFmt(state, "Array elements have inconsistent types '{s}' and '{s}'", .{ d1, d2 });
+            return compiler_errors.compileFailFmt(state, "Array elements have inconsistent types '{s}' and '{s}'", .{ d1, d2 });
         }
         if (!ir.isSubtype(ti, elem)) elem = ti;
     }
@@ -530,12 +517,16 @@ fn inferArrayLiteral(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAllo
 }
 
 fn inferStructInit(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, init: ast.StructInit) TypecheckError!ir.Type {
-    var struct_name = init.name;
+    const sn = from_ast.resolveStructName(state, init.type_expr) orelse {
+        return compiler_errors.compileFailFmt(state, "Invalid struct initialization type", .{});
+    };
+    var struct_name = sn;
     if (std.mem.indexOfScalar(u8, struct_name, '.') != null) {
         struct_name = path.resolveModuleType(state, struct_name) catch struct_name;
     }
+    try from_ast.checkStructInitExport(state, init.type_expr, struct_name);
     if (!state.structs.contains(struct_name)) {
-                return @import("../../errors/compile.zig").compileFailFmt(state, "Unknown struct '{s}'", .{init.name});
+        return compiler_errors.compileFailFmt(state, "Unknown struct '{s}'", .{sn});
     }
     for (init.fields) |field| {
         const expected = try fieldTypeFromStruct(state, ta, struct_name, field.name);
@@ -551,7 +542,7 @@ fn checkStmt(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node:
     noteDiag(state, node);
     switch (node.*) {
         .declaration => |d| {
-            if (d.value.* == .import) {
+            if (d.value.* == .call and d.value.call.callee.* == .primary and std.mem.eql(u8, d.value.call.callee.primary.name, "@import")) {
                 if (state.global_types.get(d.name)) |mod| {
                     if (std.mem.startsWith(u8, mod, "module:")) {
                         try env.define(d.name, .{ .struct_ = mod });
@@ -642,27 +633,31 @@ fn checkFunction(state: *state_mod.CompilerState, ta: ir.TypeAlloc, f: *ast.Func
 
     const plist = switch (f.params.*) {
         .params => |p| p.params,
-        else => &[_]*ast.Node{},
+        else => &[_]ast.Param{},
     };
     const is_variadic = switch (f.params.*) {
         .params => |p| p.is_variadic,
         else => false,
     };
     for (plist, 0..) |pnode, i| {
-        if (pnode.* != .declaration) continue;
-        const d = &pnode.declaration;
         var t: ir.Type = ir.TUnknown;
-        if (d.type_annotation) |ann| t = try from_ast.typeFromAst(ann, state, ta);
-        if (std.mem.eql(u8, d.name, "self")) {
+        if (pnode.type_annotation) |ann| t = try from_ast.typeFromAst(ann, state, ta);
+        if (std.mem.eql(u8, pnode.name, "self")) {
             if (std.mem.indexOf(u8, f.name, "::")) |idx| {
                 t = .{ .struct_ = f.name[0..idx] };
             }
         }
+
+        const is_rest = pnode.is_rest;
+        if (is_rest and i != plist.len - 1) {
+            return compiler_errors.compileFailFmt(state, "Rest parameter must be the last parameter", .{});
+        }
+
         if (is_variadic and i == plist.len - 1 and t != .array) {
             const elem = if (t == .unknown) ir.TUnknown else t;
             t = try ta.arrayType(elem, null);
         }
-        try env.define(d.name, t);
+        try env.define(pnode.name, t);
     }
 
     if (f.body.* == .block) {
@@ -704,7 +699,8 @@ pub fn typecheck(state: *state_mod.CompilerState, doc: *ast.Document) TypecheckE
     for (doc.statements) |s| {
         if (s.* != .declaration) continue;
         const d = &s.declaration;
-        if (d.value.* == .import or d.is_const) try top_consts.put(d.name, {});
+        const is_imp = (d.value.* == .call and d.value.call.callee.* == .primary and std.mem.eql(u8, d.value.call.callee.primary.name, "@import"));
+        if (is_imp or d.is_const) try top_consts.put(d.name, {});
     }
 
     for (doc.statements) |s| {
