@@ -19,6 +19,7 @@ var buffer_push_n: NativeFunction = undefined;
 var buffer_from_string_n: NativeFunction = undefined;
 var buffer_copy_n: NativeFunction = undefined;
 var buffer_fill_n: NativeFunction = undefined;
+var buffer_fill_range_n: NativeFunction = undefined;
 var buffer_resize_n: NativeFunction = undefined;
 
 fn bufferAlloc(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
@@ -151,8 +152,28 @@ fn bufferFromString(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     return .{ .buffer = buf };
 }
 
-fn bufferCopy(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
+fn bufferFillRange(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
+    _ = vm;
+    if (args.len < 4) return error.ArityError;
+    if (args[0] != .buffer) return error.TypeError;
+    const val_raw = try util.asInt(args[1]);
+    const val: u8 = @intCast(val_raw & 0xFF);
+    const start_raw = try util.asInt(args[2]);
+    const len_raw = try util.asInt(args[3]);
+    if (start_raw < 0 or len_raw < 0) return error.IndexOutOfBounds;
+    const start: usize = @intCast(start_raw);
+    const len: usize = @intCast(len_raw);
+    const end = std.math.add(usize, start, len) catch return error.IndexOutOfBounds;
+    const buf = args[0].buffer;
+    if (end > buf.bytes.items.len) return error.IndexOutOfBounds;
+    
+    @memset(buf.bytes.items[start .. end], val);
+    return .null;
+}
+
+fn bufferCopy(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
+    _ = vm_ptr;
     if (args.len < 5) return error.ArityError;
     if (args[0] != .buffer or args[2] != .buffer) return error.TypeError;
     const dst = args[0].buffer;
@@ -175,11 +196,11 @@ fn bufferCopy(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     }
     
     if (dst == src and u_dst_off != u_src_off) {
-        // Safe overlapping copy
-        const tmp = try vm.allocator.alloc(u8, u_len);
-        defer vm.allocator.free(tmp);
-        @memcpy(tmp, src.bytes.items[u_src_off .. src_end]);
-        @memcpy(dst.bytes.items[u_dst_off .. dst_end], tmp);
+        if (u_dst_off < u_src_off) {
+            std.mem.copyForwards(u8, dst.bytes.items[u_dst_off .. dst_end], src.bytes.items[u_src_off .. src_end]);
+        } else {
+            std.mem.copyBackwards(u8, dst.bytes.items[u_dst_off .. dst_end], src.bytes.items[u_src_off .. src_end]);
+        }
     } else if (dst != src) {
         @memcpy(dst.bytes.items[u_dst_off .. dst_end], src.bytes.items[u_src_off .. src_end]);
     }
@@ -187,8 +208,7 @@ fn bufferCopy(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
 }
 
 fn bufferFill(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
-    const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
-    _ = vm;
+    _ = vm_ptr;
     if (args.len < 2) return error.ArityError;
     if (args[0] != .buffer) return error.TypeError;
     const val_raw = try util.asInt(args[1]);
@@ -228,8 +248,9 @@ pub fn register(vm: *VMState) !void {
     buffer_from_string_n = .{ .name = "__bufferFromString", .func = bufferFromString, .arity = 1 };
     buffer_copy_n = .{ .name = "__bufferCopy", .func = bufferCopy, .arity = 5 };
     buffer_fill_n = .{ .name = "__bufferFill", .func = bufferFill, .arity = 2 };
+    buffer_fill_range_n = .{ .name = "__bufferFillRange", .func = bufferFillRange, .arity = 4 };
     buffer_resize_n = .{ .name = "__bufferResize", .func = bufferResize, .arity = 2 };
-    
+
     try vm.globals.put("__bufferAlloc", .{ .native = &buffer_alloc_n });
     try vm.globals.put("__bufferCreate", .{ .native = &buffer_create_n });
     try vm.globals.put("__bufferWriteString", .{ .native = &buffer_write_string_n });
@@ -242,5 +263,6 @@ pub fn register(vm: *VMState) !void {
     try vm.globals.put("__bufferFromString", .{ .native = &buffer_from_string_n });
     try vm.globals.put("__bufferCopy", .{ .native = &buffer_copy_n });
     try vm.globals.put("__bufferFill", .{ .native = &buffer_fill_n });
+    try vm.globals.put("__bufferFillRange", .{ .native = &buffer_fill_range_n });
     try vm.globals.put("__bufferResize", .{ .native = &buffer_resize_n });
 }

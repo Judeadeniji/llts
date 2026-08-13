@@ -46,6 +46,10 @@ pub @func fill(buf, val) {
     return __bufferFill(buf, val);
 }
 
+pub @func fillRange(buf, val, start, len) {
+    return __bufferFillRange(buf, val, start, len);
+}
+
 pub @func resize(buf, new_len) {
     return __bufferResize(buf, new_len);
 }

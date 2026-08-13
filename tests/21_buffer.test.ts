@@ -166,3 +166,15 @@ test("buffer: overlapping copy", () => {
 	`);
 	expectOutput(res, ["12123478"]);
 });
+
+test("buffer: fillRange", () => {
+	const res = runSource(`
+		@const $buffer = @import("std/buffer");
+		pub @func main() {
+			$b = buffer.fromString("12345678");
+			buffer.fillRange(b, 33, 2, 4); # replace 4 bytes starting at 2 with '!'
+			print(buffer.readString(b, 0, 8));
+		}
+	`);
+	expectOutput(res, ["12!!!!78"]);
+});
