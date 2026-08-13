@@ -13,6 +13,8 @@ pub const LltsFunction = struct {
     address: u32,
     arity: u8,
     is_variadic: bool = false,
+    /// Index into Chunk.sources for this function's originating file.
+    source_index: u16 = 0,
 };
 
 /// Runtime module instance from OP_GET_MODULE (owns dynamic properties).

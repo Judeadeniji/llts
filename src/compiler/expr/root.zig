@@ -14,6 +14,8 @@ const control = @import("../stmt/control.zig");
 const CompilerState = state_mod.CompilerState;
 
 pub fn compileExpression(state: *CompilerState, node: *ast.Node) anyerror!void {
+    const loc = node.loc();
+    emit.noteLoc(state, loc.line, loc.column, loc.path);
     switch (node.*) {
         .literal => |*l| try literal.compileLiteral(state, l),
         .primary => |*p| try compilePrimary(state, p, node),

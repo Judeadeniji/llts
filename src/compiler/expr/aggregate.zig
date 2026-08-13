@@ -29,8 +29,7 @@ pub fn compileTry(state: *CompilerState, try_expr: *const ast.TryExpr) !void {
     // Compile-time: '?' requires an error-union (or unknown) operand.
     if (types.resolveType(state, try_expr.expression)) |disp| {
         if (!types.typeAllowsError(disp)) {
-            std.debug.print("CompileError: '?' operator used on non-error-union type '{s}'\n", .{disp});
-            return error.CompileError;
+                        return @import("../../errors/compile.zig").compileFailFmt(state, "'?' operator used on non-error-union type '{s}'", .{disp});
         }
     }
     try expr.compileExpression(state, try_expr.expression);
@@ -68,8 +67,7 @@ pub fn compileStructInit(state: *CompilerState, init: *const ast.StructInit) !vo
 /// Result is Pass-colored and may be returned from the frame.
 pub fn compileNew(state: *CompilerState, c: *const ast.Call) !void {
     if (c.args.len != 2) {
-        std.debug.print("CompileError: @new expects (allocator, value) — like Go make\n", .{});
-        return error.CompileError;
+                return @import("../../errors/compile.zig").compileFailFmt(state, "@new expects (allocator, value) — like Go make", .{});
     }
     const value = c.args[1];
     switch (value.*) {
@@ -93,8 +91,7 @@ pub fn compileNew(state: *CompilerState, c: *const ast.Call) !void {
             try fillArray(state, arr);
         },
         else => {
-            std.debug.print("CompileError: @new value must be a struct or array literal\n", .{});
-            return error.CompileError;
+                        return @import("../../errors/compile.zig").compileFailFmt(state, "@new value must be a struct or array literal", .{});
         },
     }
 }
@@ -105,16 +102,14 @@ fn resolveStructDef(state: *CompilerState, init: *const ast.StructInit) !state_m
         struct_name = try path.resolveModuleType(state, struct_name);
         if (!state.chunk.exports.contains(struct_name)) {
             if (std.mem.indexOfScalar(u8, init.name, '.')) |dot| {
-                std.debug.print("CompileError: '{s}' has no export '{s}'\n", .{ init.name[0..dot], init.name[dot + 1 ..] });
+                return @import("../../errors/compile.zig").compileFailFmt(state, "'{s}' has no export '{s}'", .{ init.name[0..dot], init.name[dot + 1 ..] });
             } else {
-                std.debug.print("CompileError: Unknown struct: {s}\n", .{init.name});
+                return @import("../../errors/compile.zig").compileFailFmt(state, "Unknown struct: {s}", .{init.name});
             }
-            return error.CompileError;
         }
     }
     return state.structs.get(struct_name) orelse {
-        std.debug.print("CompileError: Unknown struct: {s}\n", .{init.name});
-        return error.CompileError;
+        return @import("../../errors/compile.zig").compileFailFmt(state, "Unknown struct: {s}", .{init.name});
     };
 }
 
@@ -139,8 +134,7 @@ fn fillArray(state: *CompilerState, arr: *const ast.ArrayLiteral) !void {
 fn fillStruct(state: *CompilerState, init: *const ast.StructInit, struct_def: state_mod.StructDef) !void {
     for (init.fields) |field| {
         const offset = struct_def.offsets.get(field.name) orelse {
-            std.debug.print("CompileError: Unknown field {s}\n", .{field.name});
-            return error.CompileError;
+                        return @import("../../errors/compile.zig").compileFailFmt(state, "Unknown field {s}", .{field.name});
         };
         try emit.emitOp(state, .OP_DUP);
         try emit.emitConstant(state, .{ .int = offset });
@@ -162,8 +156,7 @@ pub fn compileMember(state: *CompilerState, mem: *const ast.Member, node: *ast.N
             if (!state.chunk.exports.contains(static_path) and !is_reexport) {
                 const mod_name = if (mem.object.* == .primary) mem.object.primary.name else "Module";
                 const prop_name = if (mem.property.* == .primary) mem.property.primary.name else "property";
-                std.debug.print("CompileError: '{s}' has no export '{s}'\n", .{ mod_name, prop_name });
-                return error.CompileError;
+                                return @import("../../errors/compile.zig").compileFailFmt(state, "'{s}' has no export '{s}'", .{ mod_name, prop_name });
             }
         }
         if (state.functions.contains(static_path)) {
@@ -207,14 +200,12 @@ fn compileEnumVariant(state: *CompilerState, mem: *const ast.Member) !bool {
             else
                 "Module";
             const short = if (std.mem.lastIndexOf(u8, ename, "::")) |idx| ename[idx + 2 ..] else ename;
-            std.debug.print("CompileError: '{s}' has no export '{s}'\n", .{ mod_name, short });
-            return error.CompileError;
+                        return @import("../../errors/compile.zig").compileFailFmt(state, "'{s}' has no export '{s}'", .{ mod_name, short });
         }
     }
 
     const value = ed.variants.get(variant) orelse {
-        std.debug.print("CompileError: Unknown enum variant '{s}' on '{s}'\n", .{ variant, ename });
-        return error.CompileError;
+                return @import("../../errors/compile.zig").compileFailFmt(state, "Unknown enum variant '{s}' on '{s}'", .{ variant, ename });
     };
     try emit.emitConstant(state, .{ .int = value });
     return true;

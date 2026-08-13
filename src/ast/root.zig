@@ -6,6 +6,8 @@ const types = @import("types.zig");
 pub const Location = struct {
     line: u32 = 0,
     column: u32 = 0,
+    /// Originating source path (borrowed from Document / parser).
+    path: []const u8 = "",
 };
 
 pub const LiteralKind = expr.LiteralKind;

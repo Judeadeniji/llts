@@ -58,8 +58,7 @@ pub fn resolveVariable(state: *CompilerState, name: []const u8) !void {
         var buf: [256]u8 = undefined;
         const type_key = std.fmt.bufPrint(&buf, "${s}", .{name}) catch "";
         if (!state.global_types.contains(type_key)) {
-            std.debug.print("CompileError: Unknown identifier '{s}'\n", .{name});
-            return error.CompileError;
+                        return @import("../errors/compile.zig").compileFailFmt(state, "Unknown identifier '{s}'", .{name});
         }
     }
     if (state.functions.contains(name)) {

@@ -55,7 +55,7 @@ pub fn compileFunction(state: *CompilerState, node: *ast.FunctionDecl, ast_node:
 
     const params = switch (node.params.*) {
         .params => |*p| p,
-        else => return fail("function params malformed"),
+        else => return fail(state, "function params malformed"),
     };
 
     if (params.is_variadic) {
@@ -69,7 +69,7 @@ pub fn compileFunction(state: *CompilerState, node: *ast.FunctionDecl, ast_node:
 
     const body = switch (node.body.*) {
         .block => |*b| b,
-        else => return fail("function body must be a block"),
+        else => return fail(state, "function body must be a block"),
     };
     for (body.statements) |s| try stmt.compileStatement(state, s);
 
@@ -117,7 +117,6 @@ fn pushParam(state: *CompilerState, p: *ast.Node, method_struct: ?[]const u8) !v
     }
 }
 
-fn fail(msg: []const u8) error{CompileError} {
-    std.debug.print("CompileError: {s}\n", .{msg});
-    return error.CompileError;
+fn fail(state: *CompilerState, msg: []const u8) error{CompileError} {
+    return @import("../../errors/compile.zig").compileFailFmt(state, "{s}", .{msg});
 }

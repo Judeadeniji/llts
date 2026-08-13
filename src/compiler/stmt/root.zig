@@ -9,7 +9,9 @@ const func = @import("func.zig");
 const CompilerState = state_mod.CompilerState;
 
 pub fn compileStatement(state: *CompilerState, node: *ast.Node) anyerror!void {
-    try emit.emitLineIfNeeded(state, node.loc().line);
+    const loc = node.loc();
+    emit.noteLoc(state, loc.line, loc.column, loc.path);
+    try emit.emitLineIfNeeded(state, loc.line, loc.column);
     switch (node.*) {
         .function_decl => |*f| try func.compileFunction(state, f, node),
         .declaration => |*d| try decl.compileDeclaration(state, d),

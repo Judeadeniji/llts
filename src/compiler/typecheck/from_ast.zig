@@ -30,8 +30,7 @@ pub fn resolveNamedType(name: []const u8, state: ?*state_mod.CompilerState) From
     if (state) |st| {
         if (st.enums.contains(name)) return .{ .enum_ = name };
         if (st.structs.contains(name)) return .{ .struct_ = name };
-        std.debug.print("CompileError: Unknown type '{s}'\n", .{name});
-        return error.CompileError;
+        return @import("../../errors/compile.zig").compileFailFmt(st, "Unknown type '{s}'", .{name});
     }
     return t;
 }

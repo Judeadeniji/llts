@@ -11,7 +11,7 @@ const aggregate = @import("aggregate.zig");
 const CompilerState = state_mod.CompilerState;
 
 pub fn compileCall(state: *CompilerState, c: *const ast.Call, node: *ast.Node) !void {
-    try emit.emitLineIfNeeded(state, c.loc.line);
+    try emit.emitLineIfNeeded(state, c.loc.line, c.loc.column);
 
     if (c.callee.* == .primary and std.mem.eql(u8, c.callee.primary.name, "print")) {
         try emit.emitNameGet(state, .OP_GET_GLOBAL, "print");
@@ -21,15 +21,16 @@ pub fn compileCall(state: *CompilerState, c: *const ast.Call, node: *ast.Node) !
         return;
     }
     if (c.callee.* == .primary and std.mem.eql(u8, c.callee.primary.name, "@isError")) {
-        if (c.args.len != 1) return error.CompileError;
+        if (c.args.len != 1) {
+            return @import("../../errors/compile.zig").compileFailFmt(state, "@isError expects exactly 1 argument", .{});
+        }
         try expr.compileExpression(state, c.args[0]);
         try emit.emitOp(state, .OP_IS_ERROR);
         return;
     }
     if (c.callee.* == .primary and std.mem.eql(u8, c.callee.primary.name, "@typeOf")) {
         if (c.args.len != 1) {
-            std.debug.print("CompileError: @typeOf expects exactly 1 argument\n", .{});
-            return error.CompileError;
+                        return @import("../../errors/compile.zig").compileFailFmt(state, "@typeOf expects exactly 1 argument", .{});
         }
         // Prefer typecheck-filled result; fall back to resolveType for emit-only paths.
         const disp = state.type_of_results.get(node) orelse
@@ -76,8 +77,7 @@ pub fn compileCall(state: *CompilerState, c: *const ast.Call, node: *ast.Node) !
                 const mem = &c.callee.member;
                 const mod_name = if (mem.object.* == .primary) mem.object.primary.name else "Module";
                 const prop_name = if (mem.property.* == .primary) mem.property.primary.name else "property";
-                std.debug.print("CompileError: '{s}' has no export '{s}'\n", .{ mod_name, prop_name });
-                return error.CompileError;
+                                return @import("../../errors/compile.zig").compileFailFmt(state, "'{s}' has no export '{s}'", .{ mod_name, prop_name });
             }
         }
         if (try emitNamedCall(state, name, c.args, false, null)) return;
@@ -110,8 +110,7 @@ fn emitMethodCall(state: *CompilerState, name: []const u8, self_obj: *ast.Node, 
         try emit.emitCallStatic(state, @intCast(fn_info.address), argc);
         return;
     }
-    std.debug.print("CompileError: Unknown method {s}\n", .{name});
-    return error.CompileError;
+        return @import("../../errors/compile.zig").compileFailFmt(state, "Unknown method {s}", .{name});
 }
 
 fn emitNamedCall(state: *CompilerState, name: []const u8, args: []*ast.Node, _: bool, _: ?*ast.Node) !bool {

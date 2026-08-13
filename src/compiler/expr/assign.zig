@@ -94,7 +94,7 @@ fn assignPrimary(state: *CompilerState, prim: *const ast.Primary, right: *ast.No
         state.locals.items[@intCast(local_arg)].is_const
     else
         state.global_consts.contains(prim.name);
-    if (is_const) return failConst(prim.name);
+    if (is_const) return failConst(state, prim.name);
     if (arith) |op| {
         try scope.resolveVariable(state, prim.name);
         try expr.compileExpression(state, right);
@@ -113,7 +113,6 @@ fn assignPrimary(state: *CompilerState, prim: *const ast.Primary, right: *ast.No
     }
 }
 
-fn failConst(name: []const u8) error{CompileError} {
-    std.debug.print("CompileError: Cannot reassign to constant variable '{s}'\n", .{name});
-    return error.CompileError;
+fn failConst(state: *CompilerState, name: []const u8) error{CompileError} {
+    return @import("../../errors/compile.zig").compileFailFmt(state, "Cannot reassign to constant variable '{s}'", .{name});
 }

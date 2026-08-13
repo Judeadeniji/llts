@@ -84,7 +84,7 @@ pub const Parser = struct {
         const message = std.fmt.bufPrint(&msg_buf, fmt, args) catch "parse error";
         const report = @import("../errors/report.zig");
         report.reportSourceError(self.path, self.source, token.line, token.column, message);
-        report.reportLocationFrame(self.path, token.line, "<script>");
+        report.reportLocationFrameCol(self.path, token.line, token.column, "<parse>");
         return error.ParseFailed;
     }
 
@@ -104,8 +104,7 @@ pub const Parser = struct {
     }
 
     pub fn locOf(self: *const Parser, token: Token) Location {
-        _ = self;
-        return .{ .line = token.line, .column = token.column };
+        return .{ .line = token.line, .column = token.column, .path = self.path };
     }
 
     pub fn dupe(self: *Parser, s: []const u8) ParseError![]const u8 {

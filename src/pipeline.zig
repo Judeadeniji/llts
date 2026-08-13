@@ -27,6 +27,7 @@ pub fn runSource(
 
     var state = try vm_state.VMState.init(allocator, &chunk);
     defer state.deinit();
+    state.script_path = path;
     try builtins.registerBuiltins(&state);
     try execute.execute(&state, 0);
 }

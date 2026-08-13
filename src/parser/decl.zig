@@ -65,7 +65,6 @@ pub fn parseCompilerKeyword(self: *Parser) ParseError!*Node {
     if (std.mem.eql(u8, keyword.value, "enum")) return enums.parseCompilerEnum(self);
     if (std.mem.eql(u8, keyword.value, "extern")) return parseCompilerExtern(self);
 
-    std.debug.print("DEBUG FALLTHROUGH: '{s}' (len: {d})\n", .{keyword.value, keyword.value.len});
     return self.failTok(keyword, "Unhandled compiler keyword: {s}", .{keyword.value});
 }
 

@@ -32,6 +32,8 @@ pub fn compile(
     state.debug = opts.debug;
     state.chunk.file = doc.path;
     state.chunk.source = doc.source;
+    state.diag_path = doc.path;
+    _ = try state.chunk.addSource(doc.path, doc.source);
 
     try modules.resolveImports(&state, doc);
     try registerStructNames(&state, doc);
@@ -60,6 +62,7 @@ pub fn compile(
             .address = def.address.?,
             .arity = arity,
             .is_variadic = is_variadic,
+            .source_index = def.source_index,
         });
 
         for (def.forward_jumps.items) |patch| {
@@ -68,6 +71,7 @@ pub fn compile(
             state.chunk.code.items[patch + 1] = @intCast(addr & 0xff);
         }
 
+        try emit.emitSource(&state, def.source_index);
         try stmt.compileFunction(&state, &def.node.function_decl, def.node);
     }
 
@@ -153,6 +157,17 @@ fn registerFunctions(state: *state_mod.CompilerState, doc: *ast.Document) !void 
     }
 }
 
+fn sourceTextForPath(state: *state_mod.CompilerState, path: []const u8) []const u8 {
+    for (state.chunk.sources.items) |s| {
+        if (std.mem.eql(u8, s.path, path)) return s.text;
+    }
+    if (std.mem.eql(u8, state.chunk.file, path)) return state.chunk.source;
+    for (state.module_docs.items) |md| {
+        if (std.mem.eql(u8, md.path, path)) return md.source;
+    }
+    return state.chunk.source;
+}
+
 fn collectFuncs(state: *state_mod.CompilerState, node: *ast.Node) !void {
     switch (node.*) {
         .function_decl => |*fn_decl| {
@@ -164,12 +179,18 @@ fn collectFuncs(state: *state_mod.CompilerState, node: *ast.Node) !void {
                 return_type = typecheck.typeAstToDisplay(rt, state) catch null;
             }
             try analyzeBody(state, fn_decl.body, &calls, &has_loop, &has_return, &return_type, fn_decl.name);
+            const loc = node.loc();
+            const src_idx: u16 = if (loc.path.len > 0)
+                try state.chunk.addSource(loc.path, sourceTextForPath(state, loc.path))
+            else
+                0;
             try state.functions.put(fn_decl.name, .{
                 .node = node,
                 .has_loop = has_loop,
                 .has_return = has_return,
                 .calls = calls,
                 .return_type = return_type,
+                .source_index = src_idx,
             });
         },
         .struct_decl => |s| {
@@ -330,8 +351,7 @@ fn registerModuleDecls(state: *state_mod.CompilerState, doc: *ast.Document) !voi
         if (s.* == .declaration) {
             const decl_node = &s.declaration;
             if (state.global_vars.contains(decl_node.name)) {
-                std.debug.print("CompileError: Variable '{s}' already declared in this scope\n", .{decl_node.name});
-                return error.CompileError;
+                                return @import("../errors/compile.zig").compileFailFmt(state, "Variable '{s}' already declared in this scope", .{decl_node.name});
             }
             try state.global_vars.put(decl_node.name, {});
             if (decl_node.is_const) try state.global_consts.put(decl_node.name, {});

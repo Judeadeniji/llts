@@ -32,6 +32,12 @@ pub fn deinitScanResult(result: *ScanResult) void {
     result.tokens.deinit(result.allocator);
 }
 
+fn failScan(self: *ctx.Scanner, err: ScanError, message: []const u8) ScanError {
+    const report = @import("../errors/report.zig");
+    report.reportSourceErrorWithFrame(self.path, self.source, self.line, self.column, message, "<scan>");
+    return err;
+}
+
 fn scanAll(self: *ctx.Scanner) ScanError!void {
     while (self.pos < self.source.len) {
         try scanNext(self);
@@ -129,8 +135,7 @@ fn scanNext(self: *ctx.Scanner) ScanError!void {
         return;
     }
 
-    std.debug.print("{s}:{d}:{d}: Unexpected character\n", .{ self.path, self.line, self.column });
-    return error.UnexpectedCharacter;
+    return failScan(self, error.UnexpectedCharacter, "Unexpected character");
 }
 
 fn scanRegister(self: *ctx.Scanner) ScanError!void {
@@ -142,7 +147,7 @@ fn scanRegister(self: *ctx.Scanner) ScanError!void {
         if (!ctx.isAlphaNumeric(c)) break;
         _ = self.advance();
     }
-    if (self.pos == start) return error.ExpectedRegister;
+    if (self.pos == start) return failScan(self, error.ExpectedRegister, "Expected register name after $");
     try self.pushToken(.v_register, self.source[start..self.pos], col, line);
 }
 
@@ -155,9 +160,9 @@ fn scanCompilerKeyword(self: *ctx.Scanner) ScanError!void {
         if (!ctx.isAlphaNumeric(c)) break;
         _ = self.advance();
     }
-    if (self.pos == start) return error.ExpectedCompilerKeyword;
+    if (self.pos == start) return failScan(self, error.ExpectedCompilerKeyword, "Expected compiler keyword after @");
     const kw = self.source[start..self.pos];
-    if (!keywords.isCompilerSymbol(kw)) return error.InvalidCompilerKeyword;
+    if (!keywords.isCompilerSymbol(kw)) return failScan(self, error.InvalidCompilerKeyword, "Invalid compiler keyword");
     try self.pushToken(.compiler_keyword, kw, col, line);
 }
 
@@ -180,15 +185,15 @@ fn scanIdentifierOrKeyword(self: *ctx.Scanner) ScanError!void {
 }
 
 fn scanMemberExpression(self: *ctx.Scanner) ScanError!void {
-    const base = self.previous() orelse return error.InvalidMember;
-    if (base.type != .v_register and base.type != .identifier) return error.InvalidMember;
+    const base = self.previous() orelse return failScan(self, error.InvalidMember, "Invalid member access");
+    if (base.type != .v_register and base.type != .identifier) return failScan(self, error.InvalidMember, "Invalid member access");
     while (self.peek(0) == '.') {
         const col = self.column;
         const line = self.line;
         _ = self.advance();
         try self.pushToken(.delimiter, ".", col, line);
-        const ch = self.peek(0) orelse return error.InvalidMember;
-        if (!ctx.isAlphaNumeric(ch)) return error.InvalidMember;
+        const ch = self.peek(0) orelse return failScan(self, error.InvalidMember, "Expected property name after '.'");
+        if (!ctx.isAlphaNumeric(ch)) return failScan(self, error.InvalidMember, "Expected property name after '.'");
         try scanIdentifierOrKeyword(self);
     }
 }

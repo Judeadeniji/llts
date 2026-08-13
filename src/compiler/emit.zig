@@ -67,17 +67,38 @@ pub fn emitCallStatic(state: *CompilerState, addr: u16, argc: u8) !void {
     try emitByte(state, argc);
 }
 
-pub fn emitLine(state: *CompilerState, line: u32) !void {
+pub fn noteLoc(state: *CompilerState, line: u32, column: u32, path: []const u8) void {
+    if (line > 0) state.diag_line = line;
+    if (column > 0) state.diag_column = column;
+    if (path.len > 0) state.diag_path = path;
+}
+
+pub fn emitLine(state: *CompilerState, line: u32, column: u32) !void {
+    noteLoc(state, line, column, "");
     if (!state.debug) return;
     try emitOp(state, .OP_LINE);
     try emitByte(state, @intCast((line >> 8) & 0xff));
     try emitByte(state, @intCast(line & 0xff));
+    try emitByte(state, @intCast((column >> 8) & 0xff));
+    try emitByte(state, @intCast(column & 0xff));
 }
 
-pub fn emitLineIfNeeded(state: *CompilerState, line: u32) !void {
+pub fn emitSource(state: *CompilerState, source_index: u16) !void {
+    const sf = state.chunk.sourceAt(source_index);
+    if (sf.path.len > 0) state.diag_path = sf.path;
+    if (!state.debug) return;
+    try emitOp(state, .OP_SOURCE);
+    try emitByte(state, @intCast((source_index >> 8) & 0xff));
+    try emitByte(state, @intCast(source_index & 0xff));
+}
+
+pub fn emitLineIfNeeded(state: *CompilerState, line: u32, column: u32) !void {
+    noteLoc(state, line, column, "");
     if (!state.debug) return;
     const as_i: i32 = @intCast(line);
-    if (state.last_emitted_line == as_i) return;
+    const as_c: i32 = @intCast(column);
+    if (state.last_emitted_line == as_i and state.last_emitted_column == as_c) return;
     state.last_emitted_line = as_i;
-    try emitLine(state, line);
+    state.last_emitted_column = as_c;
+    try emitLine(state, line, column);
 }

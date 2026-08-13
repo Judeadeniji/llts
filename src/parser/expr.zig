@@ -195,8 +195,12 @@ pub fn parsePrimary(self: *Parser) ParseError!*Node {
                 if (self.checkDelim(",")) {
                     _ = self.advance();
                     payload = try parseExpression(self);
+                    if (self.checkDelim(",")) {
+                        const extra = self.peek(0) orelse return self.failMsg("error() takes at most 2 arguments (message, payload)");
+                        return self.failTok(extra, "error() takes at most 2 arguments (message, payload)", .{});
+                    }
                 }
-                _ = try self.consume(.delimiter, "Expected ')' after error message", ")");
+                _ = try self.consume(.delimiter, "Expected ')' after error(...)", ")");
                 return self.create(.{ .error_expr = .{ .message = msg, .payload = payload, .loc = self.locOf(token) } });
             }
             if (std.mem.eql(u8, token.value, "null")) {

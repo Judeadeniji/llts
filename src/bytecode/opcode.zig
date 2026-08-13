@@ -49,6 +49,8 @@ pub const OpCode = enum(u8) {
     OP_CALL_STATIC,
     OP_PACK_REST,
     OP_LINE,
+    /// Select active source file index (u16) for subsequent OP_LINE / frames.
+    OP_SOURCE,
     OP_MARK_CONST,
     OP_ASSERT_TYPE,
 };

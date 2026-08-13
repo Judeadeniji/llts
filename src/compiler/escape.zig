@@ -12,15 +12,22 @@ pub fn checkReturnValue(state: *CompilerState, value: *ast.Node) !void {
     switch (regionOf(state, value)) {
         .frame => {
             const loc = value.loc();
-            std.debug.print(
-                \\CompileError: value escapes its frame region
-                \\  --> {s}:{d}:{d}
-                \\  help: allocate with @new(allocator, …) so it lives in a Pass arena
-                \\
-            ,
-                .{ state.chunk.file, loc.line, loc.column },
+            const path = if (loc.path.len > 0) loc.path else state.chunk.file;
+            const source = if (std.mem.eql(u8, path, state.chunk.file)) state.chunk.source else blk: {
+                for (state.chunk.sources.items) |s| {
+                    if (std.mem.eql(u8, s.path, path)) break :blk s.text;
+                }
+                break :blk state.chunk.source;
+            };
+            return @import("../errors/compile.zig").compileFailAt(
+                state,
+                path,
+                source,
+                loc.line,
+                loc.column,
+                "value escapes its frame region; allocate with @new(allocator, …)",
+                .{},
             );
-            return error.CompileError;
         },
         .pass, .unknown => {},
     }

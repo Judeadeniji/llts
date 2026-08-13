@@ -24,13 +24,10 @@ pub fn compileFor(state: *CompilerState, for_expr: *const ast.For) !void {
     try scope.endScope(state);
 }
 
-fn bodyBlock(for_expr: *const ast.For) !*const ast.Block {
+fn bodyBlock(state: *CompilerState, for_expr: *const ast.For) !*const ast.Block {
     return switch (for_expr.body.*) {
         .block => |*b| b,
-        else => {
-            std.debug.print("CompileError: for body must be block\n", .{});
-            return error.CompileError;
-        },
+        else => @import("../../errors/compile.zig").compileFailFmt(state, "for body must be block", .{}),
     };
 }
 
@@ -54,7 +51,7 @@ fn compileCondFor(state: *CompilerState, for_expr: *const ast.For) !void {
     }
 
     try scope.beginScope(state);
-    const body = try bodyBlock(for_expr);
+    const body = try bodyBlock(state, for_expr);
     for (body.statements) |s| try stmt.compileStatement(state, s);
     try scope.endScope(state);
 
@@ -72,9 +69,9 @@ fn compileCondFor(state: *CompilerState, for_expr: *const ast.For) !void {
 }
 
 fn compileRangeFor(state: *CompilerState, for_expr: *const ast.For) !void {
-    const start = for_expr.range_start orelse return fail("Range loops must have a start and end.");
-    const end = for_expr.range_end orelse return fail("Range loops must have a start and end.");
-    if (for_expr.captures.len == 0) return fail("Range loop missing capture");
+    const start = for_expr.range_start orelse return fail(state, "Range loops must have a start and end.");
+    const end = for_expr.range_end orelse return fail(state, "Range loops must have a start and end.");
+    if (for_expr.captures.len == 0) return fail(state, "Range loop missing capture");
 
     try expr.compileExpression(state, start);
     try state.locals.append(state.allocator, .{
@@ -99,7 +96,7 @@ fn compileRangeFor(state: *CompilerState, for_expr: *const ast.For) !void {
     try emit.emitOp(state, .OP_POP);
 
     try scope.beginScope(state);
-    const body = try bodyBlock(for_expr);
+    const body = try bodyBlock(state, for_expr);
     for (body.statements) |s| try stmt.compileStatement(state, s);
     try scope.endScope(state);
 
@@ -123,7 +120,7 @@ fn compileRangeFor(state: *CompilerState, for_expr: *const ast.For) !void {
 }
 
 fn compileIterFor(state: *CompilerState, for_expr: *const ast.For) !void {
-    const iterable = for_expr.iterable orelse return fail("Iterable for missing iterable");
+    const iterable = for_expr.iterable orelse return fail(state, "Iterable for missing iterable");
     try expr.compileExpression(state, iterable);
 
     const iterable_idx: u8 = @intCast(state.locals.items.len);
@@ -167,7 +164,7 @@ fn compileIterFor(state: *CompilerState, for_expr: *const ast.For) !void {
         });
     }
 
-    const body = try bodyBlock(for_expr);
+    const body = try bodyBlock(state, for_expr);
     for (body.statements) |s| try stmt.compileStatement(state, s);
     try scope.endScope(state);
 
@@ -190,7 +187,6 @@ fn compileIterFor(state: *CompilerState, for_expr: *const ast.For) !void {
     loop.continue_jumps.deinit(state.allocator);
 }
 
-fn fail(msg: []const u8) error{CompileError} {
-    std.debug.print("CompileError: {s}\n", .{msg});
-    return error.CompileError;
+fn fail(state: *CompilerState, msg: []const u8) error{CompileError} {
+    return @import("../../errors/compile.zig").compileFailFmt(state, "{s}", .{msg});
 }

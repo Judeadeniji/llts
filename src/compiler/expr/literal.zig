@@ -6,7 +6,7 @@ const state_mod = @import("../state.zig");
 const CompilerState = state_mod.CompilerState;
 
 pub fn compileLiteral(state: *CompilerState, lit: *const ast.Literal) !void {
-    try emit.emitLineIfNeeded(state, lit.loc.line);
+    try emit.emitLineIfNeeded(state, lit.loc.line, lit.loc.column);
     switch (lit.literal_type) {
         .@"null" => try emit.emitOp(state, .OP_NULL),
         .boolean => {

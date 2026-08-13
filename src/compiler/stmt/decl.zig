@@ -22,11 +22,9 @@ pub fn compileDeclaration(state: *CompilerState, decl: *const ast.Declaration) !
             if (local.is_const) try cenv.const_names.put(local.name, {});
         }
         if (!const_expr.isConstantExpr(state, &cenv, decl.value)) {
-            std.debug.print(
-                "CompileError: '{s}' is @const but initializer is not a compile-time constant\n",
+            return @import("../../errors/compile.zig").compileFailFmt(state, "'{s}' is @const but initializer is not a compile-time constant",
                 .{decl.name},
             );
-            return error.CompileError;
         }
     }
 
@@ -44,11 +42,9 @@ pub fn compileDeclaration(state: *CompilerState, decl: *const ast.Declaration) !
         if (types.resolveType(state, decl.value)) |got| {
             if (type_name) |expected| {
                 if (!typesAssignable(state, got, expected)) {
-                    std.debug.print(
-                        "CompileError: declaration of '{s}': type '{s}' is not assignable to '{s}'\n",
+                    return @import("../../errors/compile.zig").compileFailFmt(state, "declaration of '{s}': type '{s}' is not assignable to '{s}'",
                         .{ decl.name, got, expected },
                     );
-                    return error.CompileError;
                 }
             }
         }
@@ -191,8 +187,7 @@ fn checkLocalDup(state: *CompilerState, name: []const u8) !void {
         const local = state.locals.items[i];
         if (local.depth < state.scope_depth) break;
         if (std.mem.eql(u8, local.name, name)) {
-            std.debug.print("CompileError: Variable '{s}' already declared in this scope\n", .{name});
-            return error.CompileError;
+                        return @import("../../errors/compile.zig").compileFailFmt(state, "Variable '{s}' already declared in this scope", .{name});
         }
     }
 }
@@ -247,9 +242,8 @@ pub fn compileEnum(state: *CompilerState, e: *const ast.EnumDecl) !void {
     var variants = std.StringHashMap(i32).init(state.allocator);
     for (e.variants, 0..) |name, i| {
         if (variants.contains(name)) {
-            std.debug.print("CompileError: Duplicate enum variant '{s}' in '{s}'\n", .{ name, e.name });
             variants.deinit();
-            return error.CompileError;
+            return @import("../../errors/compile.zig").compileFailFmt(state, "Duplicate enum variant '{s}' in '{s}'", .{ name, e.name });
         }
         try variants.put(name, @intCast(i));
     }

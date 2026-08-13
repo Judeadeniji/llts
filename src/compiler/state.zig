@@ -29,6 +29,7 @@ pub const FunctionDef = struct {
     return_type: ?[]const u8 = null,
     is_recursive: bool = false,
     forward_jumps: std.ArrayList(usize) = .empty,
+    source_index: u16 = 0,
 };
 
 pub const StructDef = struct {
@@ -64,6 +65,15 @@ pub const DeferEntry = struct {
     is_errdefer: bool,
 };
 
+pub const ImportFrame = struct {
+    /// File that contains the `@import`.
+    path: []const u8,
+    line: u32,
+    column: u32,
+    /// Path string passed to `@import(...)`.
+    import_path: []const u8,
+};
+
 pub const CompilerState = struct {
     allocator: std.mem.Allocator,
     chunk: chunk_mod.Chunk,
@@ -87,6 +97,15 @@ pub const CompilerState = struct {
     module_docs: std.ArrayList(*ast.Document) = .empty,
     type_of_results: std.AutoHashMap(*ast.Node, []const u8),
     last_emitted_line: i32 = -1,
+    last_emitted_column: i32 = -1,
+    /// Last AST location seen while compiling — used when a CompileError has no explicit loc.
+    diag_path: []const u8 = "",
+    diag_line: u32 = 0,
+    diag_column: u32 = 0,
+    /// Active `@import` chain (outermost first). Used while loading modules.
+    import_stack: std.ArrayList(ImportFrame) = .empty,
+    /// Resolved module path → import site that loaded it (survives after load for compile errors).
+    import_from: std.StringHashMap(ImportFrame),
 };
 
 pub fn create(allocator: std.mem.Allocator) !CompilerState {
@@ -103,10 +122,13 @@ pub fn create(allocator: std.mem.Allocator) !CompilerState {
         .ready_global_consts = std.StringHashMap(void).init(allocator),
         .native_globals = std.StringHashMap(void).init(allocator),
         .type_of_results = std.AutoHashMap(*ast.Node, []const u8).init(allocator),
+        .import_from = std.StringHashMap(ImportFrame).init(allocator),
     };
     try state.native_globals.put("print", {});
     try state.native_globals.put("error", {});
     try state.native_globals.put("len", {});
+    try state.native_globals.put("__printLn", {});
+    try state.native_globals.put("__hostLog", {});
     try putStruct(&state, "string", &.{ .{ "ptr", "int" }, .{ "len", "int" } });
     try putStruct(&state, "error", &.{.{ "message", "string" }});
     return state;
@@ -171,6 +193,8 @@ pub fn deinit(self: *CompilerState) void {
     self.ready_global_consts.deinit();
     self.native_globals.deinit();
     self.type_of_results.deinit();
+    self.import_stack.deinit(self.allocator);
+    self.import_from.deinit();
 }
 
 pub fn currentChunk(state: *CompilerState) *chunk_mod.Chunk {

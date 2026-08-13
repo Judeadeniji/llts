@@ -67,13 +67,37 @@ fn ownDisplay(state: *state_mod.CompilerState, t: ir.Type) ![]const u8 {
     return s;
 }
 
+fn sourceFor(state: *state_mod.CompilerState, file_path: []const u8) []const u8 {
+    for (state.chunk.sources.items) |s| {
+        if (std.mem.eql(u8, s.path, file_path)) return s.text;
+    }
+    return state.chunk.source;
+}
+
 fn requireAssign(state: *state_mod.CompilerState, got: ir.Type, expected: ir.Type, ctx: []const u8) TypecheckError!void {
+    try requireAssignAt(state, got, expected, ctx, .{});
+}
+
+fn requireAssignAt(state: *state_mod.CompilerState, got: ir.Type, expected: ir.Type, ctx: []const u8, loc: ast.Location) TypecheckError!void {
     if (ir.involvesUnknown(got) or ir.involvesUnknown(expected)) return;
     if (!ir.isSubtype(got, expected)) {
         const g = try ownDisplay(state, got);
         const e = try ownDisplay(state, expected);
-        std.debug.print("CompileError: {s}: type '{s}' is not assignable to '{s}'\n", .{ ctx, g, e });
-        return error.CompileError;
+        if (loc.line > 0 or loc.path.len > 0) {
+            const file_path = if (loc.path.len > 0) loc.path else state.chunk.file;
+            const line = if (loc.line > 0) loc.line else 1;
+            const col = if (loc.column > 0) loc.column else 1;
+            return @import("../../errors/compile.zig").compileFailAt(
+                state,
+                file_path,
+                sourceFor(state, file_path),
+                line,
+                col,
+                "{s}: type '{s}' is not assignable to '{s}'",
+                .{ ctx, g, e },
+            );
+        }
+        return @import("../../errors/compile.zig").compileFailFmt(state, "{s}: type '{s}' is not assignable to '{s}'", .{ ctx, g, e });
     }
 }
 
@@ -145,7 +169,15 @@ fn resolveCalleeName(state: *state_mod.CompilerState, call: *const ast.Call) ?[]
     return null;
 }
 
+fn noteDiag(state: *state_mod.CompilerState, node: *ast.Node) void {
+    const loc = node.loc();
+    if (loc.line > 0) state.diag_line = loc.line;
+    if (loc.column > 0) state.diag_column = loc.column;
+    if (loc.path.len > 0) state.diag_path = loc.path;
+}
+
 fn inferExpr(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node: *ast.Node) TypecheckError!ir.Type {
+    noteDiag(state, node);
     return switch (node.*) {
         .literal => |lit| try inferLiteral(ta, lit),
         .primary => |p| blk: {
@@ -201,8 +233,7 @@ fn inferExpr(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node:
                 if (from_ast.resolveEnumName(state, m.object)) |ename| {
                     if (state.enums.get(ename)) |ed| {
                         if (!ed.variants.contains(m.property.primary.name)) {
-                            std.debug.print("CompileError: Unknown enum variant '{s}' on '{s}'\n", .{ m.property.primary.name, ename });
-                            return error.CompileError;
+                                                        return @import("../../errors/compile.zig").compileFailFmt(state, "Unknown enum variant '{s}' on '{s}'", .{ m.property.primary.name, ename });
                         }
                         break :blk .{ .enum_ = ename };
                     }
@@ -221,8 +252,7 @@ fn inferExpr(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node:
             if (obj == .array) break :blk obj.array.elem.*;
             if (!ir.involvesUnknown(obj) and obj != .unknown) {
                 const d = try ownDisplay(state, obj);
-                std.debug.print("CompileError: Cannot index type '{s}'\n", .{d});
-                return error.CompileError;
+                                return @import("../../errors/compile.zig").compileFailFmt(state, "Cannot index type '{s}'", .{d});
             }
             break :blk ir.TUnknown;
         },
@@ -239,15 +269,13 @@ fn inferExpr(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node:
                 if (inner != .error_ and !ir.isErrorUnion(inner) and inner != .unknown) {
                     if (!ir.allowsError(inner)) {
                         const d = try ownDisplay(state, inner);
-                        std.debug.print("CompileError: '?' operator used on non-error-union type '{s}'\n", .{d});
-                        return error.CompileError;
+                                                return @import("../../errors/compile.zig").compileFailFmt(state, "'?' operator used on non-error-union type '{s}'", .{d});
                     }
                 }
                 if (env.annotated_return) |ar| {
                     if (!ir.allowsError(ar)) {
                         const d = try ownDisplay(state, ar);
-                        std.debug.print("CompileError: Cannot use '?' here: enclosing function return type '{s}' does not allow error\n", .{d});
-                        return error.CompileError;
+                                                return @import("../../errors/compile.zig").compileFailFmt(state, "Cannot use '?' here: enclosing function return type '{s}' does not allow error", .{d});
                     }
                 }
             }
@@ -377,16 +405,14 @@ fn isArith(op: []const u8) bool {
 fn inferCall(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, call_node: *ast.Node, c: *const ast.Call) TypecheckError!ir.Type {
     if (c.callee.* == .primary and std.mem.eql(u8, c.callee.primary.name, "@isError")) {
         if (c.args.len != 1) {
-            std.debug.print("CompileError: @isError expects exactly 1 argument\n", .{});
-            return error.CompileError;
+                        return @import("../../errors/compile.zig").compileFailFmt(state, "@isError expects exactly 1 argument", .{});
         }
         _ = try inferExpr(state, env, ta, c.args[0]);
         return ir.TBool;
     }
     if (c.callee.* == .primary and std.mem.eql(u8, c.callee.primary.name, "@typeOf")) {
         if (c.args.len != 1) {
-            std.debug.print("CompileError: @typeOf expects exactly 1 argument\n", .{});
-            return error.CompileError;
+                        return @import("../../errors/compile.zig").compileFailFmt(state, "@typeOf expects exactly 1 argument", .{});
         }
         const arg_type = try inferExpr(state, env, ta, c.args[0]);
         const disp = try ownDisplay(state, arg_type);
@@ -395,8 +421,7 @@ fn inferCall(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, call_
     }
     if (c.callee.* == .primary and std.mem.eql(u8, c.callee.primary.name, "@new")) {
         if (c.args.len != 2) {
-            std.debug.print("CompileError: @new expects (allocator, value)\n", .{});
-            return error.CompileError;
+                        return @import("../../errors/compile.zig").compileFailFmt(state, "@new expects (allocator, value)", .{});
         }
         _ = try inferExpr(state, env, ta, c.args[0]);
         return try inferExpr(state, env, ta, c.args[1]);
@@ -426,8 +451,7 @@ fn inferCall(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, call_
             break :blk false;
         };
         if (!variadic and rest == null and any_annotated and c.args.len != named_count) {
-            std.debug.print("CompileError: Function '{s}' expected {d} arguments, got {d}\n", .{ name.?, named_count, c.args.len });
-            return error.CompileError;
+                        return @import("../../errors/compile.zig").compileFailFmt(state, "Function '{s}' expected {d} arguments, got {d}", .{ name.?, named_count, c.args.len });
         }
         const ncheck = @min(c.args.len, named_count);
         var i: usize = 0;
@@ -463,17 +487,14 @@ fn inferArrayLiteral(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAllo
         }
         if (elem == .array and ti == .array) {
             if (elem.array.length != null and ti.array.length != null and elem.array.length.? != ti.array.length.?) {
-                std.debug.print(
-                    "CompileError: Array elements have inconsistent lengths [{d}] vs [{d}]\n",
+                return @import("../../errors/compile.zig").compileFailFmt(state, "Array elements have inconsistent lengths [{d}] vs [{d}]",
                     .{ elem.array.length.?, ti.array.length.? },
                 );
-                return error.CompileError;
             }
             if (!ir.isSubtype(ti.array.elem.*, elem.array.elem.*) and !ir.isSubtype(elem.array.elem.*, ti.array.elem.*)) {
                 const d1 = try ownDisplay(state, elem);
                 const d2 = try ownDisplay(state, ti);
-                std.debug.print("CompileError: Array elements have inconsistent types '{s}' and '{s}'\n", .{ d1, d2 });
-                return error.CompileError;
+                                return @import("../../errors/compile.zig").compileFailFmt(state, "Array elements have inconsistent types '{s}' and '{s}'", .{ d1, d2 });
             }
             const len = if (elem.array.length != null) elem.array.length else ti.array.length;
             const inner = if (ir.isSubtype(ti.array.elem.*, elem.array.elem.*)) elem.array.elem.* else ti.array.elem.*;
@@ -483,8 +504,7 @@ fn inferArrayLiteral(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAllo
         if (!ir.isSubtype(ti, elem) and !ir.isSubtype(elem, ti)) {
             const d1 = try ownDisplay(state, elem);
             const d2 = try ownDisplay(state, ti);
-            std.debug.print("CompileError: Array elements have inconsistent types '{s}' and '{s}'\n", .{ d1, d2 });
-            return error.CompileError;
+                        return @import("../../errors/compile.zig").compileFailFmt(state, "Array elements have inconsistent types '{s}' and '{s}'", .{ d1, d2 });
         }
         if (!ir.isSubtype(ti, elem)) elem = ti;
     }
@@ -497,8 +517,7 @@ fn inferStructInit(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc,
         struct_name = path.resolveModuleType(state, struct_name) catch struct_name;
     }
     if (!state.structs.contains(struct_name)) {
-        std.debug.print("CompileError: Unknown struct '{s}'\n", .{init.name});
-        return error.CompileError;
+                return @import("../../errors/compile.zig").compileFailFmt(state, "Unknown struct '{s}'", .{init.name});
     }
     for (init.fields) |field| {
         const expected = try fieldTypeFromStruct(state, ta, struct_name, field.name);
@@ -511,6 +530,7 @@ fn inferStructInit(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc,
 }
 
 fn checkStmt(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node: *ast.Node) TypecheckError!?ir.Type {
+    noteDiag(state, node);
     switch (node.*) {
         .declaration => |d| {
             if (d.value.* == .import) {
@@ -536,7 +556,7 @@ fn checkStmt(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node:
                 const annot = try from_ast.typeFromAst(ann, state, ta);
                 var ctx_buf: [160]u8 = undefined;
                 const ctx = std.fmt.bufPrint(&ctx_buf, "declaration of '{s}'", .{d.name}) catch "declaration";
-                try requireAssign(state, value_type, annot, ctx);
+                try requireAssignAt(state, value_type, annot, ctx, d.loc);
                 try env.define(d.name, annot);
                 if (std.mem.indexOf(u8, d.name, "::") == null) {
                     const disp = try ownDisplay(state, annot);

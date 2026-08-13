@@ -6,6 +6,20 @@ const parser = @import("../parser/root.zig");
 
 const CompilerState = state_mod.CompilerState;
 const ModuleError = error{ OutOfMemory, CompileError };
+const report = @import("../errors/report.zig");
+
+fn reportImportStack(state: *CompilerState) void {
+    // Print outermost → innermost so the `@import` chain reads like a call stack
+    // after the faulting scan/parse frame (already printed).
+    var i: isize = @intCast(state.import_stack.items.len);
+    i -= 1;
+    while (i >= 0) : (i -= 1) {
+        const f = state.import_stack.items[@intCast(i)];
+        var name_buf: [256]u8 = undefined;
+        const name = std.fmt.bufPrint(&name_buf, "@import(\"{s}\")", .{f.import_path}) catch "@import";
+        report.reportLocationFrameCol(f.path, f.line, f.column, name);
+    }
+}
 
 /// Resolve `@import` nodes: load, parse, and qualify public decls into `doc`.
 pub fn resolveImports(state: *CompilerState, doc: *ast.Document) ModuleError!void {
@@ -39,11 +53,11 @@ fn resolveImportsInner(
     for (doc.statements) |s| {
         switch (s.*) {
             .import => |imp| {
-                try loadModule(state, doc, imp.import_path, null, current_module, &out, visited);
+                try loadModule(state, doc, imp.import_path, null, current_module, &out, visited, imp.loc);
             },
             .declaration => |d| {
                 if (d.value.* == .import) {
-                    try loadModule(state, doc, d.value.import.import_path, d.name, current_module, &out, visited);
+                    try loadModule(state, doc, d.value.import.import_path, d.name, current_module, &out, visited, d.value.import.loc);
                 } else {
                     try out.append(state.allocator, s);
                 }
@@ -63,6 +77,7 @@ fn loadModule(
     current_module: ?[]const u8,
     out: *std.ArrayList(*ast.Node),
     visited: *std.StringHashMap(void),
+    import_loc: ast.Location,
 ) ModuleError!void {
     const resolved = try resolvePath(state, doc.path, import_path);
     try state.owned.append(state.allocator, resolved);
@@ -85,16 +100,40 @@ fn loadModule(
     if (visited.contains(resolved)) return;
     try visited.put(resolved, {});
 
+    try state.import_stack.append(state.allocator, .{
+        .path = doc.path,
+        .line = if (import_loc.line > 0) import_loc.line else 1,
+        .column = if (import_loc.column > 0) import_loc.column else 1,
+        .import_path = import_path,
+    });
+    defer _ = state.import_stack.pop();
+
+    // Persist edge so later compile failures in this file can still print the import chain.
+    try state.import_from.put(resolved, state.import_stack.items[state.import_stack.items.len - 1]);
+
     const source = std.fs.cwd().readFileAlloc(state.allocator, resolved, 16 * 1024 * 1024) catch {
-        std.debug.print("CompileError: cannot read import '{s}'\n", .{resolved});
+        var buf: [512]u8 = undefined;
+        const msg = std.fmt.bufPrint(&buf, "cannot read import '{s}'", .{resolved}) catch "cannot read import";
+        const line = if (import_loc.line > 0) import_loc.line else 1;
+        const col = if (import_loc.column > 0) import_loc.column else 1;
+        report.reportSourceErrorWithFrame(doc.path, doc.source, line, col, msg, "<compile>");
+        reportImportStack(state);
         return error.CompileError;
     };
     try state.owned.append(state.allocator, source);
 
-    var scan_result = scanner.scan(state.allocator, source, resolved) catch return error.CompileError;
+    _ = state.chunk.addSource(resolved, source) catch {};
+
+    var scan_result = scanner.scan(state.allocator, source, resolved) catch {
+        reportImportStack(state);
+        return error.CompileError;
+    };
     defer scanner.deinitScanResult(&scan_result);
 
-    const mod_doc = parser.parse(state.allocator, scan_result.tokens.items, resolved, source) catch return error.CompileError;
+    const mod_doc = parser.parse(state.allocator, scan_result.tokens.items, resolved, source) catch {
+        reportImportStack(state);
+        return error.CompileError;
+    };
     const owned_doc = try state.allocator.create(ast.Document);
     owned_doc.* = mod_doc;
     // Keep module arenas alive until compile finishes (nodes are referenced from `doc`).
@@ -126,14 +165,14 @@ fn resolvePath(state: *CompilerState, from: []const u8, import_path: []const u8)
 
     // 1. relative to cwd
     if (std.fs.cwd().access(with_ext, .{})) |_| {
-        return with_ext;
+        return try normalizePath(state, with_ext);
     } else |_| {}
 
     // 2. parent of cwd (zig/ → repo root)
     const up = try std.fmt.allocPrint(state.allocator, "../{s}", .{with_ext});
     if (std.fs.cwd().access(up, .{})) |_| {
         state.allocator.free(with_ext);
-        return up;
+        return try normalizePath(state, up);
     } else |_| {
         state.allocator.free(up);
     }
@@ -143,12 +182,18 @@ fn resolvePath(state: *CompilerState, from: []const u8, import_path: []const u8)
     const joined = try std.fs.path.join(state.allocator, &.{ dir, with_ext });
     state.allocator.free(with_ext);
     if (std.fs.cwd().access(joined, .{})) |_| {
-        return joined;
+        return try normalizePath(state, joined);
     } else |_| {}
 
-    std.debug.print("CompileError: Unknown module '{s}'\n", .{import_path});
     state.allocator.free(joined);
-    return error.CompileError;
+    return @import("../errors/compile.zig").compileFailFmt(state, "Unknown module '{s}'", .{import_path});
+}
+
+/// Collapse `.` / `..` so diagnostics show `dir/leaf.lls` instead of `dir/././leaf.lls`.
+fn normalizePath(state: *CompilerState, path: []const u8) ModuleError![]const u8 {
+    const cleaned = try std.fs.path.resolve(state.allocator, &.{path});
+    state.allocator.free(path);
+    return cleaned;
 }
 
 fn collectLocalBindings(
