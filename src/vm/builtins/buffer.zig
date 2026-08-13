@@ -8,12 +8,15 @@ const Value = value.Value;
 const NativeFunction = value.NativeFunction;
 
 var buffer_alloc_n: NativeFunction = undefined;
+var buffer_create_n: NativeFunction = undefined;
 var buffer_write_string_n: NativeFunction = undefined;
+var buffer_append_string_n: NativeFunction = undefined;
 var buffer_read_string_n: NativeFunction = undefined;
 var buffer_len_n: NativeFunction = undefined;
 var buffer_free_n: NativeFunction = undefined;
 var buffer_get_n: NativeFunction = undefined;
 var buffer_set_n: NativeFunction = undefined;
+var buffer_push_n: NativeFunction = undefined;
 
 fn bufferAlloc(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
@@ -23,6 +26,13 @@ fn bufferAlloc(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     
     const buf = try vm.allocBuffer();
     try buf.bytes.appendNTimes(vm.allocator, 0, @intCast(size));
+    return .{ .buffer = buf };
+}
+
+fn bufferCreate(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
+    const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
+    _ = args;
+    const buf = try vm.allocBuffer();
     return .{ .buffer = buf };
 }
 
@@ -43,6 +53,19 @@ fn bufferWriteString(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     }
     
     @memcpy(buf.bytes.items[offset .. offset + str.len], str);
+    return .{ .int = @intCast(str.len) };
+}
+
+fn bufferAppendString(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
+    const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
+    if (args.len < 2) return error.ArityError;
+    if (args[0] != .buffer) return error.TypeError;
+    
+    var buf_tmp: std.ArrayList(u8) = .empty; defer buf_tmp.deinit(vm.allocator);
+    const str = try util.valueToStr(vm, args[1], &buf_tmp);
+    
+    const buf = args[0].buffer;
+    try buf.bytes.appendSlice(vm.allocator, str);
     return .{ .int = @intCast(str.len) };
 }
 
@@ -123,20 +146,37 @@ fn bufferSet(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     return .null;
 }
 
+fn bufferPush(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
+    const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
+    if (args.len < 2) return error.ArityError;
+    if (args[0] != .buffer) return error.TypeError;
+    const val_raw = try util.asInt(args[1]);
+    
+    const buf = args[0].buffer;
+    try buf.bytes.append(vm.allocator, @intCast(val_raw & 0xFF));
+    return .null;
+}
+
 pub fn register(vm: *VMState) !void {
     buffer_alloc_n = .{ .name = "__bufferAlloc", .func = bufferAlloc, .arity = 1 };
+    buffer_create_n = .{ .name = "__bufferCreate", .func = bufferCreate, .arity = 0 };
     buffer_write_string_n = .{ .name = "__bufferWriteString", .func = bufferWriteString, .arity = 3 };
+    buffer_append_string_n = .{ .name = "__bufferAppendString", .func = bufferAppendString, .arity = 2 };
     buffer_read_string_n = .{ .name = "__bufferReadString", .func = bufferReadString, .arity = 3 };
     buffer_len_n = .{ .name = "__bufferLen", .func = bufferLen, .arity = 1 };
     buffer_free_n = .{ .name = "__bufferFree", .func = bufferFree, .arity = 1 };
     buffer_get_n = .{ .name = "__bufferGet", .func = bufferGet, .arity = 2 };
     buffer_set_n = .{ .name = "__bufferSet", .func = bufferSet, .arity = 3 };
+    buffer_push_n = .{ .name = "__bufferPush", .func = bufferPush, .arity = 2 };
     
     try vm.globals.put("__bufferAlloc", .{ .native = &buffer_alloc_n });
+    try vm.globals.put("__bufferCreate", .{ .native = &buffer_create_n });
     try vm.globals.put("__bufferWriteString", .{ .native = &buffer_write_string_n });
+    try vm.globals.put("__bufferAppendString", .{ .native = &buffer_append_string_n });
     try vm.globals.put("__bufferReadString", .{ .native = &buffer_read_string_n });
     try vm.globals.put("__bufferLen", .{ .native = &buffer_len_n });
     try vm.globals.put("__bufferFree", .{ .native = &buffer_free_n });
     try vm.globals.put("__bufferGet", .{ .native = &buffer_get_n });
     try vm.globals.put("__bufferSet", .{ .native = &buffer_set_n });
+    try vm.globals.put("__bufferPush", .{ .native = &buffer_push_n });
 }

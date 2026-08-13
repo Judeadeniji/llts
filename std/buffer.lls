@@ -2,8 +2,16 @@ pub @func alloc(size) {
     return __bufferAlloc(size);
 }
 
+pub @func create() {
+    return __bufferCreate();
+}
+
 pub @func writeString(buf, offset, str) {
     return __bufferWriteString(buf, offset, str);
+}
+
+pub @func appendString(buf, str) {
+    return __bufferAppendString(buf, str);
 }
 
 pub @func readString(buf, offset, len) {
@@ -24,4 +32,8 @@ pub @func get(buf, index) {
 
 pub @func set(buf, index, val) {
     return __bufferSet(buf, index, val);
+}
+
+pub @func push(buf, val) {
+    return __bufferPush(buf, val);
 }

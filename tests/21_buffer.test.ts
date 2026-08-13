@@ -17,6 +17,21 @@ test("buffer: alloc, len, get, set", () => {
 	expectOutput(res, ["10", "65", "66"]);
 });
 
+test("buffer: dynamic growth", () => {
+	const res = runSource(`
+		@const $buffer = @import("std/buffer");
+		pub @func main() {
+			$buf = buffer.create();
+			buffer.push(buf, 72);
+			buffer.appendString(buf, "ello");
+			print(buffer.len(buf));
+			print(buffer.readString(buf, 0, buffer.len(buf)));
+			buffer.free(buf);
+		}
+	`);
+	expectOutput(res, ["5", "Hello"]);
+});
+
 test("buffer: string I/O", () => {
 	const res = runSource(`
 		@const $buffer = @import("std/buffer");
