@@ -53,4 +53,11 @@ pub const OpCode = enum(u8) {
     OP_SOURCE,
     OP_MARK_CONST,
     OP_ASSERT_TYPE,
+    // Bitwise (appended — keep prior opcode numbers stable)
+    OP_BIT_AND,
+    OP_BIT_OR,
+    OP_BIT_XOR,
+    OP_BIT_NOT,
+    OP_SHL,
+    OP_SHR,
 };

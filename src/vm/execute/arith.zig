@@ -106,3 +106,43 @@ pub fn not_(vm: *VMState) ArithError!void {
     const a = stack.pop(vm);
     try stack.push(vm, .{ .bool = !a.isTruthy() });
 }
+
+const BitOp = enum { band, bor, bxor, shl, shr };
+
+/// Bitwise ops are integer-only (floats rejected).
+pub fn binBitwise(vm: *VMState, op: OpCode) ArithError!void {
+    const kind: BitOp = switch (op) {
+        .OP_BIT_AND => .band,
+        .OP_BIT_OR => .bor,
+        .OP_BIT_XOR => .bxor,
+        .OP_SHL => .shl,
+        .OP_SHR => .shr,
+        else => return fail(vm, "Bad bitwise op"),
+    };
+    const b = stack.pop(vm);
+    const a = stack.pop(vm);
+    if (a == .float or b == .float) return fail(vm, "Bitwise operands must be integers");
+    const ai = asInt(a) orelse return fail(vm, "Bitwise operands must be integers");
+    const bi = asInt(b) orelse return fail(vm, "Bitwise operands must be integers");
+    const result: i64 = switch (kind) {
+        .band => ai & bi,
+        .bor => ai | bi,
+        .bxor => ai ^ bi,
+        .shl => blk: {
+            if (bi < 0 or bi >= 64) return fail(vm, "Shift amount out of range");
+            break :blk ai << @intCast(bi);
+        },
+        .shr => blk: {
+            if (bi < 0 or bi >= 64) return fail(vm, "Shift amount out of range");
+            break :blk ai >> @intCast(bi);
+        },
+    };
+    try stack.push(vm, .{ .int = result });
+}
+
+pub fn bitNot(vm: *VMState) ArithError!void {
+    const a = stack.pop(vm);
+    if (a == .float) return fail(vm, "Bitwise operand must be an integer");
+    const n = asInt(a) orelse return fail(vm, "Bitwise operand must be an integer");
+    try stack.push(vm, .{ .int = ~n });
+}

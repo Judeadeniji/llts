@@ -91,6 +91,20 @@ fn scanNext(self: *ctx.Scanner) ScanError!void {
     }
 
     if (self.peek(1)) |c2| {
+        // Prefer 3-char assign ops (`<<=`, `>>=`) before 2-char (`<<`, `>>`, `<=`, …).
+        if (self.peek(2)) |c3| {
+            var three: [3]u8 = .{ ch, c2, c3 };
+            if (ops.isAssignOp(three[0..])) {
+                const col = self.column;
+                const line = self.line;
+                const val = self.source[self.pos .. self.pos + 3];
+                _ = self.advance();
+                _ = self.advance();
+                _ = self.advance();
+                try self.pushToken(.assign_op, val, col, line);
+                return;
+            }
+        }
         var two: [2]u8 = .{ ch, c2 };
         if (ops.isAssignOp(two[0..])) {
             const col = self.column;

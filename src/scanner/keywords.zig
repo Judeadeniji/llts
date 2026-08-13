@@ -20,7 +20,7 @@ pub fn isKeyword(w: []const u8) bool {
 
 pub fn isDelimiter(c: u8) bool {
     return switch (c) {
-        ',', ';', ':', '(', ')', '{', '}', '[', ']', '.', '|', '?' => true,
+        ',', ';', ':', '(', ')', '{', '}', '[', ']', '.', '?' => true,
         else => false,
     };
 }

@@ -4,16 +4,18 @@ pub const BinOps = struct {
     pub const values = [_][]const u8{
         "+",  "-",  "*",  "/",  "%",  "^",  "==", "!=", ">", ">=", "<", "<=",
         "&&", "||", "**", "|>", "..", "=>",
+        "&",  "|",  "~",  "<<", ">>",
     };
 };
 
 pub const UnaryOps = struct {
-    pub const values = [_][]const u8{ "!", "-" };
+    pub const values = [_][]const u8{ "!", "-", "~" };
 };
 
 pub const AssignOps = struct {
     pub const values = [_][]const u8{
         "=", "+=", "-=", "*=", "/=", "%=", "^=", "&&=", "||=",
+        "&=", "|=", "~=", "<<=", ">>=",
     };
 };
 

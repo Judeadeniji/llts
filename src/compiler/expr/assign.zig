@@ -27,6 +27,11 @@ fn compoundOp(op: []const u8) ?OpCode {
     if (std.mem.eql(u8, op, "*=")) return .OP_MUL;
     if (std.mem.eql(u8, op, "/=")) return .OP_DIV;
     if (std.mem.eql(u8, op, "%=")) return .OP_MOD;
+    if (std.mem.eql(u8, op, "&=")) return .OP_BIT_AND;
+    if (std.mem.eql(u8, op, "|=")) return .OP_BIT_OR;
+    if (std.mem.eql(u8, op, "~=")) return .OP_BIT_XOR;
+    if (std.mem.eql(u8, op, "<<=")) return .OP_SHL;
+    if (std.mem.eql(u8, op, ">>=")) return .OP_SHR;
     return null;
 }
 

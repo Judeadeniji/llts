@@ -86,6 +86,16 @@ fn emitBinOp(state: *CompilerState, bin: *const ast.Binary) !void {
         try emit.emitOp(state, .OP_MOD);
     } else if (std.mem.eql(u8, op, "^") or std.mem.eql(u8, op, "**")) {
         try emit.emitOp(state, .OP_POW);
+    } else if (std.mem.eql(u8, op, "&")) {
+        try emit.emitOp(state, .OP_BIT_AND);
+    } else if (std.mem.eql(u8, op, "|")) {
+        try emit.emitOp(state, .OP_BIT_OR);
+    } else if (std.mem.eql(u8, op, "~")) {
+        try emit.emitOp(state, .OP_BIT_XOR);
+    } else if (std.mem.eql(u8, op, "<<")) {
+        try emit.emitOp(state, .OP_SHL);
+    } else if (std.mem.eql(u8, op, ">>")) {
+        try emit.emitOp(state, .OP_SHR);
     } else if (std.mem.eql(u8, op, "==") or std.mem.eql(u8, op, "!=")) {
         const both = types.isStringyType(types.resolveType(state, bin.left)) and
             types.isStringyType(types.resolveType(state, bin.right));
@@ -106,4 +116,5 @@ pub fn compileUnary(state: *CompilerState, un: *const ast.Unary) !void {
     try expr.compileExpression(state, un.arg);
     if (std.mem.eql(u8, un.operator, "-")) try emit.emitOp(state, .OP_NEGATE);
     if (std.mem.eql(u8, un.operator, "!")) try emit.emitOp(state, .OP_NOT);
+    if (std.mem.eql(u8, un.operator, "~")) try emit.emitOp(state, .OP_BIT_NOT);
 }
