@@ -88,7 +88,7 @@ Zig implementation. The TypeScript prototype/reference is [`llts-js`](../llts-js
 ### P5 — Memory
 
 - [x] **Arenas + allocators** — growable `Arena` (Zig-style chunks) + `defer`.
-- [x] **`defer`** — LIFO scope-exit cleanup; `errdefer` later if needed.
+- [x] **`defer` / `errdefer`** — LIFO scope-exit cleanup; `errdefer` on error path only (`?` / error returns).
 - [x] **No tracing GC** — ownership is explicit (allocator + defer).
 - [x] **Frame regions** — VM rewinds heap bump on return; bare `Foo{}` / `[…]` are frame-local.
 - [x] **Escape = compile error** — cannot return frame-local heap; use `@new(allocator, …)`.
@@ -108,7 +108,7 @@ Zig implementation. The TypeScript prototype/reference is [`llts-js`](../llts-js
 - [ ] **Tagged byte-buffer / string encoding** — heap strings are length-prefixed code units; revisit a unified byte buffer type.
 - [ ] **Runtime-enforced fixed buffers** — `[N]T` is compile-time only; capacity traps / non-growing buffers later.
 - [ ] **UTF-8 vs code-unit length** — clarify byte vs code-point policy for `len` / `[N]byte`.
-- [ ] **`errdefer`** — error-path defer if/when needed.
+- [x] **`errdefer`** — error-path defer; richer `error(code, payload)` with `.code` / `.message` / `.payload`.
 
 ---
 
