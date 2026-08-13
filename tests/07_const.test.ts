@@ -10,7 +10,7 @@ test("cannot reassign to a @const variable", () => {
 @const $a = 10;
 a = 20;
 print(a);
-`), "CompileError: Cannot reassign to constant variable 'a'");
+`), "Cannot reassign to constant variable 'a'");
 });
 
 test("can shadow a @const variable in a new scope", () => {
@@ -33,14 +33,14 @@ test("cannot use += on a @const variable", () => {
 @const $a = 10;
 a += 5;
 print(a);
-`), "CompileError: Cannot reassign to constant variable 'a'");
+`), "Cannot reassign to constant variable 'a'");
 });
 
 test("cannot use -=, *=, /= on a @const variable", () => {
   expectError(runSource(`
 @const $a = 10;
 a -= 1;
-`), "CompileError: Cannot reassign to constant variable 'a'");
+`), "Cannot reassign to constant variable 'a'");
 });
 
 // ---------------------------------------------------------------------------
@@ -147,7 +147,7 @@ test("cannot reassign a @const captured and used across multiple statements in a
     a = 20;
 }
 doWork();
-`), "CompileError: Cannot reassign to constant variable 'a'");
+`), "Cannot reassign to constant variable 'a'");
 });
 
 // ---------------------------------------------------------------------------
@@ -167,7 +167,7 @@ test("cannot reassign a @const array to a whole new array", () => {
 @const $arr = [1, 2, 3];
 arr = [4, 5, 6];
 print(arr);
-`), "CompileError: Cannot reassign to constant variable 'arr'");
+`), "Cannot reassign to constant variable 'arr'");
 });
 
 test("@const object binding cannot be reassigned, but fields can be mutated", () => {
@@ -195,7 +195,7 @@ test("cannot redeclare the same @const twice in the same scope", () => {
 @const $a = 1;
 @const $a = 2;
 print(a);
-`), "CompileError: Variable 'a' already declared in this scope");
+`), "Variable 'a' already declared in this scope");
 });
 
 test("cannot declare a regular variable then redeclare it as @const in the same scope", () => {
@@ -203,7 +203,7 @@ test("cannot declare a regular variable then redeclare it as @const in the same 
 $a = 1;
 @const $a = 2;
 print(a);
-`), "CompileError: Variable 'a' already declared in this scope");
+`), "Variable 'a' already declared in this scope");
 });
 
 // ---------------------------------------------------------------------------
@@ -215,7 +215,7 @@ test("for-loop capture variable behaves as effectively const within the body", (
 @for (0..3) |i| {
     i = 99;
 }
-`), "CompileError: Cannot reassign to constant variable 'i'");
+`), "Cannot reassign to constant variable 'i'");
 });
 
 test("shadowing the loop capture name with an explicit @const inside body is allowed", () => {

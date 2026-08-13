@@ -256,7 +256,7 @@ io.appendFile("append_test.txt", "second");
 test("importing an unknown module name is a compile-time error", () => {
   expectError(runSource(`
 @const $nope = @import("not_a_real_module");
-`), "CompileError: Unknown module 'not_a_real_module'");
+`), "Unknown module 'not_a_real_module'");
 });
 
 test("aliasing two different modules to distinct names works independently", () => {
@@ -281,13 +281,13 @@ test("calling a module function that doesn't exist is a compile-time error", () 
   expectError(runSource(`
 @const $math = @import("std/math");
 print(math.notARealFunction(1));
-`), "CompileError: 'math' has no export 'notARealFunction'");
+`), "'math' has no export 'notARealFunction'");
 });
 
 test("using a module namespace without importing it is a compile-time error", () => {
   expectError(runSource(`
 print(string.len("hi"));
-`), "CompileError: Unknown identifier 'string'");
+`), "Unknown identifier 'string'");
 });
 
 // ---------------------------------------------------------------------------

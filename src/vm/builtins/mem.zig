@@ -1,6 +1,7 @@
 const std = @import("std");
 const state_mod = @import("../state.zig");
 const value = @import("../../bytecode/value.zig");
+const runtime = @import("../../errors/runtime.zig");
 
 const VMState = state_mod.VMState;
 const Value = value.Value;
@@ -35,9 +36,8 @@ var arena_alloc_native: NativeFunction = undefined;
 var arena_reset_native: NativeFunction = undefined;
 var arena_deinit_native: NativeFunction = undefined;
 
-fn fail(comptime op: []const u8, comptime msg: []const u8) error{TypeError} {
-    std.debug.print("RuntimeError: {s}: {s}\n", .{ op, msg });
-    return error.TypeError;
+fn fail(vm: *VMState, comptime op: []const u8, comptime msg: []const u8) error{RuntimeError} {
+    return runtime.runtimeFail(vm, op ++ ": " ++ msg);
 }
 
 fn asHeapPtr(v: Value) !i32 {
@@ -65,7 +65,7 @@ fn resolveArenaControl(vm: *VMState, v: Value) !i32 {
 
 fn arenaAlive(vm: *VMState, ctrl: i32, comptime op: []const u8) !void {
     if (vm.memory[@intCast(ctrl + 4)].int != 1)
-        return fail(op, "arena is deinitialized");
+        return fail(vm, op, "arena is deinitialized");
 }
 
 fn makeChunk(vm: *VMState, cap: i32) !i32 {
@@ -92,9 +92,9 @@ fn arenaCreate(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
     const hint = switch (args[0]) {
         .int => |x| x,
-        else => return fail("__arena_create", "invalid capacity"),
+        else => return fail(vm, "__arena_create", "invalid capacity"),
     };
-    if (hint < 0) return fail("__arena_create", "invalid capacity");
+    if (hint < 0) return fail(vm, "__arena_create", "invalid capacity");
     // hint = initial chunk size (0 → DEFAULT_CHUNK). Arena grows when full (Zig-like).
     const cap: i32 = if (hint == 0) DEFAULT_CHUNK else @intCast(hint);
 
@@ -125,9 +125,9 @@ fn arenaAlloc(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const ctrl = try resolveArenaControl(vm, args[0]);
     const n = switch (args[1]) {
         .int => |x| x,
-        else => return fail("__arena_alloc", "invalid size"),
+        else => return fail(vm, "__arena_alloc", "invalid size"),
     };
-    if (n < 0) return fail("__arena_alloc", "invalid size");
+    if (n < 0) return fail(vm, "__arena_alloc", "invalid size");
     try arenaAlive(vm, ctrl, "__arena_alloc");
 
     const cur_val = vm.memory[@intCast(ctrl + 1)];
@@ -174,7 +174,7 @@ fn arenaDeinit(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
     const ctrl = try resolveArenaControl(vm, args[0]);
     if (vm.memory[@intCast(ctrl)].int != ARENA_MAGIC)
-        return fail("__arena_deinit", "invalid arena");
+        return fail(vm, "__arena_deinit", "invalid arena");
     vm.memory[@intCast(ctrl + 4)] = .{ .int = 0 };
     return .null;
 }

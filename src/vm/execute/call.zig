@@ -2,6 +2,7 @@ const state_mod = @import("../state.zig");
 const stack = @import("../stack.zig");
 const value = @import("../../bytecode/value.zig");
 const std = @import("std");
+const runtime = @import("../../errors/runtime.zig");
 const VMState = state_mod.VMState;
 const Value = value.Value;
 const CallFrame = state_mod.CallFrame;
@@ -9,9 +10,8 @@ const MAX_FRAMES = state_mod.MAX_FRAMES;
 
 pub const CallError = error{ RuntimeError, TooManyFrames, TypeError, ArityError, OutOfMemory };
 
-fn fail(msg: []const u8) CallError {
-    @import("std").debug.print("RuntimeError: {s}\n", .{msg});
-    return error.RuntimeError;
+fn fail(vm: *VMState, msg: []const u8) CallError {
+    return runtime.runtimeFail(vm, msg);
 }
 
 pub fn callStatic(vm: *VMState, ip: *usize, addr: u16, argc: u8) CallError!void {
@@ -21,32 +21,38 @@ pub fn callStatic(vm: *VMState, ip: *usize, addr: u16, argc: u8) CallError!void 
     frame.base_slot = vm.stack.items.len - argc;
     frame.arg_count = argc;
     frame.func_name = functionNameAt(vm, addr);
-    // Region: frame. Implicit `Foo{}` / `[…]` allocs between here and return are rewound.
+    frame.line = vm.current_line;
+    frame.column = vm.current_column;
+    frame.source_index = vm.current_source_index;
+    frame.file = vm.chunk.sourceAt(vm.current_source_index).path;
+    if (vm.chunk.functions.get(frame.func_name)) |fn_info| {
+        frame.source_index = fn_info.source_index;
+        frame.file = vm.chunk.sourceAt(fn_info.source_index).path;
+    }
     frame.heap_watermark = vm.heap_ptr;
     try vm.frames.append(vm.allocator, frame);
     ip.* = addr;
 }
 
 pub fn callDynamic(vm: *VMState, ip: *usize, argc: u8) CallError!void {
-    // Callee is below args: stack = [… callee arg0…argN]
     const callee_idx = vm.stack.items.len - argc - 1;
-    if (callee_idx >= vm.stack.items.len) return fail("Stack underflow on call");
+    if (callee_idx >= vm.stack.items.len) return fail(vm, "Stack underflow on call");
     const callee = vm.stack.items[callee_idx];
     switch (callee) {
         .native => |n| {
             const args = vm.stack.items[callee_idx + 1 ..];
             if (n.arity >= 0 and args.len != @as(usize, @intCast(n.arity))) {
-                return fail("Wrong arity for native");
+                return fail(vm, "Wrong arity for native");
             }
             const result = n.func(vm, args) catch |err| {
-                std.debug.print("Native function '{s}' failed with error: {any}\n", .{n.name, err});
-                return fail("native call failed");
+                var buf: [256]u8 = undefined;
+                const msg = std.fmt.bufPrint(&buf, "Native '{s}' failed: {s}", .{ n.name, @errorName(err) }) catch "native call failed";
+                return fail(vm, msg);
             };
             vm.stack.shrinkRetainingCapacity(callee_idx);
             try stack.push(vm, result);
         },
         .function => |f| {
-            // Slide args over callee
             var i: usize = 0;
             while (i < argc) : (i += 1) {
                 vm.stack.items[callee_idx + i] = vm.stack.items[callee_idx + 1 + i];
@@ -54,19 +60,15 @@ pub fn callDynamic(vm: *VMState, ip: *usize, argc: u8) CallError!void {
             vm.stack.shrinkRetainingCapacity(callee_idx + argc);
             try callStatic(vm, ip, @intCast(f.address), argc);
         },
-        else => return fail("Can only call functions"),
+        else => return fail(vm, "Can only call functions"),
     }
 }
 
 pub fn doReturn(vm: *VMState, ip: *usize) CallError!bool {
-    // Returns true if VM should halt (no frames left)
     const result = if (vm.stack.items.len > 0) stack.pop(vm) else Value.null;
-    var frame = vm.frames.pop() orelse return fail("Return with no frame");
+    var frame = vm.frames.pop() orelse return fail(vm, "Return with no frame");
     const ret_ip = frame.return_ip;
     const base = frame.base_slot;
-    // End of frame region: drop implicit heap allocs from this call.
-    // Escape analysis must reject returning pointers into this range; `@new(arena,…)`
-    // and immortal allocs raise watermarks / live in arena slabs so they survive.
     vm.heap_ptr = frame.heap_watermark;
     frame.deinit();
     if (vm.frames.items.len == 0) {
@@ -91,7 +93,6 @@ pub fn packRest(vm: *VMState, named: u8) CallError!void {
         const slot = frame.base_slot + named + @as(usize, @intCast(i));
         vm.memory[@intCast(base + 1 + i)] = vm.stack.items[slot];
     }
-    // Truncate extras and push rest array ptr
     vm.stack.shrinkRetainingCapacity(frame.base_slot + named);
     try stack.push(vm, .{ .ptr = base + 1 });
 }

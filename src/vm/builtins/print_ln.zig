@@ -71,7 +71,7 @@ fn printLnFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     defer out.deinit(vm.allocator);
     try out.appendSlice(vm.allocator, msg);
     try out.append(vm.allocator, '\n');
-    _ = try std.posix.write(std.posix.STDOUT_FILENO, out.items);
+    @import("../../io/out.zig").writeStdout(out.items);
     return .null;
 }
 

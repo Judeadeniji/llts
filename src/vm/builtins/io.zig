@@ -32,9 +32,7 @@ fn readFileFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const path = try util.valueToOwnedString(vm, args[0]);
     defer vm.allocator.free(path);
     const content = std.fs.cwd().readFileAlloc(vm.allocator, path, 16 * 1024 * 1024) catch |err| {
-        const msg = try std.fmt.allocPrint(vm.allocator, "{s}", .{@errorName(err)});
-        defer vm.allocator.free(msg);
-        return try util.makeError(vm, msg);
+        return try util.makeIoError(vm, err, path);
     };
     defer vm.allocator.free(content);
     return try util.writeSlice(vm, content);
@@ -46,9 +44,7 @@ fn readFileBufferFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const path = try util.valueToOwnedString(vm, args[0]);
     defer vm.allocator.free(path);
     const content = std.fs.cwd().readFileAlloc(vm.allocator, path, 256 * 1024 * 1024) catch |err| {
-        const msg = try std.fmt.allocPrint(vm.allocator, "{s}", .{@errorName(err)});
-        defer vm.allocator.free(msg);
-        return try util.makeError(vm, msg);
+        return try util.makeIoError(vm, err, path);
     };
     defer vm.allocator.free(content);
     
@@ -62,9 +58,7 @@ fn readLineFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = args;
     var buf: [1024]u8 = undefined;
     const n = std.fs.File.stdin().read(&buf) catch |err| {
-        const msg = try std.fmt.allocPrint(vm.allocator, "{s}", .{@errorName(err)});
-        defer vm.allocator.free(msg);
-        return try util.makeError(vm, msg);
+        return try util.makeErrorWithPayload(vm, "IoError", try util.writeSlice(vm, @errorName(err)));
     };
     var str = buf[0..n];
     if (std.mem.endsWith(u8, str, "\n")) str = str[0 .. str.len - 1];
@@ -79,9 +73,13 @@ fn writeFileFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     defer vm.allocator.free(path);
     const content = try util.valueToOwnedString(vm, args[1]);
     defer vm.allocator.free(content);
-    const file = try std.fs.cwd().createFile(path, .{});
+    const file = std.fs.cwd().createFile(path, .{}) catch |err| {
+        return try util.makeIoError(vm, err, path);
+    };
     defer file.close();
-    try file.writeAll(content);
+    file.writeAll(content) catch |err| {
+        return try util.makeIoError(vm, err, path);
+    };
     return .null;
 }
 
@@ -91,10 +89,14 @@ fn writeFileBufferFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const path = try util.valueToOwnedString(vm, args[0]);
     defer vm.allocator.free(path);
     if (args[1] != .buffer) return error.TypeError;
-    
-    const file = try std.fs.cwd().createFile(path, .{});
+
+    const file = std.fs.cwd().createFile(path, .{}) catch |err| {
+        return try util.makeIoError(vm, err, path);
+    };
     defer file.close();
-    try file.writeAll(args[1].buffer.bytes.items);
+    file.writeAll(args[1].buffer.bytes.items) catch |err| {
+        return try util.makeIoError(vm, err, path);
+    };
     return .null;
 }
 
@@ -105,10 +107,16 @@ fn appendFileFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     defer vm.allocator.free(path);
     const content = try util.valueToOwnedString(vm, args[1]);
     defer vm.allocator.free(content);
-    const file = try std.fs.cwd().createFile(path, .{ .truncate = false });
+    const file = std.fs.cwd().createFile(path, .{ .truncate = false }) catch |err| {
+        return try util.makeIoError(vm, err, path);
+    };
     defer file.close();
-    try file.seekFromEnd(0);
-    try file.writeAll(content);
+    file.seekFromEnd(0) catch |err| {
+        return try util.makeIoError(vm, err, path);
+    };
+    file.writeAll(content) catch |err| {
+        return try util.makeIoError(vm, err, path);
+    };
     return .null;
 }
 
@@ -117,7 +125,9 @@ fn deleteFileFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     if (args.len < 1) return error.ArityError;
     const path = try util.valueToOwnedString(vm, args[0]);
     defer vm.allocator.free(path);
-    try std.fs.cwd().deleteFile(path);
+    std.fs.cwd().deleteFile(path) catch |err| {
+        return try util.makeIoError(vm, err, path);
+    };
     return .null;
 }
 
@@ -136,7 +146,7 @@ fn mkdirFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const path = try util.valueToOwnedString(vm, args[0]);
     defer vm.allocator.free(path);
     std.fs.cwd().makeDir(path) catch |err| {
-        return try util.makeError(vm, @errorName(err));
+        return try util.makeIoError(vm, err, path);
     };
     return .null;
 }
@@ -147,7 +157,7 @@ fn mkdirAllFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const path = try util.valueToOwnedString(vm, args[0]);
     defer vm.allocator.free(path);
     std.fs.cwd().makePath(path) catch |err| {
-        return try util.makeError(vm, @errorName(err));
+        return try util.makeIoError(vm, err, path);
     };
     return .null;
 }
@@ -159,7 +169,7 @@ fn readDirFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     defer vm.allocator.free(path);
 
     var dir = std.fs.cwd().openDir(path, .{ .iterate = true }) catch |err| {
-        return try util.makeError(vm, @errorName(err));
+        return try util.makeIoError(vm, err, path);
     };
     defer dir.close();
 
@@ -167,7 +177,7 @@ fn readDirFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     var list: std.ArrayListUnmanaged(Value) = .empty;
     defer list.deinit(vm.allocator);
 
-    while (it.next() catch return try util.makeError(vm, "Iteration error")) |entry| {
+    while (it.next() catch return try util.makeError(vm, "IoError")) |entry| {
         const name_val = try util.writeSlice(vm, entry.name);
         try list.append(vm.allocator, name_val);
     }
@@ -181,7 +191,7 @@ fn statFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     defer vm.allocator.free(path);
 
     const stat = std.fs.cwd().statFile(path) catch |err| {
-        return try util.makeError(vm, @errorName(err));
+        return try util.makeIoError(vm, err, path);
     };
 
     var list: std.ArrayListUnmanaged(Value) = .empty;
@@ -208,7 +218,7 @@ fn renameFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const new_path = try util.valueToOwnedString(vm, args[1]);
     defer vm.allocator.free(new_path);
     std.fs.cwd().rename(old_path, new_path) catch |err| {
-        return try util.makeError(vm, @errorName(err));
+        return try util.makeIoError(vm, err, old_path);
     };
     return .null;
 }
@@ -221,7 +231,7 @@ fn copyFileFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const dst = try util.valueToOwnedString(vm, args[1]);
     defer vm.allocator.free(dst);
     std.fs.cwd().copyFile(src, std.fs.cwd(), dst, .{}) catch |err| {
-        return try util.makeError(vm, @errorName(err));
+        return try util.makeIoError(vm, err, src);
     };
     return .null;
 }
@@ -234,7 +244,7 @@ fn symlinkFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const link_path = try util.valueToOwnedString(vm, args[1]);
     defer vm.allocator.free(link_path);
     std.fs.cwd().symLink(target, link_path, .{}) catch |err| {
-        return try util.makeError(vm, @errorName(err));
+        return try util.makeIoError(vm, err, link_path);
     };
     return .null;
 }
@@ -246,7 +256,7 @@ fn readlinkFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     defer vm.allocator.free(path);
     var buf: [std.fs.max_path_bytes]u8 = undefined;
     const link = std.fs.cwd().readLink(path, &buf) catch |err| {
-        return try util.makeError(vm, @errorName(err));
+        return try util.makeIoError(vm, err, path);
     };
     return try util.writeSlice(vm, link);
 }
@@ -258,7 +268,7 @@ fn realpathFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     defer vm.allocator.free(path);
     var buf: [std.fs.max_path_bytes]u8 = undefined;
     const real = std.fs.cwd().realpath(path, &buf) catch |err| {
-        return try util.makeError(vm, @errorName(err));
+        return try util.makeIoError(vm, err, path);
     };
     return try util.writeSlice(vm, real);
 }

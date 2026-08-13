@@ -46,7 +46,7 @@ fn jsonParseFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const str = try util.valueToStr(vm, args[0], &buf);
 
     var parsed = std.json.parseFromSlice(std.json.Value, vm.allocator, str, .{}) catch |err| {
-        return try util.makeError(vm, @errorName(err));
+        return try util.makeErrorWithPayload(vm, "JsonError", try util.writeSlice(vm, @errorName(err)));
     };
     defer parsed.deinit();
 
@@ -122,7 +122,7 @@ fn jsonStringifyFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     defer out.deinit();
     
     stringifyNode(vm, args[0], &out) catch |err| {
-        return try util.makeError(vm, @errorName(err));
+        return try util.makeErrorWithPayload(vm, "JsonError", try util.writeSlice(vm, @errorName(err)));
     };
     
     return try util.writeSlice(vm, out.written());

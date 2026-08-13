@@ -6,7 +6,6 @@ pub @func getEnv(key) {
     return __getEnv(key);
 }
 
-# TODO: Not implemented
 pub @func setEnv(key, val) {
     return __setEnv(key, val);
 }
@@ -23,12 +22,11 @@ pub @func chdir(dir) {
     return __chdir(dir);
 }
 
-# TODO: Not implemented
 pub @func pid() {
     return __pid();
 }
 
-# TODO: Not implemented
+# argv for this script: args[0] is the script path.
 pub @func args() {
     return __args();
 }

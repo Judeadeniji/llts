@@ -17,7 +17,7 @@ pub fn printArgs(vm: *VMState, argc: u8) !void {
         try writeValue(vm, &buf, stack.peek(vm, distance));
     }
     try buf.append(vm.allocator, '\n');
-    _ = try std.posix.write(std.posix.STDOUT_FILENO, buf.items);
+    @import("../../io/out.zig").writeStdout(buf.items);
 
     var j: u8 = 0;
     while (j < argc) : (j += 1) {
@@ -87,9 +87,8 @@ fn writePtr(vm: *VMState, out: *std.ArrayList(u8), p: i32) anyerror!void {
         try writeValue(vm, out, vm.memory[@intCast(p)]);
         const payload = vm.memory[@intCast(p + 1)];
         if (payload != .null) {
-            try out.appendSlice(vm.allocator, " (");
+            try out.appendSlice(vm.allocator, " — ");
             try writeValue(vm, out, payload);
-            try out.appendSlice(vm.allocator, ")");
         }
         return;
     }

@@ -70,7 +70,7 @@ test("buffer: out of bounds write/set", () => {
 			buffer.set(buf, 10, 255);
 		}
 	`);
-	expectError(res, "error.IndexOutOfBounds");
+	expectError(res, "IndexOutOfBounds");
 });
 
 test("buffer: out of bounds get", () => {
@@ -81,7 +81,7 @@ test("buffer: out of bounds get", () => {
 			print(buffer.get(buf, 10));
 		}
 	`);
-	expectError(res, "error.IndexOutOfBounds");
+	expectError(res, "IndexOutOfBounds");
 });
 
 test("buffer: resize, copy, fill, fromString", () => {
@@ -111,13 +111,13 @@ test("buffer: edge cases", () => {
 	expectError(runSource(`
 		@const $buffer = @import("std/buffer");
 		pub @func main() { buffer.alloc(-1); }
-	`), "error.IndexOutOfBounds");
+	`), "IndexOutOfBounds");
 
 	// Negative resize
 	expectError(runSource(`
 		@const $buffer = @import("std/buffer");
 		pub @func main() { $b = buffer.alloc(5); buffer.resize(b, -5); }
-	`), "error.IndexOutOfBounds");
+	`), "IndexOutOfBounds");
 
 	// readString zero length
 	expectOutput(runSource(`
@@ -129,13 +129,13 @@ test("buffer: edge cases", () => {
 	expectError(runSource(`
 		@const $buffer = @import("std/buffer");
 		pub @func main() { $b = buffer.alloc(5); buffer.readString(b, 4, 2); }
-	`), "error.IndexOutOfBounds");
+	`), "IndexOutOfBounds");
 
 	// writeString out of bounds
 	expectError(runSource(`
 		@const $buffer = @import("std/buffer");
 		pub @func main() { $b = buffer.alloc(5); buffer.writeString(b, 4, "hi"); }
-	`), "error.IndexOutOfBounds");
+	`), "IndexOutOfBounds");
 
 	// writeString empty string
 	expectOutput(runSource(`
@@ -151,7 +151,7 @@ test("buffer: edge cases", () => {
 			$b2 = buffer.alloc(5); 
 			buffer.copy(b1, 0, b2, 4, 2); 
 		}
-	`), "error.IndexOutOfBounds");
+	`), "IndexOutOfBounds");
 });
 
 test("buffer: overlapping copy", () => {
@@ -194,7 +194,7 @@ test("buffer: additional edge cases", () => {
 	expectError(runSource(`
 		@const $buffer = @import("std/buffer");
 		pub @func main() { $b = buffer.alloc(5); buffer.fillRange(b, 33, 4, 2); }
-	`), "error.IndexOutOfBounds");
+	`), "IndexOutOfBounds");
 
 	// resize shrink
 	expectOutput(runSource(`
@@ -230,5 +230,5 @@ test("buffer: additional edge cases", () => {
 	expectError(runSource(`
 		@const $buffer = @import("std/buffer");
 		pub @func main() { buffer.len(123); }
-	`), "error.TypeError");
+	`), "TypeError");
 });

@@ -19,7 +19,7 @@ fn printFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     }
     try buf.append(vm.allocator, '\n');
     // posix.write: Bun's spawnSync does not capture Zig's buffered File.stdout writer
-    _ = try std.posix.write(std.posix.STDOUT_FILENO, buf.items);
+    @import("../../io/out.zig").writeStdout(buf.items);
     return .null;
 }
 

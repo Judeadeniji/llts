@@ -1,0 +1,13 @@
+# Runtime call stack across modules
+#
+# Run from repo root:
+#   zig-out/bin/llts -i examples/call_trace/main.lls
+#
+# boom() faults in leaf.lls; the LLTS stack shows the call chain
+# main → mid.go → leaf.boom (with each file path).
+
+@const $mid = @import("./mid.lls");
+
+@func main() {
+    mid.go();
+}

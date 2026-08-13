@@ -10,6 +10,7 @@ const control = @import("control.zig");
 const call = @import("call.zig");
 const heap = @import("heap.zig");
 const debug_ops = @import("debug.zig");
+const runtime = @import("../../errors/runtime.zig");
 
 const OpCode = opcode.OpCode;
 const VMState = state_mod.VMState;
@@ -49,7 +50,12 @@ pub fn execute(vm: *VMState, start_ip: usize) RuntimeError!void {
 
         const op: OpCode = @enumFromInt(readByte(vm, &ip));
         switch (op) {
-            .OP_LINE => debug_ops.line(vm, readShort(vm, &ip)),
+            .OP_LINE => {
+                const line_no = readShort(vm, &ip);
+                const col = readShort(vm, &ip);
+                debug_ops.line(vm, line_no, col);
+            },
+            .OP_SOURCE => debug_ops.source(vm, readShort(vm, &ip)),
             .OP_CONSTANT => try stack.push(vm, vm.chunk.constants.items[readShort(vm, &ip)]),
             .OP_NULL => try stack.push(vm, .null),
             .OP_TRUE => try stack.push(vm, .{ .bool = true }),
@@ -158,13 +164,15 @@ fn getProperty(vm: *VMState, const_idx: u16) RuntimeError!void {
             try stack.push(vm, v);
             return;
         }
-        std.debug.print("RuntimeError: Undefined property '{s}'\n", .{name});
-        return error.RuntimeError;
+        var buf: [256]u8 = undefined;
+        const msg = std.fmt.bufPrint(&buf, "Undefined property '{s}'", .{name}) catch "Undefined property";
+        return runtime.runtimeFail(vm, msg);
     }
     // Struct field access uses numeric offsets via GET_INDEX at compile time;
     // dynamic property falls through to undefined.
-    std.debug.print("RuntimeError: Undefined property '{s}'\n", .{name});
-    return error.RuntimeError;
+    var buf: [256]u8 = undefined;
+    const msg = std.fmt.bufPrint(&buf, "Undefined property '{s}'", .{name}) catch "Undefined property";
+    return runtime.runtimeFail(vm, msg);
 }
 
 fn setProperty(vm: *VMState, const_idx: u16) RuntimeError!void {

@@ -56,6 +56,24 @@ pub fn makeErrorWithPayload(vm: *VMState, msg: []const u8, payload: Value) !Valu
     return .{ .ptr = p + 1 };
 }
 
+/// Map common filesystem Zig errors to stable LLTS error codes.
+pub fn ioErrorCode(err: anyerror) []const u8 {
+    return switch (err) {
+        error.FileNotFound => "FileNotFound",
+        error.AccessDenied => "AccessDenied",
+        error.IsDir => "IsDir",
+        error.NotDir => "NotDir",
+        error.PathAlreadyExists => "PathAlreadyExists",
+        error.FileBusy => "FileBusy",
+        error.SharingViolation => "SharingViolation",
+        else => "IoError",
+    };
+}
+
+pub fn makeIoError(vm: *VMState, err: anyerror, path: []const u8) !Value {
+    return makeErrorWithPayload(vm, ioErrorCode(err), try writeSlice(vm, path));
+}
+
 /// Write an array of i32 values (length-prefixed); returns data pointer.
 /// Immortal: returned from natives like `__split` through LLTS wrappers.
 /// Heap addresses are stored as `.ptr` so `print` / string ops see strings, not raw ints.

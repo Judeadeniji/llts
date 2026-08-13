@@ -1,0 +1,5 @@
+# Intentional runtime error — out of bounds.
+pub @func boom() {
+    @const $a = [1];
+    print(a[9]);
+}

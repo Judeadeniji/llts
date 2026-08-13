@@ -1,0 +1,4 @@
+# Intentional compile error — unknown identifier.
+pub @func boom() {
+    print(this_is_not_defined);
+}

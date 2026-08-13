@@ -14,10 +14,12 @@ const json_mod = @import("json_builtin.zig");
 const list_mod = @import("list.zig");
 const map_mod = @import("map.zig");
 const buffer_mod = @import("buffer.zig");
+const log_mod = @import("log.zig");
 
 pub fn registerBuiltins(vm: *state_mod.VMState) !void {
     try print_mod.register(vm);
     try print_ln_mod.register(vm);
+    try log_mod.register(vm);
     try len_mod.register(vm);
     try mem_mod.register(vm);
     try math_mod.register(vm);

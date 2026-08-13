@@ -1,0 +1,5 @@
+@const $leaf = @import("./leaf.lls");
+
+pub @func go() {
+    leaf.boom();
+}

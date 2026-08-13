@@ -60,15 +60,12 @@ test("string: fromCharCode out of range is an error", () => {
 		runSource(`
 @const $s = @import("std/string");
 print(@isError(s.fromCharCode(300)));
+print(s.fromCharCode(300).code);
 print(@isError(s.fromCharCode(-1)));
 `),
-		["true", "true"],
+		["true", "InvalidCharCode", "true"],
 	);
 });
-
-// ---------------------------------------------------------------------------
-// math — core + C-math extras + classification
-// ---------------------------------------------------------------------------
 
 test("math: trig, log, exp at known points", () => {
 	expectOutput(
@@ -246,14 +243,19 @@ print(len(os.exec("true")));
 		["hello", "hi", "0"],
 	);
 });
-test("os: setEnv stub returns 0; pid stub returns 0", () => {
+test("os: setEnv, getEnv, pid, and args", () => {
 	expectOutput(
 		runSource(`
 @const $os = @import("std/os");
-print(os.setEnv("LLTS_TEST_KEY", "v"));
-print(os.pid());
+os.setEnv("LLTS_TEST_KEY", "hello-llts");
+print(os.getEnv("LLTS_TEST_KEY"));
+print(os.getEnv("LLTS_NO_SUCH_ENV_VAR_XYZ") == null);
+print(os.pid() > 0);
+$a = os.args();
+print(len(a) >= 1);
+print(a[0] != "");
 `),
-		["0", "0"],
+		["hello-llts", "true", "true", "true", "true"],
 	);
 });
 
@@ -365,15 +367,17 @@ print(fs.exists("test_llts_fs_tmp.txt"));
 	);
 });
 
-test("fs: readFile missing path returns error", () => {
+test("fs: readFile missing path returns FileNotFound error", () => {
 	expectOutput(
 		runSource(`
 @const $fs = @import("std/fs");
 $missing = fs.readFile("test_llts_no_such_file_xyz");
 print(@isError(missing));
+print(missing.code);
+print(missing.payload);
 print(fs.exists("test_llts_no_such_file_xyz"));
 `),
-		["true", "false"],
+		["true", "FileNotFound", "test_llts_no_such_file_xyz", "false"],
 	);
 });
 

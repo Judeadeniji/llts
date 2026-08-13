@@ -7,6 +7,8 @@ const VMState = state_mod.VMState;
 const Value = value.Value;
 const NativeFunction = value.NativeFunction;
 
+extern "c" fn setenv(name: [*:0]const u8, val: [*:0]const u8, overwrite: c_int) c_int;
+
 var exec_n: NativeFunction = undefined;
 var getEnv_n: NativeFunction = undefined;
 var setEnv_n: NativeFunction = undefined;
@@ -23,17 +25,22 @@ fn execFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const cmd_str = try util.valueToOwnedString(vm, args[0]);
     defer vm.allocator.free(cmd_str);
 
-    // Simple shell exec for now using `sh -c`
     var child = std.process.Child.init(&.{ "sh", "-c", cmd_str }, vm.allocator);
     child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Pipe;
+    child.stderr_behavior = .Ignore;
 
-    try child.spawn();
-    const stdout = try child.stdout.?.readToEndAlloc(vm.allocator, 1024 * 1024 * 10);
+    child.spawn() catch |err| {
+        return try util.makeErrorWithPayload(vm, "ExecError", try util.writeSlice(vm, @errorName(err)));
+    };
+    const stdout = child.stdout.?.readToEndAlloc(vm.allocator, 1024 * 1024 * 10) catch |err| {
+        _ = child.wait() catch {};
+        return try util.makeErrorWithPayload(vm, "ExecError", try util.writeSlice(vm, @errorName(err)));
+    };
     defer vm.allocator.free(stdout);
-    _ = try child.wait();
+    _ = child.wait() catch |err| {
+        return try util.makeErrorWithPayload(vm, "ExecError", try util.writeSlice(vm, @errorName(err)));
+    };
 
-    // To return a string, we need to allocate on heap
     return try util.writeSlice(vm, stdout);
 }
 
@@ -46,15 +53,28 @@ fn getEnvFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
         defer vm.allocator.free(val);
         return try util.writeSlice(vm, val);
     } else |err| switch (err) {
-        error.EnvironmentVariableNotFound => return .{ .ptr = 0 }, // Should be null, using ptr 0 as null representation if supported
-        else => return try util.makeError(vm, "Error reading environment variable"),
+        error.EnvironmentVariableNotFound => return .null,
+        else => return try util.makeError(vm, "EnvError"),
     }
 }
 
 fn setEnvFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
-    _ = vm_ptr;
-    _ = args;
-    return .{ .int = 0 };
+    const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
+    if (args.len < 2) return error.ArityError;
+    const key = try util.valueToOwnedString(vm, args[0]);
+    defer vm.allocator.free(key);
+    const val = try util.valueToOwnedString(vm, args[1]);
+    defer vm.allocator.free(val);
+
+    const key_z = try vm.allocator.dupeZ(u8, key);
+    defer vm.allocator.free(key_z);
+    const val_z = try vm.allocator.dupeZ(u8, val);
+    defer vm.allocator.free(val_z);
+
+    if (setenv(key_z.ptr, val_z.ptr, 1) != 0) {
+        return try util.makeError(vm, "EnvError");
+    }
+    return .null;
 }
 
 fn exitFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
@@ -67,7 +87,9 @@ fn cwdFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
     _ = args;
     var buf: [std.fs.max_path_bytes]u8 = undefined;
-    const cwd = try std.process.getCwd(&buf);
+    const cwd = std.process.getCwd(&buf) catch |err| {
+        return try util.makeErrorWithPayload(vm, "CwdError", try util.writeSlice(vm, @errorName(err)));
+    };
     return try util.writeSlice(vm, cwd);
 }
 
@@ -76,20 +98,24 @@ fn chdirFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     if (args.len < 1) return error.ArityError;
     const dir = try util.valueToOwnedString(vm, args[0]);
     defer vm.allocator.free(dir);
-    try std.posix.chdir(dir);
-    return .{ .int = 0 };
+    std.posix.chdir(dir) catch {
+        return try util.makeErrorWithPayload(vm, "ChdirError", try util.writeSlice(vm, dir));
+    };
+    return .null;
 }
 
 fn pidFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     _ = args;
-    return .{ .int = 0 };
+    return .{ .int = @intCast(std.os.linux.getpid()) };
 }
 
 fn argsFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
-    _ = vm_ptr;
+    const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
     _ = args;
-    return error.NotImplemented;
+    // Script path as args[0] (like many scripting languages' argv[0]).
+    const path_val = try util.writeSlice(vm, vm.script_path);
+    return try util.writeArray(vm, &.{path_val});
 }
 
 fn platformFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {

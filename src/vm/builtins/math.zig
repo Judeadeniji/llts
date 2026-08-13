@@ -65,7 +65,7 @@ fn sqrtFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     if (args.len < 1) return error.ArityError;
     const val = try util.asInt(args[0]);
     if (val < 0) {
-        return try util.makeError(vm, "Cannot take square root of negative number");
+        return try util.makeError(vm, "DomainError");
     }
     return .{ .int = @intFromFloat(@sqrt(@as(f64, @floatFromInt(val)))) };
 }

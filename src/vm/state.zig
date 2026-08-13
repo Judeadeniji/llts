@@ -19,7 +19,11 @@ pub const CallFrame = struct {
     arg_count: u8 = 0,
     const_slots: std.AutoHashMap(u8, void),
     func_name: []const u8 = "<script>",
+    /// Borrowed path from chunk.sources.
+    file: []const u8 = "",
     line: u32 = 1,
+    column: u32 = 1,
+    source_index: u16 = 0,
     /// Heap bump at call entry. On return, `heap_ptr` rewinds here so
     /// frame-local implicit allocs (bare `Foo{}` / `[…]`) die with the frame.
     /// Immortal allocs raise this watermark so arenas / `@new` targets survive.
@@ -45,6 +49,8 @@ pub const VMState = struct {
     heap_ptr: i32 = HEAP_START,
     chunk: *Chunk,
     current_line: u32 = 1,
+    current_column: u32 = 1,
+    current_source_index: u16 = 0,
     /// Owned module instances created by OP_GET_MODULE.
     modules: std.ArrayList(*ModuleObject) = .empty,
     lists: std.ArrayList(*value.ListObject) = .empty,
@@ -54,6 +60,8 @@ pub const VMState = struct {
     string_cache: std.AutoHashMap(u32, i32),
     /// Zero-alloc string arena (appended to, never freed during execution).
     string_bytes: std.ArrayList(u8) = .empty,
+    /// Path of the running script (borrowed; used by os.args).
+    script_path: []const u8 = "",
 
     pub fn init(allocator: std.mem.Allocator, chunk: *Chunk) !VMState {
         const memory = try allocator.alloc(Value, MEMORY_SIZE);
@@ -67,11 +75,20 @@ pub const VMState = struct {
         };
         var frame = CallFrame.init(allocator);
         frame.func_name = "<script>";
+        frame.file = if (chunk.file.len > 0) chunk.file else "<anonymous>";
+        frame.source_index = 0;
         // Script frame lives until process end — watermark tracks immortal growth.
         frame.heap_watermark = HEAP_START;
         try state.frames.append(allocator, frame);
         try state.stack.ensureTotalCapacity(allocator, 1024);
         return state;
+    }
+
+    pub fn sourceForFile(self: *const VMState, path: []const u8) []const u8 {
+        for (self.chunk.sources.items) |s| {
+            if (std.mem.eql(u8, s.path, path)) return s.text;
+        }
+        return self.chunk.source;
     }
 
     pub fn deinit(self: *VMState) void {
