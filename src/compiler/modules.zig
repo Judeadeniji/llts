@@ -411,7 +411,7 @@ fn rewriteModuleRefs(
         },
         .member => |*m| {
             try rewriteModuleRefs(state, m.object, local_map, bound);
-            try rewriteModuleRefs(state, m.property, local_map, bound);
+            // Keep property short names (`syscall.mkdir` must not become `syscall.mod::mkdir`).
         },
         .index => |*ix| {
             try rewriteModuleRefs(state, ix.object, local_map, bound);
@@ -500,7 +500,7 @@ fn rewriteRefs(node: *ast.Node, local_map: *std.StringHashMap([]const u8)) void 
         },
         .member => |m| {
             rewriteRefs(m.object, local_map);
-            rewriteRefs(m.property, local_map);
+            // Same as rewriteModuleRefs: do not rewrite member property identifiers.
         },
         .index => |ix| {
             rewriteRefs(ix.object, local_map);

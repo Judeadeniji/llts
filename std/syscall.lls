@@ -1,0 +1,273 @@
+# Low-level OS syscalls — Linux-oriented, Zig/Go shaped.
+#
+# Prefer typed wrappers (`read` / `write` / `open` / …). Use `call` + `SYS_*`
+# only when you need a raw trap. SYS_* numbers come from the host kernel ABI.
+
+# --- raw escape hatch ---
+
+pub @func call(nr, ...args) {
+    return __syscall(nr, args);
+}
+
+# Look up a SYS number by name (arch-correct), e.g. nr("openat").
+pub @func nr(name) {
+    return __sys_nr(name);
+}
+
+pub @func isError(rc) {
+    return __sys_isError(rc);
+}
+
+pub @func errno(rc) {
+    return __sys_errno(rc);
+}
+
+pub @func errName(rc) {
+    return __sys_errName(rc);
+}
+
+# --- typed wrappers ---
+
+pub @func read(fd, buf) {
+    return __sys_read(fd, buf);
+}
+
+pub @func write(fd, data) {
+    return __sys_write(fd, data);
+}
+
+pub @func open(path, flags, ...rest) {
+    @if (len(rest) > 0) {
+        return __sys_open(path, flags, rest[0]);
+    }
+    return __sys_open(path, flags);
+}
+
+pub @func close(fd) {
+    return __sys_close(fd);
+}
+
+pub @func lseek(fd, offset, whence) {
+    return __sys_lseek(fd, offset, whence);
+}
+
+pub @func fsync(fd) {
+    return __sys_fsync(fd);
+}
+
+pub @func pipe() {
+    return __sys_pipe();
+}
+
+pub @func dup(fd) {
+    return __sys_dup(fd);
+}
+
+pub @func dup2(old_fd, new_fd) {
+    return __sys_dup2(old_fd, new_fd);
+}
+
+pub @func getpid() {
+    return __sys_getpid();
+}
+
+pub @func getppid() {
+    return __sys_getppid();
+}
+
+pub @func getuid() {
+    return __sys_getuid();
+}
+
+pub @func geteuid() {
+    return __sys_geteuid();
+}
+
+pub @func getgid() {
+    return __sys_getgid();
+}
+
+pub @func getegid() {
+    return __sys_getegid();
+}
+
+pub @func kill(pid, sig) {
+    return __sys_kill(pid, sig);
+}
+
+pub @func chdir(path) {
+    return __sys_chdir(path);
+}
+
+pub @func getcwd() {
+    return __sys_getcwd();
+}
+
+pub @func unlink(path) {
+    return __sys_unlink(path);
+}
+
+pub @func rename(old_path, new_path) {
+    return __sys_rename(old_path, new_path);
+}
+
+pub @func mkdir(path, ...rest) {
+    @if (len(rest) > 0) {
+        return __sys_mkdir(path, rest[0]);
+    }
+    return __sys_mkdir(path);
+}
+
+pub @func rmdir(path) {
+    return __sys_rmdir(path);
+}
+
+pub @func access(path, ...rest) {
+    @if (len(rest) > 0) {
+        return __sys_access(path, rest[0]);
+    }
+    return __sys_access(path);
+}
+
+pub @func chmod(path, mode) {
+    return __sys_chmod(path, mode);
+}
+
+pub @func symlink(target, path) {
+    return __sys_symlink(target, path);
+}
+
+pub @func readlink(path) {
+    return __sys_readlink(path);
+}
+
+pub @func ftruncate(fd, len) {
+    return __sys_ftruncate(fd, len);
+}
+
+pub @func umask(mask) {
+    return __sys_umask(mask);
+}
+
+pub @func nanosleep(sec, nsec) {
+    return __sys_nanosleep(sec, nsec);
+}
+
+pub @func fcntl(fd, cmd, ...rest) {
+    @if (len(rest) > 0) {
+        return __sys_fcntl(fd, cmd, rest[0]);
+    }
+    return __sys_fcntl(fd, cmd);
+}
+
+# --- SYS_* (host arch) ---
+
+pub $SYS_read = __SYS_read;
+pub $SYS_write = __SYS_write;
+pub $SYS_open = __SYS_open;
+pub $SYS_openat = __SYS_openat;
+pub $SYS_close = __SYS_close;
+pub $SYS_lseek = __SYS_lseek;
+pub $SYS_mmap = __SYS_mmap;
+pub $SYS_mprotect = __SYS_mprotect;
+pub $SYS_munmap = __SYS_munmap;
+pub $SYS_brk = __SYS_brk;
+pub $SYS_ioctl = __SYS_ioctl;
+pub $SYS_access = __SYS_access;
+pub $SYS_pipe = __SYS_pipe;
+pub $SYS_dup = __SYS_dup;
+pub $SYS_dup2 = __SYS_dup2;
+pub $SYS_nanosleep = __SYS_nanosleep;
+pub $SYS_getpid = __SYS_getpid;
+pub $SYS_socket = __SYS_socket;
+pub $SYS_connect = __SYS_connect;
+pub $SYS_accept = __SYS_accept;
+pub $SYS_bind = __SYS_bind;
+pub $SYS_listen = __SYS_listen;
+pub $SYS_clone = __SYS_clone;
+pub $SYS_fork = __SYS_fork;
+pub $SYS_execve = __SYS_execve;
+pub $SYS_exit = __SYS_exit;
+pub $SYS_wait4 = __SYS_wait4;
+pub $SYS_kill = __SYS_kill;
+pub $SYS_fcntl = __SYS_fcntl;
+pub $SYS_fsync = __SYS_fsync;
+pub $SYS_ftruncate = __SYS_ftruncate;
+pub $SYS_getcwd = __SYS_getcwd;
+pub $SYS_chdir = __SYS_chdir;
+pub $SYS_rename = __SYS_rename;
+pub $SYS_mkdir = __SYS_mkdir;
+pub $SYS_rmdir = __SYS_rmdir;
+pub $SYS_unlink = __SYS_unlink;
+pub $SYS_symlink = __SYS_symlink;
+pub $SYS_readlink = __SYS_readlink;
+pub $SYS_chmod = __SYS_chmod;
+pub $SYS_umask = __SYS_umask;
+pub $SYS_getuid = __SYS_getuid;
+pub $SYS_getgid = __SYS_getgid;
+pub $SYS_geteuid = __SYS_geteuid;
+pub $SYS_getegid = __SYS_getegid;
+pub $SYS_getppid = __SYS_getppid;
+pub $SYS_clock_gettime = __SYS_clock_gettime;
+
+# --- open flags ---
+
+pub $O_RDONLY = __O_RDONLY;
+pub $O_WRONLY = __O_WRONLY;
+pub $O_RDWR = __O_RDWR;
+pub $O_CREAT = __O_CREAT;
+pub $O_EXCL = __O_EXCL;
+pub $O_TRUNC = __O_TRUNC;
+pub $O_APPEND = __O_APPEND;
+pub $O_NONBLOCK = __O_NONBLOCK;
+pub $O_DIRECTORY = __O_DIRECTORY;
+pub $O_CLOEXEC = __O_CLOEXEC;
+
+# --- seek / stdio / access ---
+
+pub $SEEK_SET = __SEEK_SET;
+pub $SEEK_CUR = __SEEK_CUR;
+pub $SEEK_END = __SEEK_END;
+
+pub $STDIN_FILENO = __STDIN_FILENO;
+pub $STDOUT_FILENO = __STDOUT_FILENO;
+pub $STDERR_FILENO = __STDERR_FILENO;
+
+pub $F_OK = __F_OK;
+pub $R_OK = __R_OK;
+pub $W_OK = __W_OK;
+pub $X_OK = __X_OK;
+
+pub $AT_FDCWD = __AT_FDCWD;
+
+# --- mode bits ---
+
+pub $S_IRWXU = __S_IRWXU;
+pub $S_IRUSR = __S_IRUSR;
+pub $S_IWUSR = __S_IWUSR;
+pub $S_IXUSR = __S_IXUSR;
+pub $S_IRWXG = __S_IRWXG;
+pub $S_IRGRP = __S_IRGRP;
+pub $S_IWGRP = __S_IWGRP;
+pub $S_IXGRP = __S_IXGRP;
+pub $S_IRWXO = __S_IRWXO;
+pub $S_IROTH = __S_IROTH;
+pub $S_IWOTH = __S_IWOTH;
+pub $S_IXOTH = __S_IXOTH;
+
+# --- signals ---
+
+pub $SIGTERM = __SIGTERM;
+pub $SIGKILL = __SIGKILL;
+pub $SIGINT = __SIGINT;
+pub $SIGHUP = __SIGHUP;
+pub $SIGUSR1 = __SIGUSR1;
+pub $SIGUSR2 = __SIGUSR2;
+
+# --- fcntl ---
+
+pub $F_GETFD = __F_GETFD;
+pub $F_SETFD = __F_SETFD;
+pub $F_GETFL = __F_GETFL;
+pub $F_SETFL = __F_SETFL;
+pub $FD_CLOEXEC = __FD_CLOEXEC;

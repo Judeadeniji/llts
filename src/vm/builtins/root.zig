@@ -9,6 +9,7 @@ const string_mod = @import("string.zig");
 const io_mod = @import("io.zig");
 const time_mod = @import("time.zig");
 const os_mod = @import("os.zig");
+const syscall_mod = @import("syscall.zig");
 const http_mod = @import("http.zig");
 const json_mod = @import("json_builtin.zig");
 const list_mod = @import("list.zig");
@@ -27,6 +28,7 @@ pub fn registerBuiltins(vm: *state_mod.VMState) !void {
     try io_mod.register(vm);
     try time_mod.register(vm);
     try os_mod.register(vm);
+    try syscall_mod.register(vm);
     try http_mod.register(vm);
     try json_mod.register(vm);
     try list_mod.register(vm);

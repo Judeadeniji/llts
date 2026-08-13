@@ -13,7 +13,14 @@ pub fn readString(vm: *VMState, ptr: i32) ![]u8 {
     const buf = try vm.allocator.alloc(u8, len);
     var i: usize = 0;
     while (i < len) : (i += 1) {
-        buf[i] = @intCast(vm.memory[@intCast(ptr + @as(i32, @intCast(i)))] .int);
+        const val = vm.memory[@intCast(ptr + @as(i32, @intCast(i)))];
+        switch (val) {
+            .int => |ch| buf[i] = @intCast(ch),
+            else => {
+                vm.allocator.free(buf);
+                return error.TypeError;
+            }
+        }
     }
     return buf;
 }
@@ -128,7 +135,11 @@ pub fn valueToStr(vm: *VMState, v: Value, buf: *std.ArrayList(u8)) ![]const u8 {
             try buf.ensureTotalCapacity(vm.allocator, len);
             var i: usize = 0;
             while (i < len) : (i += 1) {
-                buf.appendAssumeCapacity(@intCast(vm.memory[@intCast(p + @as(i32, @intCast(i)))].int));
+                const val = vm.memory[@intCast(p + @as(i32, @intCast(i)))];
+                switch (val) {
+                    .int => |ch| buf.appendAssumeCapacity(@intCast(ch)),
+                    else => return error.TypeError,
+                }
             }
             return buf.items;
         },
@@ -172,13 +183,21 @@ pub fn stringEquals(vm: *VMState, a: Value, b: Value) bool {
         const char_a: u8 = switch (a) {
             .slice => |s| vm.string_bytes.items[s.offset + i],
             .name => |idx| vm.chunk.stringAt(idx)[i],
-            .ptr => |p| @intCast(vm.memory[@intCast(p + @as(i32, @intCast(i)))].int),
+            .ptr => |p| blk: {
+                const val = vm.memory[@intCast(p + @as(i32, @intCast(i)))];
+                if (val != .int) return false;
+                break :blk @intCast(val.int);
+            },
             else => unreachable,
         };
         const char_b: u8 = switch (b) {
             .slice => |s| vm.string_bytes.items[s.offset + i],
             .name => |idx| vm.chunk.stringAt(idx)[i],
-            .ptr => |p| @intCast(vm.memory[@intCast(p + @as(i32, @intCast(i)))].int),
+            .ptr => |p| blk: {
+                const val = vm.memory[@intCast(p + @as(i32, @intCast(i)))];
+                if (val != .int) return false;
+                break :blk @intCast(val.int);
+            },
             else => unreachable,
         };
         if (char_a != char_b) return false;
