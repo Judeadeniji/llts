@@ -40,6 +40,7 @@ Zig implementation. The TypeScript prototype/reference is [`llts-js`](../llts-js
 - [x] `std/debug`: `printLn`, `log`, `assert`.
 - [x] `std/mem`: `alloc` / Arena helpers.
 - [x] `std/io`: `readLine`, `readFile`, `writeFile`, `appendFile`, `deleteFile`, `exists` via host `__*` bindings.
+- [x] `std/syscall`: raw `call` + typed POSIX wrappers (`read`/`write`/`open`/…) and host `SYS_*` / `O_*` constants.
 
 ### Tooling
 - [x] `zig build` / `zig build test`.

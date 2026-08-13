@@ -1,0 +1,84 @@
+@const $std = @import("std/index");
+
+@func main() {
+    std.debug.printLn("Simple File Manager (llts)");
+    std.debug.printLn("Commands: ls <dir>, cat <file>, touch <file>, rm <file>, mkdir <dir>, exit");
+    
+    outer: @for (0..100000) |iter| {
+        std.debug.printLn("> Enter command:");
+        $line = std.io.readLine();
+        
+        @if (line == null) {
+            std.debug.printLn("EOF");
+            break :outer;
+        }
+
+        line = std.string.trim(line);
+        @if (std.string.len(line) == 0) {
+            break :outer;
+        }
+
+        $parts = std.string.split(line, " ");
+        
+        @if (len(parts) == 0) {
+            continue;
+        }
+
+        $cmd = parts[0];
+
+        @if (cmd == "exit") {
+            std.debug.printLn("Goodbye!");
+            break :outer;
+        }
+
+        @if (cmd == "ls") {
+            $path = ".";
+            @if (len(parts) > 1) {
+                path = parts[1];
+            }
+            $files = std.fs.readDir(path);
+            @if (@isError(files)) {
+                std.debug.printLn("Error: Could not list directory {s}", path);
+            } @else {
+                std.debug.printLn("Files in {s}:", path);
+                @for (0..len(files)) |i| {
+                    std.debug.printLn("  {s}", files[i]);
+                }
+            }
+        } @else @if (cmd == "cat") {
+            @if (len(parts) < 2) {
+                std.debug.printLn("Usage: cat <file>");
+            } @else {
+                $content = std.fs.readFile(parts[1]);
+                @if (@isError(content)) {
+                    std.debug.printLn("Error: Could not read file");
+                } @else {
+                    std.debug.printLn("{s}", content);
+                }
+            }
+        } @else @if (cmd == "touch") {
+            @if (len(parts) < 2) {
+                std.debug.printLn("Usage: touch <file>");
+            } @else {
+                std.fs.writeFile(parts[1], "");
+                std.debug.printLn("Created {s}", parts[1]);
+            }
+        } @else @if (cmd == "rm") {
+            @if (len(parts) < 2) {
+                std.debug.printLn("Usage: rm <file>");
+            } @else {
+                std.fs.deleteFile(parts[1]);
+                std.debug.printLn("Deleted {s}", parts[1]);
+            }
+        } @else @if (cmd == "mkdir") {
+            @if (len(parts) < 2) {
+                std.debug.printLn("Usage: mkdir <dir>");
+            } @else {
+                std.fs.mkdir(parts[1]);
+                std.debug.printLn("Created directory {s}", parts[1]);
+            }
+        } @else {
+            std.debug.printLn("Unknown command: {s}", cmd);
+        }
+    }
+}
