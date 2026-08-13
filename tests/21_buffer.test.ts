@@ -159,12 +159,22 @@ test("buffer: overlapping copy", () => {
 		@const $buffer = @import("std/buffer");
 		pub @func main() {
 			$b = buffer.fromString("12345678");
-			# copy "1234" to offset 2 -> "12123478"
+			# copy "1234" to offset 2 -> "12123478" (copyBackwards)
 			buffer.copy(b, 2, b, 0, 4);
 			print(buffer.readString(b, 0, 8));
+			
+			$b2 = buffer.fromString("12345678");
+			# copy "3456" to offset 0 -> "34565678" (copyForwards)
+			buffer.copy(b2, 0, b2, 2, 4);
+			print(buffer.readString(b2, 0, 8));
+
+			$b3 = buffer.fromString("12345678");
+			# copy to same offset -> no-op
+			buffer.copy(b3, 2, b3, 2, 4);
+			print(buffer.readString(b3, 0, 8));
 		}
 	`);
-	expectOutput(res, ["12123478"]);
+	expectOutput(res, ["12123478", "34565678", "12345678"]);
 });
 
 test("buffer: fillRange", () => {
@@ -177,4 +187,48 @@ test("buffer: fillRange", () => {
 		}
 	`);
 	expectOutput(res, ["12!!!!78"]);
+});
+
+test("buffer: additional edge cases", () => {
+	// fillRange OOB
+	expectError(runSource(`
+		@const $buffer = @import("std/buffer");
+		pub @func main() { $b = buffer.alloc(5); buffer.fillRange(b, 33, 4, 2); }
+	`), "error.IndexOutOfBounds");
+
+	// resize shrink
+	expectOutput(runSource(`
+		@const $buffer = @import("std/buffer");
+		pub @func main() {
+			$b = buffer.fromString("12345678");
+			buffer.resize(b, 4);
+			print(buffer.len(b));
+			print(buffer.readString(b, 0, 4));
+		}
+	`), ["4", "1234"]);
+
+	// alloc(0)
+	expectOutput(runSource(`
+		@const $buffer = @import("std/buffer");
+		pub @func main() {
+			$b = buffer.alloc(0);
+			print(buffer.len(b));
+		}
+	`), ["0"]);
+
+	// set byte mask
+	expectOutput(runSource(`
+		@const $buffer = @import("std/buffer");
+		pub @func main() {
+			$b = buffer.alloc(1);
+			buffer.set(b, 0, 300);
+			print(buffer.get(b, 0));
+		}
+	`), ["44"]);
+
+	// Type error (pass int where buffer expected)
+	expectError(runSource(`
+		@const $buffer = @import("std/buffer");
+		pub @func main() { buffer.len(123); }
+	`), "error.TypeError");
 });
