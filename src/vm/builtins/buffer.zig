@@ -13,16 +13,19 @@ var buffer_write_string_n: NativeFunction = undefined;
 var buffer_append_string_n: NativeFunction = undefined;
 var buffer_read_string_n: NativeFunction = undefined;
 var buffer_len_n: NativeFunction = undefined;
-var buffer_free_n: NativeFunction = undefined;
 var buffer_get_n: NativeFunction = undefined;
 var buffer_set_n: NativeFunction = undefined;
 var buffer_push_n: NativeFunction = undefined;
+var buffer_from_string_n: NativeFunction = undefined;
+var buffer_copy_n: NativeFunction = undefined;
+var buffer_fill_n: NativeFunction = undefined;
+var buffer_resize_n: NativeFunction = undefined;
 
 fn bufferAlloc(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
     if (args.len < 1) return error.ArityError;
     const size = try util.asInt(args[0]);
-    if (size < 0) return try util.makeError(vm, "Invalid buffer size");
+    if (size < 0) return error.IndexOutOfBounds;
     
     const buf = try vm.allocBuffer();
     try buf.bytes.appendNTimes(vm.allocator, 0, @intCast(size));
@@ -41,15 +44,16 @@ fn bufferWriteString(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     if (args.len < 3) return error.ArityError;
     if (args[0] != .buffer) return error.TypeError;
     const offset_raw = try util.asInt(args[1]);
-    if (offset_raw < 0) return try util.makeError(vm, "Invalid offset");
+    if (offset_raw < 0) return error.IndexOutOfBounds;
     const offset: usize = @intCast(offset_raw);
     
     var buf_tmp: std.ArrayList(u8) = .empty; defer buf_tmp.deinit(vm.allocator);
     const str = try util.valueToStr(vm, args[2], &buf_tmp);
     
     const buf = args[0].buffer;
-    if (offset + str.len > buf.bytes.items.len) {
-        return try util.makeError(vm, "Buffer write out of bounds");
+    const end = std.math.add(usize, offset, str.len) catch return error.IndexOutOfBounds;
+    if (end > buf.bytes.items.len) {
+        return error.IndexOutOfBounds;
     }
     
     @memcpy(buf.bytes.items[offset .. offset + str.len], str);
@@ -76,13 +80,14 @@ fn bufferReadString(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     
     const offset_raw = try util.asInt(args[1]);
     const len_raw = try util.asInt(args[2]);
-    if (offset_raw < 0 or len_raw < 0) return try util.makeError(vm, "Invalid offset or length");
+    if (offset_raw < 0 or len_raw < 0) return error.IndexOutOfBounds;
     const offset: usize = @intCast(offset_raw);
     const len: usize = @intCast(len_raw);
     
     const buf = args[0].buffer;
-    if (offset + len > buf.bytes.items.len) {
-        return try util.makeError(vm, "Buffer read out of bounds");
+    const end = std.math.add(usize, offset, len) catch return error.IndexOutOfBounds;
+    if (end > buf.bytes.items.len) {
+        return error.IndexOutOfBounds;
     }
     
     const slice = buf.bytes.items[offset .. offset + len];
@@ -96,52 +101,30 @@ fn bufferLen(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     return .{ .int = @intCast(args[0].buffer.bytes.items.len) };
 }
 
-fn bufferFree(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
-    const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
-    if (args.len < 1) return error.ArityError;
-    if (args[0] != .buffer) return error.TypeError;
-    
-    const buf = args[0].buffer;
-    var found = false;
-    for (vm.buffers.items, 0..) |b, i| {
-        if (b == buf) {
-            _ = vm.buffers.swapRemove(i);
-            found = true;
-            break;
-        }
-    }
-    
-    if (found) {
-        buf.deinit(vm.allocator);
-        vm.allocator.destroy(buf);
-    }
-    return .null;
-}
-
 fn bufferGet(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
-    const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
+    _ = vm_ptr;
     if (args.len < 2) return error.ArityError;
     if (args[0] != .buffer) return error.TypeError;
     const index_raw = try util.asInt(args[1]);
-    if (index_raw < 0) return try util.makeError(vm, "Invalid offset");
+    if (index_raw < 0) return error.IndexOutOfBounds;
     const index: usize = @intCast(index_raw);
     
     const buf = args[0].buffer;
-    if (index >= buf.bytes.items.len) return try util.makeError(vm, "Buffer read out of bounds");
+    if (index >= buf.bytes.items.len) return error.IndexOutOfBounds;
     return .{ .int = @intCast(buf.bytes.items[index]) };
 }
 
 fn bufferSet(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
-    const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
+    _ = vm_ptr;
     if (args.len < 3) return error.ArityError;
     if (args[0] != .buffer) return error.TypeError;
     const index_raw = try util.asInt(args[1]);
     const val_raw = try util.asInt(args[2]);
-    if (index_raw < 0) return try util.makeError(vm, "Invalid offset");
+    if (index_raw < 0) return error.IndexOutOfBounds;
     const index: usize = @intCast(index_raw);
     
     const buf = args[0].buffer;
-    if (index >= buf.bytes.items.len) return try util.makeError(vm, "Buffer write out of bounds");
+    if (index >= buf.bytes.items.len) return error.IndexOutOfBounds;
     buf.bytes.items[index] = @intCast(val_raw & 0xFF);
     return .null;
 }
@@ -157,6 +140,73 @@ fn bufferPush(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     return .null;
 }
 
+fn bufferFromString(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
+    const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
+    if (args.len < 1) return error.ArityError;
+    var buf_tmp: std.ArrayList(u8) = .empty; defer buf_tmp.deinit(vm.allocator);
+    const str = try util.valueToStr(vm, args[0], &buf_tmp);
+    
+    const buf = try vm.allocBuffer();
+    try buf.bytes.appendSlice(vm.allocator, str);
+    return .{ .buffer = buf };
+}
+
+fn bufferCopy(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
+    _ = vm_ptr;
+    if (args.len < 5) return error.ArityError;
+    if (args[0] != .buffer or args[2] != .buffer) return error.TypeError;
+    const dst = args[0].buffer;
+    const src = args[2].buffer;
+    
+    const dst_off = try util.asInt(args[1]);
+    const src_off = try util.asInt(args[3]);
+    const len = try util.asInt(args[4]);
+    if (dst_off < 0 or src_off < 0 or len < 0) return error.IndexOutOfBounds;
+    
+    const u_dst_off: usize = @intCast(dst_off);
+    const u_src_off: usize = @intCast(src_off);
+    const u_len: usize = @intCast(len);
+    
+    const dst_end = std.math.add(usize, u_dst_off, u_len) catch return error.IndexOutOfBounds;
+    const src_end = std.math.add(usize, u_src_off, u_len) catch return error.IndexOutOfBounds;
+    
+    if (dst_end > dst.bytes.items.len or src_end > src.bytes.items.len) {
+        return error.IndexOutOfBounds;
+    }
+    
+    @memcpy(dst.bytes.items[u_dst_off .. dst_end], src.bytes.items[u_src_off .. src_end]);
+    return .null;
+}
+
+fn bufferFill(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
+    const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
+    _ = vm;
+    if (args.len < 2) return error.ArityError;
+    if (args[0] != .buffer) return error.TypeError;
+    const val_raw = try util.asInt(args[1]);
+    const val: u8 = @intCast(val_raw & 0xFF);
+    
+    const buf = args[0].buffer;
+    @memset(buf.bytes.items, val);
+    return .null;
+}
+
+fn bufferResize(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
+    const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
+    if (args.len < 2) return error.ArityError;
+    if (args[0] != .buffer) return error.TypeError;
+    const new_len = try util.asInt(args[1]);
+    if (new_len < 0) return error.IndexOutOfBounds;
+    
+    const buf = args[0].buffer;
+    const old_len = buf.bytes.items.len;
+    try buf.bytes.resize(vm.allocator, @intCast(new_len));
+    if (new_len > old_len) {
+        @memset(buf.bytes.items[old_len..@intCast(new_len)], 0);
+    }
+    return .null;
+}
+
 pub fn register(vm: *VMState) !void {
     buffer_alloc_n = .{ .name = "__bufferAlloc", .func = bufferAlloc, .arity = 1 };
     buffer_create_n = .{ .name = "__bufferCreate", .func = bufferCreate, .arity = 0 };
@@ -164,10 +214,13 @@ pub fn register(vm: *VMState) !void {
     buffer_append_string_n = .{ .name = "__bufferAppendString", .func = bufferAppendString, .arity = 2 };
     buffer_read_string_n = .{ .name = "__bufferReadString", .func = bufferReadString, .arity = 3 };
     buffer_len_n = .{ .name = "__bufferLen", .func = bufferLen, .arity = 1 };
-    buffer_free_n = .{ .name = "__bufferFree", .func = bufferFree, .arity = 1 };
     buffer_get_n = .{ .name = "__bufferGet", .func = bufferGet, .arity = 2 };
     buffer_set_n = .{ .name = "__bufferSet", .func = bufferSet, .arity = 3 };
     buffer_push_n = .{ .name = "__bufferPush", .func = bufferPush, .arity = 2 };
+    buffer_from_string_n = .{ .name = "__bufferFromString", .func = bufferFromString, .arity = 1 };
+    buffer_copy_n = .{ .name = "__bufferCopy", .func = bufferCopy, .arity = 5 };
+    buffer_fill_n = .{ .name = "__bufferFill", .func = bufferFill, .arity = 2 };
+    buffer_resize_n = .{ .name = "__bufferResize", .func = bufferResize, .arity = 2 };
     
     try vm.globals.put("__bufferAlloc", .{ .native = &buffer_alloc_n });
     try vm.globals.put("__bufferCreate", .{ .native = &buffer_create_n });
@@ -175,8 +228,11 @@ pub fn register(vm: *VMState) !void {
     try vm.globals.put("__bufferAppendString", .{ .native = &buffer_append_string_n });
     try vm.globals.put("__bufferReadString", .{ .native = &buffer_read_string_n });
     try vm.globals.put("__bufferLen", .{ .native = &buffer_len_n });
-    try vm.globals.put("__bufferFree", .{ .native = &buffer_free_n });
     try vm.globals.put("__bufferGet", .{ .native = &buffer_get_n });
     try vm.globals.put("__bufferSet", .{ .native = &buffer_set_n });
     try vm.globals.put("__bufferPush", .{ .native = &buffer_push_n });
+    try vm.globals.put("__bufferFromString", .{ .native = &buffer_from_string_n });
+    try vm.globals.put("__bufferCopy", .{ .native = &buffer_copy_n });
+    try vm.globals.put("__bufferFill", .{ .native = &buffer_fill_n });
+    try vm.globals.put("__bufferResize", .{ .native = &buffer_resize_n });
 }

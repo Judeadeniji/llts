@@ -6,6 +6,10 @@ pub @func create() {
     return __bufferCreate();
 }
 
+pub @func fromString(str) {
+    return __bufferFromString(str);
+}
+
 pub @func writeString(buf, offset, str) {
     return __bufferWriteString(buf, offset, str);
 }
@@ -22,10 +26,6 @@ pub @func len(buf) {
     return __bufferLen(buf);
 }
 
-pub @func free(buf) {
-    return __bufferFree(buf);
-}
-
 pub @func get(buf, index) {
     return __bufferGet(buf, index);
 }
@@ -36,4 +36,16 @@ pub @func set(buf, index, val) {
 
 pub @func push(buf, val) {
     return __bufferPush(buf, val);
+}
+
+pub @func copy(dst, dst_off, src, src_off, len) {
+    return __bufferCopy(dst, dst_off, src, src_off, len);
+}
+
+pub @func fill(buf, val) {
+    return __bufferFill(buf, val);
+}
+
+pub @func resize(buf, new_len) {
+    return __bufferResize(buf, new_len);
 }

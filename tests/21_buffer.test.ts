@@ -11,7 +11,6 @@ test("buffer: alloc, len, get, set", () => {
 			buffer.set(buf, 1, 66);
 			print(buffer.get(buf, 0));
 			print(buffer.get(buf, 1));
-			buffer.free(buf);
 		}
 	`);
 	expectOutput(res, ["10", "65", "66"]);
@@ -26,7 +25,6 @@ test("buffer: dynamic growth", () => {
 			buffer.appendString(buf, "ello");
 			print(buffer.len(buf));
 			print(buffer.readString(buf, 0, buffer.len(buf)));
-			buffer.free(buf);
 		}
 	`);
 	expectOutput(res, ["5", "Hello"]);
@@ -40,7 +38,6 @@ test("buffer: string I/O", () => {
 			$len = buffer.writeString(buf, 5, "Hello");
 			print(len);
 			print(buffer.readString(buf, 5, 5));
-			buffer.free(buf);
 		}
 	`);
 	expectOutput(res, ["5", "Hello"]);
@@ -60,14 +57,23 @@ test("buffer: file I/O", () => {
 			print(buffer.readString(buf2, 0, 5));
 			
 			fs.deleteFile("test_buf.txt");
-			buffer.free(buf);
-			buffer.free(buf2);
 		}
 	`);
 	expectOutput(res, ["5", "world"]);
 });
 
-test("buffer: out of bounds", () => {
+test("buffer: out of bounds write/set", () => {
+	const res = runSource(`
+		@const $buffer = @import("std/buffer");
+		pub @func main() {
+			$buf = buffer.alloc(5);
+			buffer.set(buf, 10, 255);
+		}
+	`);
+	expectError(res, "error.IndexOutOfBounds");
+});
+
+test("buffer: out of bounds get", () => {
 	const res = runSource(`
 		@const $buffer = @import("std/buffer");
 		pub @func main() {
@@ -75,5 +81,27 @@ test("buffer: out of bounds", () => {
 			print(buffer.get(buf, 10));
 		}
 	`);
-	expectOutput(res, ["Error: Buffer read out of bounds"]);
+	expectError(res, "error.IndexOutOfBounds");
+});
+
+test("buffer: resize, copy, fill, fromString", () => {
+	const res = runSource(`
+		@const $buffer = @import("std/buffer");
+		pub @func main() {
+			$b1 = buffer.fromString("hello");
+			print(buffer.len(b1));
+			
+			buffer.resize(b1, 10);
+			print(buffer.len(b1));
+			print(buffer.get(b1, 8)); # should be 0
+			
+			buffer.fill(b1, 33); # fill with '!'
+			print(buffer.readString(b1, 0, 10)); # !!!!!!!!!!
+			
+			$b2 = buffer.alloc(5);
+			buffer.copy(b2, 0, b1, 2, 5);
+			print(buffer.readString(b2, 0, 5)); # !!!!!
+		}
+	`);
+	expectOutput(res, ["5", "10", "0", "!!!!!!!!!!", "!!!!!"]);
 });
