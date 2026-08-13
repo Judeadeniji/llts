@@ -153,3 +153,16 @@ test("buffer: edge cases", () => {
 		}
 	`), "error.IndexOutOfBounds");
 });
+
+test("buffer: overlapping copy", () => {
+	const res = runSource(`
+		@const $buffer = @import("std/buffer");
+		pub @func main() {
+			$b = buffer.fromString("12345678");
+			# copy "1234" to offset 2 -> "12123478"
+			buffer.copy(b, 2, b, 0, 4);
+			print(buffer.readString(b, 0, 8));
+		}
+	`);
+	expectOutput(res, ["12123478"]);
+});

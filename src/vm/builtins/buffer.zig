@@ -152,7 +152,7 @@ fn bufferFromString(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
 }
 
 fn bufferCopy(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
-    _ = vm_ptr;
+    const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
     if (args.len < 5) return error.ArityError;
     if (args[0] != .buffer or args[2] != .buffer) return error.TypeError;
     const dst = args[0].buffer;
@@ -174,7 +174,15 @@ fn bufferCopy(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
         return error.IndexOutOfBounds;
     }
     
-    @memcpy(dst.bytes.items[u_dst_off .. dst_end], src.bytes.items[u_src_off .. src_end]);
+    if (dst == src and u_dst_off != u_src_off) {
+        // Safe overlapping copy
+        const tmp = try vm.allocator.alloc(u8, u_len);
+        defer vm.allocator.free(tmp);
+        @memcpy(tmp, src.bytes.items[u_src_off .. src_end]);
+        @memcpy(dst.bytes.items[u_dst_off .. dst_end], tmp);
+    } else if (dst != src) {
+        @memcpy(dst.bytes.items[u_dst_off .. dst_end], src.bytes.items[u_src_off .. src_end]);
+    }
     return .null;
 }
 
