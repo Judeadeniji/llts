@@ -41,6 +41,51 @@ pub fn compileCall(state: *CompilerState, c: *const ast.Call, node: *ast.Node) !
         try emit.emitString(state, disp);
         return;
     }
+    if (c.callee.* == .primary and std.mem.eql(u8, c.callee.primary.name, "@sizeOf")) {
+        if (c.args.len != 1) {
+            return @import("../../errors/compile.zig").compileFailFmt(state, "@sizeOf expects exactly 1 argument", .{});
+        }
+        
+        var static_type: ?[]const u8 = null;
+        if (c.args[0].* == .primary and c.args[0].primary.kind == .identifier) {
+            static_type = c.args[0].primary.name;
+        } else if (try path.tryResolveStaticPath(state, c.args[0])) |p| {
+            static_type = p;
+        }
+        
+        if (static_type) |name| {
+            var is_type = false;
+            var size: i32 = 0;
+            if (std.mem.eql(u8, name, "int") or std.mem.eql(u8, name, "float")) {
+                is_type = true; size = 8;
+            } else if (std.mem.eql(u8, name, "bool")) {
+                is_type = true; size = 1;
+            } else if (std.mem.eql(u8, name, "null")) {
+                is_type = true; size = 0;
+            } else if (std.mem.eql(u8, name, "string") or std.mem.eql(u8, name, "[]byte")) {
+                is_type = true; size = 16;
+            } else if (state.structs.get(name)) |sd| {
+                is_type = true; size = sd.size * 16;
+            }
+            if (is_type) {
+                try emit.emitConstant(state, .{ .int = size });
+                return;
+            }
+        }
+        
+        if (types.resolveType(state, c.args[0])) |type_name| {
+            if (state.structs.get(type_name)) |sd| {
+                try expr.compileExpression(state, c.args[0]);
+                try emit.emitOp(state, .OP_POP);
+                try emit.emitConstant(state, .{ .int = sd.size * 16 });
+                return;
+            }
+        }
+
+        try expr.compileExpression(state, c.args[0]);
+        try emit.emitOp(state, .OP_SIZEOF);
+        return;
+    }
     // `@new(allocator, Foo{…}|[…])` — compiler intrinsic (Go make-style).
     // Allocator is a *library* value (std.mem.Arena); `@` means the compiler
     // sees the alloc and colors the result as Pass (may escape the frame).

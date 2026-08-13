@@ -53,6 +53,7 @@ pub const OpCode = enum(u8) {
     OP_SOURCE,
     OP_MARK_CONST,
     OP_ASSERT_TYPE,
+    OP_SIZEOF,
     // Bitwise (appended — keep prior opcode numbers stable)
     OP_BIT_AND,
     OP_BIT_OR,

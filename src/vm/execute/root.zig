@@ -110,6 +110,19 @@ pub fn execute(vm: *VMState, start_ip: usize) RuntimeError!void {
             .OP_SET_ARRAY => try heap.setArray(vm),
             .OP_MARK_CONST => try debug_ops.markConst(vm, readByte(vm, &ip)),
             .OP_ASSERT_TYPE => try debug_ops.assertType(vm, readByte(vm, &ip)),
+            .OP_SIZEOF => {
+                const val = stack.pop(vm);
+                const size: i64 = switch (val) {
+                    .null => 0,
+                    .bool => 1,
+                    .int, .float => 8,
+                    .ptr => 4,
+                    .slice => 8,
+                    .name => 4,
+                    .native, .function, .module, .list, .map, .buffer => 8,
+                };
+                try stack.push(vm, .{ .int = size });
+            },
             .OP_STRING_EQUAL, .OP_STRING_NOT_EQUAL => try compare.compareEq(vm, op == .OP_STRING_NOT_EQUAL),
             .OP_IMPORT => {
                 _ = readShort(vm, &ip);
