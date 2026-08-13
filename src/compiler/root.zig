@@ -7,6 +7,9 @@ const scope = @import("scope.zig");
 const state_mod = @import("state.zig");
 const stmt = @import("stmt/root.zig");
 const typecheck = @import("typecheck/root.zig");
+const path_mod = @import("expr/path.zig");
+const reachability = @import("reachability.zig");
+const types = @import("typecheck/from_ast.zig");
 
 pub const CompileOptions = struct {
     debug: bool = true,
@@ -46,12 +49,17 @@ pub fn compile(
 
     try typecheck.typecheck(&state, doc);
 
+    var reach = try reachability.compute(&state, doc);
+    defer reach.deinit();
+
     const main_jump = try emit.emitJump(&state, .OP_JUMP);
 
     var fit = state.functions.iterator();
     while (fit.next()) |e| {
         const name = e.key_ptr.*;
         const def = e.value_ptr;
+        if (!reach.isFunctionReachable(name)) continue;
+
         def.address = @intCast(state.chunk.code.items.len);
 
         const arity = fnArity(def.node);
@@ -79,7 +87,9 @@ pub fn compile(
 
     for (doc.statements) |s| {
         if (s.* != .function_decl and s.* != .struct_decl and s.* != .enum_decl) {
-            try stmt.compileStatement(&state, s);
+            if (reach.shouldEmitTopLevel(doc, s)) {
+                try stmt.compileStatement(&state, s);
+            }
         }
     }
 
@@ -239,11 +249,40 @@ fn analyzeBody(
             }
         },
         .call => |c| {
-            if (c.callee.* == .primary and c.callee.primary.kind == .identifier) {
+            if (try path_mod.tryResolveStaticPath(state, c.callee)) |name| {
+                try calls.put(name, {});
+            } else if (c.callee.* == .primary and c.callee.primary.kind == .identifier) {
                 try calls.put(c.callee.primary.name, {});
             } else if (c.callee.* == .member) {
                 if (c.callee.member.property.* == .primary) {
-                    try calls.put(c.callee.member.property.primary.name, {});
+                    const prop = c.callee.member.property.primary.name;
+                    const object = c.callee.member.object;
+                    if (object.* == .primary and object.primary.kind == .identifier and std.mem.eql(u8, object.primary.name, "self")) {
+                        if (std.mem.indexOf(u8, full_name, "::")) |idx| {
+                            const type_name = full_name[0..idx];
+                            const method_name = try std.fmt.allocPrint(state.allocator, "{s}::{s}", .{ type_name, prop });
+                            try state.owned.append(state.allocator, method_name);
+                            try calls.put(method_name, {});
+                        } else {
+                            try calls.put(prop, {});
+                        }
+                    } else if (types.resolveType(state, object)) |type_name| {
+                        if (state.structs.get(type_name)) |sd| {
+                            if (sd.offsets.get(prop) == null) {
+                                const method_name = try std.fmt.allocPrint(state.allocator, "{s}::{s}", .{ type_name, prop });
+                                try state.owned.append(state.allocator, method_name);
+                                try calls.put(method_name, {});
+                            } else {
+                                try calls.put(prop, {});
+                            }
+                        } else {
+                            try calls.put(prop, {});
+                        }
+                    } else if (try path_mod.tryResolveStaticPath(state, c.callee)) |name| {
+                        try calls.put(name, {});
+                    } else {
+                        try calls.put(prop, {});
+                    }
                 }
             }
             try analyzeBody(state, c.callee, calls, has_loop, has_return, return_type, full_name);

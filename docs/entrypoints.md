@@ -36,6 +36,7 @@ The pipeline orchestrated by `runSource` runs sequentially, transforming raw sou
 ### 3. Compiler Phase (`compiler.compile`)
 - **Input:** AST `Document`, Compiler Options (containing `debug` boolean).
 - **Output:** Bytecode `Chunk`.
+- **Tree shaking:** After typechecking, a reachability pass emits only functions and module-level initializers referenced from the entry file (plus transitive callees and globals). Importing `std/index` still parses the full stdlib, but unreached functions are omitted from the chunk.
 
 ### 4. VM & Execution Phase
 - **State Initialization:** `VMState.init()` sets up the VM given the `Chunk`.
