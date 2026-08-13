@@ -7,9 +7,10 @@ This document outlines the entry points, CLI arguments, initialization sequence,
 
 The CLI entry point `main()` parses the following arguments:
 
-- `-i, --input <file.lls>`: **(Required unless `--smoke` is provided)** Specifies the path to the input LLTS file to execute.
+- `-i, --input <file.lls|file.llb>`: **(Required unless `--smoke` is provided)** Source (`.lls`) to compile and run, or precompiled bytecode (`.llb`) to execute directly.
+- `-o, --output <file.llb>`: Compile the input `.lls` to binary bytecode and exit without running the VM.
 - `-r, --release`: Disables debug mode in the compiler/VM. When provided, `RunOptions.debug` evaluates to `false`. Default is `true`.
-- `-d, --dump-bytecode [FILE]`: Compiles the input file and writes a human-readable bytecode dump to stdout or `FILE`, then exits without running the VM.
+- `-d, --dump-bytecode [FILE]`: Compiles the input file and writes a human-readable bytecode dump to stdout or `FILE`, then exits without running the VM. Cannot be combined with `-o`.
 - `--log-level <LEVEL>`: Sets the minimum log level for the IO subsystem (e.g., `trace`, `debug`, `info`, `warn`, `err`).
 - `--smoke`: Runs a hardcoded VM smoke test (`print(42)`) manually constructing a bytecode chunk, running it, and exiting immediately without reading any file.
 
@@ -49,8 +50,10 @@ The pipeline orchestrated by `runSource` runs sequentially, transforming raw sou
 `root.zig` serves as the primary export namespace for the `llts` package. It exports core components, making them accessible to `main.zig` and other consumers:
 - **Core Types:** `OpCode`, `Value`, `Chunk`, `VMState`, `Document`, `RunOptions`
 - **Subsystems:** Exports the `io` (logging, colors, formatting) and `diag` (error and diagnostic reporting) APIs.
-- **Bytecode tools:** `disasm.dump` writes a human-readable chunk listing (constants, functions, instructions).
+- **Bytecode tools:** `disasm.dump` writes a human-readable chunk listing (constants, functions, instructions). `serialize.read` / `serialize.write` load and save lean binary `.llb` artifacts.
 - **Execution Endpoints:** 
   - `compileSource`: Scan, parse, and compile without running.
+  - `writeBytecodeFile` / `readBytecodeFile`: Save and load binary bytecode.
+  - `runBytecodeFile`: Load `.llb` and execute (CO-RE).
   - `runSource`: The standard pipeline execution.
   - `runChunk`: Useful for running pre-built/manually constructed chunks directly (e.g., used by the `--smoke` flag).

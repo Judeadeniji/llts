@@ -4,6 +4,7 @@ pub const opcode = @import("bytecode/opcode.zig");
 pub const value = @import("bytecode/value.zig");
 pub const chunk = @import("bytecode/chunk.zig");
 pub const disasm = @import("bytecode/disasm.zig");
+pub const serialize = @import("bytecode/serialize.zig");
 pub const vm_state = @import("vm/state.zig");
 pub const vm_stack = @import("vm/stack.zig");
 pub const execute = @import("vm/execute/root.zig");
@@ -21,13 +22,21 @@ pub const VMState = vm_state.VMState;
 pub const Document = ast.Document;
 pub const RunOptions = pipeline.RunOptions;
 
-/// Run a pre-built chunk (Phase 0 smoke / later compiler output).
+/// Run a pre-built chunk (Phase 0 smoke / CO-RE bytecode load).
 pub fn runChunk(allocator: std.mem.Allocator, c: *Chunk) !void {
-    var state = try VMState.init(allocator, c);
-    defer state.deinit();
-    const builtins = @import("vm/builtins/root.zig");
-    try builtins.registerBuiltins(&state, c);
-    try execute.execute(&state, 0);
+    try pipeline.runChunk(allocator, c, c.file);
+}
+
+pub fn writeBytecodeFile(allocator: std.mem.Allocator, c: *const Chunk, path: []const u8) !void {
+    try pipeline.writeBytecodeFile(allocator, c, path);
+}
+
+pub fn readBytecodeFile(allocator: std.mem.Allocator, path: []const u8) !Chunk {
+    return try pipeline.readBytecodeFile(allocator, path);
+}
+
+pub fn runBytecodeFile(allocator: std.mem.Allocator, path: []const u8) !void {
+    try pipeline.runBytecodeFile(allocator, path);
 }
 
 pub fn runSource(
@@ -53,6 +62,7 @@ test {
     _ = value;
     _ = chunk;
     _ = disasm;
+    _ = serialize;
     _ = scanner;
     _ = ast;
     _ = parser;

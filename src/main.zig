@@ -42,6 +42,7 @@ pub fn main() !void {
     var release = false;
     var dump_bytecode = false;
     var dump_output: ?[]const u8 = null;
+    var output_path: ?[]const u8 = null;
 
     var i: usize = 0;
     while (i < arg_list.items.len) {
@@ -53,6 +54,13 @@ pub fn main() !void {
                 std.process.exit(1);
             }
             input_path = arg_list.items[i];
+            i += 1;
+        } else if (std.mem.eql(u8, arg, "-o") or std.mem.eql(u8, arg, "--output")) {
+            if (i >= arg_list.items.len) {
+                io.printStderr("Missing value for output\n", .{});
+                std.process.exit(1);
+            }
+            output_path = arg_list.items[i];
             i += 1;
         } else if (std.mem.eql(u8, arg, "-r") or std.mem.eql(u8, arg, "--release")) {
             release = true;
@@ -85,12 +93,34 @@ pub fn main() !void {
     }
 
     const path = input_path orelse {
-        io.printStderr("Usage: llts -i <file.lls> [-r] [-d [FILE]] [--log-level LEVEL]\n", .{});
+        io.printStderr("Usage: llts -i <file.lls|file.llb> [-r] [-o file.llb] [-d [FILE]] [--log-level LEVEL]\n", .{});
         std.process.exit(1);
     };
 
     if (dump_bytecode) {
+        if (output_path != null) {
+            io.printStderr("-d and -o are mutually exclusive\n", .{});
+            std.process.exit(1);
+        }
+        if (llts.serialize.isBytecodePath(path)) {
+            io.printStderr("Cannot dump bytecode from a .llb file; use a .lls source\n", .{});
+            std.process.exit(1);
+        }
         try dumpFile(gpa, path, release, dump_output);
+        return;
+    }
+
+    if (output_path != null) {
+        if (llts.serialize.isBytecodePath(path)) {
+            io.printStderr("Cannot compile a .llb file; use a .lls source with -o\n", .{});
+            std.process.exit(1);
+        }
+        try compileFile(gpa, path, release, output_path.?);
+        return;
+    }
+
+    if (llts.serialize.isBytecodePath(path)) {
+        try runBytecode(gpa, path);
         return;
     }
 
@@ -110,6 +140,44 @@ fn runSmoke(allocator: std.mem.Allocator) !void {
     try c.write(1);
 
     try llts.runChunk(allocator, &c);
+}
+
+fn runBytecode(allocator: std.mem.Allocator, path: []const u8) !void {
+    llts.diag.reset();
+    llts.runBytecodeFile(allocator, path) catch |err| {
+        if (!llts.diag.wasEmitted()) {
+            io.printStderr("Failed to run bytecode {s}: {}\n", .{ path, err });
+        }
+        std.process.exit(1);
+    };
+}
+
+fn compileFile(
+    allocator: std.mem.Allocator,
+    path: []const u8,
+    release: bool,
+    out_path: []const u8,
+) !void {
+    llts.diag.reset();
+
+    const source = std.fs.cwd().readFileAlloc(allocator, path, 16 * 1024 * 1024) catch |err| {
+        io.printStderr("Failed to read {s}: {}\n", .{ path, err });
+        std.process.exit(1);
+    };
+    defer allocator.free(source);
+
+    var chunk = llts.compileSource(allocator, path, source, .{ .debug = !release }) catch |err| {
+        if (!llts.diag.wasEmitted()) {
+            io.printStderr("Error: {}\n", .{err});
+        }
+        std.process.exit(1);
+    };
+    defer chunk.deinit();
+
+    llts.writeBytecodeFile(allocator, &chunk, out_path) catch |err| {
+        io.printStderr("Failed to write {s}: {}\n", .{ out_path, err });
+        std.process.exit(1);
+    };
 }
 
 fn runFile(allocator: std.mem.Allocator, path: []const u8, release: bool) !void {

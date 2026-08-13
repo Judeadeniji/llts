@@ -117,3 +117,37 @@ Use `-d` / `--dump-bytecode [FILE]` on the CLI to compile without running. The d
 - Instruction listing (`OFFSET  OP_NAME operands…`) with resolved names/constants and jump targets
 
 `disasm.dump(chunk, writer)` is also available from the `llts` package for programmatic use.
+
+## 6. Binary bytecode (`.llb`) — CO-RE
+
+Compile once to a portable binary artifact; run without re-parsing or re-compiling. The file contains **execution bytecode only** — raw `code` bytes plus the string/constant/function pools needed to run. Source text, exports, and unused interned names are omitted.
+
+### File format v2 (`serialize.zig`)
+
+```
+LLTS  u16 version (2)  u16 flags
+u32 code_len + raw opcode bytes
+u32 string_count + (len-prefixed strings referenced by constants/functions only)
+u32 const_count + typed constant entries (name indices remapped)
+u32 func_count + (name_idx, address, arity, variadic)
+entry file path (len-prefixed string, no source bodies)
+```
+
+Constant tags: `null`, `bool`, `int`, `float`, `name` (string pool index). Natives are not embedded; the VM re-registers builtins from bytecode global references at load time.
+
+v1 artifacts (with embedded sources) can still be loaded; new compiles write v2.
+
+### CLI
+
+```bash
+# Compile .lls → .llb (no execution)
+llts -i app.lls -o app.llb
+
+# Run precompiled bytecode
+llts -i app.llb
+
+# Release bytecode (no OP_LINE / OP_SOURCE in code either)
+llts -i app.lls -r -o app.llb
+```
+
+Text dumps (`-d`) and binary output (`-o`) are mutually exclusive.

@@ -104,6 +104,18 @@ pub fn compile(
     try emit.emitOp(&state, .OP_NULL);
     try emit.emitOp(&state, .OP_RETURN);
 
+    // Export keys borrow compiler-owned strings; intern them into the chunk before teardown.
+    {
+        var old_exports = state.chunk.exports;
+        state.chunk.exports = std.StringHashMap(void).init(allocator);
+        var exp_it = old_exports.keyIterator();
+        while (exp_it.next()) |name| {
+            const owned = try state.chunk.internString(name.*);
+            try state.chunk.exports.put(owned, {});
+        }
+        old_exports.deinit();
+    }
+
     const result = state.chunk;
     // Prevent errdefer from freeing the returned chunk; deinit tables only.
     state.chunk = chunk_mod.Chunk.init(allocator);
