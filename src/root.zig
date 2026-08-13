@@ -25,6 +25,8 @@ pub const RunOptions = pipeline.RunOptions;
 pub fn runChunk(allocator: std.mem.Allocator, c: *Chunk) !void {
     var state = try VMState.init(allocator, c);
     defer state.deinit();
+    const builtins = @import("vm/builtins/root.zig");
+    try builtins.registerBuiltins(&state, c);
     try execute.execute(&state, 0);
 }
 
