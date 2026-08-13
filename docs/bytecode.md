@@ -106,3 +106,14 @@ The `OpCode` enum defines the operations executed by the VM. These are represent
 1. **Compilation**: The compiler emits a sequence of `u8` opcodes into `Chunk.code`. 
 2. **Operands**: Instructions that require operands (like `OP_CONSTANT` or `OP_JUMP`) expect their arguments to be serialized immediately after the opcode in `Chunk.code`. For instance, `OP_CONSTANT` is followed by a 16-bit constant index.
 3. **Execution**: The VM maintains an Instruction Pointer (`ip`) scanning through the chunk. It fetches the opcode, decodes any immediate operands, manipulates the execution stack using `Value` tagged unions, and advances `ip`.
+
+## 5. Bytecode dump (`disasm.zig`)
+
+Use `-d` / `--dump-bytecode [FILE]` on the CLI to compile without running. The dump includes:
+
+- Header (file path, pool sizes)
+- Function table (name, address, arity, variadic flag, source index)
+- Constant pool (index and printable value)
+- Instruction listing (`OFFSET  OP_NAME operands…`) with resolved names/constants and jump targets
+
+`disasm.dump(chunk, writer)` is also available from the `llts` package for programmatic use.
