@@ -15,7 +15,7 @@ pub fn compileBlock(state: *CompilerState, block: *const ast.Block) !void {
 }
 
 pub fn compileDefer(state: *CompilerState, def: *const ast.Defer) !void {
-    try scope.pushDefer(state, def.body);
+    try scope.pushDefer(state, def.body, def.is_errdefer);
 }
 
 pub fn compileReturn(state: *CompilerState, ret: *const ast.Return) !void {
@@ -26,7 +26,7 @@ pub fn compileReturn(state: *CompilerState, ret: *const ast.Return) !void {
     } else {
         try emit.emitOp(state, .OP_NULL);
     }
-    try scope.emitFunctionExitDefers(state);
+    try scope.emitFunctionExitDefers(state, .dynamic);
     if (state.inline_return_jumps.items.len > 0) {
         const patch = try emit.emitJump(state, .OP_JUMP);
         const top = &state.inline_return_jumps.items[state.inline_return_jumps.items.len - 1];
@@ -44,7 +44,7 @@ pub fn compileFunction(state: *CompilerState, node: *ast.FunctionDecl, ast_node:
 
     state.locals = .empty;
     state.scope_depth = 0;
-    state.defer_stacks = std.AutoHashMap(i32, std.ArrayList(*ast.Node)).init(state.allocator);
+    state.defer_stacks = std.AutoHashMap(i32, std.ArrayListUnmanaged(state_mod.DeferEntry)).init(state.allocator);
 
     try scope.beginScope(state);
 
@@ -73,7 +73,7 @@ pub fn compileFunction(state: *CompilerState, node: *ast.FunctionDecl, ast_node:
     };
     for (body.statements) |s| try stmt.compileStatement(state, s);
 
-    try scope.emitFunctionExitDefers(state);
+    try scope.emitFunctionExitDefers(state, .normal);
     try emit.emitOp(state, .OP_NULL);
     try emit.emitOp(state, .OP_RETURN);
 

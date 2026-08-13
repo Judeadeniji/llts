@@ -44,9 +44,10 @@ pub fn parseStatement(self: *Parser) ParseError!*Node {
                 return s;
             }
             if (std.mem.eql(u8, token.value, "return")) return control.parseReturnStatement(self);
+            if (std.mem.eql(u8, token.value, "defer")) return control.parseDeferStatement(self, false);
+            if (std.mem.eql(u8, token.value, "errdefer")) return control.parseDeferStatement(self, true);
             if (std.mem.eql(u8, token.value, "break")) return control.parseBreakStatement(self);
             if (std.mem.eql(u8, token.value, "continue")) return control.parseContinueStatement(self);
-            if (std.mem.eql(u8, token.value, "defer")) return control.parseDeferStatement(self);
             if (std.mem.eql(u8, token.value, "true") or std.mem.eql(u8, token.value, "false") or
                 std.mem.eql(u8, token.value, "error") or std.mem.eql(u8, token.value, "null"))
                 return parseExpressionStatement(self);

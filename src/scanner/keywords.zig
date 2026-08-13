@@ -7,7 +7,7 @@ const compiler_map = std.StaticStringMap(void).initComptime(.{
 
 const keyword_map = std.StaticStringMap(void).initComptime(.{
     .{ "true", {} }, .{ "false", {} }, .{ "return", {} }, .{ "pub", {} }, .{ "break", {} }, 
-    .{ "continue", {} }, .{ "defer", {} }, .{ "error", {} }, .{ "null", {} }
+    .{ "continue", {} }, .{ "defer", {} }, .{ "errdefer", {} }, .{ "error", {} }, .{ "null", {} }
 });
 
 pub fn isCompilerSymbol(w: []const u8) bool {

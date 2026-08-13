@@ -195,7 +195,7 @@ pub fn compileBreak(state: *CompilerState, brk: *const ast.Break) !void {
         try emit.emitOp(state, .OP_SET_LOCAL);
         try emit.emitByte(state, target.result_slot);
         try emit.emitOp(state, .OP_POP);
-        try scope.emitDefersUntil(state, target.scope_depth);
+        try scope.emitDefersUntil(state, target.scope_depth, .normal);
         try scope.emitPopsUntil(state, target.scope_depth);
         const jump = try emit.emitJump(state, .OP_JUMP);
         try target.break_jumps.append(state.allocator, jump);
@@ -211,7 +211,7 @@ pub fn compileBreak(state: *CompilerState, brk: *const ast.Break) !void {
 
     if (state.loops.items.len == 0) return fail("Cannot break outside of a loop");
     const target = try findLoop(state, brk.label);
-    try scope.emitDefersUntil(state, target.scope_depth);
+    try scope.emitDefersUntil(state, target.scope_depth, .normal);
     try scope.emitPopsUntil(state, target.scope_depth);
     const jump = try emit.emitJump(state, .OP_JUMP);
     try target.break_jumps.append(state.allocator, jump);
@@ -220,7 +220,7 @@ pub fn compileBreak(state: *CompilerState, brk: *const ast.Break) !void {
 pub fn compileContinue(state: *CompilerState, cont: *const ast.Continue) !void {
     if (state.loops.items.len == 0) return fail("Cannot continue outside of a loop");
     const target = try findLoop(state, cont.label);
-    try scope.emitDefersUntil(state, target.scope_depth);
+    try scope.emitDefersUntil(state, target.scope_depth, .normal);
     try scope.emitPopsUntil(state, target.scope_depth);
     const jump = try emit.emitJump(state, .OP_JUMP);
     try target.continue_jumps.append(state.allocator, jump);
@@ -257,7 +257,7 @@ fn finishExprFrame(state: *CompilerState) !void {
             var i: isize = @intCast(list.items.len);
             i -= 1;
             while (i >= 0) : (i -= 1) {
-                try stmt.compileStatement(state, list.items[@intCast(i)]);
+                try stmt.compileStatement(state, list.items[@intCast(i)].body);
             }
         }
         list.deinit(state.allocator);

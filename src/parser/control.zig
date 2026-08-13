@@ -215,8 +215,9 @@ pub fn parseReturnStatement(self: *Parser) ParseError!*Node {
     } });
 }
 
-pub fn parseDeferStatement(self: *Parser) ParseError!*Node {
-    const keyword = try self.consume(.keyword, "Expected \"defer\"", "defer");
+pub fn parseDeferStatement(self: *Parser, is_errdefer: bool) ParseError!*Node {
+    const kw = if (is_errdefer) "errdefer" else "defer";
+    const keyword = try self.consume(.keyword, "Expected keyword", kw);
     const body: *Node = if (self.checkDelim("{"))
         try parseBlock(self)
     else blk: {
@@ -224,7 +225,7 @@ pub fn parseDeferStatement(self: *Parser) ParseError!*Node {
         _ = try self.consume(.delimiter, "Expected \";\" after defer", ";");
         break :blk e;
     };
-    return self.create(.{ .defer_stmt = .{ .body = body, .loc = self.locOf(keyword) } });
+    return self.create(.{ .defer_stmt = .{ .body = body, .is_errdefer = is_errdefer, .loc = self.locOf(keyword) } });
 }
 
 pub fn parseBreakStatement(self: *Parser) ParseError!*Node {

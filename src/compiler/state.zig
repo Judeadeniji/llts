@@ -59,6 +59,11 @@ pub const ExprTracker = struct {
     break_jumps: std.ArrayList(usize) = .empty,
 };
 
+pub const DeferEntry = struct {
+    body: *ast.Node,
+    is_errdefer: bool,
+};
+
 pub const CompilerState = struct {
     allocator: std.mem.Allocator,
     chunk: chunk_mod.Chunk,
@@ -70,7 +75,7 @@ pub const CompilerState = struct {
     enums: std.StringHashMap(EnumDef),
     loops: std.ArrayList(LoopTracker) = .empty,
     exprs: std.ArrayList(ExprTracker) = .empty,
-    defer_stacks: std.AutoHashMap(i32, std.ArrayList(*ast.Node)),
+    defer_stacks: std.AutoHashMap(i32, std.ArrayListUnmanaged(DeferEntry)),
     global_vars: std.StringHashMap(void),
     global_types: std.StringHashMap([]const u8),
     global_consts: std.StringHashMap(void),
@@ -91,7 +96,7 @@ pub fn create(allocator: std.mem.Allocator) !CompilerState {
         .functions = std.StringHashMap(FunctionDef).init(allocator),
         .structs = std.StringHashMap(StructDef).init(allocator),
         .enums = std.StringHashMap(EnumDef).init(allocator),
-        .defer_stacks = std.AutoHashMap(i32, std.ArrayList(*ast.Node)).init(allocator),
+        .defer_stacks = std.AutoHashMap(i32, std.ArrayListUnmanaged(DeferEntry)).init(allocator),
         .global_vars = std.StringHashMap(void).init(allocator),
         .global_types = std.StringHashMap([]const u8).init(allocator),
         .global_consts = std.StringHashMap(void).init(allocator),

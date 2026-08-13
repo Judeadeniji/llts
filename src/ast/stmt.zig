@@ -38,6 +38,7 @@ pub const Return = struct {
 
 pub const Defer = struct {
     body: *Node,
+    is_errdefer: bool = false,
     loc: Location,
 };
 

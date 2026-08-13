@@ -33,7 +33,7 @@ pub fn compileTry(state: *CompilerState, try_expr: *const ast.TryExpr) !void {
     try emit.emitOp(state, .OP_IS_ERROR);
     const skip_ret = try emit.emitJump(state, .OP_JUMP_IF_FALSE);
     try emit.emitOp(state, .OP_POP);
-    try scope.emitFunctionExitDefers(state);
+    try scope.emitFunctionExitDefers(state, .error_path);
     try emit.emitOp(state, .OP_RETURN);
     emit.patchJump(state, skip_ret);
     try emit.emitOp(state, .OP_POP);
