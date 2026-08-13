@@ -66,6 +66,11 @@ pub fn writeValue(vm: *VMState, out: *std.ArrayList(u8), v: Value) !void {
         },
         .list => try out.appendSlice(vm.allocator, "<list>"),
         .map => try out.appendSlice(vm.allocator, "<map>"),
+        .buffer => |b| {
+            var tmp: [64]u8 = undefined;
+            const s = try std.fmt.bufPrint(&tmp, "<Buffer {d} bytes>", .{b.bytes.items.len});
+            try out.appendSlice(vm.allocator, s);
+        },
     }
 }
 

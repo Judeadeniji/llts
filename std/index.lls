@@ -11,3 +11,4 @@ pub @const $http = @import("std/http.lls");
 pub @const $json = @import("std/json.lls");
 pub @const $list = @import("std/list.lls");
 pub @const $map = @import("std/map.lls");
+pub @const $buffer = @import("std/buffer.lls");

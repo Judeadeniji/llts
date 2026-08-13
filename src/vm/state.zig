@@ -47,8 +47,9 @@ pub const VMState = struct {
     current_line: u32 = 1,
     /// Owned module instances created by OP_GET_MODULE.
     modules: std.ArrayList(*ModuleObject) = .empty,
-    lists: std.ArrayList(*ListObject) = .empty,
-    maps: std.ArrayList(*MapObject) = .empty,
+    lists: std.ArrayList(*value.ListObject) = .empty,
+    maps: std.ArrayList(*value.MapObject) = .empty,
+    buffers: std.ArrayList(*value.BufferObject) = .empty,
     /// Cache: constant string index → heap data pointer, avoids re-allocating the same literal.
     string_cache: std.AutoHashMap(u32, i32),
     /// Zero-alloc string arena (appended to, never freed during execution).
@@ -93,6 +94,11 @@ pub const VMState = struct {
             self.allocator.destroy(mp);
         }
         self.maps.deinit(self.allocator);
+        for (self.buffers.items) |buf| {
+            buf.deinit(self.allocator);
+            self.allocator.destroy(buf);
+        }
+        self.buffers.deinit(self.allocator);
         self.string_cache.deinit();
         self.string_bytes.deinit(self.allocator);
         self.allocator.free(self.memory);
@@ -133,10 +139,17 @@ pub const VMState = struct {
         return lst;
     }
 
-    pub fn allocMap(self: *VMState) !*MapObject {
-        const mp = try self.allocator.create(MapObject);
+    pub fn allocMap(self: *VMState) !*value.MapObject {
+        const mp = try self.allocator.create(value.MapObject);
         mp.* = .{ .entries = std.StringHashMap(Value).init(self.allocator) };
         try self.maps.append(self.allocator, mp);
         return mp;
+    }
+
+    pub fn allocBuffer(self: *VMState) !*value.BufferObject {
+        const buf = try self.allocator.create(value.BufferObject);
+        buf.* = .{ .bytes = .empty };
+        try self.buffers.append(self.allocator, buf);
+        return buf;
     }
 };

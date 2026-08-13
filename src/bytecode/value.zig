@@ -45,6 +45,14 @@ pub const ListObject = struct {
     }
 };
 
+pub const BufferObject = struct {
+    bytes: std.ArrayList(u8),
+
+    pub fn deinit(self: *BufferObject, allocator: std.mem.Allocator) void {
+        self.bytes.deinit(allocator);
+    }
+};
+
 /// Tagged runtime value. Heap objects (arrays, strings, errors, structs) use `.ptr`.
 pub const Value = union(enum) {
     null,
@@ -65,6 +73,8 @@ pub const Value = union(enum) {
     list: *ListObject,
     /// Growable Map (std/map).
     map: *MapObject,
+    /// Byte Buffer (std/buffer).
+    buffer: *BufferObject,
 
     pub fn isTruthy(self: Value) bool {
         return switch (self) {
@@ -74,7 +84,7 @@ pub const Value = union(enum) {
             .float => |n| n != 0,
             .ptr => true,
             .slice => |s| s.len > 0,
-            .native, .function, .name, .module, .list, .map => true,
+            .native, .function, .name, .module, .list, .map, .buffer => true,
         };
     }
 };

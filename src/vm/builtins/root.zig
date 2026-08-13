@@ -13,6 +13,7 @@ const http_mod = @import("http.zig");
 const json_mod = @import("json_builtin.zig");
 const list_mod = @import("list.zig");
 const map_mod = @import("map.zig");
+const buffer_mod = @import("buffer.zig");
 
 pub fn registerBuiltins(vm: *state_mod.VMState) !void {
     try print_mod.register(vm);
@@ -28,4 +29,5 @@ pub fn registerBuiltins(vm: *state_mod.VMState) !void {
     try json_mod.register(vm);
     try list_mod.register(vm);
     try map_mod.register(vm);
+    try buffer_mod.register(vm);
 }

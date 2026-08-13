@@ -1,0 +1,27 @@
+pub @func alloc(size) {
+    return __bufferAlloc(size);
+}
+
+pub @func writeString(buf, offset, str) {
+    return __bufferWriteString(buf, offset, str);
+}
+
+pub @func readString(buf, offset, len) {
+    return __bufferReadString(buf, offset, len);
+}
+
+pub @func len(buf) {
+    return __bufferLen(buf);
+}
+
+pub @func free(buf) {
+    return __bufferFree(buf);
+}
+
+pub @func get(buf, index) {
+    return __bufferGet(buf, index);
+}
+
+pub @func set(buf, index, val) {
+    return __bufferSet(buf, index, val);
+}

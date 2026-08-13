@@ -8,8 +8,10 @@ const Value = value.Value;
 const NativeFunction = value.NativeFunction;
 
 var read_file_n: NativeFunction = undefined;
+var read_file_buffer_n: NativeFunction = undefined;
 var read_line_n: NativeFunction = undefined;
 var write_file_n: NativeFunction = undefined;
+var write_file_buffer_n: NativeFunction = undefined;
 var append_file_n: NativeFunction = undefined;
 var delete_file_n: NativeFunction = undefined;
 var exists_n: NativeFunction = undefined;
@@ -38,6 +40,23 @@ fn readFileFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     return try util.writeSlice(vm, content);
 }
 
+fn readFileBufferFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
+    const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
+    if (args.len < 1) return error.ArityError;
+    const path = try util.valueToOwnedString(vm, args[0]);
+    defer vm.allocator.free(path);
+    const content = std.fs.cwd().readFileAlloc(vm.allocator, path, 256 * 1024 * 1024) catch |err| {
+        const msg = try std.fmt.allocPrint(vm.allocator, "{s}", .{@errorName(err)});
+        defer vm.allocator.free(msg);
+        return try util.makeError(vm, msg);
+    };
+    defer vm.allocator.free(content);
+    
+    const buf = try vm.allocBuffer();
+    try buf.bytes.appendSlice(vm.allocator, content);
+    return .{ .buffer = buf };
+}
+
 fn readLineFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
     _ = args;
@@ -63,6 +82,19 @@ fn writeFileFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const file = try std.fs.cwd().createFile(path, .{});
     defer file.close();
     try file.writeAll(content);
+    return .null;
+}
+
+fn writeFileBufferFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
+    const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
+    if (args.len < 2) return error.ArityError;
+    const path = try util.valueToOwnedString(vm, args[0]);
+    defer vm.allocator.free(path);
+    if (args[1] != .buffer) return error.TypeError;
+    
+    const file = try std.fs.cwd().createFile(path, .{});
+    defer file.close();
+    try file.writeAll(args[1].buffer.bytes.items);
     return .null;
 }
 
@@ -240,8 +272,10 @@ fn chmodFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
 
 pub fn register(vm: *VMState) !void {
     read_file_n = .{ .name = "__readFile", .func = readFileFn, .arity = 1 };
+    read_file_buffer_n = .{ .name = "__readFileBuffer", .func = readFileBufferFn, .arity = 1 };
     read_line_n = .{ .name = "__readLine", .func = readLineFn, .arity = 0 };
     write_file_n = .{ .name = "__writeFile", .func = writeFileFn, .arity = 2 };
+    write_file_buffer_n = .{ .name = "__writeFileBuffer", .func = writeFileBufferFn, .arity = 2 };
     append_file_n = .{ .name = "__appendFile", .func = appendFileFn, .arity = 2 };
     delete_file_n = .{ .name = "__deleteFile", .func = deleteFileFn, .arity = 1 };
     exists_n = .{ .name = "__exists", .func = existsFn, .arity = 1 };
@@ -257,8 +291,10 @@ pub fn register(vm: *VMState) !void {
     chmod_n = .{ .name = "__chmod", .func = chmodFn, .arity = 2 };
 
     try vm.globals.put("__readFile", .{ .native = &read_file_n });
+    try vm.globals.put("__readFileBuffer", .{ .native = &read_file_buffer_n });
     try vm.globals.put("__readLine", .{ .native = &read_line_n });
     try vm.globals.put("__writeFile", .{ .native = &write_file_n });
+    try vm.globals.put("__writeFileBuffer", .{ .native = &write_file_buffer_n });
     try vm.globals.put("__appendFile", .{ .native = &append_file_n });
     try vm.globals.put("__deleteFile", .{ .native = &delete_file_n });
     try vm.globals.put("__exists", .{ .native = &exists_n });

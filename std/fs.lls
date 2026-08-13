@@ -20,8 +20,16 @@ pub @struct Dir {
         return __readFile(path);
     }
 
+    @func readFileBuffer(self, path) {
+        return __readFileBuffer(path);
+    }
+
     @func writeFile(self, path, content) {
         return __writeFile(path, content);
+    }
+
+    @func writeFileBuffer(self, path, buf) {
+        return __writeFileBuffer(path, buf);
     }
 
     @func appendFile(self, path, content) {
@@ -83,8 +91,16 @@ pub @func readFile(path) {
     return __readFile(path);
 }
 
+pub @func readFileBuffer(path) {
+    return __readFileBuffer(path);
+}
+
 pub @func writeFile(path, content) {
     return __writeFile(path, content);
+}
+
+pub @func writeFileBuffer(path, buf) {
+    return __writeFileBuffer(path, buf);
 }
 
 pub @func appendFile(path, content) {
