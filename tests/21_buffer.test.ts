@@ -105,3 +105,51 @@ test("buffer: resize, copy, fill, fromString", () => {
 	`);
 	expectOutput(res, ["5", "10", "0", "!!!!!!!!!!", "!!!!!"]);
 });
+
+test("buffer: edge cases", () => {
+	// Negative alloc
+	expectError(runSource(`
+		@const $buffer = @import("std/buffer");
+		pub @func main() { buffer.alloc(-1); }
+	`), "error.IndexOutOfBounds");
+
+	// Negative resize
+	expectError(runSource(`
+		@const $buffer = @import("std/buffer");
+		pub @func main() { $b = buffer.alloc(5); buffer.resize(b, -5); }
+	`), "error.IndexOutOfBounds");
+
+	// readString zero length
+	expectOutput(runSource(`
+		@const $buffer = @import("std/buffer");
+		pub @func main() { $b = buffer.alloc(5); print(len(buffer.readString(b, 0, 0))); }
+	`), ["0"]);
+
+	// readString out of bounds
+	expectError(runSource(`
+		@const $buffer = @import("std/buffer");
+		pub @func main() { $b = buffer.alloc(5); buffer.readString(b, 4, 2); }
+	`), "error.IndexOutOfBounds");
+
+	// writeString out of bounds
+	expectError(runSource(`
+		@const $buffer = @import("std/buffer");
+		pub @func main() { $b = buffer.alloc(5); buffer.writeString(b, 4, "hi"); }
+	`), "error.IndexOutOfBounds");
+
+	// writeString empty string
+	expectOutput(runSource(`
+		@const $buffer = @import("std/buffer");
+		pub @func main() { $b = buffer.alloc(5); print(buffer.writeString(b, 0, "")); }
+	`), ["0"]);
+
+	// copy out of bounds
+	expectError(runSource(`
+		@const $buffer = @import("std/buffer");
+		pub @func main() { 
+			$b1 = buffer.alloc(5); 
+			$b2 = buffer.alloc(5); 
+			buffer.copy(b1, 0, b2, 4, 2); 
+		}
+	`), "error.IndexOutOfBounds");
+});
