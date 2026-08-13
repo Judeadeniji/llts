@@ -21,6 +21,7 @@ fn execFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
     if (args.len < 1) return error.ArityError;
     const cmd_str = try util.valueToOwnedString(vm, args[0]);
+    defer vm.allocator.free(cmd_str);
 
     // Simple shell exec for now using `sh -c`
     var child = std.process.Child.init(&.{ "sh", "-c", cmd_str }, vm.allocator);
@@ -40,6 +41,7 @@ fn getEnvFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
     if (args.len < 1) return error.ArityError;
     const key = try util.valueToOwnedString(vm, args[0]);
+    defer vm.allocator.free(key);
     if (std.process.getEnvVarOwned(vm.allocator, key)) |val| {
         defer vm.allocator.free(val);
         return try util.writeSlice(vm, val);
@@ -52,9 +54,7 @@ fn getEnvFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
 fn setEnvFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     _ = args;
-    // zig std.process.setEnvVar is not available cross-platform in standard lib?
-    // We can just return 0 for now or error.
-    return .{ .int = 0 };
+    return error.NotImplemented;
 }
 
 fn exitFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
@@ -75,6 +75,7 @@ fn chdirFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
     if (args.len < 1) return error.ArityError;
     const dir = try util.valueToOwnedString(vm, args[0]);
+    defer vm.allocator.free(dir);
     try std.posix.chdir(dir);
     return .{ .int = 0 };
 }
@@ -82,13 +83,13 @@ fn chdirFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
 fn pidFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     _ = args;
-    return .{ .int = 0 }; // stub
+    return error.NotImplemented;
 }
 
 fn argsFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     _ = args;
-    return .{ .int = 0 }; // stub
+    return error.NotImplemented;
 }
 
 fn platformFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {

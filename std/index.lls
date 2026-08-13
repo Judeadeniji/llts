@@ -5,3 +5,7 @@ pub @const $debug = @import("std/debug.lls");
 pub @const $io = @import("std/io.lls");
 pub @const $fs = @import("std/fs.lls");
 pub @const $mem = @import("std/mem.lls");
+pub @const $time = @import("std/time.lls");
+pub @const $os = @import("std/os.lls");
+pub @const $http = @import("std/http.lls");
+pub @const $json = @import("std/json.lls");

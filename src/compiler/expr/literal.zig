@@ -22,20 +22,20 @@ pub fn compileLiteral(state: *CompilerState, lit: *const ast.Literal) !void {
                 const f = std.fmt.parseFloat(f64, lit.value) catch return error.CompileError;
                 try emit.emitConstant(state, .{ .float = f });
             } else {
-                const n = std.fmt.parseInt(i32, lit.value, 10) catch return error.CompileError;
+                const n = std.fmt.parseInt(i64, lit.value, 10) catch return error.CompileError;
                 try emit.emitConstant(state, .{ .int = n });
             }
         },
         .hex => {
-            const n = std.fmt.parseInt(i32, lit.value[2..], 16) catch return error.CompileError;
+            const n = std.fmt.parseInt(i64, lit.value[2..], 16) catch return error.CompileError;
             try emit.emitConstant(state, .{ .int = n });
         },
         .octal => {
-            const n = std.fmt.parseInt(i32, lit.value[2..], 8) catch return error.CompileError;
+            const n = std.fmt.parseInt(i64, lit.value[2..], 8) catch return error.CompileError;
             try emit.emitConstant(state, .{ .int = n });
         },
         .binary => {
-            const n = std.fmt.parseInt(i32, lit.value[2..], 2) catch return error.CompileError;
+            const n = std.fmt.parseInt(i64, lit.value[2..], 2) catch return error.CompileError;
             try emit.emitConstant(state, .{ .int = n });
         },
     }

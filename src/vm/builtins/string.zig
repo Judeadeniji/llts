@@ -235,7 +235,7 @@ fn parseIntFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const base: u8 = if (args.len > 1) @intCast(@max(try util.asInt(args[1]), 2)) else 10;
     
     // allow negative sign
-    const val = std.fmt.parseInt(i32, str, base) catch return .{ .int = 0 }; // or error?
+    const val = std.fmt.parseInt(i64, str, base) catch return .{ .int = 0 }; // or error?
     return .{ .int = val };
 }
 

@@ -43,7 +43,7 @@ fn fail(comptime op: []const u8, comptime msg: []const u8) error{TypeError} {
 fn asHeapPtr(v: Value) !i32 {
     return switch (v) {
         .ptr => |p| p,
-        .int => |n| n,
+        .int => |n| @intCast(n),
         else => error.TypeError,
     };
 }
@@ -84,7 +84,7 @@ fn allocFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
         .int => |x| x,
         else => return error.TypeError,
     };
-    const ptr = try vm.allocSlots(n);
+    const ptr = try vm.allocSlots(@intCast(n));
     return .{ .ptr = ptr };
 }
 
@@ -96,7 +96,7 @@ fn arenaCreate(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     };
     if (hint < 0) return fail("__arena_create", "invalid capacity");
     // hint = initial chunk size (0 → DEFAULT_CHUNK). Arena grows when full (Zig-like).
-    const cap: i32 = if (hint == 0) DEFAULT_CHUNK else hint;
+    const cap: i32 = if (hint == 0) DEFAULT_CHUNK else @intCast(hint);
 
     const chunk = try makeChunk(vm, cap);
     const ctrl = try vm.allocImmortal(5);
@@ -117,7 +117,7 @@ fn bumpInChunk(vm: *VMState, chunk: i32, n: i32) ?i32 {
     const data_end = vm.memory[@intCast(chunk + 2)].int;
     if (watermark + n > data_end) return null;
     vm.memory[@intCast(chunk + 3)] = .{ .int = watermark + n };
-    return watermark;
+    return @intCast(watermark);
 }
 
 fn arenaAlloc(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
@@ -132,20 +132,20 @@ fn arenaAlloc(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
 
     const cur_val = vm.memory[@intCast(ctrl + 1)];
     const cur = try asHeapPtr(cur_val);
-    if (bumpInChunk(vm, cur, n)) |ptr| return .{ .ptr = ptr };
+    if (bumpInChunk(vm, cur, @intCast(n))) |ptr| return .{ .ptr = ptr };
 
     // Grow: new chunk ≥ max(n, 1.5× last cap), like Zig ArenaAllocator.
     const last_cap = vm.memory[@intCast(ctrl + 3)].int;
     const grown = last_cap + @divTrunc(last_cap, 2);
     const new_cap = @max(n, @max(grown, DEFAULT_CHUNK));
-    const new_chunk = try makeChunk(vm, new_cap);
+    const new_chunk = try makeChunk(vm, @intCast(new_cap));
 
     // Append to list (from current).
     vm.memory[@intCast(cur + 4)] = .{ .ptr = new_chunk };
     vm.memory[@intCast(ctrl + 1)] = .{ .ptr = new_chunk };
     vm.memory[@intCast(ctrl + 3)] = .{ .int = new_cap };
 
-    const ptr = bumpInChunk(vm, new_chunk, n) orelse return error.OutOfMemory;
+    const ptr = bumpInChunk(vm, new_chunk, @intCast(n)) orelse return error.OutOfMemory;
     return .{ .ptr = ptr };
 }
 

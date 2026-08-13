@@ -47,7 +47,7 @@ fn asArrayPtr(vm: *VMState, v: Value) ?i32 {
     return switch (v) {
         .ptr => |x| x,
         // Heap loads are untyped i32s (TS parity): in-range ints are pointers.
-        .int => |x| if (x >= state_mod.HEAP_START and x < vm.heap_ptr) x else null,
+        .int => |x| if (x >= state_mod.HEAP_START and x < vm.heap_ptr) @intCast(x) else null,
         else => null,
     };
 }
@@ -112,7 +112,7 @@ pub fn isError(vm: *VMState) HeapError!void {
     const val = stack.pop(vm);
     const p: ?i32 = switch (val) {
         .ptr => |x| x,
-        .int => |x| if (x >= state_mod.HEAP_START and x < vm.heap_ptr) x else null,
+        .int => |x| if (x >= state_mod.HEAP_START and x < vm.heap_ptr) @intCast(x) else null,
         else => null,
     };
     const ok = if (p) |ptr|

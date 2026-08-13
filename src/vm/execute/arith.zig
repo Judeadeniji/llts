@@ -15,7 +15,7 @@ fn fail(msg: []const u8) ArithError {
 
 const ArithOp = enum { add, sub, mul, div, mod, pow };
 
-fn asInt(v: Value) ?i32 {
+fn asInt(v: Value) ?i64 {
     return switch (v) {
         .int => |n| n,
         .ptr => |p| p,
@@ -64,7 +64,7 @@ pub fn binArith(vm: *VMState, op: OpCode) ArithError!void {
     }
     const ai = asInt(a) orelse return fail("Operands must be numbers");
     const bi = asInt(b) orelse return fail("Operands must be numbers");
-    const result: i32 = switch (kind) {
+    const result: i64 = switch (kind) {
         .add => ai +% bi,
         .sub => ai -% bi,
         .mul => ai *% bi,
@@ -75,15 +75,15 @@ pub fn binArith(vm: *VMState, op: OpCode) ArithError!void {
     // Preserve pointer-ness when adding offsets to a heap ptr (array bump).
     // Subtraction of two ptrs yields an int distance.
     if (kind == .add and (a == .ptr or b == .ptr)) {
-        try stack.push(vm, .{ .ptr = result });
+        try stack.push(vm, .{ .ptr = @intCast(result) });
     } else {
         try stack.push(vm, .{ .int = result });
     }
 }
 
-fn powi(base: i32, exp: i32) i32 {
+fn powi(base: i64, exp: i64) i64 {
     if (exp < 0) return 0;
-    var result: i32 = 1;
+    var result: i64 = 1;
     var b = base;
     var e = exp;
     while (e > 0) : (e >>= 1) {

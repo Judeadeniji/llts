@@ -7,12 +7,12 @@
 
 # --- Duration units (nanoseconds) ---
 
-pub @const $Nanosecond = 1.0;
-pub @const $Microsecond = 1000.0;
-pub @const $Millisecond = 1000000.0;
-pub @const $Second = 1000000000.0;
-pub @const $Minute = 60000000000.0;
-pub @const $Hour = 3600000000000.0;
+pub @const $Nanosecond = 1;
+pub @const $Microsecond = 1000;
+pub @const $Millisecond = 1000000;
+pub @const $Second = 1000000000;
+pub @const $Minute = 60000000000;
+pub @const $Hour = 3600000000000;
 
 # --- Clock ---
 
@@ -69,7 +69,7 @@ pub @func Equal(t, u) {
 }
 
 pub @func IsZero(t) {
-    return t == 0.0;
+    return t == 0;
 }
 
 # --- Duration unit conversion (also Time→unix: Seconds(Now()) ≈ Now().Unix()) ---

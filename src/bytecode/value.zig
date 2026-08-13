@@ -31,7 +31,7 @@ pub const ModuleObject = struct {
 pub const Value = union(enum) {
     null,
     bool: bool,
-    int: i32,
+    int: i64,
     float: f64,
     /// Pointer into the i32 heap (arrays, strings, errors, structs).
     ptr: i32,
