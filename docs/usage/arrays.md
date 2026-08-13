@@ -10,7 +10,34 @@ This document provides a technical overview of arrays in the `llts` language, in
   ```
 - **Type**: These literals are length-prefixed under the hood, making their size retrievable at runtime.
 
-## 2. Indexing and Assignment
+## 2. `@new(allocator, …)` — arena buffers / strings
+
+Allocate into an arena (reclaim with `reset` / `deinit`):
+
+```llts
+@const $mem = @import("std/mem");
+$a = mem.create(0);
+
+# Fixed size known at compile time
+$buf = @new(a, [256]byte);
+
+# Runtime size (string ≡ []byte buffer)
+$n = 64;
+$s = @new(a, []byte, n);
+# same:
+$t = @new(a, string, n);
+
+print(len(s));  # 64
+s[0] = 65;      # mutable bytes
+
+a.reset();
+```
+
+Also: `@new(a, Point)` zero-fills structs; `@new(a, Point{ x: 1 })` / `@new(a, [1,2,3])` for explicit inits.
+
+Bare `[…]` / `Foo{}` stay **frame-local** (rewound on return) and are not individually freeable.
+
+## 3. Indexing and Assignment
 - **0-Based Indexing**: Elements are accessed and mutated using standard `array[index]` syntax.
   ```llts
   arr[0] = 42;
@@ -20,14 +47,14 @@ This document provides a technical overview of arrays in the `llts` language, in
   std.debug.printLn("arr[0] = {i}", arr[0]);
   ```
 
-## 3. Built-in Functions
+## 4. Built-in Functions
 - **`len()`**: Retrieves the length (bounds) of an array literal.
   ```llts
   $ok = std.debug.assert(len(arr) == 5);
   ```
   *(Note: `std.debug.assert` returns `null` on success and an error value on failure.)*
 
-## 4. Advanced / Low-Level Allocation
+## 5. Advanced / Low-Level Allocation
 - **Raw Heap Allocation**: If you need raw heap memory without length-prefixing overhead, use `std.mem.alloc`.
   ```llts
   $raw = std.mem.alloc(3);

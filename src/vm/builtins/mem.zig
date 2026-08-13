@@ -34,6 +34,7 @@ var alloc_native: NativeFunction = undefined;
 var alloc_immortal_native: NativeFunction = undefined;
 var arena_create_native: NativeFunction = undefined;
 var arena_alloc_native: NativeFunction = undefined;
+var arena_alloc_array_native: NativeFunction = undefined;
 var arena_reset_native: NativeFunction = undefined;
 var arena_deinit_native: NativeFunction = undefined;
 
@@ -160,6 +161,28 @@ fn arenaAlloc(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     return .{ .ptr = ptr };
 }
 
+/// Length-prefixed zeroed array: slots = len+1, returns data pointer (length at ptr-1).
+fn arenaAllocArray(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
+    const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
+    const len = switch (args[1]) {
+        .int => |x| x,
+        else => return fail(vm, "__arena_alloc_array", "invalid length"),
+    };
+    if (len < 0) return fail(vm, "__arena_alloc_array", "invalid length");
+    var alloc_args = [_]Value{ args[0], .{ .int = len + 1 } };
+    const base_v = try arenaAlloc(vm_ptr, &alloc_args);
+    const base = switch (base_v) {
+        .ptr => |p| p,
+        else => return fail(vm, "__arena_alloc_array", "invalid allocation"),
+    };
+    vm.memory[@intCast(base)] = .{ .int = len };
+    var i: i32 = 1;
+    while (i <= len) : (i += 1) {
+        vm.memory[@intCast(base + i)] = .{ .int = 0 };
+    }
+    return .{ .ptr = base + 1 };
+}
+
 fn arenaReset(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
     const ctrl = try resolveArenaControl(vm, args[0]);
@@ -195,6 +218,7 @@ pub fn register(vm: *VMState) !void {
     alloc_immortal_native = .{ .name = "__allocImmortal", .func = allocImmortalFn, .arity = 1 };
     arena_create_native = .{ .name = "__arena_create", .func = arenaCreate, .arity = 1 };
     arena_alloc_native = .{ .name = "__arena_alloc", .func = arenaAlloc, .arity = 2 };
+    arena_alloc_array_native = .{ .name = "__arena_alloc_array", .func = arenaAllocArray, .arity = 2 };
     arena_reset_native = .{ .name = "__arena_reset", .func = arenaReset, .arity = 1 };
     arena_deinit_native = .{ .name = "__arena_deinit", .func = arenaDeinit, .arity = 1 };
 
@@ -202,6 +226,7 @@ pub fn register(vm: *VMState) !void {
     try vm.globals.put("__allocImmortal", .{ .native = &alloc_immortal_native });
     try vm.globals.put("__arena_create", .{ .native = &arena_create_native });
     try vm.globals.put("__arena_alloc", .{ .native = &arena_alloc_native });
+    try vm.globals.put("__arena_alloc_array", .{ .native = &arena_alloc_array_native });
     try vm.globals.put("__arena_reset", .{ .native = &arena_reset_native });
     try vm.globals.put("__arena_deinit", .{ .native = &arena_deinit_native });
 }

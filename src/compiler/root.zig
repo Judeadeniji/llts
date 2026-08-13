@@ -218,13 +218,16 @@ fn analyzeBody(
             if (return_type.* == null) {
                 if (r.return_value) |v| {
                     if (v.* == .struct_init) return_type.* = v.struct_init.name;
-                    // `@new(a, Foo{…})` — return type is the struct being allocated.
+                    // `@new(a, Foo{…}|Foo|[N]T)` — return type from value or type arg.
                     if (v.* == .call) {
                         const c = v.call;
-                        if (c.callee.* == .primary and std.mem.eql(u8, c.callee.primary.name, "@new") and
-                            c.args.len == 2 and c.args[1].* == .struct_init)
-                        {
-                            return_type.* = c.args[1].struct_init.name;
+                        if (c.callee.* == .primary and std.mem.eql(u8, c.callee.primary.name, "@new") and c.args.len == 2) {
+                            const arg = c.args[1];
+                            if (arg.* == .struct_init) {
+                                return_type.* = arg.struct_init.name;
+                            } else if (arg.* == .primary and arg.primary.kind == .identifier) {
+                                return_type.* = arg.primary.name;
+                            }
                         }
                     }
                     if (v.* == .primary and std.mem.eql(u8, v.primary.name, "self")) {

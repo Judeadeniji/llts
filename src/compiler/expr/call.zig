@@ -86,7 +86,7 @@ pub fn compileCall(state: *CompilerState, c: *const ast.Call, node: *ast.Node) !
         try emit.emitOp(state, .OP_SIZEOF);
         return;
     }
-    // `@new(allocator, Foo{…}|[…])` — compiler intrinsic (Go make-style).
+    // `@new(allocator, Type|Foo{…}|[…])` — compiler intrinsic (Go make-style).
     // Allocator is a *library* value (std.mem.Arena); `@` means the compiler
     // sees the alloc and colors the result as Pass (may escape the frame).
     if (c.callee.* == .primary and std.mem.eql(u8, c.callee.primary.name, "@new")) {

@@ -166,9 +166,14 @@ fn exprToString(self: *Parser, e: *Node) ParseError![]const u8 {
 fn finishCall(self: *Parser, callee: *Node) ParseError!*Node {
     _ = try self.consume(.delimiter, "Expected '('", "(");
     var args: std.ArrayList(*Node) = .empty;
+    const is_new = callee.* == .primary and std.mem.eql(u8, callee.primary.name, "@new");
     if (!self.checkDelim(")")) {
         while (true) {
-            try args.append(self.arena, try parseExpression(self));
+            if (is_new and args.items.len == 1) {
+                try args.append(self.arena, try parseNewSecondArg(self));
+            } else {
+                try args.append(self.arena, try parseExpression(self));
+            }
             if (self.checkDelim(",")) {
                 _ = self.advance();
             } else break;
@@ -180,6 +185,31 @@ fn finishCall(self: *Parser, callee: *Node) ParseError!*Node {
         .args = try args.toOwnedSlice(self.arena),
         .loc = callee.loc(),
     } });
+}
+
+/// `@new(a, Type)` — second arg may be a type (`[N]T`, `[]T`, `Point`) or a value literal (`Point{}`, `[…]`).
+fn parseNewSecondArg(self: *Parser) ParseError!*Node {
+    if (looksLikeArrayType(self)) {
+        return @import("types.zig").parseType(self);
+    }
+    return parseExpression(self);
+}
+
+fn looksLikeArrayType(self: *const Parser) bool {
+    const t0 = self.peek(0) orelse return false;
+    if (t0.type != .delimiter or !std.mem.eql(u8, t0.value, "[")) return false;
+    const t1 = self.peek(1) orelse return false;
+    // `[]T`
+    if (t1.type == .delimiter and std.mem.eql(u8, t1.value, "]")) {
+        const t2 = self.peek(2) orelse return false;
+        return t2.type == .identifier or (t2.type == .keyword and std.mem.eql(u8, t2.value, "error"));
+    }
+    // `[N]T`
+    if (t1.type != .number and t1.type != .hex and t1.type != .octal and t1.type != .binary) return false;
+    const t2 = self.peek(2) orelse return false;
+    if (t2.type != .delimiter or !std.mem.eql(u8, t2.value, "]")) return false;
+    const t3 = self.peek(3) orelse return false;
+    return t3.type == .identifier or (t3.type == .keyword and std.mem.eql(u8, t3.value, "error"));
 }
 
 pub fn parsePrimary(self: *Parser) ParseError!*Node {

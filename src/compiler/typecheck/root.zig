@@ -420,11 +420,29 @@ fn inferCall(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, call_
         return ir.TString;
     }
     if (c.callee.* == .primary and std.mem.eql(u8, c.callee.primary.name, "@new")) {
-        if (c.args.len != 2) {
-                        return @import("../../errors/compile.zig").compileFailFmt(state, "@new expects (allocator, value)", .{});
+        if (c.args.len != 2 and c.args.len != 3) {
+            return @import("../../errors/compile.zig").compileFailFmt(state, "@new expects (allocator, type_or_value) or (allocator, []T|string, length)", .{});
         }
         _ = try inferExpr(state, env, ta, c.args[0]);
-        return try inferExpr(state, env, ta, c.args[1]);
+        const v = c.args[1];
+        if (c.args.len == 3) _ = try inferExpr(state, env, ta, c.args[2]);
+        switch (v.*) {
+            .array_type, .union_type => return try from_ast.typeFromAst(v, state, ta),
+            .primary => |p| {
+                if (p.kind == .identifier) {
+                    if (std.mem.eql(u8, p.name, "string") or std.mem.eql(u8, p.name, "[]byte")) {
+                        return ir.TString;
+                    }
+                    if (state.structs.contains(p.name) or state.enums.contains(p.name)) {
+                        return try from_ast.typeFromAst(v, state, ta);
+                    }
+                    const named = ir.namedType(p.name);
+                    if (named != .struct_) return named;
+                }
+                return try inferExpr(state, env, ta, v);
+            },
+            else => return try inferExpr(state, env, ta, v),
+        }
     }
 
     const name = resolveCalleeName(state, c);

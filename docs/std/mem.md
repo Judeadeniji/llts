@@ -8,6 +8,19 @@ In `llts-zig`, the memory region model supports different styles of allocation:
 - **Frame-Local Bump Allocation:** Creating simple objects or arrays directly (e.g., `Foo{}` or `[...]`) typically performs a frame-local bump allocation. These objects die when the function returns and cannot safely escape.
 - **Heap/Library Allocation:** Using `alloc` or an `Arena` allocator pushes items to the heap, which allows objects to outlive their current frame.
 
+### `@new(allocator, Type | value)`
+
+Compiler intrinsic (see also [arrays](../usage/arrays.md)):
+
+```llts
+$buf = @new(arena, [256]byte);      # fixed zero-filled array
+$s = @new(arena, string, n);      # runtime-length byte buffer
+$p = @new(arena, Point);            # zero-filled struct
+$q = @new(arena, Point{ x: 1 });  # explicit init
+```
+
+Reclaim with `arena.reset()` or `arena.deinit()` — there is no per-object `free`.
+
 ## Functions
 
 ### `alloc`

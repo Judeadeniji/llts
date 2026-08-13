@@ -1,0 +1,80 @@
+# Read a file into an arena-backed []byte slice, mutate it, print a summary.
+#
+#   zig-out/bin/llts -i examples/arena_file_slice.lls
+#
+# Edit `path` below (or extend main to take a path) to try other files.
+
+@const $fs = @import("std/fs");
+@const $mem = @import("std/mem");
+@const $string = @import("std/string");
+@const $buffer = @import("std/buffer");
+@const $debug = @import("std/debug");
+@const $io = @import("std/io");
+
+@func copyStringToSlice(src, dst) {
+    $n = string.len(src);
+    @for (0..n) |i| {
+        dst[i] = string.charCodeAt(src, i);
+    }
+}
+
+@func countNewlines(buf) {
+    $lines = 0;
+    $n = len(buf);
+    @for (0..n) |i| {
+        @if (buf[i] == 10) {
+            lines = lines + 1;
+        }
+    }
+    return lines;
+}
+
+# Uppercase ASCII letters in place (a-z → A-Z).
+@func uppercaseAscii(buf) {
+    $n = len(buf);
+    @for (0..n) |i| {
+        $c = buf[i];
+        @if (c >= 97) {
+            @if (c <= 122) {
+                buf[i] = c - 32;
+            }
+        }
+    }
+}
+
+# Build a short string preview from the byte slice (via std/buffer).
+@func preview(buf, max) {
+    $n = len(buf);
+    @if (n > max) {
+        n = max;
+    }
+    $out = buffer.create();
+    @for (0..n) |i| {
+        buffer.push(out, buf[i]);
+    }
+    return buffer.readString(out, 0, buffer.len(out));
+}
+
+@func main() {
+    $path = "examples/hello-world.lls";
+
+    $text = fs.readFile(path);
+    @if (@isError(text)) {
+        io.eprintln("failed to read file");
+        return;
+    }
+
+    $a = mem.create(0);
+    defer a.deinit();
+
+    $n = string.len(text);
+    # Runtime-sized zeroed slice (same as @new(a, string, n)).
+    $slice = @new(a, []byte, n);
+    copyStringToSlice(text, slice);
+
+    debug.printLn("path={s} bytes={i}", path, n, null, null);
+    debug.printLn("newlines={i}", countNewlines(slice), null, null, null);
+
+    uppercaseAscii(slice);
+    debug.printLn("preview={s}", preview(slice, 60), null, null, null);
+}

@@ -4,20 +4,21 @@
 import { test } from "bun:test";
 import { expectError, expectOutput, runSource } from "./helpers";
 
-test("returning bare struct literal is a compile error", () => {
-	expectError(
+test("returning bare struct literal uses immortal alloc (allowed)", () => {
+	expectOutput(
 		runSource(`
 @struct Point { x: int; }
 @func make() {
     return Point { x: 1 };
 }
-print(make());
+$p = make();
+print(p.x);
 `),
-		"escapes its frame region",
+		["1"],
 	);
 });
 
-test("returning local bound to bare struct is a compile error", () => {
+test("returning local bound to frame struct is a compile error", () => {
 	expectError(
 		runSource(`
 @struct Point { x: int; }
