@@ -62,5 +62,6 @@ The language and VM feature an advanced diagnostic subsystem (`src/errors/`) and
 
 ## Syntax Quick Reference for Agents
 *   **Declarations:** `@func`, `@const`, `@struct`, `@if`, `@for`.
+*   **Introspection:** `@typeOf(expr)`, `@sizeOf(T_or_expr)` — see [Errors / types](errors.md#type-introspection).
 *   **Variable Binding:** Newly initialized variables must have the `$` prefix (e.g., `$my_var = 1;`), but subsequent usages must NOT use it (e.g., `my_var = 2;`).
 *   **Mathematical Operators:** Contains standard operators + exponentiation (`**`).

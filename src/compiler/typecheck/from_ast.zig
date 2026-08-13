@@ -138,9 +138,25 @@ pub fn resolveType(state: *state_mod.CompilerState, node: *ast.Node) ?[]const u8
                 }
                 break :blk null;
             }
+            // Imported value: `io.stdout` → type of global `mod::stdout`.
+            if (@import("../expr/path.zig").tryResolveStaticPath(state, node) catch null) |static_path| {
+                if (state.global_types.get(static_path)) |gt| {
+                    if (!std.mem.startsWith(u8, gt, "module:")) break :blk gt;
+                }
+            }
             var object_type = resolveType(state, m.object) orelse break :blk null;
             if (std.mem.indexOfScalar(u8, object_type, '.') != null) {
                 object_type = @import("../expr/path.zig").resolveModuleType(state, object_type) catch object_type;
+            }
+            // Module namespace (`module:path`) — field types come from exported globals.
+            if (std.mem.startsWith(u8, object_type, "module:")) {
+                const mod_path = object_type["module:".len..];
+                var qbuf: [512]u8 = undefined;
+                const q = std.fmt.bufPrint(&qbuf, "{s}::{s}", .{ mod_path, m.property.primary.name }) catch break :blk null;
+                if (state.global_types.get(q)) |gt| {
+                    if (!std.mem.startsWith(u8, gt, "module:")) break :blk gt;
+                }
+                break :blk null;
             }
             const struct_def = state.structs.get(object_type) orelse break :blk null;
             break :blk struct_def.types.get(m.property.primary.name);

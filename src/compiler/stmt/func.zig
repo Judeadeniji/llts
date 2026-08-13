@@ -20,7 +20,13 @@ pub fn compileDefer(state: *CompilerState, def: *const ast.Defer) !void {
 
 pub fn compileReturn(state: *CompilerState, ret: *const ast.Return) !void {
     if (ret.return_value) |v| {
-        // Region escape: frame-local heap cannot be returned (compile error).
+        // Returning a bare struct/array literal promotes to immortal (like a global init).
+        // Other frame-colored values still fail in checkReturnValue.
+        const promote = v.* == .struct_init or v.* == .array_literal;
+        const prev_immortal = state.alloc_immortal;
+        if (promote) state.alloc_immortal = true;
+        defer state.alloc_immortal = prev_immortal;
+
         try @import("../escape.zig").checkReturnValue(state, v);
         try expr.compileExpression(state, v);
     } else {

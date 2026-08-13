@@ -44,9 +44,10 @@ pub fn compileTry(state: *CompilerState, try_expr: *const ast.TryExpr) !void {
 }
 
 pub fn compileArray(state: *CompilerState, arr: *const ast.ArrayLiteral) !void {
-    // Frame-local: uses `__alloc` (rewound on return). Prefer `@new(a, […])` to escape.
+    // Frame-local `__alloc` by default; `__allocImmortal` for globals / returned literals.
     const length: i32 = @intCast(arr.elements.len);
-    try emit.emitNameGet(state, .OP_GET_GLOBAL, "__alloc");
+    const alloc = if (state.alloc_immortal) "__allocImmortal" else "__alloc";
+    try emit.emitNameGet(state, .OP_GET_GLOBAL, alloc);
     try emit.emitConstant(state, .{ .int = length + 1 });
     try emit.emitOp(state, .OP_CALL);
     try emit.emitByte(state, 1);
@@ -55,8 +56,9 @@ pub fn compileArray(state: *CompilerState, arr: *const ast.ArrayLiteral) !void {
 
 pub fn compileStructInit(state: *CompilerState, init: *const ast.StructInit) !void {
     const struct_def = try resolveStructDef(state, init);
-    // Frame-local bump — cannot be returned (escape.zig). Use `@new(arena, …)` to escape.
-    try emit.emitNameGet(state, .OP_GET_GLOBAL, "__alloc");
+    // Frame bump by default; immortal for module/globals and returned literals (escape.zig).
+    const alloc = if (state.alloc_immortal) "__allocImmortal" else "__alloc";
+    try emit.emitNameGet(state, .OP_GET_GLOBAL, alloc);
     try emit.emitConstant(state, .{ .int = struct_def.size });
     try emit.emitOp(state, .OP_CALL);
     try emit.emitByte(state, 1);

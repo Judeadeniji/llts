@@ -10,7 +10,7 @@ This repository is the **Zig** implementation (the forward path). The TypeScript
 
 - Custom syntax: `@func`, `$var` declarations, `@const`, `@struct`, `@for` / `@if`
 - Hand-written scanner, recursive-descent parser, AST, bytecode compiler, stack VM
-- Modules (`@import`), `pub` visibility, gradual typecheck + `@typeOf`
+- Modules (`@import`), `pub` visibility, gradual typecheck + `@typeOf` / `@sizeOf`
 - Explicit errors (`error(...)`, `?`), arenas + `defer` (no tracing GC)
 - Frame-local heap (bare `Foo{}` / `[…]`); escape is a compile error — use `@new(allocator, …)` with `std.mem.Arena`
 - Standard library under `std/` (`math`, `string`, `io`, `debug`, `mem`)

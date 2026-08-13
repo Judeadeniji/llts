@@ -43,6 +43,11 @@ pub fn tryResolveStaticPath(state: *CompilerState, node: *ast.Node) !?[]const u8
             if (state.global_types.get(re_key)) |re| {
                 if (std.mem.startsWith(u8, re, "module:")) return re["module:".len..];
             }
+            // `mod.value.field` — once `mod.value` is a typed binding (not a nested module),
+            // further members are fields/methods, not static path segments.
+            if (state.global_types.get(obj_path)) |obj_ty| {
+                if (!std.mem.startsWith(u8, obj_ty, "module:")) return null;
+            }
             const q = try std.fmt.allocPrint(state.allocator, "{s}::{s}", .{ obj_path, prop });
             try state.owned.append(state.allocator, q);
             return q;

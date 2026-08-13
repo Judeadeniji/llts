@@ -36,6 +36,10 @@ pub @func write(fd, data) {
     return __sys_write(fd, data);
 }
 
+pub @func writeAll(fd, data) {
+    return __sys_writeAll(fd, data);
+}
+
 pub @func open(path, flags, ...rest) {
     @if (len(rest) > 0) {
         return __sys_open(path, flags, rest[0]);

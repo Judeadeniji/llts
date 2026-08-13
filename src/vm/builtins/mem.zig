@@ -31,6 +31,7 @@ const DEFAULT_CHUNK: i32 = 64;
 //   [5 ..] data
 
 var alloc_native: NativeFunction = undefined;
+var alloc_immortal_native: NativeFunction = undefined;
 var arena_create_native: NativeFunction = undefined;
 var arena_alloc_native: NativeFunction = undefined;
 var arena_reset_native: NativeFunction = undefined;
@@ -85,6 +86,16 @@ fn allocFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
         else => return error.TypeError,
     };
     const ptr = try vm.allocSlots(@intCast(n));
+    return .{ .ptr = ptr };
+}
+
+fn allocImmortalFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
+    const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
+    const n = switch (args[0]) {
+        .int => |x| x,
+        else => return error.TypeError,
+    };
+    const ptr = try vm.allocImmortal(@intCast(n));
     return .{ .ptr = ptr };
 }
 
@@ -181,12 +192,14 @@ fn arenaDeinit(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
 
 pub fn register(vm: *VMState) !void {
     alloc_native = .{ .name = "__alloc", .func = allocFn, .arity = 1 };
+    alloc_immortal_native = .{ .name = "__allocImmortal", .func = allocImmortalFn, .arity = 1 };
     arena_create_native = .{ .name = "__arena_create", .func = arenaCreate, .arity = 1 };
     arena_alloc_native = .{ .name = "__arena_alloc", .func = arenaAlloc, .arity = 2 };
     arena_reset_native = .{ .name = "__arena_reset", .func = arenaReset, .arity = 1 };
     arena_deinit_native = .{ .name = "__arena_deinit", .func = arenaDeinit, .arity = 1 };
 
     try vm.globals.put("__alloc", .{ .native = &alloc_native });
+    try vm.globals.put("__allocImmortal", .{ .native = &alloc_immortal_native });
     try vm.globals.put("__arena_create", .{ .native = &arena_create_native });
     try vm.globals.put("__arena_alloc", .{ .native = &arena_alloc_native });
     try vm.globals.put("__arena_reset", .{ .native = &arena_reset_native });

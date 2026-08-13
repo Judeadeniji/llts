@@ -28,6 +28,12 @@ pub fn compileDeclaration(state: *CompilerState, decl: *const ast.Declaration) !
         }
     }
 
+    const is_module_export = std.mem.indexOf(u8, decl.name, "::") != null;
+    // Module / top-level values outlive any frame — allocate literals immortally.
+    const prev_immortal = state.alloc_immortal;
+    if (state.scope_depth == 0 or is_module_export) state.alloc_immortal = true;
+    defer state.alloc_immortal = prev_immortal;
+
     try expr.compileExpression(state, decl.value);
 
     var type_name: ?[]const u8 = null;
@@ -62,7 +68,6 @@ pub fn compileDeclaration(state: *CompilerState, decl: *const ast.Declaration) !
         type_name = if (state.global_types.get(decl.name)) |gt| gt else inferDeclType(state, decl.value);
     }
 
-    const is_module_export = std.mem.indexOf(u8, decl.name, "::") != null;
     if (state.scope_depth > 0 and !is_module_export) {
         try checkLocalDup(state, decl.name);
         try state.locals.append(state.allocator, .{

@@ -1,5 +1,107 @@
-# Stdio — stdin helpers. File I/O lives in std.fs.
+# Stdio — stdin / stdout / stderr as File handles over std/syscall.
+# Path I/O lives in std/fs.
+#
+# Usage:
+#   io.stdout.writeAll("hello\n");
+#   io.eprintln("fail");
+#   $line = io.stdin.readLine();
+
+@const $syscall = @import("std/syscall.lls");
+@const $buffer = @import("std/buffer.lls");
+
+pub @struct File {
+    fd: int;
+
+    @func write(self, data) {
+        return write(self.fd, data);
+    }
+
+    @func writeAll(self, data) {
+        return writeAll(self.fd, data);
+    }
+
+    @func read(self, buf) {
+        return read(self.fd, buf);
+    }
+
+    @func readLine(self) {
+        return readLineFd(self.fd);
+    }
+
+    @func flush(self) {
+        return syscall.fsync(self.fd);
+    }
+}
+
+pub $stdin = File{ fd: syscall.STDIN_FILENO };
+pub $stdout = File{ fd: syscall.STDOUT_FILENO };
+pub $stderr = File{ fd: syscall.STDERR_FILENO };
+
+pub @func fromFd(fd) {
+    return File{ fd: fd };
+}
+
+# --- fd operations ---
+
+pub @func write(fd, data) {
+    return syscall.write(fd, data);
+}
+
+pub @func writeAll(fd, data) {
+    return syscall.writeAll(fd, data);
+}
+
+pub @func read(fd, buf) {
+    return syscall.read(fd, buf);
+}
+
+pub @func readLineFd(fd) {
+    return __readLine(fd);
+}
+
+# --- convenience (stdout / stderr / stdin) ---
 
 pub @func readLine() {
-    return __readLine();
+    return stdin.readLine();
+}
+
+pub @func print(data) {
+    return stdout.writeAll(data);
+}
+
+pub @func eprint(data) {
+    return stderr.writeAll(data);
+}
+
+pub @func println(data) {
+    $rc = stdout.writeAll(data);
+    @if (@isError(rc)) {
+        return rc;
+    }
+    return stdout.writeAll("\n");
+}
+
+pub @func eprintln(data) {
+    $rc = stderr.writeAll(data);
+    @if (@isError(rc)) {
+        return rc;
+    }
+    return stderr.writeAll("\n");
+}
+
+# Drain stdin until EOF into a string.
+pub @func readAll() {
+    $chunk = buffer.alloc(8192);
+    $out = buffer.create();
+    @for (0..1000000) |i| {
+        $n = stdin.read(chunk);
+        @if (@isError(n)) {
+            return n;
+        }
+        @if (n == 0) {
+            break;
+        }
+        buffer.appendString(out, buffer.readString(chunk, 0, n));
+    }
+    return buffer.readString(out, 0, buffer.len(out));
 }

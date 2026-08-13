@@ -36,8 +36,8 @@ pub fn checkReturnValue(state: *CompilerState, value: *ast.Node) !void {
 /// Classify an expression's heap region (syntactic / local-tracking first cut).
 pub fn regionOf(state: *CompilerState, node: *ast.Node) AllocRegion {
     switch (node.*) {
-        // Bare literals → current frame bump (VM rewinds on return).
-        .struct_init, .array_literal => return .frame,
+        // Bare literals → frame bump by default; immortal when compiling globals / return literals.
+        .struct_init, .array_literal => return if (state.alloc_immortal) .pass else .frame,
         // `@new(a, Foo{…})` — compiler intrinsic; Pass / outer allocator.
         .call => |c| {
             if (c.callee.* == .primary and std.mem.eql(u8, c.callee.primary.name, "@new"))

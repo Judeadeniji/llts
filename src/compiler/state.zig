@@ -98,6 +98,8 @@ pub const CompilerState = struct {
     type_of_results: std.AutoHashMap(*ast.Node, []const u8),
     last_emitted_line: i32 = -1,
     last_emitted_column: i32 = -1,
+    /// When true, bare struct/array literals use immortal heap (globals / return of literals).
+    alloc_immortal: bool = false,
     /// Last AST location seen while compiling — used when a CompileError has no explicit loc.
     diag_path: []const u8 = "",
     diag_line: u32 = 0,

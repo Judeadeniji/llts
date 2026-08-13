@@ -113,3 +113,7 @@ $v = Vector3 { x: 10, y: 20, z: 30 };
 v.translate(5, 5, 5);
 v.scale(2);
 ```
+
+## 7. `@sizeOf`
+
+Struct size is `field_count * 16` bytes (one VM slot per field). `@sizeOf(Point)` and `@sizeOf(p)` agree when `p` is typed. See [Type introspection](errors.md#sizeof).

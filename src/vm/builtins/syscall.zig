@@ -16,6 +16,7 @@ var errno_n: NativeFunction = undefined;
 var err_name_n: NativeFunction = undefined;
 var read_n: NativeFunction = undefined;
 var write_n: NativeFunction = undefined;
+var write_all_n: NativeFunction = undefined;
 var open_n: NativeFunction = undefined;
 var close_n: NativeFunction = undefined;
 var lseek_n: NativeFunction = undefined;
@@ -172,6 +173,30 @@ fn writeFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const s = try util.valueToStr(vm, args[1], &tmp);
     const n = std.posix.write(fd, s) catch |err| return try makeSyscallError(vm, err);
     return .{ .int = @intCast(n) };
+}
+
+fn writeAllFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
+    const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
+    if (args.len < 2) return error.ArityError;
+    const fd: std.posix.fd_t = @intCast(try util.asInt(args[0]));
+
+    var owned: ?[]u8 = null;
+    defer if (owned) |o| vm.allocator.free(o);
+
+    const bytes: []const u8 = if (args[1] == .buffer)
+        args[1].buffer.bytes.items
+    else blk: {
+        owned = try util.valueToOwnedString(vm, args[1]);
+        break :blk owned.?;
+    };
+
+    var remaining = bytes;
+    while (remaining.len > 0) {
+        const n = std.posix.write(fd, remaining) catch |err| return try makeSyscallError(vm, err);
+        if (n == 0) return try util.makeErrorWithPayload(vm, "SyscallError", try util.writeSlice(vm, "ShortWrite"));
+        remaining = remaining[n..];
+    }
+    return .{ .int = @intCast(bytes.len) };
 }
 
 fn openFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
@@ -452,6 +477,7 @@ pub fn register(vm: *VMState) !void {
     err_name_n = .{ .name = "__sys_errName", .func = errNameFn, .arity = 1 };
     read_n = .{ .name = "__sys_read", .func = readFn, .arity = 2 };
     write_n = .{ .name = "__sys_write", .func = writeFn, .arity = 2 };
+    write_all_n = .{ .name = "__sys_writeAll", .func = writeAllFn, .arity = 2 };
     open_n = .{ .name = "__sys_open", .func = openFn, .arity = -1 };
     close_n = .{ .name = "__sys_close", .func = closeFn, .arity = 1 };
     lseek_n = .{ .name = "__sys_lseek", .func = lseekFn, .arity = 3 };
@@ -488,6 +514,7 @@ pub fn register(vm: *VMState) !void {
     try vm.globals.put("__sys_errName", .{ .native = &err_name_n });
     try vm.globals.put("__sys_read", .{ .native = &read_n });
     try vm.globals.put("__sys_write", .{ .native = &write_n });
+    try vm.globals.put("__sys_writeAll", .{ .native = &write_all_n });
     try vm.globals.put("__sys_open", .{ .native = &open_n });
     try vm.globals.put("__sys_close", .{ .native = &close_n });
     try vm.globals.put("__sys_lseek", .{ .native = &lseek_n });

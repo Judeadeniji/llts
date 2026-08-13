@@ -8,7 +8,7 @@ Zig implementation. The TypeScript prototype/reference is [`llts-js`](../llts-js
 - [x] Basic Tokens: Identifiers, Numbers (int, float, hex, binary, octal), Strings, Booleans.
 - [x] Registers: `$a`, `$t0`, etc. (declaration-only sigil; uses omit `$`).
 - [x] Keywords: `return`, `true`, `false`, `break`, `continue`, `pub`, `defer`.
-- [x] Compiler Directives: `@func`, `@import`, `@const`, `@if`, `@for`, `@struct`, `@typeOf`, `@isError`, `@extern`.
+- [x] Compiler Directives: `@func`, `@import`, `@const`, `@if`, `@for`, `@struct`, `@typeOf`, `@sizeOf`, `@isError`, `@extern`.
 - [x] Operators: Arithmetic, Assignment (including compound `+=` etc.), Comparison, Logical, Pipe (`|>`), Power (`**` / `^`).
 - [x] Comments: Line comments starting with `#`.
 
@@ -84,6 +84,7 @@ Zig implementation. The TypeScript prototype/reference is [`llts-js`](../llts-js
 - [x] **Structs as types**
 - [x] **Debug type asserts**; strip with `--release`.
 - [x] **`@typeOf(expr)`**
+- [x] **`@sizeOf(T_or_expr)`** — static sizes for types / typed values; runtime `OP_SIZEOF` fallback (`tests/26_sizeof.test.ts`).
 - [x] **`pub` for user files** — private decls stay in-module; relative `./` / `../` imports.
 
 ### P5 — Memory

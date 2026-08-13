@@ -61,7 +61,9 @@ For details on type enforcement, initialization constraints, and compile errors 
 
 ## Type Introspection
 
-To programmatically check types, use the `@typeOf()` builtin macro. This is extremely useful for generating type assertions or debugging type mismatches.
+### `@typeOf`
+
+To programmatically check types, use the `@typeOf()` builtin. Useful for assertions and debugging mismatches.
 
 ```llts
 print(@typeOf(p));     # Point
@@ -69,6 +71,33 @@ print(@typeOf(n));     # i32
 print(@typeOf(msg));   # string
 print(@typeOf(grid));  # [2][2]int
 ```
+
+### `@sizeOf`
+
+`@sizeOf(T_or_expr)` returns the VM slot footprint in bytes (compile-time when the argument is a type name or typed value; otherwise `OP_SIZEOF` at runtime).
+
+| Argument | Size |
+|---|---|
+| `int` / `float` | `8` |
+| `bool` | `1` |
+| `null` | `0` |
+| `string` / `[]byte` | `16` (header: ptr + len) |
+| struct type / value | `field_count * 16` |
+| runtime value (no static type) | measured from the live value |
+
+```llts
+print(@sizeOf(int));       # 8
+print(@sizeOf(Point));     # 48 for three int fields
+$p = Point { x: 1, y: 2, z: 3 };
+print(@sizeOf(p));         # same as @sizeOf(Point)
+
+$x = 100;
+print(@sizeOf(x));         # 8
+$arr = [1, 2, 3, 4];
+print(@sizeOf(arr));       # runtime measure
+```
+
+Expects exactly one argument. Covered by `tests/26_sizeof.test.ts`.
 
 ## Key Safety Constraints
 1. **Strong Typing on Assignment**: Variables initialized with explicit types (`$var: type = ...`) will reject incompatible runtime or compile-time assignments.

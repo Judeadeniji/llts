@@ -55,13 +55,19 @@ fn readFileBufferFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
 
 fn readLineFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
-    _ = args;
-    var buf: [1024]u8 = undefined;
-    const n = std.fs.File.stdin().read(&buf) catch |err| {
+    const fd: std.posix.fd_t = if (args.len >= 1)
+        @intCast(try util.asInt(args[0]))
+    else
+        std.posix.STDIN_FILENO;
+    var buf: [8192]u8 = undefined;
+    const n = std.posix.read(fd, &buf) catch |err| {
         return try util.makeErrorWithPayload(vm, "IoError", try util.writeSlice(vm, @errorName(err)));
     };
+    if (n == 0) return .null;
     var str = buf[0..n];
-    if (std.mem.endsWith(u8, str, "\n")) str = str[0 .. str.len - 1];
+    if (std.mem.indexOfScalar(u8, str, '\n')) |nl| {
+        str = str[0..nl];
+    }
     if (std.mem.endsWith(u8, str, "\r")) str = str[0 .. str.len - 1];
     return try util.writeSlice(vm, str);
 }
@@ -283,7 +289,7 @@ fn chmodFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
 pub fn register(vm: *VMState) !void {
     read_file_n = .{ .name = "__readFile", .func = readFileFn, .arity = 1 };
     read_file_buffer_n = .{ .name = "__readFileBuffer", .func = readFileBufferFn, .arity = 1 };
-    read_line_n = .{ .name = "__readLine", .func = readLineFn, .arity = 0 };
+    read_line_n = .{ .name = "__readLine", .func = readLineFn, .arity = -1 };
     write_file_n = .{ .name = "__writeFile", .func = writeFileFn, .arity = 2 };
     write_file_buffer_n = .{ .name = "__writeFileBuffer", .func = writeFileBufferFn, .arity = 2 };
     append_file_n = .{ .name = "__appendFile", .func = appendFileFn, .arity = 2 };
