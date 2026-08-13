@@ -3,6 +3,7 @@ const std = @import("std");
 pub const opcode = @import("bytecode/opcode.zig");
 pub const value = @import("bytecode/value.zig");
 pub const chunk = @import("bytecode/chunk.zig");
+pub const disasm = @import("bytecode/disasm.zig");
 pub const vm_state = @import("vm/state.zig");
 pub const vm_stack = @import("vm/stack.zig");
 pub const execute = @import("vm/execute/root.zig");
@@ -36,10 +37,20 @@ pub fn runSource(
     try pipeline.runSource(allocator, path, source, options);
 }
 
+pub fn compileSource(
+    allocator: std.mem.Allocator,
+    path: []const u8,
+    source: []const u8,
+    options: RunOptions,
+) !Chunk {
+    return try pipeline.compileSource(allocator, path, source, options);
+}
+
 test {
     _ = opcode;
     _ = value;
     _ = chunk;
+    _ = disasm;
     _ = scanner;
     _ = ast;
     _ = parser;

@@ -34,22 +34,41 @@ pub fn main() !void {
     defer args.deinit();
     _ = args.skip(); // argv0
 
+    var arg_list: std.ArrayList([]const u8) = .empty;
+    defer arg_list.deinit(gpa);
+    while (args.next()) |a| try arg_list.append(gpa, a);
+
     var input_path: ?[]const u8 = null;
     var release = false;
+    var dump_bytecode = false;
+    var dump_output: ?[]const u8 = null;
 
-    while (args.next()) |arg| {
+    var i: usize = 0;
+    while (i < arg_list.items.len) {
+        const arg = arg_list.items[i];
+        i += 1;
         if (std.mem.eql(u8, arg, "-i") or std.mem.eql(u8, arg, "--input")) {
-            input_path = args.next() orelse {
+            if (i >= arg_list.items.len) {
                 io.printStderr("Missing value for input\n", .{});
                 std.process.exit(1);
-            };
+            }
+            input_path = arg_list.items[i];
+            i += 1;
         } else if (std.mem.eql(u8, arg, "-r") or std.mem.eql(u8, arg, "--release")) {
             release = true;
+        } else if (std.mem.eql(u8, arg, "-d") or std.mem.eql(u8, arg, "--dump-bytecode")) {
+            dump_bytecode = true;
+            if (i < arg_list.items.len and !std.mem.startsWith(u8, arg_list.items[i], "-")) {
+                dump_output = arg_list.items[i];
+                i += 1;
+            }
         } else if (std.mem.eql(u8, arg, "--log-level")) {
-            const val = args.next() orelse {
+            if (i >= arg_list.items.len) {
                 io.printStderr("Missing value for --log-level\n", .{});
                 std.process.exit(1);
-            };
+            }
+            const val = arg_list.items[i];
+            i += 1;
             if (io.Level.parse(val)) |l| {
                 io.log.setLevel(l);
             } else {
@@ -66,9 +85,14 @@ pub fn main() !void {
     }
 
     const path = input_path orelse {
-        io.printStderr("Usage: llts -i <file.lls> [-r] [--log-level LEVEL]\n", .{});
+        io.printStderr("Usage: llts -i <file.lls> [-r] [-d [FILE]] [--log-level LEVEL]\n", .{});
         std.process.exit(1);
     };
+
+    if (dump_bytecode) {
+        try dumpFile(gpa, path, release, dump_output);
+        return;
+    }
 
     try runFile(gpa, path, release);
 }
@@ -103,4 +127,43 @@ fn runFile(allocator: std.mem.Allocator, path: []const u8, release: bool) !void 
         }
         std.process.exit(1);
     };
+}
+
+fn dumpFile(
+    allocator: std.mem.Allocator,
+    path: []const u8,
+    release: bool,
+    output_path: ?[]const u8,
+) !void {
+    llts.diag.reset();
+
+    const source = std.fs.cwd().readFileAlloc(allocator, path, 16 * 1024 * 1024) catch |err| {
+        io.printStderr("Failed to read {s}: {}\n", .{ path, err });
+        std.process.exit(1);
+    };
+    defer allocator.free(source);
+
+    var chunk = llts.compileSource(allocator, path, source, .{ .debug = !release }) catch |err| {
+        if (!llts.diag.wasEmitted()) {
+            io.printStderr("Error: {}\n", .{err});
+        }
+        std.process.exit(1);
+    };
+    defer chunk.deinit();
+
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(allocator);
+    llts.disasm.dump(&chunk, out.writer(allocator)) catch |err| {
+        io.printStderr("Failed to dump bytecode: {}\n", .{err});
+        std.process.exit(1);
+    };
+
+    if (output_path) |out_path| {
+        std.fs.cwd().writeFile(.{ .sub_path = out_path, .data = out.items }) catch |err| {
+            io.printStderr("Failed to write {s}: {}\n", .{ out_path, err });
+            std.process.exit(1);
+        };
+    } else {
+        io.writeStdout(out.items);
+    }
 }
