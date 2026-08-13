@@ -85,6 +85,12 @@ fn writePtr(vm: *VMState, out: *std.ArrayList(u8), p: i32) anyerror!void {
     if (header_val == .int and header_val.int == ERROR_TAG) {
         try out.appendSlice(vm.allocator, "Error: ");
         try writeValue(vm, out, vm.memory[@intCast(p)]);
+        const payload = vm.memory[@intCast(p + 1)];
+        if (payload != .null) {
+            try out.appendSlice(vm.allocator, " (");
+            try writeValue(vm, out, payload);
+            try out.appendSlice(vm.allocator, ")");
+        }
         return;
     }
     if (header_val == .int and header_val.int >= 0 and header_val.int < 1024 * 1024) {

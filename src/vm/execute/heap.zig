@@ -101,10 +101,20 @@ pub fn makeString(vm: *VMState) HeapError!void {
 
 pub fn makeError(vm: *VMState) HeapError!void {
     const msg = stack.pop(vm);
-    // Immortal: `return error(…)` must survive the frame (escape policy allows error returns).
-    const p = try vm.allocImmortal(2);
+    const p = try vm.allocImmortal(3);
     vm.memory[@intCast(p)] = .{ .int = ERROR_TAG };
     vm.memory[@intCast(p + 1)] = msg;
+    vm.memory[@intCast(p + 2)] = .null;
+    try stack.push(vm, .{ .ptr = p + 1 });
+}
+
+pub fn makeErrorPayload(vm: *VMState) HeapError!void {
+    const payload = stack.pop(vm);
+    const msg = stack.pop(vm);
+    const p = try vm.allocImmortal(3);
+    vm.memory[@intCast(p)] = .{ .int = ERROR_TAG };
+    vm.memory[@intCast(p + 1)] = msg;
+    vm.memory[@intCast(p + 2)] = payload;
     try stack.push(vm, .{ .ptr = p + 1 });
 }
 

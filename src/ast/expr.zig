@@ -83,6 +83,7 @@ pub const TryExpr = struct {
 
 pub const ErrorExpr = struct {
     message: *Node,
+    payload: ?*Node = null,
     loc: Location,
 };
 

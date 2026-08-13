@@ -37,12 +37,22 @@ pub fn writeSlice(vm: *VMState, bytes: []const u8) !Value {
     return .{ .slice = .{ .offset = offset, .len = @intCast(bytes.len) } };
 }
 
-/// Allocate an error object `[ERROR_TAG, msgPtr]` and return ptr to msgPtr slot.
+/// Allocate an error object `[ERROR_TAG, codePtr, payload]` and return ptr to codePtr slot.
 pub fn makeError(vm: *VMState, msg: []const u8) !Value {
     const msg_val = try writeSlice(vm, msg);
-    const p = try vm.allocImmortal(2);
+    const p = try vm.allocImmortal(3);
     vm.memory[@intCast(p)] = .{ .int = ERROR_TAG };
     vm.memory[@intCast(p + 1)] = msg_val;
+    vm.memory[@intCast(p + 2)] = .null;
+    return .{ .ptr = p + 1 };
+}
+
+pub fn makeErrorWithPayload(vm: *VMState, msg: []const u8, payload: Value) !Value {
+    const msg_val = try writeSlice(vm, msg);
+    const p = try vm.allocImmortal(3);
+    vm.memory[@intCast(p)] = .{ .int = ERROR_TAG };
+    vm.memory[@intCast(p + 1)] = msg_val;
+    vm.memory[@intCast(p + 2)] = payload;
     return .{ .ptr = p + 1 };
 }
 

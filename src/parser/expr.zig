@@ -191,8 +191,13 @@ pub fn parsePrimary(self: *Parser) ParseError!*Node {
                 _ = self.advance();
                 _ = try self.consume(.delimiter, "Expected '(' after error", "(");
                 const msg = try parseExpression(self);
+                var payload: ?*ast.Node = null;
+                if (self.checkDelim(",")) {
+                    _ = self.advance();
+                    payload = try parseExpression(self);
+                }
                 _ = try self.consume(.delimiter, "Expected ')' after error message", ")");
-                return self.create(.{ .error_expr = .{ .message = msg, .loc = self.locOf(token) } });
+                return self.create(.{ .error_expr = .{ .message = msg, .payload = payload, .loc = self.locOf(token) } });
             }
             if (std.mem.eql(u8, token.value, "null")) {
                 _ = self.advance();

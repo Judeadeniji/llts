@@ -17,7 +17,12 @@ pub fn compileIndex(state: *CompilerState, idx: *const ast.Index) !void {
 
 pub fn compileError(state: *CompilerState, err: *const ast.ErrorExpr) !void {
     try expr.compileExpression(state, err.message);
-    try emit.emitOp(state, .OP_MAKE_ERROR);
+    if (err.payload) |p| {
+        try expr.compileExpression(state, p);
+        try emit.emitOp(state, .OP_MAKE_ERROR_PAYLOAD);
+    } else {
+        try emit.emitOp(state, .OP_MAKE_ERROR);
+    }
 }
 
 pub fn compileTry(state: *CompilerState, try_expr: *const ast.TryExpr) !void {

@@ -24,6 +24,7 @@ pub const OpCode = enum(u8) {
     OP_DUP,
     OP_MAKE_STRING,
     OP_MAKE_ERROR,
+    OP_MAKE_ERROR_PAYLOAD,
     OP_IS_ERROR,
     OP_SET_GLOBAL,
     OP_GET_GLOBAL,

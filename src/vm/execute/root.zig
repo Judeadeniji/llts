@@ -93,6 +93,7 @@ pub fn execute(vm: *VMState, start_ip: usize) RuntimeError!void {
             .OP_PACK_REST => try call.packRest(vm, readByte(vm, &ip)),
             .OP_MAKE_STRING => try heap.makeString(vm),
             .OP_MAKE_ERROR => try heap.makeError(vm),
+            .OP_MAKE_ERROR_PAYLOAD => try heap.makeErrorPayload(vm),
             .OP_IS_ERROR => try heap.isError(vm),
             .OP_STRING_ADD => try heap.stringAdd(vm),
             .OP_GET_INDEX => try heap.getIndex(vm),
@@ -128,12 +129,24 @@ fn getProperty(vm: *VMState, const_idx: u16) RuntimeError!void {
     });
     const obj = stack.pop(vm);
     // error.message → heap slot at ptr
-    if (std.mem.eql(u8, name, "message")) {
+    if (std.mem.eql(u8, name, "message") or std.mem.eql(u8, name, "code")) {
         switch (obj) {
             .ptr => |p| {
                 const tag = vm.memory[@intCast(p - 1)];
                 if (tag == .int and tag.int == state_mod.ERROR_TAG) {
                     try stack.push(vm, vm.memory[@intCast(p)]);
+                    return;
+                }
+            },
+            else => {},
+        }
+    }
+    if (std.mem.eql(u8, name, "payload")) {
+        switch (obj) {
+            .ptr => |p| {
+                const tag = vm.memory[@intCast(p - 1)];
+                if (tag == .int and tag.int == state_mod.ERROR_TAG) {
+                    try stack.push(vm, vm.memory[@intCast(p + 1)]);
                     return;
                 }
             },
