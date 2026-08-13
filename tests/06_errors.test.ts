@@ -306,7 +306,7 @@ test("? on a function with no error in its return type is a compile-time error",
 }
 
 print(doWork());
-`), "CompileError: '?' operator used on non-error-union type '[]byte'");
+`), "'?' operator used on non-error-union type '[]byte'");
 });
 
 test("propagated error keeps its original message through multiple hops unmodified", () => {
@@ -328,3 +328,12 @@ print(@isError(final));
 print(final.message);
 `), ["true", "original text"]);
 });
+
+test("error() rejects more than 2 arguments with a clear message", () => {
+  const res = runSource(`$e = error("a", "b", "c");`);
+  expectError(res, "at most 2 arguments");
+  if (!res.stderr.includes("at <parse>")) {
+    throw new Error(`missing parse frame:\n${res.stderr}`);
+  }
+});
+

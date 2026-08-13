@@ -1,2 +1,4 @@
-@const $err = error("this is an error");
-print(err);
+@const $std = @import("std/index.lls");
+
+@const $err_msg = error("this is an error", "hello");
+std.debug.err(err_msg);

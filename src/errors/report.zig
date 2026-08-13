@@ -1,4 +1,6 @@
-const std = @import("std");
+const out = @import("../io/out.zig");
+const color = @import("../io/color.zig");
+const diag = @import("diag.zig");
 
 pub fn reportSourceError(
     path: []const u8,
@@ -7,9 +9,15 @@ pub fn reportSourceError(
     column: u32,
     message: []const u8,
 ) void {
-    // Match TS diagnostics closely enough for tests (`Error:`, `--> path:line:col`).
-    std.debug.print("{s}: Error: {s}\n", .{ path, message });
-    std.debug.print("  --> {s}:{d}:{d}\n", .{ path, line, column });
+    diag.markEmitted();
+    const c_err = color.paint(color.bold ++ color.bright_red);
+    const c_arrow = color.paint(color.bold ++ color.bright_cyan);
+    const c_num = color.paint(color.blue);
+    const c_caret = color.paint(color.bold ++ color.bright_cyan);
+    const r = color.r();
+
+    out.printStderr("{s}Error{s}: {s}\n", .{ c_err, r, message });
+    out.printStderr("  {s}-->{s} {s}:{d}:{d}\n", .{ c_arrow, r, path, line, column });
 
     var current: u32 = 1;
     var start: usize = 0;
@@ -18,11 +26,12 @@ pub fn reportSourceError(
         if (i == source.len or source[i] == '\n') {
             if (current == line) {
                 const line_src = source[start..i];
-                std.debug.print("   {d} | {s}\n", .{ line, line_src });
-                std.debug.print("     | ", .{});
+                out.printStderr("   {s}{d}{s} | {s}\n", .{ c_num, line, r, line_src });
+                out.printStderr("     | ", .{});
                 var c: u32 = 1;
-                while (c < column) : (c += 1) std.debug.print(" ", .{});
-                std.debug.print("^\n", .{});
+                const col = if (column == 0) 1 else column;
+                while (c < col) : (c += 1) out.printStderr(" ", .{});
+                out.printStderr("{s}^{s}\n", .{ c_caret, r });
                 break;
             }
             current += 1;
@@ -31,10 +40,42 @@ pub fn reportSourceError(
     }
 }
 
+/// Source diagnostic plus a single stack frame (scan / parse / compile).
+pub fn reportSourceErrorWithFrame(
+    path: []const u8,
+    source: []const u8,
+    line: u32,
+    column: u32,
+    message: []const u8,
+    frame_name: []const u8,
+) void {
+    reportSourceError(path, source, line, column, message);
+    reportLocationFrameCol(path, line, column, frame_name);
+}
+
 pub fn reportLocationFrame(path: []const u8, line: u32, name: []const u8) void {
-    std.debug.print("    at {s} ({s}:{d})\n", .{ name, path, line });
+    reportLocationFrameCol(path, line, 1, name);
+}
+
+pub fn reportLocationFrameCol(path: []const u8, line: u32, column: u32, name: []const u8) void {
+    diag.markEmitted();
+    const c_dim = color.paint(color.dim);
+    const c_name = color.paint(color.cyan);
+    const r = color.r();
+    out.printStderr("    {s}at{s} {s}{s}{s} ({s}:{d}:{d})\n", .{ c_dim, r, c_name, name, r, path, line, column });
 }
 
 pub fn reportCompileMessage(message: []const u8) void {
-    std.debug.print("Error: {s}\n", .{message});
+    diag.markEmitted();
+    const c_err = color.paint(color.bold ++ color.bright_red);
+    const r = color.r();
+    out.printStderr("{s}Error{s}: {s}\n", .{ c_err, r, message });
+}
+
+/// Location-less compile failure; keeps `CompileError:` prefix for existing tests.
+pub fn reportCompileError(message: []const u8) void {
+    diag.markEmitted();
+    const c_err = color.paint(color.bold ++ color.bright_red);
+    const r = color.r();
+    out.printStderr("{s}CompileError{s}: {s}\n", .{ c_err, r, message });
 }
