@@ -22,3 +22,5 @@ print(v.x, v.y, v.z);
 
 v.scale(2);
 print(v.x, v.y, v.z);
+
+@func main() {}

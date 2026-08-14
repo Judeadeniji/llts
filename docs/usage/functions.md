@@ -35,7 +35,7 @@ Type annotations can be omitted completely.
 ## Arguments and Variables
 *   **Variable Declarations:** Local variables inside functions (or at the top level) are instantiated with a `$` prefix (e.g., `$a = 1;`).
 *   **Variable Usage:** When referencing variables in expressions or as function arguments, the `$` prefix is **omitted** (e.g., `add(a, b)`).
-*   **Top-level Execution:** Functions can be invoked directly from the top level (global scope) without needing an entry point like `main()`.
+*   **Top-level Execution:** Top-level statements run as module initialization. The entry file must then define a zero-arg `main()`, which the compiler invokes automatically.
 
 ```llts
 @func main() {

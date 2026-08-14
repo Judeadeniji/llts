@@ -18,3 +18,5 @@ $squared = std.math.sqr(a);
 std.debug.printLn("5 squared = {i}", squared);
 
 std.debug.assert(sum == 8);
+
+@func main() {}

@@ -37,3 +37,5 @@ $lines_len = len(lines);
         std.io.println(line);
     }
 }
+
+@func main() {}

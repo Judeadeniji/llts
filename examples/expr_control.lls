@@ -33,3 +33,5 @@ print(c);
     Color.Red => { print(Color.Red); },
     @else => { print(-1); },
 }
+
+@func main() {}

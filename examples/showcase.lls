@@ -41,3 +41,5 @@ hero.takeDamage(45);
 
 
 hero |> printStatus;
+
+@func main() {}

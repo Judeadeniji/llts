@@ -18,3 +18,5 @@
 
 print("Starting mutual recursion test...");
 ping(3);
+
+@func main() {}

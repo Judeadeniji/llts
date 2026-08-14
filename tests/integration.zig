@@ -28,7 +28,7 @@ fn runLlts(allocator: std.mem.Allocator, source: []const u8) !struct { stdout: [
 
 test "print arithmetic" {
     const allocator = std.testing.allocator;
-    const result = try runLlts(allocator, "print(1 + 2 * 3)\n");
+    const result = try runLlts(allocator, "@func main() { print(1 + 2 * 3); }\n");
     defer allocator.free(result.stdout);
     defer allocator.free(result.stderr);
     try std.testing.expectEqual(@as(u8, 0), result.code);

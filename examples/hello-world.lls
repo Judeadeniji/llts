@@ -101,3 +101,5 @@ std.debug.printLn(
     c,
     a + b * c
 );
+
+@func main() {}

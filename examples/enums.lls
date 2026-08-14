@@ -15,3 +15,5 @@ print(@typeOf(Color.Blue));
     print(c);
 }
 paint(Color.Green);
+
+@func main() {}

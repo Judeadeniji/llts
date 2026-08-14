@@ -1,8 +1,8 @@
 /**
- * Entry point: a zero-arg `main` is invoked automatically after top-level statements.
+ * Entry point: a zero-arg `main` is required and invoked after top-level statements.
  */
 import { test } from "bun:test";
-import { runSource, expectOutput } from "./helpers";
+import { runSource, runSourceAsWritten, expectOutput, expectError } from "./helpers";
 
 test("main is invoked automatically", () => {
 	expectOutput(
@@ -38,12 +38,23 @@ print(1);
 	);
 });
 
-test("without main, only top-level runs", () => {
-	expectOutput(
-		runSource(`
+test("without main is a compile error", () => {
+	expectError(
+		runSourceAsWritten(`
 print(99);
 `),
-		["99"],
+		"missing entry point 'main'",
+	);
+});
+
+test("main with arguments is a compile error", () => {
+	expectError(
+		runSource(`
+@func main(argc) {
+    print(argc);
+}
+`),
+		"'main' must take 0 arguments",
 	);
 });
 

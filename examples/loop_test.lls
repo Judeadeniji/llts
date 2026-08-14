@@ -22,3 +22,5 @@ outer: @for (0..3) |x| {
     }
 }
 print("Done with nested labeled loops.");
+
+@func main() {}

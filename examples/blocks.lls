@@ -40,3 +40,5 @@ $flag: bool = check: {
     break :check true;
 };
 print(flag);
+
+@func main() {}

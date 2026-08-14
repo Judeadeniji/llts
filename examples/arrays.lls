@@ -20,3 +20,5 @@ std.debug.assert(len(arr) == 5);
 # Raw heap allocation still available via std.mem
 $raw = std.mem.alloc(3);
 std.debug.printLn("raw ptr = {i}", raw);
+
+@func main() {}

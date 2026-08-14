@@ -10,6 +10,7 @@ const typecheck = @import("typecheck/root.zig");
 const path_mod = @import("expr/path.zig");
 const reachability = @import("reachability.zig");
 const types = @import("typecheck/from_ast.zig");
+const compile_errors = @import("../errors/compile.zig");
 
 pub const CompileOptions = struct {
     debug: bool = true,
@@ -48,6 +49,7 @@ pub fn compile(
     }
 
     try typecheck.typecheck(&state, doc);
+    try requireEntryMain(&state, doc);
 
     var reach = try reachability.compute(&state, doc);
     defer reach.deinit();
@@ -93,13 +95,10 @@ pub fn compile(
         }
     }
 
-    // Language entry: zero-arg `main` runs after top-level statements (tests/10_main).
-    if (state.chunk.functions.get("main")) |main_fn| {
-        if (main_fn.arity == 0) {
-            try emit.emitCallStatic(&state, @intCast(main_fn.address), 0);
-            try emit.emitOp(&state, .OP_POP); // discard main's return value
-        }
-    }
+    // Language entry: zero-arg `main` runs after top-level statements.
+    const main_fn = state.chunk.functions.get("main").?;
+    try emit.emitCallStatic(&state, @intCast(main_fn.address), 0);
+    try emit.emitOp(&state, .OP_POP); // discard main's return value
 
     try emit.emitOp(&state, .OP_NULL);
     try emit.emitOp(&state, .OP_RETURN);
@@ -122,6 +121,57 @@ pub fn compile(
     state.chunk.deinit();
     state_mod.deinit(&state);
     return result;
+}
+
+fn requireEntryMain(state: *state_mod.CompilerState, doc: *ast.Document) !void {
+    const def = state.functions.getPtr("main") orelse {
+        const loc = eofLocation(doc.source);
+        return compile_errors.compileFail(
+            doc.path,
+            doc.source,
+            loc.line,
+            loc.column,
+            "missing entry point 'main'",
+        );
+    };
+
+    const loc = def.node.loc();
+    if (loc.path.len > 0 and !std.mem.eql(u8, loc.path, doc.path)) {
+        const eof = eofLocation(doc.source);
+        return compile_errors.compileFail(
+            doc.path,
+            doc.source,
+            eof.line,
+            eof.column,
+            "missing entry point 'main'",
+        );
+    }
+
+    if (fnArity(def.node) != 0 or fnVariadic(def.node)) {
+        return compile_errors.compileFailAt(
+            state,
+            if (loc.path.len > 0) loc.path else doc.path,
+            sourceTextForPath(state, if (loc.path.len > 0) loc.path else doc.path),
+            if (loc.line > 0) loc.line else 1,
+            if (loc.column > 0) loc.column else 1,
+            "'main' must take 0 arguments",
+            .{},
+        );
+    }
+}
+
+fn eofLocation(source: []const u8) struct { line: u32, column: u32 } {
+    var line: u32 = 1;
+    var column: u32 = 1;
+    for (source) |ch| {
+        if (ch == '\n') {
+            line += 1;
+            column = 1;
+        } else {
+            column += 1;
+        }
+    }
+    return .{ .line = line, .column = column };
 }
 
 fn fnArity(node: *ast.Node) u8 {

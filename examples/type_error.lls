@@ -27,3 +27,5 @@ print(grid[1][0]);
 #   p.y = "nope";  # CompileError: [4]byte not assignable to int
 p.y = 99;
 print(p.y);
+
+@func main() {}

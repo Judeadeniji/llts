@@ -25,8 +25,33 @@ function requireBinary() {
 	}
 }
 
+function hasMain(source: string): boolean {
+	return /(?:pub\s+)?@func\s+main\s*\(/.test(source);
+}
+
+/** Append an empty `main` so snippet tests stay valid programs. */
+function ensureMain(source: string): string {
+	if (hasMain(source)) return source;
+	return `${source}\n@func main() {}\n`;
+}
+
 /** Compile and run an inline .lls source string. */
 export function runSource(source: string): RunResult {
+	requireBinary();
+	const tmp = path.join(
+		os.tmpdir(),
+		`llts_test_${Date.now()}_${Math.random().toString(36).slice(2)}.lls`,
+	);
+	fs.writeFileSync(tmp, ensureMain(source), "utf-8");
+	try {
+		return runFile(tmp);
+	} finally {
+		fs.unlinkSync(tmp);
+	}
+}
+
+/** Compile and run inline source exactly as written (no injected `main`). */
+export function runSourceAsWritten(source: string): RunResult {
 	requireBinary();
 	const tmp = path.join(
 		os.tmpdir(),
@@ -67,7 +92,7 @@ export function runSourceWithArgs(source: string, scriptArgs: string[]): RunResu
 		os.tmpdir(),
 		`llts_test_${Date.now()}_${Math.random().toString(36).slice(2)}.lls`,
 	);
-	fs.writeFileSync(tmp, source, "utf-8");
+	fs.writeFileSync(tmp, ensureMain(source), "utf-8");
 	try {
 		return runFile(tmp, scriptArgs);
 	} finally {
