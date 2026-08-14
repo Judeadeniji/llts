@@ -10,6 +10,8 @@ const builtins = @import("vm/builtins/root.zig");
 
 pub const RunOptions = struct {
     debug: bool = true,
+    /// Extra argv forwarded to `os.args()` as argv[1..] (argv[0] is the script path).
+    script_args: []const []const u8 = &.{},
 };
 
 pub fn compileSource(
@@ -27,10 +29,16 @@ pub fn compileSource(
     return try compiler.compile(allocator, &doc, .{ .debug = options.debug });
 }
 
-pub fn runChunk(allocator: std.mem.Allocator, chunk: *chunk_mod.Chunk, script_path: []const u8) !void {
+pub fn runChunk(
+    allocator: std.mem.Allocator,
+    chunk: *chunk_mod.Chunk,
+    script_path: []const u8,
+    script_args: []const []const u8,
+) !void {
     var state = try vm_state.VMState.init(allocator, chunk);
     defer state.deinit();
     state.script_path = script_path;
+    state.script_args = script_args;
     try builtins.registerBuiltins(&state, chunk);
     try execute.execute(&state, 0);
 }
@@ -43,7 +51,7 @@ pub fn runSource(
 ) !void {
     var chunk = try compileSource(allocator, path, source, options);
     defer chunk.deinit();
-    try runChunk(allocator, &chunk, path);
+    try runChunk(allocator, &chunk, path, options.script_args);
 }
 
 pub fn writeBytecodeFile(allocator: std.mem.Allocator, chunk: *const chunk_mod.Chunk, path: []const u8) !void {
@@ -54,8 +62,12 @@ pub fn readBytecodeFile(allocator: std.mem.Allocator, path: []const u8) !chunk_m
     return try serialize.readFile(allocator, path);
 }
 
-pub fn runBytecodeFile(allocator: std.mem.Allocator, path: []const u8) !void {
+pub fn runBytecodeFile(
+    allocator: std.mem.Allocator,
+    path: []const u8,
+    script_args: []const []const u8,
+) !void {
     var chunk = try readBytecodeFile(allocator, path);
     defer chunk.deinit();
-    try runChunk(allocator, &chunk, path);
+    try runChunk(allocator, &chunk, path, script_args);
 }

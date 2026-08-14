@@ -1,5 +1,5 @@
 import { test } from "bun:test";
-import { expectError, expectOutput, runSource } from "./helpers";
+import { expectError, expectOutput, runSource, runSourceWithArgs } from "./helpers";
 
 // ---------------------------------------------------------------------------
 // string — parseInt / parseFloat / fromCharCode / charCodeAt
@@ -256,6 +256,22 @@ print(len(a) >= 1);
 print(a[0] != "");
 `),
 		["hello-llts", "true", "true", "true", "true"],
+	);
+});
+
+test("os: args includes trailing CLI script arguments", () => {
+	expectOutput(
+		runSourceWithArgs(
+			`
+@const $os = @import("std/os");
+$a = os.args();
+print(len(a));
+print(a[1]);
+print(a[2]);
+`,
+			["hello", "world"],
+		),
+		["3", "hello", "world"],
 	);
 });
 

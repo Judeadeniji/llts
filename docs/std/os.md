@@ -104,16 +104,22 @@ print("PID: " + os.pid());
 ```
 
 ### `args() -> array`
-Gets the command-line arguments passed to the script.
+Gets the command-line arguments passed to the program.
 
 **Returns:**
-An array of arguments. The first element (`args()[0]`) is the script path.
+An array of arguments. The first element (`args()[0]`) is the source path. Remaining elements are trailing CLI arguments after host flags (or after `--`):
+
+```bash
+llts run program.lls hello world
+llts run program.lls -- -r  # "-r" is a program arg, not a host flag
+```
 
 **Example:**
 ```llts
 const os = import("std/os");
 const argv = os.args();
-print("Script path: " + argv[0]);
+print("Program path: " + argv[0]);
+print("Arg count: " + len(argv));
 ```
 
 ### `platform() -> string`

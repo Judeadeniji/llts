@@ -1,4 +1,5 @@
 const std = @import("std");
+const zli = @import("zli");
 const llts = @import("llts");
 const io = llts.io;
 
@@ -22,6 +23,21 @@ fn zigLogFn(
     io.log.log(level, scope_name, format, args);
 }
 
+const log_level_flag = zli.Flag{
+    .name = "log-level",
+    .description = "Set log level (err, warn, info, debug)",
+    .type = .String,
+    .default_value = .{ .String = "" },
+};
+
+const release_flag = zli.Flag{
+    .name = "release",
+    .shortcut = "r",
+    .description = "Disable debug info",
+    .type = .Bool,
+    .default_value = .{ .Bool = false },
+};
+
 pub fn main() !void {
     io.color.initFromEnv();
     io.log.initFromEnv();
@@ -30,108 +46,160 @@ pub fn main() !void {
     defer _ = gpa_state.deinit();
     const gpa = gpa_state.allocator();
 
-    var args = try std.process.argsWithAllocator(gpa);
-    defer args.deinit();
-    _ = args.skip(); // argv0
+    var wbuf: [1024]u8 = undefined;
+    var stdout_writer = std.fs.File.stdout().writerStreaming(&wbuf);
+    const stdout = &stdout_writer.interface;
+    defer stdout.flush() catch {};
 
-    var arg_list: std.ArrayList([]const u8) = .empty;
-    defer arg_list.deinit(gpa);
-    while (args.next()) |a| try arg_list.append(gpa, a);
+    var rbuf: [1024]u8 = undefined;
+    var stdin_reader = std.fs.File.stdin().readerStreaming(&rbuf);
+    const stdin = &stdin_reader.interface;
 
-    var input_path: ?[]const u8 = null;
-    var release = false;
-    var dump_bytecode = false;
-    var dump_output: ?[]const u8 = null;
-    var output_path: ?[]const u8 = null;
+    const root = try zli.Command.init(stdout, stdin, gpa, .{
+        .name = "llts",
+        .description = "LLTS — a general-purpose language",
+        .version = .{ .major = 0, .minor = 1, .patch = 0 },
+    }, showHelp);
+    defer root.deinit();
 
-    var i: usize = 0;
-    while (i < arg_list.items.len) {
-        const arg = arg_list.items[i];
-        i += 1;
-        if (std.mem.eql(u8, arg, "-i") or std.mem.eql(u8, arg, "--input")) {
-            if (i >= arg_list.items.len) {
-                io.printStderr("Missing value for input\n", .{});
-                std.process.exit(1);
-            }
-            input_path = arg_list.items[i];
-            i += 1;
-        } else if (std.mem.eql(u8, arg, "-o") or std.mem.eql(u8, arg, "--output")) {
-            if (i >= arg_list.items.len) {
-                io.printStderr("Missing value for output\n", .{});
-                std.process.exit(1);
-            }
-            output_path = arg_list.items[i];
-            i += 1;
-        } else if (std.mem.eql(u8, arg, "-r") or std.mem.eql(u8, arg, "--release")) {
-            release = true;
-        } else if (std.mem.eql(u8, arg, "-d") or std.mem.eql(u8, arg, "--dump-bytecode")) {
-            dump_bytecode = true;
-            if (i < arg_list.items.len and !std.mem.startsWith(u8, arg_list.items[i], "-")) {
-                dump_output = arg_list.items[i];
-                i += 1;
-            }
-        } else if (std.mem.eql(u8, arg, "--log-level")) {
-            if (i >= arg_list.items.len) {
-                io.printStderr("Missing value for --log-level\n", .{});
-                std.process.exit(1);
-            }
-            const val = arg_list.items[i];
-            i += 1;
-            if (io.Level.parse(val)) |l| {
-                io.log.setLevel(l);
-            } else {
-                io.printStderr("Invalid log level: {s}\n", .{val});
-                std.process.exit(1);
-            }
-        } else if (std.mem.eql(u8, arg, "--smoke")) {
-            try runSmoke(gpa);
-            return;
-        } else {
-            io.printStderr("Invalid argument: {s}\n", .{arg});
-            std.process.exit(1);
-        }
-    }
+    try root.addFlag(log_level_flag);
+    try root.addFlag(release_flag);
 
-    const path = input_path orelse {
-        io.printStderr("Usage: llts -i <file.lls|file.llb> [-r] [-o file.llb] [-d [FILE]] [--log-level LEVEL]\n", .{});
-        std.process.exit(1);
-    };
+    const run_cmd = try zli.Command.init(stdout, stdin, gpa, .{
+        .name = "run",
+        .description = "Run an LLTS source or bytecode file",
+    }, runFileCmd);
+    try run_cmd.addFlag(log_level_flag);
+    try run_cmd.addFlag(release_flag);
+    try run_cmd.addPositionalArg(.{
+        .name = "file",
+        .description = "Source (.lls) or bytecode (.llb) file to run",
+        .required = true,
+    });
+    try run_cmd.addPositionalArg(.{
+        .name = "args",
+        .description = "Arguments forwarded to the program",
+        .required = false,
+        .variadic = true,
+    });
+    try root.addCommand(run_cmd);
 
-    if (dump_bytecode) {
-        if (output_path != null) {
-            io.printStderr("-d and -o are mutually exclusive\n", .{});
-            std.process.exit(1);
-        }
-        if (llts.serialize.isBytecodePath(path)) {
-            io.printStderr("Cannot dump bytecode from a .llb file; use a .lls source\n", .{});
-            std.process.exit(1);
-        }
-        try dumpFile(gpa, path, release, dump_output);
-        return;
-    }
+    const build_cmd = try zli.Command.init(stdout, stdin, gpa, .{
+        .name = "build",
+        .description = "Compile an LLTS source file to bytecode",
+    }, buildCmd);
+    try build_cmd.addFlag(log_level_flag);
+    try build_cmd.addFlag(release_flag);
+    try build_cmd.addFlag(.{
+        .name = "output",
+        .shortcut = "o",
+        .description = "Output bytecode file path",
+        .type = .String,
+        .default_value = .{ .String = "out.llb" },
+    });
+    try build_cmd.addPositionalArg(.{
+        .name = "file",
+        .description = "Source file to compile",
+        .required = true,
+    });
+    try root.addCommand(build_cmd);
 
-    if (output_path != null) {
-        if (llts.serialize.isBytecodePath(path)) {
-            io.printStderr("Cannot compile a .llb file; use a .lls source with -o\n", .{});
-            std.process.exit(1);
-        }
-        try compileFile(gpa, path, release, output_path.?);
-        return;
-    }
+    const dump_cmd = try zli.Command.init(stdout, stdin, gpa, .{
+        .name = "dump",
+        .description = "Dump bytecode from an LLTS source file",
+    }, dumpCmd);
+    try dump_cmd.addFlag(log_level_flag);
+    try dump_cmd.addFlag(release_flag);
+    try dump_cmd.addFlag(.{
+        .name = "output",
+        .shortcut = "o",
+        .description = "Output file path",
+        .type = .String,
+        .default_value = .{ .String = "" },
+    });
+    try dump_cmd.addPositionalArg(.{
+        .name = "file",
+        .description = "Source file to compile and dump",
+        .required = true,
+    });
+    try root.addCommand(dump_cmd);
 
-    if (llts.serialize.isBytecodePath(path)) {
-        try runBytecode(gpa, path);
-        return;
-    }
+    const smoke_cmd = try zli.Command.init(stdout, stdin, gpa, .{
+        .name = "smoke",
+        .description = "Run the smoke test",
+    }, smokeCmd);
+    try root.addCommand(smoke_cmd);
 
-    try runFile(gpa, path, release);
+    try root.execute(.{});
 }
 
-fn runSmoke(allocator: std.mem.Allocator) !void {
-    var c = llts.Chunk.init(allocator);
+fn showHelp(ctx: zli.CommandContext) !void {
+    setLogLevel(ctx);
+    try ctx.command.printHelp();
+}
+
+fn setLogLevel(ctx: zli.CommandContext) void {
+    const str = ctx.flag("log-level", []const u8);
+    if (str.len > 0) {
+        if (io.Level.parse(str)) |l| {
+            io.log.setLevel(l);
+        } else {
+            io.printStderr("Invalid log level: {s}\n", .{str});
+            std.process.exit(1);
+        }
+    }
+}
+
+fn runFileCmd(ctx: zli.CommandContext) !void {
+    setLogLevel(ctx);
+    const release = ctx.flag("release", bool);
+    const file = ctx.getArg("file").?;
+
+    var program_args: []const []const u8 = &[_][]const u8{};
+    if (ctx.positional_args.len > 1) {
+        program_args = ctx.positional_args[1..];
+    }
+
+    if (llts.serialize.isBytecodePath(file)) {
+        try runBytecode(ctx.allocator, file, program_args);
+    } else {
+        try runFile(ctx.allocator, file, release, program_args);
+    }
+}
+
+fn buildCmd(ctx: zli.CommandContext) !void {
+    setLogLevel(ctx);
+    const release = ctx.flag("release", bool);
+    const file = ctx.getArg("file").?;
+    const out_path = ctx.flag("output", []const u8);
+
+    if (llts.serialize.isBytecodePath(file)) {
+        io.printStderr("Cannot compile a .llb file; use a .lls source\n", .{});
+        std.process.exit(1);
+    }
+
+    try compileFile(ctx.allocator, file, release, out_path);
+}
+
+fn dumpCmd(ctx: zli.CommandContext) !void {
+    setLogLevel(ctx);
+    const release = ctx.flag("release", bool);
+    const file = ctx.getArg("file").?;
+    const out_val = ctx.flag("output", []const u8);
+    const out_path: ?[]const u8 = if (out_val.len > 0) out_val else null;
+
+    if (llts.serialize.isBytecodePath(file)) {
+        io.printStderr("Cannot dump bytecode from a .llb file; use a .lls source\n", .{});
+        std.process.exit(1);
+    }
+
+    try dumpFile(ctx.allocator, file, release, out_path);
+}
+
+fn smokeCmd(ctx: zli.CommandContext) !void {
+    var c = llts.Chunk.init(ctx.allocator);
     defer c.deinit();
 
-    // print(42)
     const idx = try c.addConstant(.{ .int = 42 });
     try c.writeOp(.OP_CONSTANT);
     try c.write(@intCast((idx >> 8) & 0xff));
@@ -139,12 +207,12 @@ fn runSmoke(allocator: std.mem.Allocator) !void {
     try c.writeOp(.OP_PRINT);
     try c.write(1);
 
-    try llts.runChunk(allocator, &c);
+    try llts.runChunk(ctx.allocator, &c);
 }
 
-fn runBytecode(allocator: std.mem.Allocator, path: []const u8) !void {
+fn runBytecode(allocator: std.mem.Allocator, path: []const u8, script_args: []const []const u8) !void {
     llts.diag.reset();
-    llts.runBytecodeFile(allocator, path) catch |err| {
+    llts.runBytecodeFile(allocator, path, script_args) catch |err| {
         if (!llts.diag.wasEmitted()) {
             io.printStderr("Failed to run bytecode {s}: {}\n", .{ path, err });
         }
@@ -180,7 +248,7 @@ fn compileFile(
     };
 }
 
-fn runFile(allocator: std.mem.Allocator, path: []const u8, release: bool) !void {
+fn runFile(allocator: std.mem.Allocator, path: []const u8, release: bool, script_args: []const []const u8) !void {
     llts.diag.reset();
 
     const source = std.fs.cwd().readFileAlloc(allocator, path, 16 * 1024 * 1024) catch |err| {
@@ -189,7 +257,7 @@ fn runFile(allocator: std.mem.Allocator, path: []const u8, release: bool) !void 
     };
     defer allocator.free(source);
 
-    llts.runSource(allocator, path, source, .{ .debug = !release }) catch |err| {
+    llts.runSource(allocator, path, source, .{ .debug = !release, .script_args = script_args }) catch |err| {
         if (!llts.diag.wasEmitted()) {
             io.printStderr("Error: {}\n", .{err});
         }

@@ -60,8 +60,10 @@ pub const VMState = struct {
     string_cache: std.AutoHashMap(u32, i32),
     /// Zero-alloc string arena (appended to, never freed during execution).
     string_bytes: std.ArrayList(u8) = .empty,
-    /// Path of the running script (borrowed; used by os.args).
+    /// Path of the running script (borrowed; used by os.args as argv[0]).
     script_path: []const u8 = "",
+    /// Extra argv after the script path (borrowed; used by os.args as argv[1..]).
+    script_args: []const []const u8 = &.{},
 
     pub fn init(allocator: std.mem.Allocator, chunk: *Chunk) !VMState {
         const memory = try allocator.alloc(Value, MEMORY_SIZE);

@@ -113,9 +113,15 @@ fn pidFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
 fn argsFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
     _ = args;
-    // Script path as args[0] (like many scripting languages' argv[0]).
-    const path_val = try util.writeSlice(vm, vm.script_path);
-    return try util.writeArray(vm, &.{path_val});
+    // Program path as args[0] (like C argv[0]), then any trailing CLI args
+    // forwarded by the host.
+    var items: std.ArrayList(Value) = .empty;
+    defer items.deinit(vm.allocator);
+    try items.append(vm.allocator, try util.writeSlice(vm, vm.script_path));
+    for (vm.script_args) |a| {
+        try items.append(vm.allocator, try util.writeSlice(vm, a));
+    }
+    return try util.writeArray(vm, items.items);
 }
 
 fn platformFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {

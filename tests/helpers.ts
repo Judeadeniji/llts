@@ -41,9 +41,9 @@ export function runSource(source: string): RunResult {
 }
 
 /** Compile and run a .lls file (absolute or relative to repo root). */
-export function runFile(filePath: string): RunResult {
+export function runFile(filePath: string, scriptArgs: string[] = []): RunResult {
 	requireBinary();
-	const result = spawnSync([ENTRY, "-i", filePath], {
+	const result = spawnSync([ENTRY, "run", filePath, ...scriptArgs], {
 		cwd: ROOT,
 	});
 	const stdout = result.stdout.toString();
@@ -58,6 +58,21 @@ export function runFile(filePath: string): RunResult {
 		exitCode: result.exitCode ?? 1,
 		lines: allLines,
 	};
+}
+
+/** Compile and run inline source with trailing script argv (`os.args()[1..]`). */
+export function runSourceWithArgs(source: string, scriptArgs: string[]): RunResult {
+	requireBinary();
+	const tmp = path.join(
+		os.tmpdir(),
+		`llts_test_${Date.now()}_${Math.random().toString(36).slice(2)}.lls`,
+	);
+	fs.writeFileSync(tmp, source, "utf-8");
+	try {
+		return runFile(tmp, scriptArgs);
+	} finally {
+		fs.unlinkSync(tmp);
+	}
 }
 
 /** Assert the run succeeded (exit 0) and produced exactly the expected output lines. */
