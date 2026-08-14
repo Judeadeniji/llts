@@ -124,6 +124,24 @@ a.deinit();
 	);
 });
 
+test("@new []byte grows past 1MiB", () => {
+	expectOutput(
+		runSource(`
+@const $mem = @import("std/mem");
+$a = mem.create(0);
+$n = 2000000;
+$b = @new(a, []byte, n);
+print(len(b));
+b[0] = 1;
+b[1999999] = 2;
+print(b[0]);
+print(b[1999999]);
+a.deinit();
+`),
+		["2000000", "1", "2"],
+	);
+});
+
 test("@new []byte is packed (200 bytes in a tiny arena)", () => {
 	expectOutput(
 		runSource(`

@@ -9,11 +9,11 @@ const ERROR_TAG = state_mod.ERROR_TAG;
 /// Read a length-prefixed heap string at `ptr` into an owned buffer.
 pub fn readString(vm: *VMState, ptr: i32) ![]u8 {
     if (ptr < 1 or !vm.isValidHeapPtr(ptr)) return error.TypeError;
-    const len: usize = @intCast(vm.memory[@intCast(ptr - 1)].int);
+    const len: usize = @intCast(vm.slot(ptr - 1).*.int);
     const buf = try vm.allocator.alloc(u8, len);
     var i: usize = 0;
     while (i < len) : (i += 1) {
-        const val = vm.memory[@intCast(ptr + @as(i32, @intCast(i)))];
+        const val = vm.slot(ptr + @as(i32, @intCast(i))).*;
         switch (val) {
             .int => |ch| buf[i] = @intCast(ch),
             else => {
@@ -55,14 +55,14 @@ pub fn appendStr(vm: *VMState, v: Value) !void {
             const src = vm.string_bytes.items[s.offset .. s.offset + s.len];
             vm.string_bytes.appendSliceAssumeCapacity(src);
         },
-        .bytes => |b| try vm.string_bytes.appendSlice(vm.allocator, vm.bytes[b.offset..][0..b.len]),
+        .bytes => |b| try vm.string_bytes.appendSlice(vm.allocator, vm.bytes.items[b.offset..][0..b.len]),
         .name => |idx| try vm.string_bytes.appendSlice(vm.allocator, vm.chunk.stringAt(idx)),
         .ptr => |p| {
-            const len: usize = @intCast(vm.memory[@intCast(p - 1)].int);
+            const len: usize = @intCast(vm.slot(p - 1).*.int);
             try vm.string_bytes.ensureUnusedCapacity(vm.allocator, len);
             var i: usize = 0;
             while (i < len) : (i += 1) {
-                const val = vm.memory[@intCast(p + @as(i32, @intCast(i)))];
+                const val = vm.slot(p + @as(i32, @intCast(i))).*;
                 if (val != .int) return error.TypeError;
                 vm.string_bytes.appendAssumeCapacity(@intCast(val.int));
             }
@@ -75,18 +75,18 @@ pub fn appendStr(vm: *VMState, v: Value) !void {
 pub fn makeError(vm: *VMState, msg: []const u8) !Value {
     const msg_val = try writeSlice(vm, msg);
     const p = try vm.allocImmortal(3);
-    vm.memory[@intCast(p)] = .{ .int = ERROR_TAG };
-    vm.memory[@intCast(p + 1)] = msg_val;
-    vm.memory[@intCast(p + 2)] = .null;
+    vm.slot(p).* = .{ .int = ERROR_TAG };
+    vm.slot(p + 1).* = msg_val;
+    vm.slot(p + 2).* = .null;
     return .{ .ptr = p + 1 };
 }
 
 pub fn makeErrorWithPayload(vm: *VMState, msg: []const u8, payload: Value) !Value {
     const msg_val = try writeSlice(vm, msg);
     const p = try vm.allocImmortal(3);
-    vm.memory[@intCast(p)] = .{ .int = ERROR_TAG };
-    vm.memory[@intCast(p + 1)] = msg_val;
-    vm.memory[@intCast(p + 2)] = payload;
+    vm.slot(p).* = .{ .int = ERROR_TAG };
+    vm.slot(p + 1).* = msg_val;
+    vm.slot(p + 2).* = payload;
     return .{ .ptr = p + 1 };
 }
 
@@ -114,9 +114,9 @@ pub fn makeIoError(vm: *VMState, err: anyerror, path: []const u8) !Value {
 pub fn writeArray(vm: *VMState, items: []const Value) !Value {
     const len: i64 = @intCast(items.len);
     const base = try vm.allocImmortal(@intCast(len + 1));
-    vm.memory[@intCast(base)] = .{ .int = len };
+    vm.slot(base).* = .{ .int = len };
     for (items, 0..) |item, i| {
-        vm.memory[@intCast(base + 1 + @as(i32, @intCast(i)))] = item;
+        vm.slot(base + 1 + @as(i32, @intCast(i))).* = item;
     }
     return .{ .ptr = base + 1 };
 }
@@ -146,7 +146,7 @@ pub fn valueToOwnedString(vm: *VMState, v: Value) ![]u8 {
         .ptr => |p| try readString(vm, p),
         .name => |idx| try vm.allocator.dupe(u8, vm.chunk.stringAt(idx)),
         .slice => |s| try vm.allocator.dupe(u8, vm.string_bytes.items[s.offset .. s.offset + s.len]),
-        .bytes => |b| try vm.allocator.dupe(u8, vm.bytes[b.offset..][0..b.len]),
+        .bytes => |b| try vm.allocator.dupe(u8, vm.bytes.items[b.offset..][0..b.len]),
         else => error.TypeError,
     };
 }
@@ -158,14 +158,14 @@ pub fn valueToStr(vm: *VMState, v: Value, buf: *std.ArrayList(u8)) ![]const u8 {
     switch (v) {
         .name => |idx| return vm.chunk.stringAt(idx),
         .slice => |s| return vm.string_bytes.items[s.offset .. s.offset + s.len],
-        .bytes => |b| return vm.bytes[b.offset..][0..b.len],
+        .bytes => |b| return vm.bytes.items[b.offset..][0..b.len],
         .ptr => |p| {
             buf.clearRetainingCapacity();
-            const len: usize = @intCast(vm.memory[@intCast(p - 1)].int);
+            const len: usize = @intCast(vm.slot(p - 1).*.int);
             try buf.ensureTotalCapacity(vm.allocator, len);
             var i: usize = 0;
             while (i < len) : (i += 1) {
-                const val = vm.memory[@intCast(p + @as(i32, @intCast(i)))];
+                const val = vm.slot(p + @as(i32, @intCast(i))).*;
                 switch (val) {
                     .int => |ch| buf.appendAssumeCapacity(@intCast(ch)),
                     else => return error.TypeError,
@@ -195,7 +195,7 @@ pub fn stringEquals(vm: *VMState, a: Value, b: Value) bool {
         .slice => |s| s.len,
         .bytes => |ba| ba.len,
         .name => |idx| vm.chunk.stringAt(idx).len,
-        .ptr => |p| @intCast(vm.memory[@intCast(p - 1)].int),
+        .ptr => |p| @intCast(vm.slot(p - 1).*.int),
         else => unreachable,
     };
     
@@ -203,7 +203,7 @@ pub fn stringEquals(vm: *VMState, a: Value, b: Value) bool {
         .slice => |s| s.len,
         .bytes => |by| by.len,
         .name => |idx| vm.chunk.stringAt(idx).len,
-        .ptr => |p| @intCast(vm.memory[@intCast(p - 1)].int),
+        .ptr => |p| @intCast(vm.slot(p - 1).*.int),
         else => unreachable,
     };
     
@@ -214,10 +214,10 @@ pub fn stringEquals(vm: *VMState, a: Value, b: Value) bool {
     while (i < len_a) : (i += 1) {
         const char_a: u8 = switch (a) {
             .slice => |s| vm.string_bytes.items[s.offset + i],
-            .bytes => |by| vm.bytes[by.offset + i],
+            .bytes => |by| vm.bytes.items[by.offset + i],
             .name => |idx| vm.chunk.stringAt(idx)[i],
             .ptr => |p| blk: {
-                const val = vm.memory[@intCast(p + @as(i32, @intCast(i)))];
+                const val = vm.slot(p + @as(i32, @intCast(i))).*;
                 if (val != .int) return false;
                 break :blk @intCast(val.int);
             },
@@ -225,10 +225,10 @@ pub fn stringEquals(vm: *VMState, a: Value, b: Value) bool {
         };
         const char_b: u8 = switch (b) {
             .slice => |s| vm.string_bytes.items[s.offset + i],
-            .bytes => |by| vm.bytes[by.offset + i],
+            .bytes => |by| vm.bytes.items[by.offset + i],
             .name => |idx| vm.chunk.stringAt(idx)[i],
             .ptr => |p| blk: {
-                const val = vm.memory[@intCast(p + @as(i32, @intCast(i)))];
+                const val = vm.slot(p + @as(i32, @intCast(i))).*;
                 if (val != .int) return false;
                 break :blk @intCast(val.int);
             },

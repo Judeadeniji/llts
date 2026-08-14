@@ -66,19 +66,19 @@ fn asHeapPtr(v: Value) !i32 {
 fn resolveArenaControl(vm: *VMState, v: Value) !i32 {
     const raw = try asHeapPtr(v);
     if (!vm.isValidHeapPtr(raw)) return error.TypeError;
-    if (vm.memory[@intCast(raw)] == .int and vm.memory[@intCast(raw)].int == ARENA_MAGIC)
+    if (vm.slot(raw).* == .int and vm.slot(raw).*.int == ARENA_MAGIC)
         return raw;
     // Arena struct object: slot 0 = control ptr.
-    const slot = vm.memory[@intCast(raw)];
+    const slot = vm.slot(raw).*;
     const candidate = try asHeapPtr(slot);
     if (!vm.isValidHeapPtr(candidate)) return error.TypeError;
-    if (vm.memory[@intCast(candidate)] == .int and vm.memory[@intCast(candidate)].int == ARENA_MAGIC)
+    if (vm.slot(candidate).* == .int and vm.slot(candidate).*.int == ARENA_MAGIC)
         return candidate;
     return error.TypeError;
 }
 
 fn arenaAlive(vm: *VMState, ctrl: i32, comptime op: []const u8) !void {
-    if (vm.memory[@intCast(ctrl + 4)].int != 1)
+    if (vm.slot(ctrl + 4).*.int != 1)
         return fail(vm, op, "arena is deinitialized");
 }
 
@@ -87,36 +87,36 @@ fn makeChunk(vm: *VMState, cap: i32) !i32 {
     var prev: i32 = 0;
     var curr = vm.free_chunks;
     while (curr != 0) {
-        const c_data_base: i32 = @intCast(vm.memory[@intCast(curr + 1)].int);
-        const c_data_end: i32 = @intCast(vm.memory[@intCast(curr + 2)].int);
+        const c_data_base: i32 = @intCast(vm.slot(curr + 1).*.int);
+        const c_data_end: i32 = @intCast(vm.slot(curr + 2).*.int);
         const c_cap = c_data_end - c_data_base;
         if (c_cap >= cap) {
             // Unlink from free list
-            const next = vm.memory[@intCast(curr + 4)].int;
+            const next = vm.slot(curr + 4).*.int;
             if (prev == 0) {
                 vm.free_chunks = @intCast(next);
             } else {
-                vm.memory[@intCast(prev + 4)] = .{ .int = next };
+                vm.slot(prev + 4).* = .{ .int = next };
             }
             // Re-initialize chunk
-            vm.memory[@intCast(curr)] = .{ .int = CHUNK_MAGIC };
-            vm.memory[@intCast(curr + 1)] = .{ .int = curr + 5 };
-            vm.memory[@intCast(curr + 2)] = .{ .int = curr + 5 + c_cap };
-            vm.memory[@intCast(curr + 3)] = .{ .int = curr + 5 };
-            vm.memory[@intCast(curr + 4)] = .{ .int = 0 }; // next
+            vm.slot(curr).* = .{ .int = CHUNK_MAGIC };
+            vm.slot(curr + 1).* = .{ .int = curr + 5 };
+            vm.slot(curr + 2).* = .{ .int = curr + 5 + c_cap };
+            vm.slot(curr + 3).* = .{ .int = curr + 5 };
+            vm.slot(curr + 4).* = .{ .int = 0 }; // next
             return curr;
         }
         prev = curr;
-        curr = @intCast(vm.memory[@intCast(curr + 4)].int);
+        curr = @intCast(vm.slot(curr + 4).*.int);
     }
 
     // 2. Fallback to fresh allocation
     const chunk = try vm.allocImmortal(5 + cap);
-    vm.memory[@intCast(chunk)] = .{ .int = CHUNK_MAGIC };
-    vm.memory[@intCast(chunk + 1)] = .{ .int = chunk + 5 };
-    vm.memory[@intCast(chunk + 2)] = .{ .int = chunk + 5 + cap };
-    vm.memory[@intCast(chunk + 3)] = .{ .int = chunk + 5 };
-    vm.memory[@intCast(chunk + 4)] = .{ .int = 0 }; // next
+    vm.slot(chunk).* = .{ .int = CHUNK_MAGIC };
+    vm.slot(chunk + 1).* = .{ .int = chunk + 5 };
+    vm.slot(chunk + 2).* = .{ .int = chunk + 5 + cap };
+    vm.slot(chunk + 3).* = .{ .int = chunk + 5 };
+    vm.slot(chunk + 4).* = .{ .int = 0 }; // next
     return chunk;
 }
 
@@ -124,42 +124,42 @@ fn makeByteChunk(vm: *VMState, cap: i32) !i32 {
     var prev: i32 = 0;
     var curr = vm.free_byte_chunks;
     while (curr != 0) {
-        const c_cap: i32 = @intCast(vm.memory[@intCast(curr + 2)].int);
+        const c_cap: i32 = @intCast(vm.slot(curr + 2).*.int);
         if (c_cap >= cap) {
-            const next = vm.memory[@intCast(curr + 4)].int;
+            const next = vm.slot(curr + 4).*.int;
             if (prev == 0) {
                 vm.free_byte_chunks = @intCast(next);
             } else {
-                vm.memory[@intCast(prev + 4)] = .{ .int = next };
+                vm.slot(prev + 4).* = .{ .int = next };
             }
-            const off: i32 = @intCast(vm.memory[@intCast(curr + 1)].int);
-            @memset(vm.bytes[@intCast(off)..][0..@intCast(c_cap)], 0);
-            vm.memory[@intCast(curr)] = .{ .int = BYTE_CHUNK_MAGIC };
-            vm.memory[@intCast(curr + 3)] = .{ .int = 0 };
-            vm.memory[@intCast(curr + 4)] = .{ .int = 0 };
+            const off: i32 = @intCast(vm.slot(curr + 1).*.int);
+            @memset(vm.bytes.items[@intCast(off)..][0..@intCast(c_cap)], 0);
+            vm.slot(curr).* = .{ .int = BYTE_CHUNK_MAGIC };
+            vm.slot(curr + 3).* = .{ .int = 0 };
+            vm.slot(curr + 4).* = .{ .int = 0 };
             return curr;
         }
         prev = curr;
-        curr = @intCast(vm.memory[@intCast(curr + 4)].int);
+        curr = @intCast(vm.slot(curr + 4).*.int);
     }
 
     const off = try vm.allocImmortalBytes(cap);
     const hdr = try vm.allocImmortal(5);
-    vm.memory[@intCast(hdr)] = .{ .int = BYTE_CHUNK_MAGIC };
-    vm.memory[@intCast(hdr + 1)] = .{ .int = off };
-    vm.memory[@intCast(hdr + 2)] = .{ .int = cap };
-    vm.memory[@intCast(hdr + 3)] = .{ .int = 0 };
-    vm.memory[@intCast(hdr + 4)] = .{ .int = 0 };
+    vm.slot(hdr).* = .{ .int = BYTE_CHUNK_MAGIC };
+    vm.slot(hdr + 1).* = .{ .int = off };
+    vm.slot(hdr + 2).* = .{ .int = cap };
+    vm.slot(hdr + 3).* = .{ .int = 0 };
+    vm.slot(hdr + 4).* = .{ .int = 0 };
     return hdr;
 }
 
 fn bumpInByteChunk(vm: *VMState, chunk: i32, n: i32) ?i32 {
-    if (vm.memory[@intCast(chunk)].int != BYTE_CHUNK_MAGIC) return null;
-    const watermark = vm.memory[@intCast(chunk + 3)].int;
-    const cap = vm.memory[@intCast(chunk + 2)].int;
+    if (vm.slot(chunk).*.int != BYTE_CHUNK_MAGIC) return null;
+    const watermark = vm.slot(chunk + 3).*.int;
+    const cap = vm.slot(chunk + 2).*.int;
     if (watermark + n > cap) return null;
-    vm.memory[@intCast(chunk + 3)] = .{ .int = watermark + n };
-    const off = vm.memory[@intCast(chunk + 1)].int;
+    vm.slot(chunk + 3).* = .{ .int = watermark + n };
+    const off = vm.slot(chunk + 1).*.int;
     return @intCast(off + watermark);
 }
 
@@ -196,25 +196,25 @@ fn arenaCreate(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const chunk = try makeChunk(vm, cap);
     const byte_chunk = try makeByteChunk(vm, cap);
     const ctrl = try vm.allocImmortal(7);
-    vm.memory[@intCast(ctrl)] = .{ .int = ARENA_MAGIC };
-    vm.memory[@intCast(ctrl + 1)] = .{ .ptr = chunk }; // current
-    vm.memory[@intCast(ctrl + 2)] = .{ .ptr = chunk }; // first
-    vm.memory[@intCast(ctrl + 3)] = .{ .int = cap };
-    vm.memory[@intCast(ctrl + 4)] = .{ .int = 1 }; // alive
-    vm.memory[@intCast(ctrl + 5)] = .{ .ptr = byte_chunk };
-    vm.memory[@intCast(ctrl + 6)] = .{ .ptr = byte_chunk };
+    vm.slot(ctrl).* = .{ .int = ARENA_MAGIC };
+    vm.slot(ctrl + 1).* = .{ .ptr = chunk }; // current
+    vm.slot(ctrl + 2).* = .{ .ptr = chunk }; // first
+    vm.slot(ctrl + 3).* = .{ .int = cap };
+    vm.slot(ctrl + 4).* = .{ .int = 1 }; // alive
+    vm.slot(ctrl + 5).* = .{ .ptr = byte_chunk };
+    vm.slot(ctrl + 6).* = .{ .ptr = byte_chunk };
 
     const obj = try vm.allocImmortal(1);
-    vm.memory[@intCast(obj)] = .{ .ptr = ctrl };
+    vm.slot(obj).* = .{ .ptr = ctrl };
     return .{ .ptr = obj };
 }
 
 fn bumpInChunk(vm: *VMState, chunk: i32, n: i32) ?i32 {
-    if (vm.memory[@intCast(chunk)].int != CHUNK_MAGIC) return null;
-    const watermark = vm.memory[@intCast(chunk + 3)].int;
-    const data_end = vm.memory[@intCast(chunk + 2)].int;
+    if (vm.slot(chunk).*.int != CHUNK_MAGIC) return null;
+    const watermark = vm.slot(chunk + 3).*.int;
+    const data_end = vm.slot(chunk + 2).*.int;
     if (watermark + n > data_end) return null;
-    vm.memory[@intCast(chunk + 3)] = .{ .int = watermark + n };
+    vm.slot(chunk + 3).* = .{ .int = watermark + n };
     return @intCast(watermark);
 }
 
@@ -228,20 +228,20 @@ fn arenaAlloc(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     if (n < 0) return fail(vm, "__arena_alloc", "invalid size");
     try arenaAlive(vm, ctrl, "__arena_alloc");
 
-    const cur_val = vm.memory[@intCast(ctrl + 1)];
+    const cur_val = vm.slot(ctrl + 1).*;
     const cur = try asHeapPtr(cur_val);
     if (bumpInChunk(vm, cur, @intCast(n))) |ptr| return .{ .ptr = ptr };
 
     // Grow: new chunk ≥ max(n, 1.5× last cap), like Zig ArenaAllocator.
-    const last_cap = vm.memory[@intCast(ctrl + 3)].int;
+    const last_cap = vm.slot(ctrl + 3).*.int;
     const grown = last_cap + @divTrunc(last_cap, 2);
     const new_cap = @max(n, @max(grown, DEFAULT_CHUNK));
     const new_chunk = try makeChunk(vm, @intCast(new_cap));
 
     // Append to list (from current).
-    vm.memory[@intCast(cur + 4)] = .{ .ptr = new_chunk };
-    vm.memory[@intCast(ctrl + 1)] = .{ .ptr = new_chunk };
-    vm.memory[@intCast(ctrl + 3)] = .{ .int = new_cap };
+    vm.slot(cur + 4).* = .{ .ptr = new_chunk };
+    vm.slot(ctrl + 1).* = .{ .ptr = new_chunk };
+    vm.slot(ctrl + 3).* = .{ .int = new_cap };
 
     const ptr = bumpInChunk(vm, new_chunk, @intCast(n)) orelse return error.OutOfMemory;
     return .{ .ptr = ptr };
@@ -261,10 +261,10 @@ fn arenaAllocArray(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
         .ptr => |p| p,
         else => return fail(vm, "__arena_alloc_array", "invalid allocation"),
     };
-    vm.memory[@intCast(base)] = .{ .int = len };
+    vm.slot(base).* = .{ .int = len };
     var i: i32 = 1;
     while (i <= len) : (i += 1) {
-        vm.memory[@intCast(base + i)] = .{ .int = 0 };
+        vm.slot(base + i).* = .{ .int = 0 };
     }
     return .{ .ptr = base + 1 };
 }
@@ -281,23 +281,23 @@ fn arenaAllocBytes(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     try arenaAlive(vm, ctrl, "__arena_alloc_bytes");
     if (n == 0) return .{ .bytes = .{ .offset = 0, .len = 0 } };
 
-    const cur_val = vm.memory[@intCast(ctrl + 5)];
+    const cur_val = vm.slot(ctrl + 5).*;
     const cur = try asHeapPtr(cur_val);
     if (bumpInByteChunk(vm, cur, @intCast(n))) |off| {
-        @memset(vm.bytes[@intCast(off)..][0..@intCast(n)], 0);
+        @memset(vm.bytes.items[@intCast(off)..][0..@intCast(n)], 0);
         return .{ .bytes = .{ .offset = @intCast(off), .len = @intCast(n) } };
     }
 
-    const last_cap = vm.memory[@intCast(ctrl + 3)].int;
+    const last_cap = vm.slot(cur + 2).*.int;
     const grown = last_cap + @divTrunc(last_cap, 2);
     const new_cap = @max(n, @max(grown, DEFAULT_CHUNK));
     const new_chunk = try makeByteChunk(vm, @intCast(new_cap));
 
-    vm.memory[@intCast(cur + 4)] = .{ .ptr = new_chunk };
-    vm.memory[@intCast(ctrl + 5)] = .{ .ptr = new_chunk };
+    vm.slot(cur + 4).* = .{ .ptr = new_chunk };
+    vm.slot(ctrl + 5).* = .{ .ptr = new_chunk };
 
     const off = bumpInByteChunk(vm, new_chunk, @intCast(n)) orelse return error.OutOfMemory;
-    @memset(vm.bytes[@intCast(off)..][0..@intCast(n)], 0);
+    @memset(vm.bytes.items[@intCast(off)..][0..@intCast(n)], 0);
     return .{ .bytes = .{ .offset = @intCast(off), .len = @intCast(n) } };
 }
 
@@ -307,68 +307,68 @@ fn arenaReset(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     try arenaAlive(vm, ctrl, "__arena_reset");
 
     // Retain capacity: rewind every chunk watermark, resume at first (Zig .retain_capacity).
-    var chunk_v = vm.memory[@intCast(ctrl + 2)];
+    var chunk_v = vm.slot(ctrl + 2).*;
     while (true) {
         const chunk = try asHeapPtr(chunk_v);
         if (chunk == 0) break;
-        if (vm.memory[@intCast(chunk)].int != CHUNK_MAGIC) break;
-        vm.memory[@intCast(chunk + 3)] = vm.memory[@intCast(chunk + 1)]; // watermark = data_base
-        const next = vm.memory[@intCast(chunk + 4)];
+        if (vm.slot(chunk).*.int != CHUNK_MAGIC) break;
+        vm.slot(chunk + 3).* = vm.slot(chunk + 1).*; // watermark = data_base
+        const next = vm.slot(chunk + 4).*;
         chunk_v = next;
         const next_p = asHeapPtr(next) catch break;
         if (next_p == 0) break;
     }
-    vm.memory[@intCast(ctrl + 1)] = vm.memory[@intCast(ctrl + 2)]; // current = first
+    vm.slot(ctrl + 1).* = vm.slot(ctrl + 2).*; // current = first
 
-    var bchunk_v = vm.memory[@intCast(ctrl + 6)];
+    var bchunk_v = vm.slot(ctrl + 6).*;
     while (true) {
         const bchunk = try asHeapPtr(bchunk_v);
         if (bchunk == 0) break;
-        if (vm.memory[@intCast(bchunk)].int != BYTE_CHUNK_MAGIC) break;
-        vm.memory[@intCast(bchunk + 3)] = .{ .int = 0 };
-        const next = vm.memory[@intCast(bchunk + 4)];
+        if (vm.slot(bchunk).*.int != BYTE_CHUNK_MAGIC) break;
+        vm.slot(bchunk + 3).* = .{ .int = 0 };
+        const next = vm.slot(bchunk + 4).*;
         bchunk_v = next;
         const next_p = asHeapPtr(next) catch break;
         if (next_p == 0) break;
     }
-    vm.memory[@intCast(ctrl + 5)] = vm.memory[@intCast(ctrl + 6)];
+    vm.slot(ctrl + 5).* = vm.slot(ctrl + 6).*;
     return .null;
 }
 
 fn arenaDeinit(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
     const ctrl = try resolveArenaControl(vm, args[0]);
-    if (vm.memory[@intCast(ctrl)].int != ARENA_MAGIC)
+    if (vm.slot(ctrl).*.int != ARENA_MAGIC)
         return fail(vm, "__arena_deinit", "invalid arena");
         
     // Walk the chunks and push them to vm.free_chunks
-    var chunk_v = vm.memory[@intCast(ctrl + 2)]; // first chunk
+    var chunk_v = vm.slot(ctrl + 2).*; // first chunk
     while (true) {
         const chunk = try asHeapPtr(chunk_v);
         if (chunk == 0) break;
-        if (vm.memory[@intCast(chunk)].int != CHUNK_MAGIC) break;
+        if (vm.slot(chunk).*.int != CHUNK_MAGIC) break;
         
-        const next = vm.memory[@intCast(chunk + 4)];
+        const next = vm.slot(chunk + 4).*;
         
         // Push this chunk to the free list
-        vm.memory[@intCast(chunk + 4)] = .{ .int = vm.free_chunks };
+        vm.slot(chunk + 4).* = .{ .int = vm.free_chunks };
         vm.free_chunks = chunk;
         
         chunk_v = next;
     }
 
-    var bchunk_v = vm.memory[@intCast(ctrl + 6)];
+    var bchunk_v = vm.slot(ctrl + 6).*;
     while (true) {
         const bchunk = try asHeapPtr(bchunk_v);
         if (bchunk == 0) break;
-        if (vm.memory[@intCast(bchunk)].int != BYTE_CHUNK_MAGIC) break;
-        const next = vm.memory[@intCast(bchunk + 4)];
-        vm.memory[@intCast(bchunk + 4)] = .{ .int = vm.free_byte_chunks };
+        if (vm.slot(bchunk).*.int != BYTE_CHUNK_MAGIC) break;
+        const next = vm.slot(bchunk + 4).*;
+        vm.slot(bchunk + 4).* = .{ .int = vm.free_byte_chunks };
         vm.free_byte_chunks = bchunk;
         bchunk_v = next;
     }
 
-    vm.memory[@intCast(ctrl + 4)] = .{ .int = 0 }; // Mark arena as dead
+    vm.slot(ctrl + 4).* = .{ .int = 0 }; // Mark arena as dead
     return .null;
 }
 

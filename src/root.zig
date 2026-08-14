@@ -67,4 +67,5 @@ test {
     _ = ast;
     _ = parser;
     _ = pipeline;
+    _ = vm_state;
 }

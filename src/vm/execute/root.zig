@@ -153,9 +153,9 @@ fn getProperty(vm: *VMState, const_idx: u16) RuntimeError!void {
     if (std.mem.eql(u8, name, "message") or std.mem.eql(u8, name, "code")) {
         switch (obj) {
             .ptr => |p| {
-                const tag = vm.memory[@intCast(p - 1)];
+                const tag = vm.slot(p - 1).*;
                 if (tag == .int and tag.int == state_mod.ERROR_TAG) {
-                    try stack.push(vm, vm.memory[@intCast(p)]);
+                    try stack.push(vm, vm.slot(p).*);
                     return;
                 }
             },
@@ -165,9 +165,9 @@ fn getProperty(vm: *VMState, const_idx: u16) RuntimeError!void {
     if (std.mem.eql(u8, name, "payload")) {
         switch (obj) {
             .ptr => |p| {
-                const tag = vm.memory[@intCast(p - 1)];
+                const tag = vm.slot(p - 1).*;
                 if (tag == .int and tag.int == state_mod.ERROR_TAG) {
-                    try stack.push(vm, vm.memory[@intCast(p + 1)]);
+                    try stack.push(vm, vm.slot(p + 1).*);
                     return;
                 }
             },

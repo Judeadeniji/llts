@@ -51,7 +51,7 @@ fn valuesEqual(vm: *VMState, a: Value, b: Value) bool {
 
 fn isErrorPtr(vm: *VMState, p: i32) bool {
     if (p < 1 or !vm.isValidHeapPtr(p - 1)) return false;
-    const tag = vm.memory[@intCast(p - 1)];
+    const tag = vm.slot(p - 1).*;
     return tag == .int and tag.int == state_mod.ERROR_TAG;
 }
 

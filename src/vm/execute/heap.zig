@@ -27,11 +27,11 @@ pub fn getIndex(vm: *VMState) HeapError!void {
                 const msg = std.fmt.bufPrint(&buf, "Array index out of bounds: {d} (len {d}); use len(arr)", .{ i, b.len }) catch "Array index out of bounds";
                 return fail(vm, msg);
             }
-            try stack.push(vm, .{ .int = vm.bytes[b.offset + @as(u32, @intCast(i))] });
+            try stack.push(vm, .{ .int = vm.bytes.items[b.offset + @as(u32, @intCast(i))] });
             return;
         },
         .ptr => |p| {
-            try stack.push(vm, vm.memory[@intCast(p + i)]);
+            try stack.push(vm, vm.slot(p + @as(i32, @intCast(i))).*);
             return;
         },
         .null => return fail(vm, "Cannot access field of null"),
@@ -59,12 +59,12 @@ pub fn setIndex(vm: *VMState) HeapError!void {
                 else => return fail(vm, "Byte store requires int"),
             };
             if (n < 0 or n > 255) return fail(vm, "Byte value out of range 0..255");
-            vm.bytes[b.offset + @as(u32, @intCast(i))] = @intCast(n);
+            vm.bytes.items[b.offset + @as(u32, @intCast(i))] = @intCast(n);
             try stack.push(vm, .{ .int = n });
             return;
         },
         .ptr => |p| {
-            vm.memory[@intCast(p + i)] = val;
+            vm.slot(p + @as(i32, @intCast(i))).* = val;
             try stack.push(vm, val);
             return;
         },
@@ -98,18 +98,18 @@ pub fn getArray(vm: *VMState) HeapError!void {
             const msg = std.fmt.bufPrint(&buf, "Array index out of bounds: {d} (len {d}); use len(arr)", .{ i, b.len }) catch "Array index out of bounds";
             return fail(vm, msg);
         }
-        try stack.push(vm, .{ .int = vm.bytes[b.offset + @as(u32, @intCast(i))] });
+        try stack.push(vm, .{ .int = vm.bytes.items[b.offset + @as(u32, @intCast(i))] });
         return;
     }
     const p = asArrayPtr(vm, ptr) orelse return fail(vm, "Indexing non-array");
-    const len_val = vm.memory[@intCast(p - 1)];
+    const len_val = vm.slot(p - 1).*;
     const len = len_val.int;
     if (i < 0 or i >= len) {
         var buf: [96]u8 = undefined;
         const msg = std.fmt.bufPrint(&buf, "Array index out of bounds: {d} (len {d}); use len(arr)", .{ i, len }) catch "Array index out of bounds";
         return fail(vm, msg);
     }
-    try stack.push(vm, vm.memory[@intCast(p + i)]);
+    try stack.push(vm, vm.slot(p + @as(i32, @intCast(i))).*);
 }
 
 pub fn setArray(vm: *VMState) HeapError!void {
@@ -132,19 +132,19 @@ pub fn setArray(vm: *VMState) HeapError!void {
             else => return fail(vm, "Byte store requires int"),
         };
         if (n < 0 or n > 255) return fail(vm, "Byte value out of range 0..255");
-        vm.bytes[b.offset + @as(u32, @intCast(i))] = @intCast(n);
+        vm.bytes.items[b.offset + @as(u32, @intCast(i))] = @intCast(n);
         try stack.push(vm, .{ .int = n });
         return;
     }
     const p = asArrayPtr(vm, ptr) orelse return fail(vm, "Indexing non-array");
-    const len_val = vm.memory[@intCast(p - 1)];
+    const len_val = vm.slot(p - 1).*;
     const len = len_val.int;
     if (i < 0 or i >= len) {
         var buf: [96]u8 = undefined;
         const msg = std.fmt.bufPrint(&buf, "Array index out of bounds: {d} (len {d}); use len(arr)", .{ i, len }) catch "Array index out of bounds";
         return fail(vm, msg);
     }
-    vm.memory[@intCast(p + i)] = val;
+    vm.slot(p + @as(i32, @intCast(i))).* = val;
     try stack.push(vm, val);
 }
 
@@ -158,9 +158,9 @@ pub fn makeString(vm: *VMState) HeapError!void {
 pub fn makeError(vm: *VMState) HeapError!void {
     const msg = stack.pop(vm);
     const p = try vm.allocImmortal(3);
-    vm.memory[@intCast(p)] = .{ .int = ERROR_TAG };
-    vm.memory[@intCast(p + 1)] = msg;
-    vm.memory[@intCast(p + 2)] = .null;
+    vm.slot(p).* = .{ .int = ERROR_TAG };
+    vm.slot(p + 1).* = msg;
+    vm.slot(p + 2).* = .null;
     try stack.push(vm, .{ .ptr = p + 1 });
 }
 
@@ -168,9 +168,9 @@ pub fn makeErrorPayload(vm: *VMState) HeapError!void {
     const payload = stack.pop(vm);
     const msg = stack.pop(vm);
     const p = try vm.allocImmortal(3);
-    vm.memory[@intCast(p)] = .{ .int = ERROR_TAG };
-    vm.memory[@intCast(p + 1)] = msg;
-    vm.memory[@intCast(p + 2)] = payload;
+    vm.slot(p).* = .{ .int = ERROR_TAG };
+    vm.slot(p + 1).* = msg;
+    vm.slot(p + 2).* = payload;
     try stack.push(vm, .{ .ptr = p + 1 });
 }
 
@@ -178,11 +178,11 @@ pub fn isError(vm: *VMState) HeapError!void {
     const val = stack.pop(vm);
     const p: ?i32 = switch (val) {
         .ptr => |x| x,
-        .int => |x| if (x >= state_mod.HEAP_START and x < vm.heap_ptr) @intCast(x) else null,
+        .int => |x| if (vm.isValidHeapPtr(x)) @intCast(x) else null,
         else => null,
     };
     const ok = if (p) |ptr|
-        ptr >= state_mod.HEAP_START and vm.memory[@intCast(ptr - 1)] == .int and vm.memory[@intCast(ptr - 1)].int == ERROR_TAG
+        ptr >= state_mod.HEAP_START and vm.isValidHeapPtr(ptr - 1) and vm.slot(ptr - 1).* == .int and vm.slot(ptr - 1).*.int == ERROR_TAG
     else
         false;
     try stack.push(vm, .{ .bool = ok });
@@ -203,13 +203,13 @@ fn appendStr(vm: *VMState, list: *std.ArrayList(u8), v: Value) !void {
         .name => |idx| try list.appendSlice(vm.allocator, vm.chunk.stringAt(idx)),
         .slice => |s| try list.appendSlice(vm.allocator, vm.string_bytes.items[s.offset .. s.offset + s.len]),
         .ptr => |p| {
-            const len: usize = @intCast(vm.memory[@intCast(p - 1)].int);
+            const len: usize = @intCast(vm.slot(p - 1).*.int);
             var i: usize = 0;
             while (i < len) : (i += 1) {
-                try list.append(vm.allocator, @intCast(vm.memory[@intCast(p + @as(i32, @intCast(i)))].int));
+                try list.append(vm.allocator, @intCast(vm.slot(p + @as(i32, @intCast(i))).*.int));
             }
         },
-        .bytes => |b| try list.appendSlice(vm.allocator, vm.bytes[b.offset..][0..b.len]),
+        .bytes => |b| try list.appendSlice(vm.allocator, vm.bytes.items[b.offset..][0..b.len]),
         .int => |n| {
             var buf: [32]u8 = undefined;
             const s = try std.fmt.bufPrint(&buf, "{d}", .{n});

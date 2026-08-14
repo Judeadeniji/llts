@@ -87,11 +87,11 @@ pub fn packRest(vm: *VMState, named: u8) CallError!void {
     const total = frame.arg_count;
     const rest_count: i32 = if (total > named) @intCast(total - named) else 0;
     const base = try vm.allocSlots(rest_count + 1);
-    vm.memory[@intCast(base)] = .{ .int = rest_count };
+    vm.slot(base).* = .{ .int = rest_count };
     var i: i32 = 0;
     while (i < rest_count) : (i += 1) {
         const slot = frame.base_slot + named + @as(usize, @intCast(i));
-        vm.memory[@intCast(base + 1 + i)] = vm.stack.items[slot];
+        vm.slot(base + 1 + i).* = vm.stack.items[slot];
     }
     vm.stack.shrinkRetainingCapacity(frame.base_slot + named);
     try stack.push(vm, .{ .ptr = base + 1 });

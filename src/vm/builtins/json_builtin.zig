@@ -61,7 +61,7 @@ fn stringifyNode(vm: *VMState, val: Value, out: *std.io.Writer.Allocating) !void
         .float => |f| try out.writer.print("{d}", .{f}),
         .name => |idx| try out.writer.print("{f}", .{std.json.fmt(vm.chunk.stringAt(idx), .{})}),
         .slice => |s| try out.writer.print("{f}", .{std.json.fmt(vm.string_bytes.items[s.offset .. s.offset + s.len], .{})}),
-        .bytes => |b| try out.writer.print("{f}", .{std.json.fmt(vm.bytes[b.offset..][0..b.len], .{})}),
+        .bytes => |b| try out.writer.print("{f}", .{std.json.fmt(vm.bytes.items[b.offset..][0..b.len], .{})}),
         .module => |mod| {
             try out.writer.writeAll("{");
             var it = mod.props.iterator();
@@ -76,7 +76,7 @@ fn stringifyNode(vm: *VMState, val: Value, out: *std.io.Writer.Allocating) !void
             try out.writer.writeAll("}");
         },
         .ptr => |p| {
-            const tag = vm.memory[@intCast(p - 1)];
+            const tag = vm.slot(p - 1).*;
             if (tag == .int and tag.int == state_mod.ERROR_TAG) {
                 try out.writer.writeAll("\"[Error]\"");
                 return;
@@ -86,7 +86,7 @@ fn stringifyNode(vm: *VMState, val: Value, out: *std.io.Writer.Allocating) !void
             var i: usize = 0;
             while (i < len) : (i += 1) {
                 if (i > 0) try out.writer.writeAll(",");
-                try stringifyNode(vm, vm.memory[@intCast(p + @as(i32, @intCast(i)))], out);
+                try stringifyNode(vm, vm.slot(p + @as(i32, @intCast(i))).*, out);
             }
             try out.writer.writeAll("]");
         },

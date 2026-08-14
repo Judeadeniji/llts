@@ -33,7 +33,7 @@ The VM operates on a tagged union, `Value`, which can represent various primitiv
     *   `int`: 64-bit signed integer (`i64`).
     *   `float`: 64-bit floating point (`f64`).
 *   **Heap/References**: 
-    *   `ptr: i32`: A pointer into the Value-slot heap, representing `[]int` arrays, errors, and struct instances.
+    *   `ptr: i32`: A pointer into the Value heap: frame slots (`HEAP_START..`) or immortal (`IMMORTAL_BASE + i`).
     *   `bytes: { offset: u32, len: u32 }`: Packed mutable bytes in `VMState.bytes` (`@new` `[]byte` / `[N]byte`).
     *   `list: *ListObject`: Growable dynamic list (`std/list`).
     *   `map: *MapObject`: Growable hash map (`std/map`).

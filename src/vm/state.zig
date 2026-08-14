@@ -8,10 +8,10 @@ pub const ModuleObject = value.ModuleObject;
 pub const ListObject = value.ListObject;
 pub const MapObject = value.MapObject;
 
-pub const MEMORY_SIZE: usize = 1024 * 1024;
-pub const BYTE_MEMORY_SIZE: usize = 1024 * 1024;
 pub const HEAP_START: i32 = 1024;
-pub const BYTE_HEAP_START: i32 = 0;
+/// Immortal (arena / `@new` / errors) live in a separate growable list.
+/// Encoded as `IMMORTAL_BASE + index` so they never collide with frame ptrs.
+pub const IMMORTAL_BASE: i32 = 1 << 30;
 pub const ERROR_TAG: i32 = 0xE2202;
 pub const MAX_FRAMES: usize = 256;
 
@@ -28,7 +28,7 @@ pub const CallFrame = struct {
     source_index: u16 = 0,
     /// Heap bump at call entry. On return, `heap_ptr` rewinds here so
     /// frame-local implicit allocs (bare `Foo{}` / `[…]`) die with the frame.
-    /// Immortal allocs raise this watermark so arenas / `@new` targets survive.
+    /// Immortal allocs live in a separate growable list and are not rewound.
     heap_watermark: i32 = HEAP_START,
 
     pub fn init(allocator: std.mem.Allocator) CallFrame {
@@ -47,14 +47,14 @@ pub const VMState = struct {
     globals: std.StringHashMap(Value),
     stack: std.ArrayList(Value) = .empty,
     frames: std.ArrayList(CallFrame) = .empty,
-    memory: []Value,
+    /// Frame-local Value heap. Grows; rewind is `heap_ptr` (capacity retained).
+    memory: std.ArrayList(Value) = .empty,
     heap_ptr: i32 = HEAP_START,
-    immortal_ptr: i32 = @intCast(MEMORY_SIZE),
+    /// Pass-/process-lifetime Values (arenas, errors, escaped `@new`). Grows only.
+    immortal: std.ArrayList(Value) = .empty,
     free_chunks: i32 = 0,
-    /// Packed byte heap (`[]byte` / `[N]byte`). One byte per element, not one Value.
-    bytes: []u8,
-    byte_ptr: i32 = BYTE_HEAP_START,
-    byte_immortal_ptr: i32 = @intCast(BYTE_MEMORY_SIZE),
+    /// Packed byte heap (`[]byte` / `[N]byte`). Append-only, grows as needed.
+    bytes: std.ArrayList(u8) = .empty,
     free_byte_chunks: i32 = 0,
     chunk: *Chunk,
     current_line: u32 = 1,
@@ -75,18 +75,16 @@ pub const VMState = struct {
     script_args: []const []const u8 = &.{},
 
     pub fn init(allocator: std.mem.Allocator, chunk: *Chunk) !VMState {
-        const memory = try allocator.alloc(Value, MEMORY_SIZE);
-        @memset(memory, .null);
-        const bytes = try allocator.alloc(u8, BYTE_MEMORY_SIZE);
-        @memset(bytes, 0);
         var state: VMState = .{
             .allocator = allocator,
             .globals = std.StringHashMap(Value).init(allocator),
             .string_cache = std.AutoHashMap(u32, i32).init(allocator),
-            .memory = memory,
-            .bytes = bytes,
             .chunk = chunk,
         };
+        try state.memory.appendNTimes(allocator, .null, @intCast(HEAP_START));
+        try state.memory.ensureTotalCapacity(allocator, 4096);
+        try state.immortal.ensureTotalCapacity(allocator, 256);
+        try state.bytes.ensureTotalCapacity(allocator, 4096);
         var frame = CallFrame.init(allocator);
         frame.func_name = "<anonymous>";
         frame.file = if (chunk.file.len > 0) chunk.file else "<anonymous>";
@@ -132,47 +130,68 @@ pub const VMState = struct {
         self.buffers.deinit(self.allocator);
         self.string_cache.deinit();
         self.string_bytes.deinit(self.allocator);
-        self.allocator.free(self.memory);
-        self.allocator.free(self.bytes);
+        self.memory.deinit(self.allocator);
+        self.immortal.deinit(self.allocator);
+        self.bytes.deinit(self.allocator);
     }
 
     /// Frame-local bump. Rewound when the current call returns (see `doReturn`).
     pub fn allocSlots(self: *VMState, count: i32) !i32 {
+        if (count < 0) return error.OutOfMemory;
         const ptr = self.heap_ptr;
-        if (ptr + count > self.immortal_ptr) return error.OutOfMemory;
-        self.heap_ptr += count;
+        const new_ptr = ptr + count;
+        const new_len: usize = @intCast(new_ptr);
+        if (new_len > self.memory.items.len) {
+            try self.memory.resize(self.allocator, new_len);
+        }
+        @memset(self.memory.items[@intCast(ptr)..new_len], .null);
+        self.heap_ptr = new_ptr;
         return ptr;
     }
 
     /// Process-/pass-lifetime bump (arenas, `error(…)`, values meant to escape a frame).
-    /// Allocated downwards from the end of the heap to avoid leaking frame-local variables.
+    /// Separate growable list so frame rewind cannot clobber escaped data.
     pub fn allocImmortal(self: *VMState, count: i32) !i32 {
-        if (self.immortal_ptr - count < self.heap_ptr) return error.OutOfMemory;
-        self.immortal_ptr -= count;
-        return self.immortal_ptr;
+        if (count < 0) return error.OutOfMemory;
+        const idx: i32 = @intCast(self.immortal.items.len);
+        const new_len = self.immortal.items.len + @as(usize, @intCast(count));
+        try self.immortal.resize(self.allocator, new_len);
+        @memset(self.immortal.items[@intCast(idx)..], .null);
+        return IMMORTAL_BASE + idx;
+    }
+
+    pub fn isImmortalPtr(ptr: i32) bool {
+        return ptr >= IMMORTAL_BASE;
     }
 
     pub fn isValidHeapPtr(self: *const VMState, ptr: i64) bool {
+        if (ptr >= IMMORTAL_BASE) {
+            const i = ptr - IMMORTAL_BASE;
+            return i >= 0 and i < @as(i64, @intCast(self.immortal.items.len));
+        }
         if (ptr < HEAP_START) return false;
-        if (ptr >= @as(i64, @intCast(MEMORY_SIZE))) return false;
-        const p: i32 = @intCast(ptr);
-        if (p >= self.heap_ptr and p < self.immortal_ptr) return false;
-        return true;
+        return ptr < self.heap_ptr;
     }
 
-    /// Packed bytes for `@new(a, []byte, n)` / `[N]byte`. Bump from the immortal end
-    /// (same region as arena chunks) so frame rewind of `heap_ptr` cannot clobber them.
+    /// Load/store a heap slot. Frame indices are `HEAP_START..heap_ptr`;
+    /// immortal indices are `IMMORTAL_BASE + i`.
+    pub fn slot(self: *VMState, ptr: i32) *Value {
+        if (ptr >= IMMORTAL_BASE) {
+            return &self.immortal.items[@intCast(ptr - IMMORTAL_BASE)];
+        }
+        return &self.memory.items[@intCast(ptr)];
+    }
+
+    /// Packed bytes for `@new(a, []byte, n)` / `[N]byte`. Grows as needed.
     pub fn allocImmortalBytes(self: *VMState, count: i32) !i32 {
         if (count < 0) return error.OutOfMemory;
-        if (self.byte_immortal_ptr - count < self.byte_ptr) return error.OutOfMemory;
-        self.byte_immortal_ptr -= count;
-        const ptr = self.byte_immortal_ptr;
-        @memset(self.bytes[@intCast(ptr)..][0..@intCast(count)], 0);
+        const ptr: i32 = @intCast(self.bytes.items.len);
+        try self.bytes.appendNTimes(self.allocator, 0, @intCast(count));
         return ptr;
     }
 
     pub fn packedBytes(self: *VMState, offset: u32, len: u32) []u8 {
-        return self.bytes[offset..][0..len];
+        return self.bytes.items[offset..][0..len];
     }
 
     pub fn allocModule(self: *VMState, name: []const u8) !*ModuleObject {
@@ -206,3 +225,37 @@ pub const VMState = struct {
         return buf;
     }
 };
+
+test "frame heap grows past initial capacity" {
+    var c = chunk_mod.Chunk.init(std.testing.allocator);
+    defer c.deinit();
+    var vm = try VMState.init(std.testing.allocator, &c);
+    defer vm.deinit();
+
+    const a = try vm.allocSlots(8000);
+    try std.testing.expectEqual(HEAP_START, a);
+    try std.testing.expectEqual(HEAP_START + 8000, vm.heap_ptr);
+    vm.slot(a).* = .{ .int = 42 };
+    try std.testing.expectEqual(@as(i64, 42), vm.slot(a).*.int);
+}
+
+test "immortal heap and packed bytes grow" {
+    var c = chunk_mod.Chunk.init(std.testing.allocator);
+    defer c.deinit();
+    var vm = try VMState.init(std.testing.allocator, &c);
+    defer vm.deinit();
+
+    const p = try vm.allocImmortal(3);
+    try std.testing.expect(p >= IMMORTAL_BASE);
+    vm.slot(p).* = .{ .int = 7 };
+    _ = try vm.allocImmortal(5000);
+    try std.testing.expect(vm.immortal.items.len >= 5003);
+    try std.testing.expectEqual(@as(i64, 7), vm.slot(p).*.int);
+
+    const off = try vm.allocImmortalBytes(2 * 1024 * 1024);
+    try std.testing.expect(vm.bytes.items.len >= 2 * 1024 * 1024);
+    vm.bytes.items[@intCast(off)] = 9;
+    vm.bytes.items[@intCast(off + 2 * 1024 * 1024 - 1)] = 8;
+    try std.testing.expectEqual(@as(u8, 9), vm.bytes.items[@intCast(off)]);
+    try std.testing.expectEqual(@as(u8, 8), vm.bytes.items[@intCast(off + 2 * 1024 * 1024 - 1)]);
+}

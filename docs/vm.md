@@ -9,8 +9,9 @@ The virtual machine context is encapsulated entirely within `state.zig:VMState`.
 Key components of `VMState`:
 * **`stack`**: A unified `std.ArrayList(Value)` stack used for both instruction operands and local variables.
 * **`frames`**: A stack of `CallFrame` objects (max depth: `MAX_FRAMES` = 256).
-* **`memory`**: The object heap, a `[]Value` bump region (`MEMORY_SIZE` slots) for structs, `[]int` arrays, and errors.
-* **`bytes`**: Packed byte heap (`BYTE_MEMORY_SIZE`) for `@new` `[]byte` / `[N]byte` buffers. One host byte per element.
+* **`memory`**: Frame-local object heap (`ArrayList(Value)`). Starts small and grows; `heap_ptr` rewinds on return.
+* **`immortal`**: Pass-/process-lifetime Values (arenas, errors, escaped `@new`). Separate growable list; pointers are `IMMORTAL_BASE + index`.
+* **`bytes`**: Packed byte heap (`ArrayList(u8)`) for `@new` `[]byte` / `[N]byte`. Grows as needed.
 * **`string_bytes`**: A zero-alloc, append-only `std.ArrayList(u8)` arena for dynamic string data.
 * **`globals` / `modules`**: Hash maps that own and resolve global variables and module instances.
 
@@ -35,11 +36,11 @@ All operations push/pop `Value` tags onto `VMState.stack`. Local variables are a
 
 ## 3. Heap Representation & Memory Management
 
-The heap is a single, contiguous array (`vm.memory`) using a bump allocator managed by `vm.heap_ptr`. Allocation starts at `HEAP_START` (1024). It heavily leans on region-based lifetimes rather than tracing garbage collection.
+The frame heap is a growable `ArrayList(Value)` bump-allocated from `HEAP_START` (1024). Immortal allocations (arenas, `error(…)`, `@new`) live in a **separate** growable list so returning a frame cannot clobber escaped data. Packed byte buffers use a growable `ArrayList(u8)`. There is no fixed slot cap.
 
 ### Region-Based Lifetimes
-1. **Frame-Local (Implicit)**: Standard allocations (e.g., arrays, structs) call `vm.allocSlots()`, which bumps `heap_ptr`. When a function executes `OP_RETURN`, `vm.heap_ptr` is rewound to the frame's `heap_watermark`. This immediately reclaims all local allocations without overhead.
-2. **Immortal (Escaping)**: Values meant to escape a function's scope (e.g., error objects) call `vm.allocImmortal()`. This allocation bumps the `heap_ptr`, but also updates the `heap_watermark` of *all active frames*. As a result, the rewind step in `OP_RETURN` will not destroy the escaping object.
+1. **Frame-Local (Implicit)**: Standard allocations (e.g., arrays, structs) call `vm.allocSlots()`, which bumps `heap_ptr`. When a function executes `OP_RETURN`, `vm.heap_ptr` is rewound to the frame's `heap_watermark`. Capacity is retained for the next call.
+2. **Immortal (Escaping)**: Values meant to escape a function's scope call `vm.allocImmortal()` into the immortal list (`IMMORTAL_BASE + index`). Frame rewind never touches this region.
 
 ### Object Metadata
 Heap objects store their metadata immediately before their pointer index:

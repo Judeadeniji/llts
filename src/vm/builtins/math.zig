@@ -73,16 +73,16 @@ fn sqrtFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
 fn minMax(vm: *VMState, args: []Value, find_max: bool) !Value {
     if (args.len < 1) return error.ArityError;
     const ptr = try util.asPtr(args[0]);
-    const len = vm.memory[@intCast(ptr - 1)].int;
+    const len = vm.slot(ptr - 1).*.int;
     if (len == 0) return .{ .float = std.math.inf(f64) * (if (find_max) @as(f64, -1) else @as(f64, 1)) };
-    var best: f64 = switch (vm.memory[@intCast(ptr)]) {
+    var best: f64 = switch (vm.slot(ptr).*) {
         .float => |f| f,
         .int => |n| @floatFromInt(n),
         else => return error.TypeError,
     };
     var i: i32 = 1;
     while (i < len) : (i += 1) {
-        const n: f64 = switch (vm.memory[@intCast(ptr + i)]) {
+        const n: f64 = switch (vm.slot(ptr + i).*) {
             .float => |f| f,
             .int => |m| @floatFromInt(m),
             else => return error.TypeError,

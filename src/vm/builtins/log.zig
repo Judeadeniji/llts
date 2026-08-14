@@ -19,14 +19,14 @@ fn isErrorValue(vm: *VMState, v: Value) bool {
     if (v != .ptr) return false;
     const p = v.ptr;
     if (p < 1 or !vm.isValidHeapPtr(p - 1)) return false;
-    const tag = vm.memory[@intCast(p - 1)];
+    const tag = vm.slot(p - 1).*;
     return tag == .int and tag.int == ERROR_TAG;
 }
 
 /// Format an LLTS error for host logs (no redundant `Error:` prefix).
 fn writeErrorArg(vm: *VMState, out: *std.ArrayList(u8), p: i32) !void {
-    try print_fmt.writeValue(vm, out, vm.memory[@intCast(p)]);
-    const payload = vm.memory[@intCast(p + 1)];
+    try print_fmt.writeValue(vm, out, vm.slot(p).*);
+    const payload = vm.slot(p + 1).*;
     if (payload != .null) {
         try out.appendSlice(vm.allocator, " — ");
         try print_fmt.writeValue(vm, out, payload);
@@ -55,9 +55,9 @@ fn logFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
         const p = args[1].ptr;
         var code_buf: std.ArrayList(u8) = .empty;
         defer code_buf.deinit(vm.allocator);
-        try print_fmt.writeValue(vm, &code_buf, vm.memory[@intCast(p)]);
+        try print_fmt.writeValue(vm, &code_buf, vm.slot(p).*);
 
-        const payload = vm.memory[@intCast(p + 1)];
+        const payload = vm.slot(p + 1).*;
         if (payload == .null) {
             io_log.log(.err, "llts", "{s}", .{code_buf.items});
         } else {

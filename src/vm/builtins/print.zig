@@ -76,7 +76,7 @@ pub fn writeValue(vm: *VMState, out: *std.ArrayList(u8), v: Value) !void {
 }
 
 fn writePackedBytes(vm: *VMState, out: *std.ArrayList(u8), offset: u32, len: u32) !void {
-    const data = vm.bytes[offset..][0..len];
+    const data = vm.bytes.items[offset..][0..len];
     if (len == 0) return;
     var printable = true;
     for (data) |ch| {
@@ -108,24 +108,24 @@ fn writePtr(vm: *VMState, out: *std.ArrayList(u8), p: i32) anyerror!void {
         try out.appendSlice(vm.allocator, s);
         return;
     }
-    const header_val = vm.memory[@intCast(p - 1)];
+    const header_val = vm.slot(p - 1).*;
     if (header_val == .int and header_val.int == ERROR_TAG) {
         try out.appendSlice(vm.allocator, "Error: ");
-        try writeValue(vm, out, vm.memory[@intCast(p)]);
-        const payload = vm.memory[@intCast(p + 1)];
+        try writeValue(vm, out, vm.slot(p).*);
+        const payload = vm.slot(p + 1).*;
         if (payload != .null) {
             try out.appendSlice(vm.allocator, " — ");
             try writeValue(vm, out, payload);
         }
         return;
     }
-    if (header_val == .int and header_val.int >= 0 and header_val.int < 1024 * 1024) {
+    if (header_val == .int and header_val.int >= 0 and header_val.int < 64 * 1024 * 1024) {
         const len: usize = @intCast(header_val.int);
         if (len == 0) return;
         var printable = true;
         var i: usize = 0;
         while (i < len) : (i += 1) {
-            const val = vm.memory[@intCast(p + @as(i32, @intCast(i)))];
+            const val = vm.slot(p + @as(i32, @intCast(i))).*;
             if (val != .int) { printable = false; break; }
             const ch = val.int;
             if (ch < 32 or ch > 126) {
@@ -138,7 +138,7 @@ fn writePtr(vm: *VMState, out: *std.ArrayList(u8), p: i32) anyerror!void {
         if (printable) {
             i = 0;
             while (i < len) : (i += 1) {
-                const ch: u8 = @intCast(vm.memory[@intCast(p + @as(i32, @intCast(i)))].int);
+                const ch: u8 = @intCast(vm.slot(p + @as(i32, @intCast(i))).*.int);
                 try out.append(vm.allocator, ch);
             }
             return;
@@ -148,7 +148,7 @@ fn writePtr(vm: *VMState, out: *std.ArrayList(u8), p: i32) anyerror!void {
         while (i < len) : (i += 1) {
             if (i > 0) try out.appendSlice(vm.allocator, ", ");
 
-            try writeValue(vm, out, vm.memory[@intCast(p + @as(i32, @intCast(i)))]);
+            try writeValue(vm, out, vm.slot(p + @as(i32, @intCast(i))).*);
         }
         try out.append(vm.allocator, ']');
         return;
