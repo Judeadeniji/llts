@@ -7,6 +7,7 @@ const expr = @import("../expr/root.zig");
 const stmt = @import("root.zig");
 
 const CompilerState = state_mod.CompilerState;
+const from_ast = @import("../typecheck/from_ast.zig");
 
 pub fn compileBlock(state: *CompilerState, block: *const ast.Block) !void {
     try scope.beginScope(state);
@@ -98,7 +99,7 @@ fn pushParam(state: *CompilerState, p: ast.Param, method_struct: ?[]const u8) !v
     var p_type: ?[]const u8 = null;
     if (std.mem.eql(u8, p.name, "self")) p_type = method_struct;
     if (p.type_annotation) |ta| {
-        if (ta.* == .primary) p_type = ta.primary.name;
+        p_type = (try from_ast.typeAstToDisplay(ta, state));
     }
     try state.locals.append(state.allocator, .{
         .name = p.name,

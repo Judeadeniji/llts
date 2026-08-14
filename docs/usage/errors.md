@@ -54,6 +54,9 @@ LLTS features a strict, static type system that performs checks at evaluation ti
 - **Textual**: `string`, `[]byte`
   - String literals can be directly assigned to sized byte arrays. The length must match exactly.
   - Example: `$exact: [5]byte = "hello";`
+- **Optional**: `?T` is sugar for `T | null` (either spelling is accepted; `@typeOf` prints `?T`).
+  - `null` and `T` are both assignable to `?T`.
+  - Field access on a `?Struct` uses `Struct`'s layout; touching `null` is a runtime error.
 
 ### Struct and Array Type Constraints
 For details on type enforcement, initialization constraints, and compile errors specific to structs and arrays, see [Structs and Methods](structs_and_methods.md) and [Arrays](arrays.md).

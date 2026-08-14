@@ -247,6 +247,9 @@ pub fn parsePrimary(self: *Parser) ParseError!*Node {
             }
             if (std.mem.eql(u8, token.value, "[")) return parseBracketPrimary(self, token);
             if (std.mem.eql(u8, token.value, "{")) return control.parseBlock(self);
+            if (std.mem.eql(u8, token.value, "?") and looksLikeTypeContinuation(self.peek(1))) {
+                return types.parseType(self);
+            }
         },
         else => {},
     }
@@ -280,9 +283,9 @@ fn isArrayLengthToken(tok: ctx.Token) bool {
 
 fn looksLikeTypeContinuation(tok: ?ctx.Token) bool {
     const t = tok orelse return false;
-    if (t.type == .delimiter and std.mem.eql(u8, t.value, "[")) return true;
+    if (t.type == .delimiter and (std.mem.eql(u8, t.value, "[") or std.mem.eql(u8, t.value, "?"))) return true;
     if (t.type == .identifier) return true;
-    return t.type == .keyword and std.mem.eql(u8, t.value, "error");
+    return t.type == .keyword and (std.mem.eql(u8, t.value, "error") or std.mem.eql(u8, t.value, "null"));
 }
 
 fn parseArrayLiteral(self: *Parser, token: ctx.Token) ParseError!*Node {

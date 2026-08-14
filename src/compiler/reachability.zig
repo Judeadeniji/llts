@@ -327,9 +327,9 @@ fn noteCall(
                 }
             }
             if (types.resolveType(state, mem.object)) |type_name| {
-                if (state.structs.get(type_name)) |sd| {
+                if (types.lookupStruct(state, type_name)) |sd| {
                     if (sd.offsets.get(prop) == null) {
-                        const method_name = try std.fmt.allocPrint(state.allocator, "{s}::{s}", .{ type_name, prop });
+                        const method_name = try std.fmt.allocPrint(state.allocator, "{s}::{s}", .{ types.unwrapOptionalDisplay(type_name), prop });
                         defer state.allocator.free(method_name);
                         var targets = try expandCallTargets(state, method_name);
                         defer targets.deinit(state.allocator);

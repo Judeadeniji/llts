@@ -126,6 +126,11 @@ pub fn displayTypeAlloc(allocator: std.mem.Allocator, t: Type) ![]const u8 {
             break :blk try std.fmt.allocPrint(allocator, "[]{s}", .{elem});
         },
         .union_ => |arms| blk: {
+            if (optionalPayload(t)) |p| {
+                const inner = try displayTypeAlloc(allocator, p);
+                defer allocator.free(inner);
+                break :blk try std.fmt.allocPrint(allocator, "?{s}", .{inner});
+            }
             var parts: std.ArrayList([]const u8) = .empty;
             defer {
                 for (parts.items) |p| allocator.free(p);
@@ -204,6 +209,34 @@ pub fn typeEquals(a: Type, b: Type) bool {
             break :blk true;
         },
         .int, .bool, .byte, .null, .error_, .unknown, .never => std.meta.activeTag(a) == std.meta.activeTag(b),
+    };
+}
+
+/// Payload `T` when `t` is a simple optional (`T | null` / `?T`).
+pub fn optionalPayload(t: Type) ?Type {
+    if (t != .union_) return null;
+    var payload: ?Type = null;
+    var saw_null = false;
+    for (t.union_) |arm| {
+        if (arm == .null) {
+            saw_null = true;
+            continue;
+        }
+        if (payload != null) return null;
+        payload = arm;
+    }
+    if (!saw_null) return null;
+    return payload;
+}
+
+/// Struct name for `T` or `?T` / `T | null`.
+pub fn structNameOf(t: Type) ?[]const u8 {
+    return switch (t) {
+        .struct_ => |n| n,
+        else => if (optionalPayload(t)) |p| switch (p) {
+            .struct_ => |n| n,
+            else => null,
+        } else null,
     };
 }
 
@@ -314,6 +347,10 @@ pub fn parseDisplayType(ta: TypeAlloc, s_in: []const u8) !Type {
             try arms.append(ta.allocator, try parseDisplayType(ta, part));
         }
         return try ta.unionType(arms.items);
+    }
+    if (s.len > 0 and s[0] == '?') {
+        const inner = try parseDisplayType(ta, s[1..]);
+        return try ta.unionType(&.{ inner, TNull });
     }
     if (s.len > 0 and s[0] == '[') {
         if (s.len >= 2 and s[1] == ']') {

@@ -171,7 +171,7 @@ pub fn compile(state: *CompilerState, intr: Intrinsic, node: *ast.Node, c: *cons
             }
             
             if (from_ast.resolveType(state, c.args[0])) |type_name| {
-                if (state.structs.get(type_name)) |sd| {
+                if (from_ast.lookupStruct(state, type_name)) |sd| {
                     try expr.compileExpression(state, c.args[0]);
                     try emit.emitOp(state, .OP_POP);
                     try emit.emitConstant(state, .{ .int = sd.size * 16 });

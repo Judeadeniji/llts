@@ -303,7 +303,7 @@ pub fn compileMember(state: *CompilerState, mem: *const ast.Member, node: *ast.N
         return;
     }
     if (types.resolveType(state, mem.object)) |type_name| {
-        if (state.structs.get(type_name)) |sd| {
+        if (types.lookupStruct(state, type_name)) |sd| {
             if (mem.property.* == .primary) {
                 if (sd.offsets.get(mem.property.primary.name)) |offset| {
                     try expr.compileExpression(state, mem.object);

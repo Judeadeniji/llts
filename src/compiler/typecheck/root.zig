@@ -246,8 +246,10 @@ pub fn inferExpr(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, n
                 }
             }
             const obj = try inferExpr(state, env, ta, m.object);
-            if (obj == .struct_ and m.property.* == .primary) {
-                break :blk try fieldTypeFromStruct(state, ta, obj.struct_, m.property.primary.name);
+            if (m.property.* == .primary) {
+                if (ir.structNameOf(obj)) |sname| {
+                    break :blk try fieldTypeFromStruct(state, ta, sname, m.property.primary.name);
+                }
             }
             break :blk ir.TUnknown;
         },
@@ -302,9 +304,11 @@ pub fn inferExpr(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, n
             } else if (a.left.* == .member) {
                 const mem = a.left.member;
                 const obj = try inferExpr(state, env, ta, mem.object);
-                if (obj == .struct_ and mem.property.* == .primary) {
-                    const ft = try fieldTypeFromStruct(state, ta, obj.struct_, mem.property.primary.name);
-                    try requireAssign(state, val, ft, "assignment to field");
+                if (mem.property.* == .primary) {
+                    if (ir.structNameOf(obj)) |sname| {
+                        const ft = try fieldTypeFromStruct(state, ta, sname, mem.property.primary.name);
+                        try requireAssign(state, val, ft, "assignment to field");
+                    }
                 }
             } else if (a.left.* == .index) {
                 _ = try inferExpr(state, env, ta, a.left);

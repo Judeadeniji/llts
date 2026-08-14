@@ -79,7 +79,7 @@ Zig implementation. The TypeScript prototype/reference is [`llts-js`](../llts-js
 
 - [x] **Type checker pass** — gradual analysis before emit (`src/compiler/typecheck/`).
 - [x] **Return / param / field annotations** when present; unannotated = `Unknown`.
-- [x] **`$name: T`**, `[]T` / `[N]T` (incl. nested), `T | error`; aliases `i32`/`number`→`int`, `boolean`→`bool`.
+- [x] **`$name: T`**, `[]T` / `[N]T` (incl. nested), `T | error`, `?T` / `T | null`; aliases `i32`/`number`→`int`, `boolean`→`bool`.
 - [x] **`string` ≡ `[]byte`**; string literals infer as `[N]byte`.
 - [x] **Structs as types**
 - [x] **Debug type asserts**; strip with `--release`.

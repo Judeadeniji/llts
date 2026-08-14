@@ -18,6 +18,7 @@ pub fn getIndex(vm: *VMState) HeapError!void {
     const ptr = stack.pop(vm);
     const p = switch (ptr) {
         .ptr => |x| x,
+        .null => return fail(vm, "Cannot access field of null"),
         else => return fail(vm, "Indexing non-pointer"),
     };
     const i = switch (idx) {
@@ -33,6 +34,7 @@ pub fn setIndex(vm: *VMState) HeapError!void {
     const ptr = stack.pop(vm);
     const p = switch (ptr) {
         .ptr => |x| x,
+        .null => return fail(vm, "Cannot access field of null"),
         else => return fail(vm, "Indexing non-pointer"),
     };
     const i = switch (idx) {

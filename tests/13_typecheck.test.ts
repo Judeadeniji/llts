@@ -256,3 +256,68 @@ print(@typeOf(1, 2));
 		"@typeOf expects exactly 1 argument",
 	);
 });
+
+test("?T is sugar for T | null", () => {
+	expectOutput(
+		runSource(`
+$x: ?int = null;
+print(@typeOf(x));
+x = 7;
+print(x);
+`),
+		["?int", "7"],
+	);
+});
+
+test("Node | null is the same optional as ?Node", () => {
+	expectOutput(
+		runSource(`
+@struct Node {
+    value: int;
+    next: Node | null;
+}
+$n: ?Node = Node { value: 1, next: null };
+print(@typeOf(n));
+print(n.value);
+print(n.next);
+`),
+		["?Node", "1", "null"],
+	);
+});
+
+test("null is not assignable to a non-optional struct", () => {
+	expectError(
+		runSource(`
+@struct Node {
+    value: int;
+}
+$n: Node = null;
+print(n);
+`),
+		"not assignable",
+	);
+});
+
+test("self-referential ?Node linked list", () => {
+	expectOutput(
+		runSource(`
+@const $mem = @import("std/mem");
+@struct Node {
+    value: int;
+    next: ?Node;
+}
+pub @func main() {
+    $a = mem.create(0);
+    defer a.deinit();
+    $head: ?Node = null;
+    head = @new(a, Node { value: 1, next: head });
+    head = @new(a, Node { value: 2, next: head });
+    print(@typeOf(head));
+    print(head.value);
+    print(head.next.value);
+    print(head.next.next);
+}
+`),
+		["?Node", "2", "1", "null"],
+	);
+});

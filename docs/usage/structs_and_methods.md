@@ -12,6 +12,7 @@ Structs in `llts` are user-defined data structures encapsulating strongly typed 
 - Each field is declared as `identifier: type;`.
 - Every field declaration **must** end with a semicolon `;`.
 - Supported primitive types include `int`, `string`. Other structs can also be used as types.
+- Self-referential fields use `?T` or `T | null` (e.g. `next: ?Node`).
 
 **Example:**
 ```llts

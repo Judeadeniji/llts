@@ -54,7 +54,7 @@ fn assignIndex(state: *CompilerState, idx: *const ast.Index, right: *ast.Node, a
 
 fn assignMember(state: *CompilerState, mem: *const ast.Member, right: *ast.Node, arith: ?OpCode) !void {
     if (types.resolveType(state, mem.object)) |type_name| {
-        if (state.structs.get(type_name)) |sd| {
+        if (state.structs.get(types.unwrapOptionalDisplay(type_name))) |sd| {
             if (mem.property.* == .primary) {
                 if (sd.offsets.get(mem.property.primary.name)) |offset| {
                     if (arith) |op| {

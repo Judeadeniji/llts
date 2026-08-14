@@ -45,6 +45,25 @@ pub fn resolveNamedType(name: []const u8, state: ?*state_mod.CompilerState) From
     return t;
 }
 
+/// Strip a simple optional wrapper from a type display: `?T` / `T | null` / `null | T` → `T`.
+pub fn unwrapOptionalDisplay(display: []const u8) []const u8 {
+    var t = std.mem.trim(u8, display, " \t");
+    while (t.len > 0 and t[0] == '?') {
+        t = std.mem.trim(u8, t[1..], " \t");
+    }
+    if (std.mem.endsWith(u8, t, " | null")) {
+        return std.mem.trim(u8, t[0 .. t.len - 7], " \t");
+    }
+    if (std.mem.startsWith(u8, t, "null | ")) {
+        return std.mem.trim(u8, t[7..], " \t");
+    }
+    return t;
+}
+
+pub fn lookupStruct(state: *state_mod.CompilerState, display: []const u8) ?state_mod.StructDef {
+    return state.structs.get(unwrapOptionalDisplay(display));
+}
+
 pub fn parseArrayLengthString(raw: []const u8) FromAstError!usize {
     const n: i64 = if (std.mem.startsWith(u8, raw, "0x"))
         std.fmt.parseInt(i64, raw[2..], 16) catch return error.CompileError
@@ -182,7 +201,7 @@ pub fn resolveType(state: *state_mod.CompilerState, node: *ast.Node) ?[]const u8
                 }
                 break :blk null;
             }
-            const struct_def = state.structs.get(object_type) orelse break :blk null;
+            const struct_def = lookupStruct(state, object_type) orelse break :blk null;
             break :blk struct_def.types.get(m.property.primary.name);
         },
         .call => |c| blk: {
@@ -198,8 +217,9 @@ pub fn resolveType(state: *state_mod.CompilerState, node: *ast.Node) ?[]const u8
                 if (mem.property.* == .primary) {
                     const prop = mem.property.primary.name;
                     if (resolveType(state, mem.object)) |obj_type| {
+                        const struct_name = unwrapOptionalDisplay(obj_type);
                         var buf: [256]u8 = undefined;
-                        const method_name = std.fmt.bufPrint(&buf, "{s}::{s}", .{ obj_type, prop }) catch break :blk null;
+                        const method_name = std.fmt.bufPrint(&buf, "{s}::{s}", .{ struct_name, prop }) catch break :blk null;
                         if (state.functions.get(method_name)) |def| break :blk def.return_type;
                     }
                 }

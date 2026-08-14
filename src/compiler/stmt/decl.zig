@@ -125,7 +125,12 @@ fn typesAssignable(state: *CompilerState, got: []const u8, expected: []const u8)
         // lengths differ
         return false;
     }
-    return false;
+    var arena = std.heap.ArenaAllocator.init(state.allocator);
+    defer arena.deinit();
+    const ta = ir.TypeAlloc{ .allocator = arena.allocator() };
+    const g = ir.parseDisplayType(ta, got) catch return false;
+    const e = ir.parseDisplayType(ta, expected) catch return false;
+    return ir.isSubtype(g, e);
 }
 
 fn arrayElemSuffix(display: []const u8) ?[]const u8 {

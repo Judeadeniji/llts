@@ -36,9 +36,9 @@ pub fn compileCall(state: *CompilerState, c: *const ast.Call, node: *ast.Node) !
         if (mem.property.* == .primary) {
             const prop = mem.property.primary.name;
             if (types.resolveType(state, mem.object)) |type_name| {
-                if (state.structs.get(type_name)) |sd| {
+                if (types.lookupStruct(state, type_name)) |sd| {
                     if (sd.offsets.get(prop) == null) {
-                        const method_name = try std.fmt.allocPrint(state.allocator, "{s}::{s}", .{ type_name, prop });
+                        const method_name = try std.fmt.allocPrint(state.allocator, "{s}::{s}", .{ types.unwrapOptionalDisplay(type_name), prop });
                         try state.owned.append(state.allocator, method_name);
                         try emitMethodCall(state, method_name, mem.object, c.args);
                         return;
