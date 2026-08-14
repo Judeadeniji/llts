@@ -1,0 +1,16 @@
+$mem = @import("std/mem");
+$debug = @import("std/debug");
+
+pub @func main() {
+    debug.printLn("Starting massive allocations...");
+    $arena = mem.create(0);
+    
+    # We will try to allocate 100,000 slots 15 times (1.5M total slots).
+    # Since the VM heap is hardcoded to 1,048,576 slots, this should crash.
+    @for(0..15) |i| {
+        $p = arena.alloc(100000);
+        debug.printLn("Allocated 100,000 slots successfully");
+    }
+    
+    debug.printLn("Loop finished (this should not be reached).");
+}

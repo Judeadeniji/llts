@@ -1,0 +1,107 @@
+# Singly-linked list on a std.mem.Arena.
+#
+# Nodes that form the chain must be born with `@new` so they can be linked and
+# returned from helpers. There is no per-node free — `defer arena.deinit()`
+# reclaims the whole list at once.
+#
+#   zig-out/bin/llts run examples/linked_list.lls
+
+@const $mem = @import("std/mem");
+@const $debug = @import("std/debug");
+
+@struct Node {
+    value: int;
+    next: unknown; # next Node, or null at the tail
+}
+
+@func pushFront(arena, head, value): Node {
+    return @new(arena, Node { value: value, next: head });
+}
+
+@func pushBack(arena, head: Node, value): Node {
+    $n = @new(arena, Node { value: value, next: null });
+    $curr = head;
+    @for (curr.next != null) {
+        curr = curr.next;
+    }
+    curr.next = n;
+    return head;
+}
+
+@func listLen(head: Node) {
+    $n = 0;
+    $curr = head;
+    @for (curr != null) {
+        n = n + 1;
+        curr = curr.next;
+    }
+    return n;
+}
+
+@func listSum(head: Node) {
+    $total = 0;
+    $curr = head;
+    @for (curr != null) {
+        total = total + curr.value;
+        curr = curr.next;
+    }
+    return total;
+}
+
+@func contains(head: Node, value) {
+    $curr = head;
+    @for (curr != null) {
+        @if (curr.value == value) {
+            return true;
+        }
+        curr = curr.next;
+    }
+    return false;
+}
+
+@func reverse(head: Node) {
+    $prev: unknown = null;
+    $curr = head;
+    @for (curr != null) {
+        $nxt = curr.next;
+        curr.next = prev;
+        prev = curr;
+        curr = nxt;
+    }
+    return prev;
+}
+
+@func printList(head: Node) {
+    $curr = head;
+    @for (curr != null) {
+        debug.printLn("  {i}", curr.value);
+        curr = curr.next;
+    }
+}
+
+pub @func main() {
+    $arena = mem.create(0);
+    defer arena.deinit();
+
+    # pushFront 1..5 → 5 → 4 → 3 → 2 → 1
+    $head = pushFront(arena, null, 1);
+    @for (2..6) |i| {
+        head = pushFront(arena, head, i);
+    }
+
+    debug.printLn("after pushFront 1..5 (head is 5):");
+    printList(head);
+    debug.printLn("len = {i}", listLen(head));
+    debug.printLn("sum = {i}", listSum(head));
+    debug.printLn("contains 3 = {i}", contains(head, 3));
+    debug.printLn("contains 9 = {i}", contains(head, 9));
+
+    head = reverse(head);
+    debug.printLn("after reverse (head is 1):");
+    printList(head);
+
+    head = pushBack(arena, head, 6);
+    debug.printLn("after pushBack 6:");
+    printList(head);
+    debug.printLn("sum = {i}", listSum(head));
+}

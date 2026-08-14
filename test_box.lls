@@ -1,0 +1,10 @@
+$mem = @import("std/mem");
+$debug = @import("std/debug");
+
+@struct Box {
+    value: int;
+}
+
+pub @func main() {
+    debug.printLn("Size of Box: {i}", @sizeOf(Box));
+}

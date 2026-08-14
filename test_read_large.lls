@@ -1,0 +1,18 @@
+$io = @import("std/io");
+$debug = @import("std/debug");
+$string = @import("std/string");
+
+pub @func main() {
+    debug.printLn("Reading from stdin...");
+    
+    # readAll() creates buffers to load the stream into memory.
+    $content = io.readAll();
+    
+    @if (@isError(content)) {
+        debug.printLn("Crashed with error:");
+        debug.printLn("{s}", content);
+    } @else {
+        debug.printLn("Read successfully! Character count:");
+        debug.printLn(string.len(content));
+    }
+}
