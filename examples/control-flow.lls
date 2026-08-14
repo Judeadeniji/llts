@@ -15,4 +15,4 @@ $sum = 0;
 std.debug.printLn("sum of evens = {i}", sum);
 std.debug.assert(sum == 0 + 2 + 4);
 
-@func main() {}
+pub @func main() {}

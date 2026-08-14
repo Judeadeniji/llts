@@ -217,7 +217,7 @@ $x = @switch (1) {
 test("break with value outside value context errors", () => {
 	expectError(
 		runSource(`
-@func main() {
+pub @func main() {
     break 1;
 }
 main();

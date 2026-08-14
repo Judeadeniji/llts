@@ -7,7 +7,7 @@ import { expectError, expectOutput, runSource } from "./helpers";
 test("defer runs on fallthrough in LIFO order", () => {
 	expectOutput(
 		runSource(`
-@func main() {
+pub @func main() {
     defer print(1);
     defer print(2);
     print(0);
@@ -20,7 +20,7 @@ test("defer runs on fallthrough in LIFO order", () => {
 test("defer block runs multiple statements", () => {
 	expectOutput(
 		runSource(`
-@func main() {
+pub @func main() {
     defer {
         print(2);
         print(1);
@@ -49,7 +49,7 @@ print(work());
 test("defer runs on break from for", () => {
 	expectOutput(
 		runSource(`
-@func main() {
+pub @func main() {
     @for (true) {
         defer print("left");
         break;
@@ -81,7 +81,7 @@ test("Arena create alloc reset deinit with defer", () => {
 		runSource(`
 $mem = @import("std/mem");
 
-@func main() {
+pub @func main() {
     $arena = mem.create(32);
     defer arena.deinit();
     $a = arena.alloc(4);
@@ -100,7 +100,7 @@ test("Arena grows past initial hint like Zig", () => {
 	expectOutput(
 		runSource(`
 $mem = @import("std/mem");
-@func main() {
+pub @func main() {
     $arena = mem.create(2);
     defer arena.deinit();
     $a = arena.alloc(8);
@@ -117,7 +117,7 @@ test("Arena create(0) uses default chunk and grows", () => {
 	expectOutput(
 		runSource(`
 $mem = @import("std/mem");
-@func main() {
+pub @func main() {
     $arena = mem.create(0);
     defer arena.deinit();
     $p = arena.alloc(100);

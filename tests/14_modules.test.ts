@@ -38,7 +38,7 @@ pub @func answer(): int {
 			"main.lls": `
 $lib = @import("./lib.lls");
 print(lib.answer());
-@func main() {}
+pub @func main() {}
 `,
 		},
 		"main.lls",
@@ -61,7 +61,7 @@ pub @func open(): int {
 			"main.lls": `
 $lib = @import("./lib.lls");
 print(lib.secret());
-@func main() {}
+pub @func main() {}
 `,
 		},
 		"main.lls",
@@ -85,7 +85,7 @@ pub @struct Point {
 $lib = @import("./lib.lls");
 $h = lib.Hidden { x: 1 };
 print(h.x);
-@func main() {}
+pub @func main() {}
 `,
 		},
 		"main.lls",
@@ -104,7 +104,7 @@ pub @func id(n: int): int {
 			"pkg/main.lls": `
 $u = @import("./util.lls");
 print(u.id(7));
-@func main() {}
+pub @func main() {}
 `,
 		},
 		"pkg/main.lls",
@@ -125,7 +125,7 @@ pub @func answer(): int {
 			"main.lls": `
 print(@import("./lib.lls").answer());
 print(@import("./lib.lls").version);
-@func main() {}
+pub @func main() {}
 `,
 		},
 		"main.lls",
@@ -143,7 +143,7 @@ test("inline @import cannot access private export", () => {
 `,
 			"main.lls": `
 print(@import("./lib.lls").secret());
-@func main() {}
+pub @func main() {}
 `,
 		},
 		"main.lls",

@@ -38,4 +38,4 @@ $lines_len = len(lines);
     }
 }
 
-@func main() {}
+pub @func main() {}

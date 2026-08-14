@@ -1,6 +1,6 @@
 @const $std = @import("std/index");
 
-@func main() {
+pub @func main() {
     $line = std.io.readLine();
     std.debug.printLn("type: {s}", @typeOf(line));
     @if (line == null) {

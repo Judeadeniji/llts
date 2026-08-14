@@ -8,6 +8,6 @@
 
 @const $mid = @import("./mid.lls");
 
-@func main() {
+pub @func main() {
     mid.go();
 }

@@ -24,7 +24,7 @@ The `compile()` function in `root.zig` orchestrates the following passes:
 4. **Code Generation**:
    - Compiles functions (assigning function addresses and patching forward references).
    - Emits bytecode for top-level statements.
-   - Generates an entry point that requires a zero-arity `main()` and calls it after top-level statements.
+   - Generates an entry point that requires `pub @func main()` with arity 0 and calls it after top-level statements.
 
 ## State Management (`CompilerState`)
 

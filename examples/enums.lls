@@ -16,4 +16,4 @@ print(@typeOf(Color.Blue));
 }
 paint(Color.Green);
 
-@func main() {}
+pub @func main() {}

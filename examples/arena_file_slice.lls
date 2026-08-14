@@ -55,7 +55,7 @@
     return buffer.readString(out, 0, buffer.len(out));
 }
 
-@func main() {
+pub @func main() {
     $path = "examples/hello-world.lls";
 
     $text = fs.readFile(path);

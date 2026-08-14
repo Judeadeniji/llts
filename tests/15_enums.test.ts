@@ -107,7 +107,7 @@ pub @enum Tok { EOF, ID, NUM }
 $lib = @import("./lib.lls");
 print(lib.Tok.EOF);
 print(lib.Tok.NUM);
-@func main() {}
+pub @func main() {}
 `,
 		},
 		"main.lls",
@@ -124,7 +124,7 @@ test("private @enum is not exported", () => {
 			"main.lls": `
 $lib = @import("./lib.lls");
 print(lib.Hidden.A);
-@func main() {}
+pub @func main() {}
 `,
 		},
 		"main.lls",

@@ -1,6 +1,6 @@
 @const $std = @import("std/index");
 
-@func main() {
+pub @func main() {
     std.debug.printLn("Simple File Manager (llts)");
     std.debug.printLn("Commands: ls <dir>, cat <file>, touch <file>, rm <file>, mkdir <dir>, exit");
     

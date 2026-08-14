@@ -10,7 +10,7 @@ test("rest-only packs all arguments into an array", () => {
 @func sum(...args) {
     return args[0] + args[1];
 }
-@func main() {
+pub @func main() {
     print(sum(10, 20));
 }
 `),

@@ -34,4 +34,4 @@ print(c);
     @else => { print(-1); },
 }
 
-@func main() {}
+pub @func main() {}

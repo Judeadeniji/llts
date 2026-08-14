@@ -42,4 +42,4 @@ hero.takeDamage(45);
 
 hero |> printStatus;
 
-@func main() {}
+pub @func main() {}

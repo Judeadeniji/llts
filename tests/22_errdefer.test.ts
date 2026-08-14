@@ -16,7 +16,7 @@ $state = list.create();
     return true;
 }
 
-@func main() {
+pub @func main() {
     f(false);
     print(list.len(state));
     print(list.get(state, 0));
@@ -46,7 +46,7 @@ test("errdefer LIFO with defer on success path", () => {
     return true;
 }
 
-@func main() {
+pub @func main() {
     $l = list.create();
     okFn(l);
     print(list.len(l));
@@ -72,7 +72,7 @@ test("errdefer LIFO with defer on error path", () => {
     return error("Oops");
 }
 
-@func main() {
+pub @func main() {
     $l = list.create();
     $err = failFn(l);
     print(@isError(err));
@@ -105,7 +105,7 @@ $state = list.create();
     return true;
 }
 
-@func main() {
+pub @func main() {
     $err = catches();
     print(@isError(err));
     print(list.get(state, 0));
@@ -120,7 +120,7 @@ main();
 test("errdefer does not run on break", () => {
 	expectOutput(
 		runSource(`
-@func main() {
+pub @func main() {
     $x = 0;
     @for (true) {
         defer x = x + 1;
@@ -138,7 +138,7 @@ main();
 test("errdefer does not run on continue", () => {
 	expectOutput(
 		runSource(`
-@func main() {
+pub @func main() {
     $x = 0;
     @for (0..3) |i| {
         defer x = x + 1;
@@ -173,7 +173,7 @@ $state = list.create();
     return true;
 }
 
-@func main() {
+pub @func main() {
     $err = outer();
     print(@isError(err));
     print(list.len(state));
@@ -201,7 +201,7 @@ $state = list.create();
     return 0;
 }
 
-@func main() {
+pub @func main() {
     print(f());
     print(list.len(state));
     print(list.get(state, 0));

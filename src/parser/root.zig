@@ -71,7 +71,7 @@ test "parse simple declaration" {
 test "parse func if for and reject dollar" {
     const scanner = @import("../scanner/root.zig");
     const src =
-        \\@func main() {
+        \\pub @func main() {
         \\  @if (true) { return 1; }
         \\  @for (0..3) |i| { }
         \\}

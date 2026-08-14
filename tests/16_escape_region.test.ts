@@ -42,7 +42,7 @@ $mem = @import("std/mem");
     return @new(a, Point { x: 3, y: 4 });
 }
 
-@func main() {
+pub @func main() {
     $a = mem.create(64);
     defer a.deinit();
     $p = make(a);

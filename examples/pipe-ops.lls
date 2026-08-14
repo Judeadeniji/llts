@@ -8,4 +8,4 @@ $a = 2 |> sqr;
 
 debug.printLn("a: {i}", a)
 
-@func main() {}
+pub @func main() {}

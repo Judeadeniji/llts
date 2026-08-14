@@ -102,4 +102,4 @@ std.debug.printLn(
     a + b * c
 );
 
-@func main() {}
+pub @func main() {}

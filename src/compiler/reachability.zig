@@ -368,7 +368,7 @@ test "reachability keeps only called std/debug function" {
         \\@const $std = @import("std/index.lls");
         \\@const $err_msg = error("this is an error", "hello");
         \\std.debug.err(err_msg);
-        \\@func main() {}
+        \\pub @func main() {}
         \\
     ;
 
@@ -394,7 +394,7 @@ test "native print does not pull in std/io print" {
     const source =
         \\@const $std = @import("std/index.lls");
         \\print(42);
-        \\@func main() {}
+        \\pub @func main() {}
         \\
     ;
 

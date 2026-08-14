@@ -15,4 +15,4 @@ $b = 20;
     std.debug.printLn("Second check passed!");
 }
 
-@func main() {}
+pub @func main() {}

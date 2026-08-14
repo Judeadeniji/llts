@@ -49,7 +49,7 @@ test("@new(a, Point) may be returned (Pass region)", () => {
     p.y = 2;
     return p;
 }
-@func main() {
+pub @func main() {
     $a = mem.create(0);
     defer a.deinit();
     $p = make(a);

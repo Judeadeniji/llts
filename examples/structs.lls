@@ -17,4 +17,4 @@ p.x = 42;
 std.debug.printLn("Mutated p.x = {i}", p.x);
 std.debug.assert(p.x == 42);
 
-@func main() {}
+pub @func main() {}

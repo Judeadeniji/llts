@@ -32,7 +32,7 @@ function hasMain(source: string): boolean {
 /** Append an empty `main` so snippet tests stay valid programs. */
 function ensureMain(source: string): string {
 	if (hasMain(source)) return source;
-	return `${source}\n@func main() {}\n`;
+	return `${source}\npub @func main() {}\n`;
 }
 
 /** Compile and run an inline .lls source string. */

@@ -1,13 +1,13 @@
 /**
- * Entry point: a zero-arg `main` is required and invoked after top-level statements.
+ * Entry point: a public zero-arg `main` is required and invoked after top-level statements.
  */
 import { test } from "bun:test";
 import { runSource, runSourceAsWritten, expectOutput, expectError } from "./helpers";
 
-test("main is invoked automatically", () => {
+test("pub main is invoked automatically", () => {
 	expectOutput(
 		runSource(`
-@func main() {
+pub @func main() {
     print(42);
 }
 `),
@@ -15,22 +15,11 @@ test("main is invoked automatically", () => {
 	);
 });
 
-test("pub main is invoked automatically", () => {
-	expectOutput(
-		runSource(`
-pub @func main() {
-    print(7);
-}
-`),
-		["7"],
-	);
-});
-
 test("top-level statements run before main", () => {
 	expectOutput(
 		runSource(`
 print(1);
-@func main() {
+pub @func main() {
     print(2);
 }
 `),
@@ -47,10 +36,21 @@ print(99);
 	);
 });
 
+test("private main is a compile error", () => {
+	expectError(
+		runSourceAsWritten(`
+@func main() {
+    print(1);
+}
+`),
+		"entry point 'main' must be pub",
+	);
+});
+
 test("main with arguments is a compile error", () => {
 	expectError(
 		runSource(`
-@func main(argc) {
+pub @func main(argc) {
     print(argc);
 }
 `),
@@ -64,7 +64,7 @@ test("main can call other functions", () => {
 @func add(a, b) {
     return a + b;
 }
-@func main() {
+pub @func main() {
     print(add(10, 20));
 }
 `),

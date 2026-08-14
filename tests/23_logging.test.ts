@@ -44,7 +44,7 @@ test("debug.info / warn / err appear on stderr with level prefix", () => {
 	const res = runWithEnv(
 		`
 @const $debug = @import("std/debug");
-@func main() {
+pub @func main() {
     debug.info("hello-info");
     debug.warn("hello-warn");
     debug.err("hello-err");
@@ -70,7 +70,7 @@ test("LLTS_LOG_LEVEL=warn suppresses info", () => {
 	const res = runWithEnv(
 		`
 @const $debug = @import("std/debug");
-@func main() {
+pub @func main() {
     debug.info("should-hide");
     debug.warn("should-show");
 }
@@ -92,7 +92,7 @@ test("debug.assert returns AssertFailed error value", () => {
 	expectOutput(
 		runSource(`
 @const $debug = @import("std/debug");
-@func main() {
+pub @func main() {
     $ok = debug.assert(true);
     print(@isError(ok));
     $bad = debug.assert(false);
@@ -106,7 +106,7 @@ test("debug.assert returns AssertFailed error value", () => {
 
 test("FORCE_COLOR embeds ANSI; NO_COLOR does not", () => {
 	const src = `
-@func main() {
+pub @func main() {
     print(1 / 0);
 }
 `;
@@ -127,7 +127,7 @@ test("debug.err auto-detects error values", () => {
 	const res = runWithEnv(
 		`
 @const $debug = @import("std/debug");
-@func main() {
+pub @func main() {
     debug.err(error("boom"));
     debug.err(error("FileNotFound", "missing.txt"));
     debug.err("plain string");

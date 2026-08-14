@@ -21,4 +21,4 @@ std.debug.assert(len(arr) == 5);
 $raw = std.mem.alloc(3);
 std.debug.printLn("raw ptr = {i}", raw);
 
-@func main() {}
+pub @func main() {}

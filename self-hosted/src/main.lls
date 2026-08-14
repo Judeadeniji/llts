@@ -5,7 +5,7 @@
 @const $scanner = @import("scanner/root.lls");
 @const $parser = @import("parser/root.lls");
 
-@func main() {
+pub @func main() {
     debug.printLn("Starting main");
     # Pass arena: tokens and other heap that must outlive nextToken's frame.
     $arena = mem.create(0);

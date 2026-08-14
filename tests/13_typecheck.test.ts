@@ -199,7 +199,7 @@ test("T | error and ? unwrap", () => {
 @func ok(): string | error {
     return "yes";
 }
-@func main(): string | error {
+pub @func main(): string | error {
     $s = ok()?;
     print(s);
     return s;

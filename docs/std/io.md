@@ -60,7 +60,7 @@ w.writeAll("ping");
 ```llts
 @const $io = @import("std/io");
 
-@func main() {
+pub @func main() {
     io.println("What is your name?");
     $name = io.readLine();
     @if (name == null) {

@@ -28,4 +28,4 @@ print(grid[1][0]);
 p.y = 99;
 print(p.y);
 
-@func main() {}
+pub @func main() {}

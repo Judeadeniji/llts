@@ -7,7 +7,7 @@ import { expectOutput, runSource } from "./helpers";
 test("io.stdout / stderr writeAll and println", () => {
 	const res = runSource(`
 @const $io = @import("std/io");
-@func main() {
+pub @func main() {
     io.stdout.writeAll("out-line\\n");
     io.stderr.writeAll("err-line\\n");
     io.println("via-println");
@@ -79,7 +79,7 @@ syscall.close(fds[1]);
 test("local io.File method style", () => {
 	const res = runSource(`
 @const $io = @import("std/io");
-@func main() {
+pub @func main() {
     $out = io.File{ fd: io.stdout.fd };
     out.writeAll("method-ok\\n");
 }

@@ -95,7 +95,7 @@ pub fn compile(
         }
     }
 
-    // Language entry: zero-arg `main` runs after top-level statements.
+    // Language entry: pub zero-arg `main` runs after top-level statements.
     const main_fn = state.chunk.functions.get("main").?;
     try emit.emitCallStatic(&state, @intCast(main_fn.address), 0);
     try emit.emitOp(&state, .OP_POP); // discard main's return value
@@ -144,6 +144,18 @@ fn requireEntryMain(state: *state_mod.CompilerState, doc: *ast.Document) !void {
             eof.line,
             eof.column,
             "missing entry point 'main'",
+        );
+    }
+
+    if (def.node.* != .function_decl or !def.node.function_decl.is_public) {
+        return compile_errors.compileFailAt(
+            state,
+            if (loc.path.len > 0) loc.path else doc.path,
+            sourceTextForPath(state, if (loc.path.len > 0) loc.path else doc.path),
+            if (loc.line > 0) loc.line else 1,
+            if (loc.column > 0) loc.column else 1,
+            "entry point 'main' must be pub",
+            .{},
         );
     }
 

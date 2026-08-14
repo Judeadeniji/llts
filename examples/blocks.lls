@@ -41,4 +41,4 @@ $flag: bool = check: {
 };
 print(flag);
 
-@func main() {}
+pub @func main() {}

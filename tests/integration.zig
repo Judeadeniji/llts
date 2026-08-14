@@ -28,7 +28,7 @@ fn runLlts(allocator: std.mem.Allocator, source: []const u8) !struct { stdout: [
 
 test "print arithmetic" {
     const allocator = std.testing.allocator;
-    const result = try runLlts(allocator, "@func main() { print(1 + 2 * 3); }\n");
+    const result = try runLlts(allocator, "pub @func main() { print(1 + 2 * 3); }\n");
     defer allocator.free(result.stdout);
     defer allocator.free(result.stderr);
     try std.testing.expectEqual(@as(u8, 0), result.code);
@@ -41,7 +41,7 @@ test "function main" {
         \\@func add(a, b) {
         \\  return a + b;
         \\}
-        \\@func main() {
+        \\pub @func main() {
         \\  print(add(10, 32));
         \\}
         \\
@@ -58,7 +58,7 @@ test "compile and run bytecode file" {
     const src_path = "/tmp/llts_zig_core_src.lls";
     const llb_path = "/tmp/llts_zig_core_out.llb";
     const src =
-        \\@func main() {
+        \\pub @func main() {
         \\  print(99);
         \\}
         \\
@@ -112,7 +112,7 @@ test "compile and run bytecode file" {
 test "range for" {
     const allocator = std.testing.allocator;
     const src =
-        \\@func main() {
+        \\pub @func main() {
         \\  $s = 0;
         \\  @for (0..3) |i| {
         \\    s = s + i;

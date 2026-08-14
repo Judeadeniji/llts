@@ -13,7 +13,7 @@ const ENTRY = path.join(ROOT, "zig-out/bin/llts");
 
 test("runtime error prints source context on stderr", () => {
 	const res = runSource(`
-@func main() {
+pub @func main() {
     @const $a = [1, 2];
     print(a[9]);
 }
@@ -43,7 +43,7 @@ test("runtime error prints LLTS call stack", () => {
     boom();
 }
 
-@func main() {
+pub @func main() {
     mid();
 }
 `);
@@ -62,7 +62,7 @@ test("runtime error prints LLTS call stack", () => {
 
 test("non-heap runtime fail also has rich diagnostics", () => {
 	const res = runSource(`
-@func main() {
+pub @func main() {
     print(1 / 0);
 }
 `);
@@ -80,7 +80,7 @@ test("non-heap runtime fail also has rich diagnostics", () => {
 
 test("runtime caret uses non-1 column for mid-line fault", () => {
 	// Spaces before print so the OOB index expression sits past column 1
-	const res = runSource(`@func main() {
+	const res = runSource(`pub @func main() {
     @const $a = [1];
       print(a[9]);
 }
@@ -110,7 +110,7 @@ test("cross-module stack frames show imported file path", () => {
 	fs.writeFileSync(
 		main,
 		`@const $h = @import("./helper.lls");
-@func main() {
+pub @func main() {
     h.boom();
 }
 `,
@@ -185,7 +185,7 @@ test("import of broken module prints import chain", () => {
 	fs.writeFileSync(
 		main,
 		`@const $b = @import("./bad.lls");
-@func main() { print(1); }
+pub @func main() { print(1); }
 `,
 		"utf-8",
 	);
@@ -225,7 +225,7 @@ pub @func ok() { return 1; }
 	fs.writeFileSync(
 		main,
 		`@const $m = @import("./mid.lls");
-@func main() { print(m.ok()); }
+pub @func main() { print(m.ok()); }
 `,
 		"utf-8",
 	);
@@ -250,7 +250,7 @@ test("import parse error prints import chain", () => {
 	fs.writeFileSync(
 		main,
 		`@const $b = @import("./bad.lls");
-@func main() { print(1); }
+pub @func main() { print(1); }
 `,
 		"utf-8",
 	);
@@ -289,7 +289,7 @@ pub @func go() { b.boom(); }
 	fs.writeFileSync(
 		main,
 		`@const $m = @import("./mid.lls");
-@func main() { m.go(); }
+pub @func main() { m.go(); }
 `,
 		"utf-8",
 	);

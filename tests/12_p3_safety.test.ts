@@ -7,7 +7,7 @@ import { runSource, expectOutput, expectError } from "./helpers";
 test("const binding cannot be reassigned at runtime path", () => {
 	expectError(
 		runSource(`
-@func main() {
+pub @func main() {
     @const $x = 1;
     x = 2;
 }

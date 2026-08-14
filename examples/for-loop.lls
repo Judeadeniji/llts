@@ -10,4 +10,4 @@ $sum = 0;
 std.debug.printLn("Sum is {i}", sum);
 std.debug.assert(sum == 10);
 
-@func main() {}
+pub @func main() {}

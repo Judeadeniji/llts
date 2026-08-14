@@ -35,10 +35,10 @@ Type annotations can be omitted completely.
 ## Arguments and Variables
 *   **Variable Declarations:** Local variables inside functions (or at the top level) are instantiated with a `$` prefix (e.g., `$a = 1;`).
 *   **Variable Usage:** When referencing variables in expressions or as function arguments, the `$` prefix is **omitted** (e.g., `add(a, b)`).
-*   **Top-level Execution:** Top-level statements run as module initialization. The entry file must then define a zero-arg `main()`, which the compiler invokes automatically.
+*   **Top-level Execution:** Top-level statements run as module initialization. The entry file must then define `pub @func main()`, which the compiler invokes automatically.
 
 ```llts
-@func main() {
+pub @func main() {
     $a = 1;         // Declaration with $
     $b = 2;
     $c = add(a, b); // Usage without $

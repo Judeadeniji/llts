@@ -22,7 +22,7 @@ LLTS provides a robust leveled logging subsystem via the standard library (`std/
 ```llts
 @const $debug = @import("std/debug");
 
-@func main() {
+pub @func main() {
     debug.info("Application starting");
     debug.warn("Disk space low");
     

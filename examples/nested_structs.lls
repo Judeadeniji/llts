@@ -33,4 +33,4 @@ std.debug.assert(r.name != "My Bad Rect");
 r.point.x = 99;
 std.debug.assert(r.point.x == 99);
 
-@func main() {}
+pub @func main() {}
