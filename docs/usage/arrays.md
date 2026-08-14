@@ -31,7 +31,7 @@ print(len(s));  # 64
 s[0] = 65;      # OK: mutating an arena []byte buffer
 ```
 
-This is a **mutable length-prefixed byte array** on the heap. It is not an interned string literal and not a `std/string` slice. Plain `"text"` values and `$b = x` string assignment semantics are documented in [String semantics](../std/string.md#string-semantics).
+This is a **mutable packed byte array** on the arena's byte heap (one host byte per element). It is not an interned string literal and not a `std/string` slice. Plain `"text"` values and `$b = x` string assignment semantics are documented in [String semantics](../std/string.md#string-semantics).
 
 Also: `@new(a, Point)` zero-fills structs; `@new(a, Point{ x: 1 })` / `@new(a, [1,2,3])` for explicit inits.
 

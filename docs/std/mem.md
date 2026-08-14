@@ -13,8 +13,8 @@ In `llts-zig`, the memory region model supports different styles of allocation:
 Compiler intrinsic (see also [arrays](../usage/arrays.md)):
 
 ```llts
-$buf = @new(arena, [256]byte);      # fixed zero-filled array
-$s = @new(arena, string, n);      # runtime-length byte buffer
+$buf = @new(arena, [256]byte);      # packed bytes (1 host byte per element)
+$s = @new(arena, string, n);      # runtime-length packed byte buffer
 $p = @new(arena, Point);            # zero-filled struct
 $q = @new(arena, Point{ x: 1 });  # explicit init
 ```

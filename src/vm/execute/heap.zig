@@ -16,33 +16,61 @@ fn fail(vm: *VMState, msg: []const u8) HeapError {
 pub fn getIndex(vm: *VMState) HeapError!void {
     const idx = stack.pop(vm);
     const ptr = stack.pop(vm);
-    const p = switch (ptr) {
-        .ptr => |x| x,
-        .null => return fail(vm, "Cannot access field of null"),
-        else => return fail(vm, "Indexing non-pointer"),
-    };
     const i = switch (idx) {
         .int => |x| x,
         else => return fail(vm, "Index must be int"),
     };
-    try stack.push(vm, vm.memory[@intCast(p + i)]);
+    switch (ptr) {
+        .bytes => |b| {
+            if (i < 0 or i >= b.len) {
+                var buf: [96]u8 = undefined;
+                const msg = std.fmt.bufPrint(&buf, "Array index out of bounds: {d} (len {d}); use len(arr)", .{ i, b.len }) catch "Array index out of bounds";
+                return fail(vm, msg);
+            }
+            try stack.push(vm, .{ .int = vm.bytes[b.offset + @as(u32, @intCast(i))] });
+            return;
+        },
+        .ptr => |p| {
+            try stack.push(vm, vm.memory[@intCast(p + i)]);
+            return;
+        },
+        .null => return fail(vm, "Cannot access field of null"),
+        else => return fail(vm, "Indexing non-pointer"),
+    }
 }
 
 pub fn setIndex(vm: *VMState) HeapError!void {
     const val = stack.pop(vm);
     const idx = stack.pop(vm);
     const ptr = stack.pop(vm);
-    const p = switch (ptr) {
-        .ptr => |x| x,
-        .null => return fail(vm, "Cannot access field of null"),
-        else => return fail(vm, "Indexing non-pointer"),
-    };
     const i = switch (idx) {
         .int => |x| x,
         else => return fail(vm, "Index must be int"),
     };
-    vm.memory[@intCast(p + i)] = val;
-    try stack.push(vm, val);
+    switch (ptr) {
+        .bytes => |b| {
+            if (i < 0 or i >= b.len) {
+                var buf: [96]u8 = undefined;
+                const msg = std.fmt.bufPrint(&buf, "Array index out of bounds: {d} (len {d}); use len(arr)", .{ i, b.len }) catch "Array index out of bounds";
+                return fail(vm, msg);
+            }
+            const n = switch (val) {
+                .int => |x| x,
+                else => return fail(vm, "Byte store requires int"),
+            };
+            if (n < 0 or n > 255) return fail(vm, "Byte value out of range 0..255");
+            vm.bytes[b.offset + @as(u32, @intCast(i))] = @intCast(n);
+            try stack.push(vm, .{ .int = n });
+            return;
+        },
+        .ptr => |p| {
+            vm.memory[@intCast(p + i)] = val;
+            try stack.push(vm, val);
+            return;
+        },
+        .null => return fail(vm, "Cannot access field of null"),
+        else => return fail(vm, "Indexing non-pointer"),
+    }
 }
 
 fn asArrayPtr(vm: *VMState, v: Value) ?i32 {
@@ -59,11 +87,21 @@ fn asArrayPtr(vm: *VMState, v: Value) ?i32 {
 pub fn getArray(vm: *VMState) HeapError!void {
     const idx = stack.pop(vm);
     const ptr = stack.pop(vm);
-    const p = asArrayPtr(vm, ptr) orelse return fail(vm, "Indexing non-array");
     const i = switch (idx) {
         .int => |x| x,
         else => return fail(vm, "Index must be int"),
     };
+    if (ptr == .bytes) {
+        const b = ptr.bytes;
+        if (i < 0 or i >= b.len) {
+            var buf: [96]u8 = undefined;
+            const msg = std.fmt.bufPrint(&buf, "Array index out of bounds: {d} (len {d}); use len(arr)", .{ i, b.len }) catch "Array index out of bounds";
+            return fail(vm, msg);
+        }
+        try stack.push(vm, .{ .int = vm.bytes[b.offset + @as(u32, @intCast(i))] });
+        return;
+    }
+    const p = asArrayPtr(vm, ptr) orelse return fail(vm, "Indexing non-array");
     const len_val = vm.memory[@intCast(p - 1)];
     const len = len_val.int;
     if (i < 0 or i >= len) {
@@ -78,11 +116,27 @@ pub fn setArray(vm: *VMState) HeapError!void {
     const val = stack.pop(vm);
     const idx = stack.pop(vm);
     const ptr = stack.pop(vm);
-    const p = asArrayPtr(vm, ptr) orelse return fail(vm, "Indexing non-array");
     const i = switch (idx) {
         .int => |x| x,
         else => return fail(vm, "Index must be int"),
     };
+    if (ptr == .bytes) {
+        const b = ptr.bytes;
+        if (i < 0 or i >= b.len) {
+            var buf: [96]u8 = undefined;
+            const msg = std.fmt.bufPrint(&buf, "Array index out of bounds: {d} (len {d}); use len(arr)", .{ i, b.len }) catch "Array index out of bounds";
+            return fail(vm, msg);
+        }
+        const n = switch (val) {
+            .int => |x| x,
+            else => return fail(vm, "Byte store requires int"),
+        };
+        if (n < 0 or n > 255) return fail(vm, "Byte value out of range 0..255");
+        vm.bytes[b.offset + @as(u32, @intCast(i))] = @intCast(n);
+        try stack.push(vm, .{ .int = n });
+        return;
+    }
+    const p = asArrayPtr(vm, ptr) orelse return fail(vm, "Indexing non-array");
     const len_val = vm.memory[@intCast(p - 1)];
     const len = len_val.int;
     if (i < 0 or i >= len) {
@@ -155,6 +209,7 @@ fn appendStr(vm: *VMState, list: *std.ArrayList(u8), v: Value) !void {
                 try list.append(vm.allocator, @intCast(vm.memory[@intCast(p + @as(i32, @intCast(i)))].int));
             }
         },
+        .bytes => |b| try list.appendSlice(vm.allocator, vm.bytes[b.offset..][0..b.len]),
         .int => |n| {
             var buf: [32]u8 = undefined;
             const s = try std.fmt.bufPrint(&buf, "{d}", .{n});

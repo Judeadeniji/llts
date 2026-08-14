@@ -4,6 +4,8 @@
 #   - Bare `Foo{}` / `[…]` → frame-local bump; dies on return; cannot escape.
 #   - `@new(allocator, Foo{…})` → compiler intrinsic (like Go make); allocates
 #     into a library Allocator (today: Arena). Result may be returned.
+#   - `@new(a, []byte, n)` / `[N]byte` → packed bytes (1 byte per element), not
+#     one Value slot per byte.
 #   - `create` → growable Arena (Zig ArenaAllocator-style chunk list).
 
 pub @func alloc(size) {

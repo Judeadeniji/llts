@@ -13,6 +13,9 @@ fn lenFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     return switch (args[0]) {
         .ptr => |p| .{ .int = vm.memory[@intCast(p - 1)].int },
         .name => |idx| .{ .int = @intCast(vm.chunk.stringAt(idx).len) },
+        .slice => |s| .{ .int = s.len },
+        .bytes => |b| .{ .int = b.len },
+        .buffer => |buf| .{ .int = @intCast(buf.bytes.items.len) },
         else => .{ .int = 0 },
     };
 }

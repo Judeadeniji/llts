@@ -36,8 +36,8 @@ fn valuesEqual(vm: *VMState, a: Value, b: Value) bool {
             .int => |y| x == @as(f64, @floatFromInt(y)),
             else => false,
         },
-        .ptr, .name, .slice => switch (b) {
-            .ptr, .name, .slice => blk: {
+        .ptr, .name, .slice, .bytes => switch (b) {
+            .ptr, .name, .slice, .bytes => blk: {
                 if (a == .ptr and isErrorPtr(vm, a.ptr)) break :blk if (b == .ptr) a.ptr == b.ptr else false;
                 if (b == .ptr and isErrorPtr(vm, b.ptr)) break :blk false;
                 break :blk @import("../builtins/util.zig").stringEquals(vm, a, b);

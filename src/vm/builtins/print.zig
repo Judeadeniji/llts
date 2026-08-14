@@ -48,6 +48,7 @@ pub fn writeValue(vm: *VMState, out: *std.ArrayList(u8), v: Value) !void {
         },
         .name => |idx| try out.appendSlice(vm.allocator, vm.chunk.stringAt(idx)),
         .slice => |s| try out.appendSlice(vm.allocator, vm.string_bytes.items[s.offset..][0..s.len]),
+        .bytes => |b| try writePackedBytes(vm, out, b.offset, b.len),
         .module => |m| {
             var tmp: [128]u8 = undefined;
             const s = try std.fmt.bufPrint(&tmp, "<module {s}>", .{m.name});
@@ -72,6 +73,32 @@ pub fn writeValue(vm: *VMState, out: *std.ArrayList(u8), v: Value) !void {
             try out.appendSlice(vm.allocator, s);
         },
     }
+}
+
+fn writePackedBytes(vm: *VMState, out: *std.ArrayList(u8), offset: u32, len: u32) !void {
+    const data = vm.bytes[offset..][0..len];
+    if (len == 0) return;
+    var printable = true;
+    for (data) |ch| {
+        if (ch < 32 or ch > 126) {
+            if (ch != '\n' and ch != '\t') {
+                printable = false;
+                break;
+            }
+        }
+    }
+    if (printable) {
+        try out.appendSlice(vm.allocator, data);
+        return;
+    }
+    try out.append(vm.allocator, '[');
+    for (data, 0..) |ch, i| {
+        if (i > 0) try out.appendSlice(vm.allocator, ", ");
+        var tmp: [8]u8 = undefined;
+        const s = try std.fmt.bufPrint(&tmp, "{d}", .{ch});
+        try out.appendSlice(vm.allocator, s);
+    }
+    try out.append(vm.allocator, ']');
 }
 
 fn writePtr(vm: *VMState, out: *std.ArrayList(u8), p: i32) anyerror!void {

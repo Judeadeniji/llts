@@ -150,8 +150,11 @@ fn readFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
     if (args.len < 2) return error.ArityError;
     const fd: std.posix.fd_t = @intCast(try util.asInt(args[0]));
-    if (args[1] != .buffer) return error.TypeError;
-    const buf = args[1].buffer.bytes.items;
+    const buf: []u8 = switch (args[1]) {
+        .buffer => |b| b.bytes.items,
+        .bytes => |b| vm.bytes[b.offset..][0..b.len],
+        else => return error.TypeError,
+    };
     const n = std.posix.read(fd, buf) catch |err| return try makeSyscallError(vm, err);
     return .{ .int = @intCast(n) };
 }
@@ -163,6 +166,13 @@ fn writeFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
 
     if (args[1] == .buffer) {
         const n = std.posix.write(fd, args[1].buffer.bytes.items) catch |err| {
+            return try makeSyscallError(vm, err);
+        };
+        return .{ .int = @intCast(n) };
+    }
+    if (args[1] == .bytes) {
+        const b = args[1].bytes;
+        const n = std.posix.write(fd, vm.bytes[b.offset..][0..b.len]) catch |err| {
             return try makeSyscallError(vm, err);
         };
         return .{ .int = @intCast(n) };
@@ -185,6 +195,8 @@ fn writeAllFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
 
     const bytes: []const u8 = if (args[1] == .buffer)
         args[1].buffer.bytes.items
+    else if (args[1] == .bytes)
+        vm.bytes[args[1].bytes.offset..][0..args[1].bytes.len]
     else blk: {
         owned = try util.valueToOwnedString(vm, args[1]);
         break :blk owned.?;

@@ -9,7 +9,9 @@ pub const ListObject = value.ListObject;
 pub const MapObject = value.MapObject;
 
 pub const MEMORY_SIZE: usize = 1024 * 1024;
+pub const BYTE_MEMORY_SIZE: usize = 1024 * 1024;
 pub const HEAP_START: i32 = 1024;
+pub const BYTE_HEAP_START: i32 = 0;
 pub const ERROR_TAG: i32 = 0xE2202;
 pub const MAX_FRAMES: usize = 256;
 
@@ -49,6 +51,11 @@ pub const VMState = struct {
     heap_ptr: i32 = HEAP_START,
     immortal_ptr: i32 = @intCast(MEMORY_SIZE),
     free_chunks: i32 = 0,
+    /// Packed byte heap (`[]byte` / `[N]byte`). One byte per element, not one Value.
+    bytes: []u8,
+    byte_ptr: i32 = BYTE_HEAP_START,
+    byte_immortal_ptr: i32 = @intCast(BYTE_MEMORY_SIZE),
+    free_byte_chunks: i32 = 0,
     chunk: *Chunk,
     current_line: u32 = 1,
     current_column: u32 = 1,
@@ -70,11 +77,14 @@ pub const VMState = struct {
     pub fn init(allocator: std.mem.Allocator, chunk: *Chunk) !VMState {
         const memory = try allocator.alloc(Value, MEMORY_SIZE);
         @memset(memory, .null);
+        const bytes = try allocator.alloc(u8, BYTE_MEMORY_SIZE);
+        @memset(bytes, 0);
         var state: VMState = .{
             .allocator = allocator,
             .globals = std.StringHashMap(Value).init(allocator),
             .string_cache = std.AutoHashMap(u32, i32).init(allocator),
             .memory = memory,
+            .bytes = bytes,
             .chunk = chunk,
         };
         var frame = CallFrame.init(allocator);
@@ -123,6 +133,7 @@ pub const VMState = struct {
         self.string_cache.deinit();
         self.string_bytes.deinit(self.allocator);
         self.allocator.free(self.memory);
+        self.allocator.free(self.bytes);
     }
 
     /// Frame-local bump. Rewound when the current call returns (see `doReturn`).
@@ -147,6 +158,21 @@ pub const VMState = struct {
         const p: i32 = @intCast(ptr);
         if (p >= self.heap_ptr and p < self.immortal_ptr) return false;
         return true;
+    }
+
+    /// Packed bytes for `@new(a, []byte, n)` / `[N]byte`. Bump from the immortal end
+    /// (same region as arena chunks) so frame rewind of `heap_ptr` cannot clobber them.
+    pub fn allocImmortalBytes(self: *VMState, count: i32) !i32 {
+        if (count < 0) return error.OutOfMemory;
+        if (self.byte_immortal_ptr - count < self.byte_ptr) return error.OutOfMemory;
+        self.byte_immortal_ptr -= count;
+        const ptr = self.byte_immortal_ptr;
+        @memset(self.bytes[@intCast(ptr)..][0..@intCast(count)], 0);
+        return ptr;
+    }
+
+    pub fn packedBytes(self: *VMState, offset: u32, len: u32) []u8 {
+        return self.bytes[offset..][0..len];
     }
 
     pub fn allocModule(self: *VMState, name: []const u8) !*ModuleObject {

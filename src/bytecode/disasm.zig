@@ -71,6 +71,7 @@ fn formatValue(
         .native => |n| try w.print("native {s}", .{n.name}),
         .ptr => |p| try w.print("ptr {d}", .{p}),
         .slice => |s| try w.print("slice offset={d} len={d}", .{ s.offset, s.len }),
+        .bytes => |b| try w.print("bytes offset={d} len={d}", .{ b.offset, b.len }),
         .module => |m| try w.print("module {s}", .{m.name}),
         .list => try buf.appendSlice(allocator, "list"),
         .map => try buf.appendSlice(allocator, "map"),

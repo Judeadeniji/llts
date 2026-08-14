@@ -25,16 +25,9 @@ pub fn readString(vm: *VMState, ptr: i32) ![]u8 {
     return buf;
 }
 
-/// Allocate a length-prefixed string on the VM heap; returns data pointer.
-/// Immortal: results are often returned from stdlib wrappers (`string.split`, etc.).
+/// Allocate a length-prefixed string; packed via the string arena (not Value-per-byte).
 pub fn writeString(vm: *VMState, bytes: []const u8) !Value {
-    const len: i64 = @intCast(bytes.len);
-    const base = try vm.allocImmortal(@intCast(len + 1));
-    vm.memory[@intCast(base)] = .{ .int = len };
-    for (bytes, 0..) |ch, i| {
-        vm.memory[@intCast(base + 1 + @as(i32, @intCast(i)))] = .{ .int = ch };
-    }
-    return .{ .ptr = base + 1 };
+    return writeSlice(vm, bytes);
 }
 
 /// Appends string bytes to the zero-alloc string arena and returns a string slice.
@@ -62,6 +55,7 @@ pub fn appendStr(vm: *VMState, v: Value) !void {
             const src = vm.string_bytes.items[s.offset .. s.offset + s.len];
             vm.string_bytes.appendSliceAssumeCapacity(src);
         },
+        .bytes => |b| try vm.string_bytes.appendSlice(vm.allocator, vm.bytes[b.offset..][0..b.len]),
         .name => |idx| try vm.string_bytes.appendSlice(vm.allocator, vm.chunk.stringAt(idx)),
         .ptr => |p| {
             const len: usize = @intCast(vm.memory[@intCast(p - 1)].int);
@@ -152,6 +146,7 @@ pub fn valueToOwnedString(vm: *VMState, v: Value) ![]u8 {
         .ptr => |p| try readString(vm, p),
         .name => |idx| try vm.allocator.dupe(u8, vm.chunk.stringAt(idx)),
         .slice => |s| try vm.allocator.dupe(u8, vm.string_bytes.items[s.offset .. s.offset + s.len]),
+        .bytes => |b| try vm.allocator.dupe(u8, vm.bytes[b.offset..][0..b.len]),
         else => error.TypeError,
     };
 }
@@ -163,6 +158,7 @@ pub fn valueToStr(vm: *VMState, v: Value, buf: *std.ArrayList(u8)) ![]const u8 {
     switch (v) {
         .name => |idx| return vm.chunk.stringAt(idx),
         .slice => |s| return vm.string_bytes.items[s.offset .. s.offset + s.len],
+        .bytes => |b| return vm.bytes[b.offset..][0..b.len],
         .ptr => |p| {
             buf.clearRetainingCapacity();
             const len: usize = @intCast(vm.memory[@intCast(p - 1)].int);
@@ -183,8 +179,8 @@ pub fn valueToStr(vm: *VMState, v: Value, buf: *std.ArrayList(u8)) ![]const u8 {
 
 /// Zero-alloc deep string equality check across all string representations.
 pub fn stringEquals(vm: *VMState, a: Value, b: Value) bool {
-    const is_str_a = a == .name or a == .slice or a == .ptr;
-    const is_str_b = b == .name or b == .slice or b == .ptr;
+    const is_str_a = a == .name or a == .slice or a == .ptr or a == .bytes;
+    const is_str_b = b == .name or b == .slice or b == .ptr or b == .bytes;
     if (!is_str_a or !is_str_b) return false;
     
     // Quick fast paths for identical tags
@@ -197,6 +193,7 @@ pub fn stringEquals(vm: *VMState, a: Value, b: Value) bool {
     // Get lengths
     const len_a: usize = switch (a) {
         .slice => |s| s.len,
+        .bytes => |ba| ba.len,
         .name => |idx| vm.chunk.stringAt(idx).len,
         .ptr => |p| @intCast(vm.memory[@intCast(p - 1)].int),
         else => unreachable,
@@ -204,6 +201,7 @@ pub fn stringEquals(vm: *VMState, a: Value, b: Value) bool {
     
     const len_b: usize = switch (b) {
         .slice => |s| s.len,
+        .bytes => |by| by.len,
         .name => |idx| vm.chunk.stringAt(idx).len,
         .ptr => |p| @intCast(vm.memory[@intCast(p - 1)].int),
         else => unreachable,
@@ -216,6 +214,7 @@ pub fn stringEquals(vm: *VMState, a: Value, b: Value) bool {
     while (i < len_a) : (i += 1) {
         const char_a: u8 = switch (a) {
             .slice => |s| vm.string_bytes.items[s.offset + i],
+            .bytes => |by| vm.bytes[by.offset + i],
             .name => |idx| vm.chunk.stringAt(idx)[i],
             .ptr => |p| blk: {
                 const val = vm.memory[@intCast(p + @as(i32, @intCast(i)))];
@@ -226,6 +225,7 @@ pub fn stringEquals(vm: *VMState, a: Value, b: Value) bool {
         };
         const char_b: u8 = switch (b) {
             .slice => |s| vm.string_bytes.items[s.offset + i],
+            .bytes => |by| vm.bytes[by.offset + i],
             .name => |idx| vm.chunk.stringAt(idx)[i],
             .ptr => |p| blk: {
                 const val = vm.memory[@intCast(p + @as(i32, @intCast(i)))];

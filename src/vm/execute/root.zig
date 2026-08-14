@@ -117,7 +117,7 @@ pub fn execute(vm: *VMState, start_ip: usize) RuntimeError!void {
                     .bool => 1,
                     .int, .float => 8,
                     .ptr => 4,
-                    .slice => 8,
+                    .slice, .bytes => 8,
                     .name => 4,
                     .native, .function, .module, .list, .map, .buffer => 8,
                 };

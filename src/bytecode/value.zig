@@ -55,13 +55,14 @@ pub const BufferObject = struct {
     }
 };
 
-/// Tagged runtime value. Heap objects (arrays, strings, errors, structs) use `.ptr`.
+/// Tagged runtime value. Heterogeneous heap objects (arrays, errors, structs) use `.ptr`.
+/// Packed byte arrays (`[]byte` / `[N]byte` / `@new(a, string, n)`) use `.bytes`.
 pub const Value = union(enum) {
     null,
     bool: bool,
     int: i64,
     float: f64,
-    /// Pointer into the i32 heap (arrays, strings, errors, structs).
+    /// Pointer into the Value-slot heap (structs, `[]int`, errors).
     ptr: i32,
     native: *const NativeFunction,
     function: LltsFunction,
@@ -69,6 +70,8 @@ pub const Value = union(enum) {
     name: u32,
     /// String view pointing into the VM's global string_bytes buffer.
     slice: struct { offset: u32, len: u32 },
+    /// Packed mutable bytes in `VMState.bytes` (arena `@new` byte buffers).
+    bytes: struct { offset: u32, len: u32 },
     /// Module object from OP_GET_MODULE.
     module: *ModuleObject,
     /// Growable List (std/list).
@@ -86,6 +89,7 @@ pub const Value = union(enum) {
             .float => |n| n != 0,
             .ptr => true,
             .slice => |s| s.len > 0,
+            .bytes => |b| b.len > 0,
             .native, .function, .name, .module, .list, .map, .buffer => true,
         };
     }

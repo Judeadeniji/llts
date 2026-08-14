@@ -9,7 +9,8 @@ The virtual machine context is encapsulated entirely within `state.zig:VMState`.
 Key components of `VMState`:
 * **`stack`**: A unified `std.ArrayList(Value)` stack used for both instruction operands and local variables.
 * **`frames`**: A stack of `CallFrame` objects (max depth: `MAX_FRAMES` = 256).
-* **`memory`**: The heap, represented as a single `[]Value` array with a capacity of 1,024,024 slots (`MEMORY_SIZE`).
+* **`memory`**: The object heap, a `[]Value` bump region (`MEMORY_SIZE` slots) for structs, `[]int` arrays, and errors.
+* **`bytes`**: Packed byte heap (`BYTE_MEMORY_SIZE`) for `@new` `[]byte` / `[N]byte` buffers. One host byte per element.
 * **`string_bytes`**: A zero-alloc, append-only `std.ArrayList(u8)` arena for dynamic string data.
 * **`globals` / `modules`**: Hash maps that own and resolve global variables and module instances.
 
@@ -25,7 +26,8 @@ A `CallFrame` (`state.zig`) tracks the execution context of a function.
 
 The VM is dynamically typed at runtime, utilizing a tagged union (`value.zig:Value`) for all stack and heap elements:
 * **Primitives**: `.null`, `.bool`, `.int` (i32), `.float` (f64).
-* **Strings**: Represented as `.slice` (offset/len into `string_bytes arena`) or `.name` (interned constant index). 
+* **Strings**: Represented as `.slice` (offset/len into `string_bytes arena`) or `.name` (interned constant index).
+* **Packed bytes**: `.bytes { offset, len }` into `VMState.bytes` — mutable `@new` byte buffers. 
 * **Pointers**: `.ptr` is a simple `i32` index pointing into the `VMState.memory` array.
 * **Objects**: Functions (`.function`, `.native`) and Modules (`.module`).
 

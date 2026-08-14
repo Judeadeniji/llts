@@ -44,6 +44,7 @@ fn strlenFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     if (args.len < 1) return error.ArityError;
     return switch (args[0]) {
         .slice => |s| .{ .int = @intCast(s.len) },
+        .bytes => |b| .{ .int = b.len },
         .name => |idx| .{ .int = @intCast(vm.chunk.stringAt(idx).len) },
         .ptr => |p| .{ .int = vm.memory[@intCast(p - 1)].int },
         else => error.TypeError,
@@ -173,6 +174,7 @@ fn srcOf(vm: *VMState, v: Value, buf: *std.ArrayList(u8)) !ArenaSrc {
             const b = vm.chunk.stringAt(idx);
             break :blk .{ .off = null, .interned = b, .len = b.len };
         },
+        .bytes => |b| .{ .off = null, .interned = vm.bytes[b.offset..][0..b.len], .len = b.len },
         .ptr => blk: {
             const b = try util.valueToStr(vm, v, buf);
             break :blk .{ .off = null, .interned = b, .len = b.len };

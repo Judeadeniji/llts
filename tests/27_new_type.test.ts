@@ -123,3 +123,39 @@ a.deinit();
 		["3", "65", "67"],
 	);
 });
+
+test("@new []byte is packed (200 bytes in a tiny arena)", () => {
+	expectOutput(
+		runSource(`
+@const $mem = @import("std/mem");
+$a = mem.create(16);
+$b = @new(a, []byte, 200);
+print(len(b));
+b[0] = 7;
+b[199] = 9;
+print(b[0]);
+print(b[199]);
+print(b[50]);
+a.deinit();
+`),
+		["200", "7", "9", "0"],
+	);
+});
+
+test("@new [N]byte index via for range", () => {
+	expectOutput(
+		runSource(`
+@const $mem = @import("std/mem");
+$a = mem.create(0);
+$b = @new(a, [3]byte);
+b[0] = 1;
+b[1] = 2;
+b[2] = 3;
+@for (0..len(b)) |i| {
+    print(b[i]);
+}
+a.deinit();
+`),
+		["1", "2", "3"],
+	);
+});

@@ -99,14 +99,22 @@ pub fn compileNew(state: *CompilerState, c: *const ast.Call) !void {
                 if (c.args.len != 2) {
                     return compiler_errors.compileFailFmt(state, "@new([N]T) takes (allocator, [N]T) — length is in the type", .{});
                 }
-                try emitArenaAlloc(state, c.args[0], @intCast(length + 1));
-                try zeroFillArray(state, @intCast(length), at.elem);
+                if (isByteElemType(at.elem)) {
+                    try emitArenaAllocBytes(state, c.args[0], null, @intCast(length));
+                } else {
+                    try emitArenaAlloc(state, c.args[0], @intCast(length + 1));
+                    try zeroFillArray(state, @intCast(length), at.elem);
+                }
             } else {
                 if (c.args.len != 3) {
                     return compiler_errors.compileFailFmt(state, "@new slice type needs a length: @new(allocator, []T, n)", .{});
                 }
                 try requireSimpleElemType(state, at.elem);
-                try emitArenaAllocArray(state, c.args[0], c.args[2]);
+                if (isByteElemType(at.elem)) {
+                    try emitArenaAllocBytes(state, c.args[0], c.args[2], null);
+                } else {
+                    try emitArenaAllocArray(state, c.args[0], c.args[2]);
+                }
             }
         },
         .primary => |p| {
@@ -117,7 +125,7 @@ pub fn compileNew(state: *CompilerState, c: *const ast.Call) !void {
                 if (c.args.len != 3) {
                     return compiler_errors.compileFailFmt(state, "@new string/[]byte needs a length: @new(allocator, string, n)", .{});
                 }
-                try emitArenaAllocArray(state, c.args[0], c.args[2]);
+                try emitArenaAllocBytes(state, c.args[0], c.args[2], null);
                 return;
             }
             if (c.args.len != 2) {
@@ -141,6 +149,11 @@ pub fn compileNew(state: *CompilerState, c: *const ast.Call) !void {
 
 fn isStringyTypeName(name: []const u8) bool {
     return std.mem.eql(u8, name, "string") or std.mem.eql(u8, name, "[]byte");
+}
+
+fn isByteElemType(elem_type: *ast.Node) bool {
+    return elem_type.* == .primary and (std.mem.eql(u8, elem_type.primary.name, "byte") or
+        std.mem.eql(u8, elem_type.primary.name, "u8"));
 }
 
 fn requireSimpleElemType(state: *CompilerState, elem_type: *ast.Node) !void {
@@ -169,6 +182,18 @@ fn emitArenaAllocArray(state: *CompilerState, allocator_expr: *ast.Node, length_
     try emit.emitNameGet(state, .OP_GET_GLOBAL, "__arena_alloc_array");
     try expr.compileExpression(state, allocator_expr);
     try expr.compileExpression(state, length_expr);
+    try emit.emitOp(state, .OP_CALL);
+    try emit.emitByte(state, 2);
+}
+
+fn emitArenaAllocBytes(state: *CompilerState, allocator_expr: *ast.Node, length_expr: ?*ast.Node, const_len: ?i32) !void {
+    try emit.emitNameGet(state, .OP_GET_GLOBAL, "__arena_alloc_bytes");
+    try expr.compileExpression(state, allocator_expr);
+    if (length_expr) |le| {
+        try expr.compileExpression(state, le);
+    } else {
+        try emit.emitConstant(state, .{ .int = const_len orelse 0 });
+    }
     try emit.emitOp(state, .OP_CALL);
     try emit.emitByte(state, 2);
 }

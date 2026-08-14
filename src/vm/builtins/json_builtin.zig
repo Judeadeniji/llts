@@ -61,6 +61,7 @@ fn stringifyNode(vm: *VMState, val: Value, out: *std.io.Writer.Allocating) !void
         .float => |f| try out.writer.print("{d}", .{f}),
         .name => |idx| try out.writer.print("{f}", .{std.json.fmt(vm.chunk.stringAt(idx), .{})}),
         .slice => |s| try out.writer.print("{f}", .{std.json.fmt(vm.string_bytes.items[s.offset .. s.offset + s.len], .{})}),
+        .bytes => |b| try out.writer.print("{f}", .{std.json.fmt(vm.bytes[b.offset..][0..b.len], .{})}),
         .module => |mod| {
             try out.writer.writeAll("{");
             var it = mod.props.iterator();

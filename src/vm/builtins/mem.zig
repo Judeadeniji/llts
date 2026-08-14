@@ -11,6 +11,8 @@ const NativeFunction = value.NativeFunction;
 const ARENA_MAGIC: i32 = 0xa5ea;
 /// Per-chunk magic (linked bump buffers, Zig ArenaAllocator-style).
 const CHUNK_MAGIC: i32 = 0xc111;
+/// Packed-byte chunk header (data lives in `vm.bytes`).
+const BYTE_CHUNK_MAGIC: i32 = 0xb10c;
 
 /// Default first-chunk data slots when create(0) / tiny hint.
 const DEFAULT_CHUNK: i32 = 64;
@@ -21,14 +23,23 @@ const DEFAULT_CHUNK: i32 = 64;
 //   [2] first_chunk
 //   [3] last_chunk_cap   (data slots in newest chunk — for 1.5× growth)
 //   [4] alive
+//   [5] byte_current
+//   [6] byte_first
 //
-// Chunk layout (immortal):
+// Value chunk layout (immortal):
 //   [0] CHUNK_MAGIC
 //   [1] data_base
 //   [2] data_end
 //   [3] watermark
 //   [4] next_chunk       (0 = none)
 //   [5 ..] data
+//
+// Byte chunk header (immortal Value slots; payload in vm.bytes):
+//   [0] BYTE_CHUNK_MAGIC
+//   [1] bytes_offset
+//   [2] cap
+//   [3] watermark
+//   [4] next
 
 var alloc_native: NativeFunction = undefined;
 var alloc_immortal_native: NativeFunction = undefined;
@@ -37,6 +48,7 @@ var arena_alloc_native: NativeFunction = undefined;
 var arena_alloc_array_native: NativeFunction = undefined;
 var arena_reset_native: NativeFunction = undefined;
 var arena_deinit_native: NativeFunction = undefined;
+var arena_alloc_bytes_native: NativeFunction = undefined;
 
 fn fail(vm: *VMState, comptime op: []const u8, comptime msg: []const u8) error{RuntimeError} {
     return runtime.runtimeFail(vm, op ++ ": " ++ msg);
@@ -108,6 +120,49 @@ fn makeChunk(vm: *VMState, cap: i32) !i32 {
     return chunk;
 }
 
+fn makeByteChunk(vm: *VMState, cap: i32) !i32 {
+    var prev: i32 = 0;
+    var curr = vm.free_byte_chunks;
+    while (curr != 0) {
+        const c_cap: i32 = @intCast(vm.memory[@intCast(curr + 2)].int);
+        if (c_cap >= cap) {
+            const next = vm.memory[@intCast(curr + 4)].int;
+            if (prev == 0) {
+                vm.free_byte_chunks = @intCast(next);
+            } else {
+                vm.memory[@intCast(prev + 4)] = .{ .int = next };
+            }
+            const off: i32 = @intCast(vm.memory[@intCast(curr + 1)].int);
+            @memset(vm.bytes[@intCast(off)..][0..@intCast(c_cap)], 0);
+            vm.memory[@intCast(curr)] = .{ .int = BYTE_CHUNK_MAGIC };
+            vm.memory[@intCast(curr + 3)] = .{ .int = 0 };
+            vm.memory[@intCast(curr + 4)] = .{ .int = 0 };
+            return curr;
+        }
+        prev = curr;
+        curr = @intCast(vm.memory[@intCast(curr + 4)].int);
+    }
+
+    const off = try vm.allocImmortalBytes(cap);
+    const hdr = try vm.allocImmortal(5);
+    vm.memory[@intCast(hdr)] = .{ .int = BYTE_CHUNK_MAGIC };
+    vm.memory[@intCast(hdr + 1)] = .{ .int = off };
+    vm.memory[@intCast(hdr + 2)] = .{ .int = cap };
+    vm.memory[@intCast(hdr + 3)] = .{ .int = 0 };
+    vm.memory[@intCast(hdr + 4)] = .{ .int = 0 };
+    return hdr;
+}
+
+fn bumpInByteChunk(vm: *VMState, chunk: i32, n: i32) ?i32 {
+    if (vm.memory[@intCast(chunk)].int != BYTE_CHUNK_MAGIC) return null;
+    const watermark = vm.memory[@intCast(chunk + 3)].int;
+    const cap = vm.memory[@intCast(chunk + 2)].int;
+    if (watermark + n > cap) return null;
+    vm.memory[@intCast(chunk + 3)] = .{ .int = watermark + n };
+    const off = vm.memory[@intCast(chunk + 1)].int;
+    return @intCast(off + watermark);
+}
+
 fn allocFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
     const n = switch (args[0]) {
@@ -139,12 +194,15 @@ fn arenaCreate(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const cap: i32 = if (hint == 0) DEFAULT_CHUNK else @intCast(hint);
 
     const chunk = try makeChunk(vm, cap);
-    const ctrl = try vm.allocImmortal(5);
+    const byte_chunk = try makeByteChunk(vm, cap);
+    const ctrl = try vm.allocImmortal(7);
     vm.memory[@intCast(ctrl)] = .{ .int = ARENA_MAGIC };
     vm.memory[@intCast(ctrl + 1)] = .{ .ptr = chunk }; // current
     vm.memory[@intCast(ctrl + 2)] = .{ .ptr = chunk }; // first
     vm.memory[@intCast(ctrl + 3)] = .{ .int = cap };
     vm.memory[@intCast(ctrl + 4)] = .{ .int = 1 }; // alive
+    vm.memory[@intCast(ctrl + 5)] = .{ .ptr = byte_chunk };
+    vm.memory[@intCast(ctrl + 6)] = .{ .ptr = byte_chunk };
 
     const obj = try vm.allocImmortal(1);
     vm.memory[@intCast(obj)] = .{ .ptr = ctrl };
@@ -211,6 +269,38 @@ fn arenaAllocArray(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     return .{ .ptr = base + 1 };
 }
 
+/// Packed `n` bytes (one byte per element). Returns `.bytes`.
+fn arenaAllocBytes(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
+    const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
+    const ctrl = try resolveArenaControl(vm, args[0]);
+    const n = switch (args[1]) {
+        .int => |x| x,
+        else => return fail(vm, "__arena_alloc_bytes", "invalid size"),
+    };
+    if (n < 0) return fail(vm, "__arena_alloc_bytes", "invalid size");
+    try arenaAlive(vm, ctrl, "__arena_alloc_bytes");
+    if (n == 0) return .{ .bytes = .{ .offset = 0, .len = 0 } };
+
+    const cur_val = vm.memory[@intCast(ctrl + 5)];
+    const cur = try asHeapPtr(cur_val);
+    if (bumpInByteChunk(vm, cur, @intCast(n))) |off| {
+        @memset(vm.bytes[@intCast(off)..][0..@intCast(n)], 0);
+        return .{ .bytes = .{ .offset = @intCast(off), .len = @intCast(n) } };
+    }
+
+    const last_cap = vm.memory[@intCast(ctrl + 3)].int;
+    const grown = last_cap + @divTrunc(last_cap, 2);
+    const new_cap = @max(n, @max(grown, DEFAULT_CHUNK));
+    const new_chunk = try makeByteChunk(vm, @intCast(new_cap));
+
+    vm.memory[@intCast(cur + 4)] = .{ .ptr = new_chunk };
+    vm.memory[@intCast(ctrl + 5)] = .{ .ptr = new_chunk };
+
+    const off = bumpInByteChunk(vm, new_chunk, @intCast(n)) orelse return error.OutOfMemory;
+    @memset(vm.bytes[@intCast(off)..][0..@intCast(n)], 0);
+    return .{ .bytes = .{ .offset = @intCast(off), .len = @intCast(n) } };
+}
+
 fn arenaReset(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
     const ctrl = try resolveArenaControl(vm, args[0]);
@@ -229,6 +319,19 @@ fn arenaReset(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
         if (next_p == 0) break;
     }
     vm.memory[@intCast(ctrl + 1)] = vm.memory[@intCast(ctrl + 2)]; // current = first
+
+    var bchunk_v = vm.memory[@intCast(ctrl + 6)];
+    while (true) {
+        const bchunk = try asHeapPtr(bchunk_v);
+        if (bchunk == 0) break;
+        if (vm.memory[@intCast(bchunk)].int != BYTE_CHUNK_MAGIC) break;
+        vm.memory[@intCast(bchunk + 3)] = .{ .int = 0 };
+        const next = vm.memory[@intCast(bchunk + 4)];
+        bchunk_v = next;
+        const next_p = asHeapPtr(next) catch break;
+        if (next_p == 0) break;
+    }
+    vm.memory[@intCast(ctrl + 5)] = vm.memory[@intCast(ctrl + 6)];
     return .null;
 }
 
@@ -254,6 +357,17 @@ fn arenaDeinit(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
         chunk_v = next;
     }
 
+    var bchunk_v = vm.memory[@intCast(ctrl + 6)];
+    while (true) {
+        const bchunk = try asHeapPtr(bchunk_v);
+        if (bchunk == 0) break;
+        if (vm.memory[@intCast(bchunk)].int != BYTE_CHUNK_MAGIC) break;
+        const next = vm.memory[@intCast(bchunk + 4)];
+        vm.memory[@intCast(bchunk + 4)] = .{ .int = vm.free_byte_chunks };
+        vm.free_byte_chunks = bchunk;
+        bchunk_v = next;
+    }
+
     vm.memory[@intCast(ctrl + 4)] = .{ .int = 0 }; // Mark arena as dead
     return .null;
 }
@@ -266,12 +380,14 @@ pub fn register(vm: *VMState) !void {
     arena_alloc_array_native = .{ .name = "__arena_alloc_array", .func = arenaAllocArray, .arity = 2 };
     arena_reset_native = .{ .name = "__arena_reset", .func = arenaReset, .arity = 1 };
     arena_deinit_native = .{ .name = "__arena_deinit", .func = arenaDeinit, .arity = 1 };
+    arena_alloc_bytes_native = .{ .name = "__arena_alloc_bytes", .func = arenaAllocBytes, .arity = 2 };
 
     try vm.globals.put("__alloc", .{ .native = &alloc_native });
     try vm.globals.put("__allocImmortal", .{ .native = &alloc_immortal_native });
     try vm.globals.put("__arena_create", .{ .native = &arena_create_native });
     try vm.globals.put("__arena_alloc", .{ .native = &arena_alloc_native });
     try vm.globals.put("__arena_alloc_array", .{ .native = &arena_alloc_array_native });
+    try vm.globals.put("__arena_alloc_bytes", .{ .native = &arena_alloc_bytes_native });
     try vm.globals.put("__arena_reset", .{ .native = &arena_reset_native });
     try vm.globals.put("__arena_deinit", .{ .native = &arena_deinit_native });
 }
