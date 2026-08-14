@@ -1,6 +1,6 @@
 # Read a file into an arena-backed []byte slice, mutate it, print a summary.
 #
-#   zig-out/bin/llts -i examples/arena_file_slice.lls
+#   zig-out/bin/llts run examples/arena_file_slice.lls
 #
 # Edit `path` below (or extend main to take a path) to try other files.
 

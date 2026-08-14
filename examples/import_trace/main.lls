@@ -1,7 +1,7 @@
 # Nested import error tracing
 #
 # Run from repo root:
-#   zig-out/bin/llts -i examples/import_trace/main.lls
+#   zig-out/bin/llts run examples/import_trace/main.lls
 #
 # The fault is in leaf.lls; the stack walks back through each @import
 # so you can see *how* that file got pulled in (main → mid → leaf).
