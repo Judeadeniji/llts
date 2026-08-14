@@ -95,6 +95,61 @@ print(string.indexOf("", "x"));
   );
 });
 
+test("string contains/join/slice register without other string natives", () => {
+  expectOutput(
+    runSource(`
+@const $string = @import("std/string");
+print(string.contains("hello", "ell"));
+print(string.contains("hello", "xyz"));
+print(string.slice("hello", 1, 4));
+print(string.slice("hello", -2, 5));
+print(string.join(["a", "b", "c"], "-"));
+print(string.eql("ab", string.concat("a", "b")));
+`),
+    ["true", "false", "ell", "lo", "a-b-c", "true"],
+  );
+});
+
+test("string lastIndexOf, indexOfFrom, trim sides, replaceFirst", () => {
+  expectOutput(
+    runSource(`
+@const $string = @import("std/string");
+print(string.lastIndexOf("ababa", "ba"));
+print(string.indexOfFrom("ababa", "a", 1));
+print(string.trimStart("  hi  "));
+print(string.trimEnd("  hi  "));
+print(string.replaceFirst("foo bar foo", "foo", "baz"));
+`),
+    ["3", "2", "hi  ", "  hi", "baz bar foo"],
+  );
+});
+
+test("string splitMax remainder, pad, isEmpty/isBlank, compare", () => {
+  expectOutput(
+    runSource(`
+@const $string = @import("std/string");
+$a = string.splitMax("a-b-c-d", "-", 3);
+print(len(a));
+print(a[0]);
+print(a[1]);
+print(a[2]);
+$b = string.splitMax("abcde", "", 3);
+print(b[0]);
+print(b[1]);
+print(b[2]);
+print(string.padStart("7", 3, "0"));
+print(string.padEnd("7", 3, "0"));
+print(string.isEmpty(""));
+print(string.isEmpty(" "));
+print(string.isBlank("   "));
+print(string.compare("a", "b"));
+print(string.compare("b", "a"));
+print(string.compare("a", "a"));
+`),
+    ["3", "a", "b", "c-d", "a", "b", "cde", "007", "700", "true", "false", "true", "-1", "1", "0"],
+  );
+});
+
 // ---------------------------------------------------------------------------
 // math module (existing, kept for regression)
 // ---------------------------------------------------------------------------

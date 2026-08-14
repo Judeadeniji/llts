@@ -8,6 +8,50 @@ The `string` module provides a comprehensive set of functions for manipulating a
 const string = @import("std/string");
 ```
 
+## String semantics
+
+Runtime strings are **byte slices**, not mutable character arrays.
+
+- **Literals** (`"hello"`) are interned in the bytecode chunk (`.name`).
+- **Built results** (`concat`, `trim`, `slice`, …) are views into the VM’s append-only `string_bytes` arena (`.slice`: `{ offset, len }`).
+
+See also [VM value system](../vm.md#2-value-system--stack-representation) and [bytecode `Value`](../bytecode.md#2-runtime-values-value).
+
+### Assignment copies the handle, not the bytes
+
+```llts
+$x = "abc";
+$b = x;
+```
+
+`$b = x` copies the string **handle** (same interned literal or same arena view). It does **not** duplicate the underlying bytes. Both names refer to the same data until one is reassigned to a different value.
+
+### Strings are immutable
+
+There is no in-place byte mutation. Index **read** works for some representations; index **write** does not:
+
+```llts
+$x = "abc";
+x[0];        # may work depending on representation
+x[0] = "z";  # runtime error: Indexing non-array
+```
+
+To change content, produce a **new** string (`string.replaceFirst`, `string.concat`, `string.slice`, …). The original is left unchanged.
+
+### Substrings are views when possible
+
+`string.slice`, `string.substr`, `string.trimStart`, and `string.trimEnd` often return another view into the same arena bytes (zero-copy). Functions that change length (`concat`, `replace`, `padStart`, …) append new bytes and return a new slice.
+
+### Contrast with arrays
+
+| | **String** | **Array** (`[1, 2, 3]`) |
+|---|---|---|
+| `$b = a` | Shared handle; same bytes | Shared heap block |
+| `b[i] = v` | Not allowed | Updates slot; `a[i]` sees it too |
+| “Change one element” | Build a new string | In-place index assign |
+
+Arena-allocated **byte buffers** from `@new(a, []byte, n)` are mutable arrays, not `string` values — see [Arrays — `@new`](../usage/arrays.md).
+
 ## Functions
 
 ### `len(str)`
@@ -202,3 +246,47 @@ Creates a single-character string from an ASCII code point.
   ```llts
   string.fromCharCode(65); // "A"
   ```
+
+Lengths and indexes are **bytes**. Empty needles: `contains(s, "")` is true; `indexOf(s, "")` is `0`; `replaceFirst` inserts at index 0. `slice` is JS-style (end exclusive, negative indexes from the end). `substr` still clamps negatives to 0.
+
+### `contains(str, search)`
+`true` if `search` occurs in `str`.
+
+```llts
+string.contains("hello", "ell"); // true
+```
+
+### `lastIndexOf(str, search)`
+Last index of `search`, or `-1`.
+
+### `indexOfFrom(str, search, from)`
+First index of `search` at or after byte `from`, or `-1`.
+
+### `trimStart(str)` / `trimEnd(str)`
+ASCII whitespace from the start or end only. Arena strings return a view (no copy).
+
+### `replaceFirst(str, search, replacement)`
+Replaces the first occurrence of `search`.
+
+### `slice(str, start, end)`
+Byte slice `[start, end)`. Negative `start`/`end` count from the end.
+
+```llts
+string.slice("hello", 1, 4); // "ell"
+string.slice("hello", -2, 5); // "lo"
+```
+
+### `compare(a, b)` / `eql(a, b)`
+`compare` returns `-1` / `0` / `1`. `eql` is byte equality.
+
+### `splitMax(str, sep, n)`
+At most `n` parts; the last part is the unsplit remainder. Empty `sep` splits by byte the same way: `splitMax("abcde", "", 3)` → `["a","b","cde"]`.
+
+### `join(arr, sep)`
+Joins a heap array (from `split`) or a `std.list` of strings. Writes into the string arena (no extra buffer).
+
+### `padStart(str, len, pad)` / `padEnd(str, len, pad)`
+Pads with repeating `pad` until byte length `len`. Empty `pad` or `len <= len(str)` returns `str`.
+
+### `isEmpty(str)` / `isBlank(str)`
+`isEmpty` is `len == 0`. `isBlank` is empty after ASCII trim.

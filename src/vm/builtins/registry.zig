@@ -113,6 +113,15 @@ fn isMathGlobal(name: []const u8) bool {
     if (std.mem.startsWith(u8, name, "__parseInt")) return false;
     if (std.mem.startsWith(u8, name, "__parseFloat")) return false;
     if (std.mem.startsWith(u8, name, "__fromCharCode")) return false;
+    if (std.mem.startsWith(u8, name, "__contains")) return false;
+    if (std.mem.startsWith(u8, name, "__lastIndex")) return false;
+    if (std.mem.startsWith(u8, name, "__slice")) return false;
+    if (std.mem.startsWith(u8, name, "__compare")) return false;
+    if (std.mem.startsWith(u8, name, "__eql")) return false;
+    if (std.mem.startsWith(u8, name, "__join")) return false;
+    if (std.mem.startsWith(u8, name, "__pad")) return false;
+    if (std.mem.startsWith(u8, name, "__isEmpty")) return false;
+    if (std.mem.startsWith(u8, name, "__isBlank")) return false;
     if (std.mem.startsWith(u8, name, "__alloc")) return false;
     if (std.mem.startsWith(u8, name, "__arena_")) return false;
     if (std.mem.startsWith(u8, name, "__O_")) return false;
@@ -137,7 +146,12 @@ fn moduleNeeded(needed: *const std.StringHashMap(void), module: Module) bool {
         .log => wants(needed, &.{}, &.{ "__hostLog" }),
         .len => wants(needed, &.{}, &.{ "len" }),
         .mem => wants(needed, &.{ "__alloc", "__arena_" }, &.{ "__allocImmortal" }),
-        .string => wants(needed, &.{ "__str", "__sub", "__index", "__split", "__toU", "__toL", "__trim", "__replace", "__concat", "__repeat", "__starts", "__ends", "__char", "__parse", "__fromC" }, &.{}),
+        .string => wants(needed, &.{
+            "__str", "__sub", "__index", "__split", "__toU", "__toL", "__trim", "__replace",
+            "__concat", "__repeat", "__starts", "__ends", "__char", "__parse", "__fromC",
+            "__contains", "__lastIndex", "__slice", "__compare", "__eql", "__join", "__pad",
+            "__isEmpty", "__isBlank",
+        }, &.{}),
         .io => wants(needed, &.{ "__read", "__write", "__append", "__delete", "__exists", "__mkdir", "__stat", "__rename", "__copy", "__symlink", "__readlink", "__realpath", "__chmod" }, &.{}),
         .time => wants(needed, &.{}, &.{ "__now", "__sleep" }),
         .os => wants(needed, &.{}, &.{ "__exec", "__getEnv", "__setEnv", "__exit", "__cwd", "__chdir", "__pid", "__args", "__platform" }),

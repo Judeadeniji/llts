@@ -38,10 +38,43 @@ pub fn writeString(vm: *VMState, bytes: []const u8) !Value {
 }
 
 /// Appends string bytes to the zero-alloc string arena and returns a string slice.
+/// If `bytes` already lives in the arena, returns a view (no copy).
 pub fn writeSlice(vm: *VMState, bytes: []const u8) !Value {
+    if (bytes.len == 0) return .{ .slice = .{ .offset = 0, .len = 0 } };
+    const items = vm.string_bytes.items;
+    const b = @intFromPtr(bytes.ptr);
+    const a = @intFromPtr(items.ptr);
+    if (items.len != 0 and b >= a and b + bytes.len <= a + items.len) {
+        return .{ .slice = .{ .offset = @intCast(b - a), .len = @intCast(bytes.len) } };
+    }
     const offset: u32 = @intCast(vm.string_bytes.items.len);
     try vm.string_bytes.appendSlice(vm.allocator, bytes);
     return .{ .slice = .{ .offset = offset, .len = @intCast(bytes.len) } };
+}
+
+/// Append a string value onto the arena. Slice sources are copied by offset so
+/// a realloc of `string_bytes` cannot invalidate the source.
+pub fn appendStr(vm: *VMState, v: Value) !void {
+    switch (v) {
+        .slice => |s| {
+            if (s.len == 0) return;
+            try vm.string_bytes.ensureUnusedCapacity(vm.allocator, s.len);
+            const src = vm.string_bytes.items[s.offset .. s.offset + s.len];
+            vm.string_bytes.appendSliceAssumeCapacity(src);
+        },
+        .name => |idx| try vm.string_bytes.appendSlice(vm.allocator, vm.chunk.stringAt(idx)),
+        .ptr => |p| {
+            const len: usize = @intCast(vm.memory[@intCast(p - 1)].int);
+            try vm.string_bytes.ensureUnusedCapacity(vm.allocator, len);
+            var i: usize = 0;
+            while (i < len) : (i += 1) {
+                const val = vm.memory[@intCast(p + @as(i32, @intCast(i)))];
+                if (val != .int) return error.TypeError;
+                vm.string_bytes.appendAssumeCapacity(@intCast(val.int));
+            }
+        },
+        else => return error.TypeError,
+    }
 }
 
 /// Allocate an error object `[ERROR_TAG, codePtr, payload]` and return ptr to codePtr slot.
@@ -123,8 +156,9 @@ pub fn valueToOwnedString(vm: *VMState, v: Value) ![]u8 {
     };
 }
 
-/// Zero-allocation slice getter. Returns a reference to existing contiguous memory if possible, 
-/// otherwise populates the fallback ArrayList.
+/// Zero-allocation slice getter. Arena slices and interned names are views;
+/// heap ptr strings are copied into `buf`.
+/// Do not grow `vm.string_bytes` while holding a `.slice` view.
 pub fn valueToStr(vm: *VMState, v: Value, buf: *std.ArrayList(u8)) ![]const u8 {
     switch (v) {
         .name => |idx| return vm.chunk.stringAt(idx),

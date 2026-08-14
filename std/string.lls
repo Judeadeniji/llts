@@ -61,3 +61,63 @@ pub @func parseFloat(str) {
 pub @func fromCharCode(code) {
     return __fromCharCode(code);
 }
+
+pub @func contains(str, search) {
+    return __contains(str, search);
+}
+
+pub @func lastIndexOf(str, search) {
+    return __lastIndexOf(str, search);
+}
+
+pub @func indexOfFrom(str, search, from) {
+    return __indexOfFrom(str, search, from);
+}
+
+pub @func trimStart(str) {
+    return __trimStart(str);
+}
+
+pub @func trimEnd(str) {
+    return __trimEnd(str);
+}
+
+pub @func replaceFirst(str, search, replacement) {
+    return __replaceFirst(str, search, replacement);
+}
+
+pub @func slice(str, start, end) {
+    return __slice(str, start, end);
+}
+
+pub @func compare(a, b) {
+    return __compare(a, b);
+}
+
+pub @func eql(a, b) {
+    return __eql(a, b);
+}
+
+pub @func splitMax(str, sep, n) {
+    return __splitMax(str, sep, n);
+}
+
+pub @func join(arr, sep) {
+    return __join(arr, sep);
+}
+
+pub @func padStart(str, len, pad) {
+    return __padStart(str, len, pad);
+}
+
+pub @func padEnd(str, len, pad) {
+    return __padEnd(str, len, pad);
+}
+
+pub @func isEmpty(str) {
+    return __isEmpty(str);
+}
+
+pub @func isBlank(str) {
+    return __isBlank(str);
+}
