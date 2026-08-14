@@ -117,7 +117,7 @@ test("cross-module stack frames show imported file path", () => {
 		"utf-8",
 	);
 	try {
-		const result = spawnSync([ENTRY, "-i", main], { cwd: ROOT });
+		const result = spawnSync([ENTRY, "run", main], { cwd: ROOT });
 		const stderr = result.stderr.toString();
 		if ((result.exitCode ?? 1) === 0) {
 			throw new Error(`expected failure, got success\n${stderr}`);
@@ -190,7 +190,7 @@ test("import of broken module prints import chain", () => {
 		"utf-8",
 	);
 	try {
-		const result = spawnSync([ENTRY, "-i", main], { cwd: ROOT });
+		const result = spawnSync([ENTRY, "run", main], { cwd: ROOT });
 		const stderr = result.stderr.toString();
 		if ((result.exitCode ?? 1) === 0) {
 			throw new Error(`expected failure\n${stderr}`);
@@ -230,7 +230,7 @@ pub @func ok() { return 1; }
 		"utf-8",
 	);
 	try {
-		const result = spawnSync([ENTRY, "-i", main], { cwd: ROOT });
+		const result = spawnSync([ENTRY, "run", main], { cwd: ROOT });
 		const stderr = result.stderr.toString();
 		if ((result.exitCode ?? 1) === 0) throw new Error(`expected failure\n${stderr}`);
 		if (!stderr.includes("at <scan> (")) throw new Error(`missing scan frame:\n${stderr}`);
@@ -255,7 +255,7 @@ test("import parse error prints import chain", () => {
 		"utf-8",
 	);
 	try {
-		const result = spawnSync([ENTRY, "-i", main], { cwd: ROOT });
+		const result = spawnSync([ENTRY, "run", main], { cwd: ROOT });
 		const stderr = result.stderr.toString();
 		if ((result.exitCode ?? 1) === 0) throw new Error(`expected failure\n${stderr}`);
 		if (!stderr.includes("Unexpected token in expression")) throw new Error(`wrong message:\n${stderr}`);
@@ -294,7 +294,7 @@ pub @func go() { b.boom(); }
 		"utf-8",
 	);
 	try {
-		const result = spawnSync([ENTRY, "-i", main], { cwd: ROOT });
+		const result = spawnSync([ENTRY, "run", main], { cwd: ROOT });
 		const stderr = result.stderr.toString();
 		if ((result.exitCode ?? 1) === 0) throw new Error(`expected failure\n${stderr}`);
 		if (!stderr.includes("Unknown identifier")) throw new Error(`wrong message:\n${stderr}`);

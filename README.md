@@ -30,9 +30,9 @@ Binary: `zig-out/bin/llts`
 ## Run
 
 ```bash
-./zig-out/bin/llts -i examples/hello-world.lls
-./zig-out/bin/llts -i examples/test-std.lls
-./zig-out/bin/llts -i examples/functions.lls
+./zig-out/bin/llts run examples/hello-world.lls
+./zig-out/bin/llts run examples/test-std.lls
+./zig-out/bin/llts run examples/functions.lls
 ```
 
 ## Test

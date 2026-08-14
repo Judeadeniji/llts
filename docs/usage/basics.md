@@ -1,6 +1,6 @@
 # LLTS Agent-Focused Basics Documentation
 
-This document serves as an agent-focused reference for understanding the core syntax, variable semantics, and basic types of the LLTS scripting language used in the `llts-zig` project.
+This document serves as an agent-focused reference for understanding the core syntax, variable semantics, and basic types of LLTS, a general-purpose language used in the `llts-zig` project.
 
 ## 1. Syntax & Core Semantics
 

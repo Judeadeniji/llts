@@ -109,7 +109,7 @@ The `OpCode` enum defines the operations executed by the VM. These are represent
 
 ## 5. Bytecode dump (`disasm.zig`)
 
-Use `-d` / `--dump-bytecode [FILE]` on the CLI to compile without running. The dump includes:
+Use `llts dump [FILE]` to compile without running. The dump includes:
 
 - Header (file path, pool sizes)
 - Function table (name, address, arity, variadic flag, source index)
@@ -141,13 +141,13 @@ v1 artifacts (with embedded sources) can still be loaded; new compiles write v2.
 
 ```bash
 # Compile .lls → .llb (no execution)
-llts -i app.lls -o app.llb
+llts build app.lls -o app.llb
 
 # Run precompiled bytecode
-llts -i app.llb
+llts run app.llb
 
 # Release bytecode (no OP_LINE / OP_SOURCE in code either)
-llts -i app.lls -r -o app.llb
+llts build app.lls -r -o app.llb
 ```
 
-Text dumps (`-d`) and binary output (`-o`) are mutually exclusive.
+Text dumps (`llts dump`) and binary output (`llts build`) are separate commands.

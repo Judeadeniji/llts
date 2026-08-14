@@ -3,7 +3,12 @@
     .version = "0.0.0",
     .fingerprint = 0x93263997463bb6d3,
     .minimum_zig_version = "0.15.2",
-    .dependencies = .{},
+    .dependencies = .{
+        .zli = .{
+            .url = "git+https://github.com/xcaeser/zli.git?ref=v4.2.0#7c97a9c04f7e745f5f9b047068353c0b045c3395",
+            .hash = "zli-4.2.0-LeUjpkbkAACgsvIg905xMTcMHBlraRzlyRPYg-Gcgr6Z",
+        },
+    },
     .paths = .{
         "build.zig",
         "build.zig.zon",

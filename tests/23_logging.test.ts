@@ -26,7 +26,7 @@ function runWithEnv(source: string, env: Record<string, string | undefined>) {
 		for (const [k, v] of Object.entries(env)) {
 			if (v === "") delete merged[k];
 		}
-		const result = spawnSync([ENTRY, "-i", tmp], {
+		const result = spawnSync([ENTRY, "run", tmp], {
 			cwd: ROOT,
 			env: merged,
 		});

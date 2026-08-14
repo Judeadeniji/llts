@@ -3,22 +3,41 @@
 ## Overview
 This document outlines the entry points, CLI arguments, initialization sequence, and compilation pipeline for the LLTS compiler/VM. It is structured to help agents quickly understand the execution flow from the CLI through to VM execution.
 
-## CLI Arguments (`src/main.zig`)
+## CLI (`src/main.zig`)
 
-The CLI entry point `main()` parses the following arguments:
+The CLI is built with [zli](https://github.com/xcaeser/zli) and uses subcommands:
 
-- `-i, --input <file.lls|file.llb>`: **(Required unless `--smoke` is provided)** Source (`.lls`) to compile and run, or precompiled bytecode (`.llb`) to execute directly.
-- `-o, --output <file.llb>`: Compile the input `.lls` to binary bytecode and exit without running the VM.
+| Command | Description |
+|---------|-------------|
+| `llts run <file> [args...]` | Compile and run a `.lls` source file, or execute a precompiled `.llb` bytecode file directly. |
+| `llts build <file> [-o out.llb]` | Compile a `.lls` source file to binary bytecode (default output: `out.llb`). |
+| `llts dump <file> [-o FILE]` | Compile a `.lls` source and write a human-readable bytecode dump to stdout or `FILE`. |
+| `llts smoke` | Run a hardcoded VM smoke test (`print(42)`) without reading any file. |
+
+Global flags (available on all subcommands):
+
 - `-r, --release`: Disables debug mode in the compiler/VM. When provided, `RunOptions.debug` evaluates to `false`. Default is `true`.
-- `-d, --dump-bytecode [FILE]`: Compiles the input file and writes a human-readable bytecode dump to stdout or `FILE`, then exits without running the VM. Cannot be combined with `-o`.
 - `--log-level <LEVEL>`: Sets the minimum log level for the IO subsystem (e.g., `trace`, `debug`, `info`, `warn`, `err`).
-- `--smoke`: Runs a hardcoded VM smoke test (`print(42)`) manually constructing a bytecode chunk, running it, and exiting immediately without reading any file.
+
+Program arguments: trailing positionals after the source path are forwarded as `os.args()[1..]`. `os.args()[0]` is always the source path.
+
+Examples:
+
+```sh
+llts run examples/hello-world.lls
+llts run program.lls hello world
+llts run program.lls -- -r   # "-r" is a program arg, not a host flag
+llts build app.lls -o app.llb
+llts dump app.lls -o dump.txt
+llts smoke
+llts --help
+```
 
 ## Initialization Sequence
 
 1. **Subsystem Initialization:** The custom IO, logging, and color systems are initialized (e.g., `initFromEnv()`). Zig's default `std.log` is wired to the new custom `io.log` subsystem via `std_options`.
 2. **Allocator Setup:** A `std.heap.GeneralPurposeAllocator` is initialized and used for the entire program lifecycle.
-3. **Argument Parsing:** CLI arguments are parsed to determine the input file, execution mode (debug/release), and log levels.
+3. **Argument Parsing:** zli parses subcommands, flags, and positional arguments.
 4. **Pre-Execution Setup:** The target file is fully read into memory using `std.fs.cwd().readFileAlloc` (up to a max size of 16MB). The `llts.diag` API state is reset for the new execution.
 5. **Execution Delegation:** Passes the source string and options to `llts.runSource` (exposed via `src/root.zig`), which delegates to `pipeline.runSource`.
 
@@ -56,4 +75,4 @@ The pipeline orchestrated by `runSource` runs sequentially, transforming raw sou
   - `writeBytecodeFile` / `readBytecodeFile`: Save and load binary bytecode.
   - `runBytecodeFile`: Load `.llb` and execute (CO-RE).
   - `runSource`: The standard pipeline execution.
-  - `runChunk`: Useful for running pre-built/manually constructed chunks directly (e.g., used by the `--smoke` flag).
+  - `runChunk`: Useful for running pre-built/manually constructed chunks directly (e.g., used by the `smoke` subcommand).

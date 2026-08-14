@@ -4,6 +4,12 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    const zli = b.dependency("zli", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    const zli_mod = zli.module("zli");
+
     const llts_mod = b.addModule("llts", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
@@ -19,6 +25,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
             .imports = &.{
                 .{ .name = "llts", .module = llts_mod },
+                .{ .name = "zli", .module = zli_mod },
             },
         }),
     });

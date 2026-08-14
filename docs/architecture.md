@@ -31,12 +31,12 @@ This produces the main executable at `zig-out/bin/llts`.
 
 To run an LLTS program:
 ```bash
-./zig-out/bin/llts -i examples/hello-world.lls
+./zig-out/bin/llts run examples/hello-world.lls
 ```
 
 The `build.zig` defines a `run` step, allowing executing the program via:
 ```bash
-zig build run -- -i <path_to_lls_file>
+zig build run -- run <path_to_lls_file>
 ```
 
 ## 4. Testing Strategies

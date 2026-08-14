@@ -10,7 +10,7 @@ fn runLlts(allocator: std.mem.Allocator, source: []const u8) !struct { stdout: [
 
     var child = std.process.Child.init(&.{
         "zig-out/bin/llts",
-        "-i",
+        "run",
         tmp_path,
     }, allocator);
     child.stdout_behavior = .Pipe;
@@ -71,10 +71,10 @@ test "compile and run bytecode file" {
 
     var compile_child = std.process.Child.init(&.{
         "zig-out/bin/llts",
-        "-i",
-        src_path,
+        "build",
         "-o",
         llb_path,
+        src_path,
     }, allocator);
     compile_child.stdout_behavior = .Ignore;
     compile_child.stderr_behavior = .Pipe;
@@ -90,7 +90,7 @@ test "compile and run bytecode file" {
 
     var run_child = std.process.Child.init(&.{
         "zig-out/bin/llts",
-        "-i",
+        "run",
         llb_path,
     }, allocator);
     run_child.stdout_behavior = .Pipe;
