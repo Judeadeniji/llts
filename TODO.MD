@@ -81,7 +81,7 @@ Zig implementation. The TypeScript prototype/reference is [`llts-js`](../llts-js
 - [x] **Return / param / field annotations** when present; unannotated = `Unknown`.
 - [x] **`$name: T`**, `[]T` / `[N]T` (incl. nested), `T | error`, `?T` / `T | null`; aliases `i32`/`number`→`int`, `boolean`→`bool`.
 - [x] **`string` ≡ `[]byte`**; string literals infer as `[N]byte`.
-- [x] **Structs as types**
+- [x] **Structs as types** — including imported `mod.Name` (e.g. `mem.Arena`).
 - [x] **Debug type asserts**; strip with `--release`.
 - [x] **`@typeOf(expr)`**
 - [x] **`@sizeOf(T_or_expr)`** — static sizes for types / typed values; runtime `OP_SIZEOF` fallback (`tests/26_sizeof.test.ts`).

@@ -71,9 +71,25 @@ fn parseTypeAtom(self: *Parser) ParseError!*Node {
         } });
     }
     const type_name = try self.consume(.identifier, "Expected type name", null);
-    return self.create(.{ .primary = .{
+    var node = try self.create(.{ .primary = .{
         .kind = .identifier,
         .name = try self.dupe(type_name.value),
         .loc = self.locOf(type_name),
     } });
+    // `mem.Arena`, `lib.Point`
+    while (self.checkDelim(".")) {
+        _ = self.advance();
+        const prop = try self.consume(.identifier, "Expected type name after '.'", null);
+        const prop_node = try self.create(.{ .primary = .{
+            .kind = .identifier,
+            .name = try self.dupe(prop.value),
+            .loc = self.locOf(prop),
+        } });
+        node = try self.create(.{ .member = .{
+            .object = node,
+            .property = prop_node,
+            .loc = node.loc(),
+        } });
+    }
+    return node;
 }

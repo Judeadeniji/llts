@@ -157,3 +157,49 @@ test("existing examples/import_test_main still works", () => {
 		"Vector3: 10, 20, 30",
 	]);
 });
+
+test("imported pub struct can be used as a type annotation", () => {
+	const { entry } = withTempModules(
+		{
+			"lib.lls": `
+pub @struct Point {
+    x: int;
+    y: int;
+}
+`,
+			"main.lls": `
+$lib = @import("./lib.lls");
+@struct Box {
+    p: lib.Point;
+}
+$b = Box { p: lib.Point { x: 3, y: 4 } };
+print(b.p.x);
+print(b.p.y);
+pub @func main() {}
+`,
+		},
+		"main.lls",
+	);
+	expectOutput(runFile(entry), ["3", "4"]);
+});
+
+test("private imported struct cannot be used as a type annotation", () => {
+	const { entry } = withTempModules(
+		{
+			"lib.lls": `
+@struct Hidden {
+    x: int;
+}
+`,
+			"main.lls": `
+$lib = @import("./lib.lls");
+@struct Box {
+    h: lib.Hidden;
+}
+pub @func main() {}
+`,
+		},
+		"main.lls",
+	);
+	expectError(runFile(entry), "has no export 'Hidden'");
+});

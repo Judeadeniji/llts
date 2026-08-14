@@ -39,3 +39,12 @@ test "optional type ?T desugars to T | null" {
     try std.testing.expect(doc.statements[0].declaration.type_annotation.?.* == .union_type);
     try std.testing.expect(doc.statements[1].declaration.type_annotation.?.* == .union_type);
 }
+
+test "dotted type mem.Arena parses as member" {
+    const src = "$a: mem.Arena = x;\n";
+    var scan_result = try scanner.scan(std.testing.allocator, src, "t.lls");
+    defer scanner.deinitScanResult(&scan_result);
+    var doc = try parser.parse(std.testing.allocator, scan_result.tokens.items, "t.lls", src);
+    defer doc.deinit();
+    try std.testing.expect(doc.statements[0].declaration.type_annotation.?.* == .member);
+}

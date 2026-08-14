@@ -13,6 +13,7 @@ Structs in `llts` are user-defined data structures encapsulating strongly typed 
 - Every field declaration **must** end with a semicolon `;`.
 - Supported primitive types include `int`, `string`. Other structs can also be used as types.
 - Self-referential fields use `?T` or `T | null` (e.g. `next: ?Node`).
+- Imported structs are valid types: `arena: mem.Arena` after `@import("std/mem")`.
 
 **Example:**
 ```llts

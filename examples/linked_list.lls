@@ -14,7 +14,7 @@
 }
 
 @struct LinkedList {
-    arena: unknown;
+    arena: mem.Arena;
     head: ?Node;
 
     @func pushFront(self, value: int) {
@@ -86,7 +86,7 @@
     }
 }
 
-@func create(arena): LinkedList {
+@func create(arena: mem.Arena): LinkedList {
     return LinkedList { arena: arena, head: null };
 }
 

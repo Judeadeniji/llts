@@ -30,6 +30,7 @@ pub fn typeFromAst(node: ?*ast.Node, state: ?*state_mod.CompilerState, ta: ir.Ty
             const right = try typeFromAst(u.right, state, ta);
             break :blk try ta.unionType(&.{ left, right });
         },
+        .member => try resolveImportedType(n, state),
         else => ir.TUnknown,
     };
 }
@@ -43,6 +44,26 @@ pub fn resolveNamedType(name: []const u8, state: ?*state_mod.CompilerState) From
         return @import("../../errors/compile.zig").compileFailFmt(st, "Unknown type '{s}'", .{name});
     }
     return t;
+}
+
+fn resolveImportedType(node: *ast.Node, state: ?*state_mod.CompilerState) FromAstError!ir.Type {
+    const st = state orelse return ir.TUnknown;
+    const q = resolveStructName(st, node) orelse {
+        return @import("../../errors/compile.zig").compileFailFmt(st, "Unknown type", .{});
+    };
+    if (st.enums.contains(q)) {
+        try checkStructInitExport(st, node, q);
+        return .{ .enum_ = q };
+    }
+    if (st.structs.contains(q)) {
+        try checkStructInitExport(st, node, q);
+        return .{ .struct_ = q };
+    }
+    const short = if (node.* == .member and node.member.property.* == .primary)
+        node.member.property.primary.name
+    else
+        q;
+    return @import("../../errors/compile.zig").compileFailFmt(st, "Unknown type '{s}'", .{short});
 }
 
 /// Strip a simple optional wrapper from a type display: `?T` / `T | null` / `null | T` → `T`.

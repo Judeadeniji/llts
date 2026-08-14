@@ -138,7 +138,8 @@ fn treeContainsImport(node: *ast.Node) bool {
             }
             return false;
         },
-        .array_type, .union_type => {},
+        .array_type => |a| return treeContainsImport(a.elem),
+        .union_type => |u| return treeContainsImport(u.left) or treeContainsImport(u.right),
         else => {},
     }
     return false;
@@ -236,7 +237,13 @@ fn loadImportsInTree(
                 if (param.type_annotation) |ta| try loadImportsInTree(state, doc, ta, current_module, out, visited);
             }
         },
-        .array_type, .union_type => {},
+        .array_type => |a| {
+            try loadImportsInTree(state, doc, a.elem, current_module, out, visited);
+        },
+        .union_type => |u| {
+            try loadImportsInTree(state, doc, u.left, current_module, out, visited);
+            try loadImportsInTree(state, doc, u.right, current_module, out, visited);
+        },
         else => {},
     }
 }
@@ -630,7 +637,11 @@ fn rewriteModuleRefs(
                 if (param.type_annotation) |ta| try rewriteModuleRefs(state, ta, local_map, bound);
             }
         },
-        .array_type, .union_type => {},
+        .array_type => |*a| try rewriteModuleRefs(state, a.elem, local_map, bound),
+        .union_type => |*u| {
+            try rewriteModuleRefs(state, u.left, local_map, bound);
+            try rewriteModuleRefs(state, u.right, local_map, bound);
+        },
         else => {},
     }
 }
