@@ -53,7 +53,7 @@ zig build && bun test tests/
     return a + b;
 }
 
-@func main() {
+pub @func main() {
     $a = 1;
     $b = 2;
     $c = add(a, b);
