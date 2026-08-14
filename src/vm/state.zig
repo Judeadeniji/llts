@@ -73,13 +73,15 @@ pub const VMState = struct {
     script_path: []const u8 = "",
     /// Extra argv after the script path (borrowed; used by os.args as argv[1..]).
     script_args: []const []const u8 = &.{},
+    max_memory_slots: usize = 1048576,
 
-    pub fn init(allocator: std.mem.Allocator, chunk: *Chunk) !VMState {
+    pub fn init(allocator: std.mem.Allocator, chunk: *Chunk, max_memory_slots: usize) !VMState {
         var state: VMState = .{
             .allocator = allocator,
             .globals = std.StringHashMap(Value).init(allocator),
             .string_cache = std.AutoHashMap(u32, i32).init(allocator),
             .chunk = chunk,
+            .max_memory_slots = max_memory_slots,
         };
         try state.memory.appendNTimes(allocator, .null, @intCast(HEAP_START));
         try state.memory.ensureTotalCapacity(allocator, 4096);
@@ -141,6 +143,7 @@ pub const VMState = struct {
         const ptr = self.heap_ptr;
         const new_ptr = ptr + count;
         const new_len: usize = @intCast(new_ptr);
+        if (new_len > self.max_memory_slots) return error.OutOfMemory;
         if (new_len > self.memory.items.len) {
             try self.memory.resize(self.allocator, new_len);
         }
@@ -155,6 +158,7 @@ pub const VMState = struct {
         if (count < 0) return error.OutOfMemory;
         const idx: i32 = @intCast(self.immortal.items.len);
         const new_len = self.immortal.items.len + @as(usize, @intCast(count));
+        if (new_len > self.max_memory_slots) return error.OutOfMemory;
         try self.immortal.resize(self.allocator, new_len);
         @memset(self.immortal.items[@intCast(idx)..], .null);
         return IMMORTAL_BASE + idx;
@@ -185,6 +189,8 @@ pub const VMState = struct {
     /// Packed bytes for `@new(a, []byte, n)` / `[N]byte`. Grows as needed.
     pub fn allocImmortalBytes(self: *VMState, count: i32) !i32 {
         if (count < 0) return error.OutOfMemory;
+        const new_len = self.bytes.items.len + @as(usize, @intCast(count));
+        if (new_len > self.max_memory_slots * 16) return error.OutOfMemory;
         const ptr: i32 = @intCast(self.bytes.items.len);
         try self.bytes.appendNTimes(self.allocator, 0, @intCast(count));
         return ptr;

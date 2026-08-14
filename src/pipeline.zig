@@ -12,6 +12,7 @@ pub const RunOptions = struct {
     debug: bool = true,
     /// Extra argv forwarded to `os.args()` as argv[1..] (argv[0] is the script path).
     script_args: []const []const u8 = &.{},
+    max_memory_slots: usize = 1048576,
 };
 
 pub fn compileSource(
@@ -34,8 +35,9 @@ pub fn runChunk(
     chunk: *chunk_mod.Chunk,
     script_path: []const u8,
     script_args: []const []const u8,
+    max_memory_slots: usize,
 ) !void {
-    var state = try vm_state.VMState.init(allocator, chunk);
+    var state = try vm_state.VMState.init(allocator, chunk, max_memory_slots);
     defer state.deinit();
     state.script_path = script_path;
     state.script_args = script_args;
@@ -51,7 +53,7 @@ pub fn runSource(
 ) !void {
     var chunk = try compileSource(allocator, path, source, options);
     defer chunk.deinit();
-    try runChunk(allocator, &chunk, path, options.script_args);
+    try runChunk(allocator, &chunk, path, options.script_args, options.max_memory_slots);
 }
 
 pub fn writeBytecodeFile(allocator: std.mem.Allocator, chunk: *const chunk_mod.Chunk, path: []const u8) !void {
@@ -66,8 +68,9 @@ pub fn runBytecodeFile(
     allocator: std.mem.Allocator,
     path: []const u8,
     script_args: []const []const u8,
+    max_memory_slots: usize,
 ) !void {
     var chunk = try readBytecodeFile(allocator, path);
     defer chunk.deinit();
-    try runChunk(allocator, &chunk, path, script_args);
+    try runChunk(allocator, &chunk, path, script_args, max_memory_slots);
 }

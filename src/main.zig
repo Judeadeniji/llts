@@ -38,6 +38,14 @@ const release_flag = zli.Flag{
     .default_value = .{ .Bool = false },
 };
 
+const max_memory_flag = zli.Flag{
+    .name = "max-memory",
+    .shortcut = "m",
+    .description = "Max memory slots (default 1048576, env LLTS_MAX_MEMORY)",
+    .type = .String,
+    .default_value = .{ .String = "" },
+};
+
 pub fn main() !void {
     io.color.initFromEnv();
     io.log.initFromEnv();
@@ -64,6 +72,7 @@ pub fn main() !void {
 
     try root.addFlag(log_level_flag);
     try root.addFlag(release_flag);
+    try root.addFlag(max_memory_flag);
 
     const run_cmd = try zli.Command.init(stdout, stdin, gpa, .{
         .name = "run",
@@ -71,6 +80,7 @@ pub fn main() !void {
     }, runFileCmd);
     try run_cmd.addFlag(log_level_flag);
     try run_cmd.addFlag(release_flag);
+    try run_cmd.addFlag(max_memory_flag);
     try run_cmd.addPositionalArg(.{
         .name = "file",
         .description = "Source (.lls) or bytecode (.llb) file to run",
@@ -150,10 +160,23 @@ fn setLogLevel(ctx: zli.CommandContext) void {
     }
 }
 
+fn getMaxMemory(allocator: std.mem.Allocator, ctx: zli.CommandContext) usize {
+    if (std.process.getEnvVarOwned(allocator, "LLTS_MAX_MEMORY")) |env_val| {
+        defer allocator.free(env_val);
+        if (std.fmt.parseInt(usize, env_val, 10)) |v| return v else |_| {}
+    } else |_| {}
+    const flag_val = ctx.flag("max-memory", []const u8);
+    if (flag_val.len > 0) {
+        if (std.fmt.parseInt(usize, flag_val, 10)) |v| return v else |_| {}
+    }
+    return 1048576;
+}
+
 fn runFileCmd(ctx: zli.CommandContext) !void {
     setLogLevel(ctx);
     const release = ctx.flag("release", bool);
     const file = ctx.getArg("file").?;
+    const max_memory = getMaxMemory(ctx.allocator, ctx);
 
     var program_args: []const []const u8 = &[_][]const u8{};
     if (ctx.positional_args.len > 1) {
@@ -161,9 +184,9 @@ fn runFileCmd(ctx: zli.CommandContext) !void {
     }
 
     if (llts.serialize.isBytecodePath(file)) {
-        try runBytecode(ctx.allocator, file, program_args);
+        try runBytecode(ctx.allocator, file, program_args, max_memory);
     } else {
-        try runFile(ctx.allocator, file, release, program_args);
+        try runFile(ctx.allocator, file, release, program_args, max_memory);
     }
 }
 
@@ -207,12 +230,12 @@ fn smokeCmd(ctx: zli.CommandContext) !void {
     try c.writeOp(.OP_PRINT);
     try c.write(1);
 
-    try llts.runChunk(ctx.allocator, &c);
+    try llts.runChunk(ctx.allocator, &c, "smoke", &[_][]const u8{}, 1048576);
 }
 
-fn runBytecode(allocator: std.mem.Allocator, path: []const u8, script_args: []const []const u8) !void {
+fn runBytecode(allocator: std.mem.Allocator, path: []const u8, script_args: []const []const u8, max_memory: usize) !void {
     llts.diag.reset();
-    llts.runBytecodeFile(allocator, path, script_args) catch |err| {
+    llts.runBytecodeFile(allocator, path, script_args, max_memory) catch |err| {
         if (!llts.diag.wasEmitted()) {
             io.printStderr("Failed to run bytecode {s}: {}\n", .{ path, err });
         }
@@ -248,7 +271,7 @@ fn compileFile(
     };
 }
 
-fn runFile(allocator: std.mem.Allocator, path: []const u8, release: bool, script_args: []const []const u8) !void {
+fn runFile(allocator: std.mem.Allocator, path: []const u8, release: bool, script_args: []const []const u8, max_memory: usize) !void {
     llts.diag.reset();
 
     const source = std.fs.cwd().readFileAlloc(allocator, path, 16 * 1024 * 1024) catch |err| {
@@ -257,7 +280,7 @@ fn runFile(allocator: std.mem.Allocator, path: []const u8, release: bool, script
     };
     defer allocator.free(source);
 
-    llts.runSource(allocator, path, source, .{ .debug = !release, .script_args = script_args }) catch |err| {
+    llts.runSource(allocator, path, source, .{ .debug = !release, .script_args = script_args, .max_memory_slots = max_memory }) catch |err| {
         if (!llts.diag.wasEmitted()) {
             io.printStderr("Error: {}\n", .{err});
         }
