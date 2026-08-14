@@ -62,9 +62,12 @@ test("io.fromFd method style on a pipe", () => {
 @const $io = @import("std/io");
 @const $syscall = @import("std/syscall");
 @const $buffer = @import("std/buffer");
+@const $mem = @import("std/mem");
+$a = mem.create(0);
+defer a.deinit();
 $fds = syscall.pipe();
-$w = io.fromFd(fds[1]);
-$r = io.fromFd(fds[0]);
+$w = io.fromFd(a, fds[1]);
+$r = io.fromFd(a, fds[0]);
 print(w.writeAll("pong") == 4);
 $b = buffer.alloc(8);
 print(r.read(b) == 4);

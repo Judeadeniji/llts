@@ -8,6 +8,7 @@
 
 @const $syscall = @import("std/syscall.lls");
 @const $buffer = @import("std/buffer.lls");
+@const $mem = @import("std/mem.lls");
 
 pub @struct File {
     fd: int;
@@ -37,8 +38,8 @@ pub $stdin = File{ fd: syscall.STDIN_FILENO };
 pub $stdout = File{ fd: syscall.STDOUT_FILENO };
 pub $stderr = File{ fd: syscall.STDERR_FILENO };
 
-pub @func fromFd(fd) {
-    return File{ fd: fd };
+pub @func fromFd(arena: mem.Arena, fd) {
+    return @new(arena, File{ fd: fd });
 }
 
 # --- fd operations ---

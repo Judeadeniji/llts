@@ -15,7 +15,7 @@ $line = io.stdin.readLine(); # null on EOF
 | Export | Value |
 |---|---|
 | `io.stdin` / `stdout` / `stderr` | `File` handles for fds 0 / 1 / 2 |
-| `io.fromFd(fd)` | wrap any fd as a `File` |
+| `io.fromFd(arena, fd)` | wrap any fd as a `File` (`@new` into `arena`) |
 
 Do **not** `syscall.close` the standard streams.
 
@@ -42,7 +42,7 @@ Same helpers take a raw fd (useful for pipes):
 $fds = syscall.pipe();
 io.writeAll(fds[1], "ping");
 # or:
-$w = io.fromFd(fds[1]);
+$w = io.fromFd(arena, fds[1]);
 w.writeAll("ping");
 ```
 

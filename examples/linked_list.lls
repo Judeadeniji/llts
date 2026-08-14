@@ -87,7 +87,7 @@
 }
 
 @func create(arena: mem.Arena): LinkedList {
-    return LinkedList { arena: arena, head: null };
+    return @new(arena, LinkedList { arena: arena, head: null });
 }
 
 pub @func main() {
