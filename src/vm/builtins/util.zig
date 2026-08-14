@@ -8,7 +8,7 @@ const ERROR_TAG = state_mod.ERROR_TAG;
 
 /// Read a length-prefixed heap string at `ptr` into an owned buffer.
 pub fn readString(vm: *VMState, ptr: i32) ![]u8 {
-    if (ptr < 1 or ptr >= vm.heap_ptr) return error.TypeError;
+    if (ptr < 1 or !vm.isValidHeapPtr(ptr)) return error.TypeError;
     const len: usize = @intCast(vm.memory[@intCast(ptr - 1)].int);
     const buf = try vm.allocator.alloc(u8, len);
     var i: usize = 0;

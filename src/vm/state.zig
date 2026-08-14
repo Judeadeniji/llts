@@ -47,6 +47,7 @@ pub const VMState = struct {
     frames: std.ArrayList(CallFrame) = .empty,
     memory: []Value,
     heap_ptr: i32 = HEAP_START,
+    immortal_ptr: i32 = @intCast(MEMORY_SIZE),
     chunk: *Chunk,
     current_line: u32 = 1,
     current_column: u32 = 1,
@@ -126,19 +127,25 @@ pub const VMState = struct {
     /// Frame-local bump. Rewound when the current call returns (see `doReturn`).
     pub fn allocSlots(self: *VMState, count: i32) !i32 {
         const ptr = self.heap_ptr;
-        if (ptr + count >= @as(i32, @intCast(self.memory.len))) return error.OutOfMemory;
+        if (ptr + count > self.immortal_ptr) return error.OutOfMemory;
         self.heap_ptr += count;
         return ptr;
     }
 
     /// Process-/pass-lifetime bump (arenas, `error(…)`, values meant to escape a frame).
-    /// Raises every frame watermark so a later return cannot rewind past this block.
+    /// Allocated downwards from the end of the heap to avoid leaking frame-local variables.
     pub fn allocImmortal(self: *VMState, count: i32) !i32 {
-        const ptr = try self.allocSlots(count);
-        for (self.frames.items) |*f| {
-            if (f.heap_watermark < self.heap_ptr) f.heap_watermark = self.heap_ptr;
-        }
-        return ptr;
+        if (self.immortal_ptr - count < self.heap_ptr) return error.OutOfMemory;
+        self.immortal_ptr -= count;
+        return self.immortal_ptr;
+    }
+
+    pub fn isValidHeapPtr(self: *const VMState, ptr: i64) bool {
+        if (ptr < HEAP_START) return false;
+        if (ptr >= @as(i64, @intCast(MEMORY_SIZE))) return false;
+        const p: i32 = @intCast(ptr);
+        if (p >= self.heap_ptr and p < self.immortal_ptr) return false;
+        return true;
     }
 
     pub fn allocModule(self: *VMState, name: []const u8) !*ModuleObject {

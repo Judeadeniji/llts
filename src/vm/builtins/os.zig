@@ -107,7 +107,7 @@ fn chdirFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
 fn pidFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     _ = args;
-    return .{ .int = @intCast(std.os.linux.getpid()) };
+    return .{ .int = std.os.linux.getpid() };
 }
 
 fn argsFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {

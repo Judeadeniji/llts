@@ -75,7 +75,7 @@ pub fn writeValue(vm: *VMState, out: *std.ArrayList(u8), v: Value) !void {
 }
 
 fn writePtr(vm: *VMState, out: *std.ArrayList(u8), p: i32) anyerror!void {
-    if (p < 1 or p - 1 >= vm.heap_ptr) {
+    if (p < 1 or !vm.isValidHeapPtr(p - 1)) {
         var tmp: [32]u8 = undefined;
         const s = try std.fmt.bufPrint(&tmp, "<ptr {d}>", .{p});
         try out.appendSlice(vm.allocator, s);

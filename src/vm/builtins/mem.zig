@@ -53,13 +53,13 @@ fn asHeapPtr(v: Value) !i32 {
 /// Resolve Arena object or raw control handle → control block base.
 fn resolveArenaControl(vm: *VMState, v: Value) !i32 {
     const raw = try asHeapPtr(v);
-    if (raw < 0 or raw >= vm.heap_ptr) return error.TypeError;
+    if (!vm.isValidHeapPtr(raw)) return error.TypeError;
     if (vm.memory[@intCast(raw)] == .int and vm.memory[@intCast(raw)].int == ARENA_MAGIC)
         return raw;
     // Arena struct object: slot 0 = control ptr.
     const slot = vm.memory[@intCast(raw)];
     const candidate = try asHeapPtr(slot);
-    if (candidate < 0 or candidate >= vm.heap_ptr) return error.TypeError;
+    if (!vm.isValidHeapPtr(candidate)) return error.TypeError;
     if (vm.memory[@intCast(candidate)] == .int and vm.memory[@intCast(candidate)].int == ARENA_MAGIC)
         return candidate;
     return error.TypeError;

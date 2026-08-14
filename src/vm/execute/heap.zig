@@ -47,7 +47,7 @@ fn asArrayPtr(vm: *VMState, v: Value) ?i32 {
     return switch (v) {
         .ptr => |x| x,
         // Heap loads are untyped i32s (TS parity): in-range ints are pointers.
-        .int => |x| if (x >= state_mod.HEAP_START and x < vm.heap_ptr) @intCast(x) else null,
+        .int => |x| if (vm.isValidHeapPtr(x)) @intCast(x) else null,
         else => null,
     };
 }
