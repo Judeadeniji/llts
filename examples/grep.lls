@@ -1,0 +1,39 @@
+@const $std = @import("std/index.lls");
+
+$args = std.os.args();
+$args_len = len(args);
+
+@if (args_len < 2) {
+    std.io.println("Usage: llts run grep.lls <pattern> [file]");
+    std.os.exit(1);
+}
+
+$pattern = args[1];
+$content = "";
+
+@if (args_len >= 3) {
+    $filepath = args[2];
+    $data_file = std.fs.readFile(filepath);
+    @if (@isError(data_file)) {
+        std.debug.printLn("grep: {s}: No such file or directory", filepath);
+        std.os.exit(1);
+    }
+    content = data_file;
+} @else {
+    $data_in = std.io.readAll();
+    @if (@isError(data_in)) {
+        std.io.eprintln("grep: error reading stdin");
+        std.os.exit(1);
+    }
+    content = data_in;
+}
+
+$lines = std.string.split(content, "\n");
+$lines_len = len(lines);
+
+@for (0..lines_len) |i| {
+    $line = lines[i];
+    @if (std.string.contains(line, pattern)) {
+        std.io.println(line);
+    }
+}
