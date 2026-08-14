@@ -71,6 +71,34 @@ fn arenaAlive(vm: *VMState, ctrl: i32, comptime op: []const u8) !void {
 }
 
 fn makeChunk(vm: *VMState, cap: i32) !i32 {
+    // 1. Search free list for a chunk >= cap
+    var prev: i32 = 0;
+    var curr = vm.free_chunks;
+    while (curr != 0) {
+        const c_data_base: i32 = @intCast(vm.memory[@intCast(curr + 1)].int);
+        const c_data_end: i32 = @intCast(vm.memory[@intCast(curr + 2)].int);
+        const c_cap = c_data_end - c_data_base;
+        if (c_cap >= cap) {
+            // Unlink from free list
+            const next = vm.memory[@intCast(curr + 4)].int;
+            if (prev == 0) {
+                vm.free_chunks = @intCast(next);
+            } else {
+                vm.memory[@intCast(prev + 4)] = .{ .int = next };
+            }
+            // Re-initialize chunk
+            vm.memory[@intCast(curr)] = .{ .int = CHUNK_MAGIC };
+            vm.memory[@intCast(curr + 1)] = .{ .int = curr + 5 };
+            vm.memory[@intCast(curr + 2)] = .{ .int = curr + 5 + c_cap };
+            vm.memory[@intCast(curr + 3)] = .{ .int = curr + 5 };
+            vm.memory[@intCast(curr + 4)] = .{ .int = 0 }; // next
+            return curr;
+        }
+        prev = curr;
+        curr = @intCast(vm.memory[@intCast(curr + 4)].int);
+    }
+
+    // 2. Fallback to fresh allocation
     const chunk = try vm.allocImmortal(5 + cap);
     vm.memory[@intCast(chunk)] = .{ .int = CHUNK_MAGIC };
     vm.memory[@intCast(chunk + 1)] = .{ .int = chunk + 5 };
@@ -209,7 +237,24 @@ fn arenaDeinit(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const ctrl = try resolveArenaControl(vm, args[0]);
     if (vm.memory[@intCast(ctrl)].int != ARENA_MAGIC)
         return fail(vm, "__arena_deinit", "invalid arena");
-    vm.memory[@intCast(ctrl + 4)] = .{ .int = 0 };
+        
+    // Walk the chunks and push them to vm.free_chunks
+    var chunk_v = vm.memory[@intCast(ctrl + 2)]; // first chunk
+    while (true) {
+        const chunk = try asHeapPtr(chunk_v);
+        if (chunk == 0) break;
+        if (vm.memory[@intCast(chunk)].int != CHUNK_MAGIC) break;
+        
+        const next = vm.memory[@intCast(chunk + 4)];
+        
+        // Push this chunk to the free list
+        vm.memory[@intCast(chunk + 4)] = .{ .int = vm.free_chunks };
+        vm.free_chunks = chunk;
+        
+        chunk_v = next;
+    }
+
+    vm.memory[@intCast(ctrl + 4)] = .{ .int = 0 }; // Mark arena as dead
     return .null;
 }
 

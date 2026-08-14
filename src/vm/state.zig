@@ -48,6 +48,7 @@ pub const VMState = struct {
     memory: []Value,
     heap_ptr: i32 = HEAP_START,
     immortal_ptr: i32 = @intCast(MEMORY_SIZE),
+    free_chunks: i32 = 0,
     chunk: *Chunk,
     current_line: u32 = 1,
     current_column: u32 = 1,
