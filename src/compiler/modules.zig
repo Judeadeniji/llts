@@ -140,6 +140,10 @@ fn treeContainsImport(node: *ast.Node) bool {
             return false;
         },
         .array_type => |a| return treeContainsImport(a.elem),
+        .tuple_type => |t| {
+            for (t.elems) |e| if (treeContainsImport(e)) return true;
+            return false;
+        },
         .pointer_type => |p| return treeContainsImport(p.elem),
         .union_type => |u| return treeContainsImport(u.left) or treeContainsImport(u.right),
         .func_type => |f| {
@@ -247,6 +251,9 @@ fn loadImportsInTree(
         },
         .array_type => |a| {
             try loadImportsInTree(state, doc, a.elem, current_module, out, visited);
+        },
+        .tuple_type => |t| {
+            for (t.elems) |e| try loadImportsInTree(state, doc, e, current_module, out, visited);
         },
         .pointer_type => |p| {
             try loadImportsInTree(state, doc, p.elem, current_module, out, visited);
@@ -667,6 +674,9 @@ fn rewriteModuleRefs(
             }
         },
         .array_type => |*a| try rewriteModuleRefs(state, a.elem, local_map, bound),
+        .tuple_type => |*t| {
+            for (t.elems) |e| try rewriteModuleRefs(state, e, local_map, bound);
+        },
         .pointer_type => |*p| try rewriteModuleRefs(state, p.elem, local_map, bound),
         .union_type => |*u| {
             try rewriteModuleRefs(state, u.left, local_map, bound);

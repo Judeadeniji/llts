@@ -48,6 +48,7 @@ pub const EnumDecl = stmt.EnumDecl;
 pub const TypeDecl = stmt.TypeDecl;
 
 pub const ArrayType = types.ArrayType;
+pub const TupleType = types.TupleType;
 pub const UnionType = types.UnionType;
 pub const PointerType = types.PointerType;
 pub const FuncType = types.FuncType;
@@ -82,6 +83,7 @@ pub const Node = union(enum) {
     error_expr: ErrorExpr,
     extern_decl: Extern,
     array_type: ArrayType,
+    tuple_type: TupleType,
     union_type: UnionType,
     pointer_type: PointerType,
     func_type: FuncType,

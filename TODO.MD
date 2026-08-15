@@ -108,6 +108,7 @@ Packed byte heap + honest numeric widths. See [`docs/memory-model.md`](docs/memo
 - [x] **Return / param / field annotations** when present; unannotated = `Unknown`.
 - [x] **`$name: T`**, `[]T` / `[N]T` (incl. nested), `T | error`, `?T` / `T | null`; numeric aliases `int`/`number`→`i64`, `byte`→`u8`, `float`→`f64`, `bool`/`boolean`→`u1`.
 - [x] **`string` ≡ `[]byte`**; string literals infer as `[N]byte`.
+- [x] **`const` literal modifier** — `const "x"` / `@const $k = "x"` keep singleton type `"x"` (and deep tuples for `const […]`); bare `"x"` still `[N]byte`.
 - [x] **Structs as types** — including imported `mod.Name` (e.g. `mem.Arena`).
 - [x] **Debug type asserts**; strip with `--release`.
 - [x] **`@typeOf(expr)`**
@@ -207,7 +208,7 @@ $i = ID(u);           # same — T(x) sugar
 - [x] **Literal types** — `"a"` / `0` / `true` / `Enum.Variant` as RHS; unions of literals
 - [x] **Function types** — `@func(params): ret` as a type form
 - [ ] **Object / shape types** — `{ fields; callables }` filled at init
-- [ ] **Tuple types** — `[T, U, …]` values + field/index access
+- [x] **Tuple types** — `[T, U, …]` values + field/index access
 - [ ] **Shape intersection `&`** — merge object types; `Readable & Writable`
 - [ ] **Optional sugar (later)** — `@enum Expr { Literal { … }, … }` → Kind + structs + `@type Expr = …`
 - [ ] **Typed error sets (follow-on)**

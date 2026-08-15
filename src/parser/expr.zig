@@ -70,6 +70,16 @@ fn parseUnary(self: *Parser) ParseError!*Node {
             .loc = arg.loc(),
         } });
     }
+    // `const "x"` / `const [1, "a"]` — keep singleton / deep literal types.
+    if (tok.type == .keyword and std.mem.eql(u8, tok.value, "const")) {
+        _ = self.advance();
+        const arg = try parseUnary(self);
+        return self.create(.{ .unary = .{
+            .operator = try self.dupe("const"),
+            .arg = arg,
+            .loc = arg.loc(),
+        } });
+    }
     return parsePostfix(self);
 }
 
@@ -83,11 +93,27 @@ fn parsePostfix(self: *Parser) ParseError!*Node {
         }
         if (tok.type == .delimiter and std.mem.eql(u8, tok.value, ".")) {
             _ = self.advance();
-            const prop = try self.consume(.identifier, "Expected property name", null);
+            // Tuple fields `.0` / `.1` use number tokens; structs use identifiers.
+            const prop = self.peek(0) orelse return self.failMsg("Expected property name");
+            if (prop.type == .number or prop.type == .hex or prop.type == .octal or prop.type == .binary) {
+                _ = self.advance();
+                const prop_node = try self.create(.{ .primary = .{
+                    .kind = .identifier,
+                    .name = try self.dupe(prop.value),
+                    .loc = self.locOf(prop),
+                } });
+                e = try self.create(.{ .member = .{
+                    .object = e,
+                    .property = prop_node,
+                    .loc = e.loc(),
+                } });
+                continue;
+            }
+            const prop_tok = try self.consume(.identifier, "Expected property name", null);
             const prop_node = try self.create(.{ .primary = .{
                 .kind = .identifier,
-                .name = try self.dupe(prop.value),
-                .loc = self.locOf(prop),
+                .name = try self.dupe(prop_tok.value),
+                .loc = self.locOf(prop_tok),
             } });
             e = try self.create(.{ .member = .{
                 .object = e,

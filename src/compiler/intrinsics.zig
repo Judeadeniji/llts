@@ -103,7 +103,7 @@ pub fn typecheck(state: *CompilerState, env: *typecheck_root.Env, ta: ir.TypeAll
             const v = c.args[1];
             if (c.args.len == 3) _ = try typecheck_root.inferExpr(state, env, ta, c.args[2]);
             const base: ir.Type = switch (v.*) {
-                .array_type, .union_type, .pointer_type, .func_type => try from_ast.typeFromAst(v, state, ta),
+                .array_type, .union_type, .pointer_type, .func_type, .tuple_type => try from_ast.typeFromAst(v, state, ta),
                 .primary => |p| blk: {
                     if (p.kind == .identifier) {
                         if (std.mem.eql(u8, p.name, "string") or std.mem.eql(u8, p.name, "[]byte")) {
@@ -156,7 +156,7 @@ pub fn compile(state: *CompilerState, intr: Intrinsic, node: *ast.Node, c: *cons
             var static_type: ?[]const u8 = null;
             if (c.args[0].* == .primary and c.args[0].primary.kind == .identifier) {
                 static_type = c.args[0].primary.name;
-            } else if (c.args[0].* == .pointer_type or c.args[0].* == .array_type or c.args[0].* == .union_type or c.args[0].* == .func_type) {
+            } else if (c.args[0].* == .pointer_type or c.args[0].* == .array_type or c.args[0].* == .union_type or c.args[0].* == .func_type or c.args[0].* == .tuple_type) {
                 static_type = try from_ast.typeAstToDisplay(c.args[0], state);
             } else if (try path.tryResolveStaticPath(state, c.args[0])) |p| {
                 static_type = p;
@@ -171,6 +171,10 @@ pub fn compile(state: *CompilerState, intr: Intrinsic, node: *ast.Node, c: *cons
                     is_type = true;
                     size = layout.sizeOfTypeName(st);
                 } else if (std.mem.startsWith(u8, st, "@func(")) {
+                    is_type = true;
+                    size = 8;
+                } else if (st.len > 0 and st[0] == '[' and std.mem.indexOfScalar(u8, st, ',') != null) {
+                    // Tuple type display `[T, U]` — handle-sized like arrays
                     is_type = true;
                     size = 8;
                 } else if (widths.fromName(st)) |w| {

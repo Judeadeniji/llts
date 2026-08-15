@@ -26,6 +26,14 @@ pub fn typeFromAst(node: ?*ast.Node, state: ?*state_mod.CompilerState, ta: ir.Ty
             }
             break :blk try ta.arrayType(elem, length);
         },
+        .tuple_type => |t| blk: {
+            var elems: std.ArrayList(ir.Type) = .empty;
+            defer elems.deinit(ta.allocator);
+            for (t.elems) |e| {
+                try elems.append(ta.allocator, try typeFromAst(e, state, ta));
+            }
+            break :blk try ta.tupleType(elems.items);
+        },
         .pointer_type => |p| try ta.ptrType(try typeFromAst(p.elem, state, ta)),
         .func_type => |f| blk: {
             var params: std.ArrayList(ir.Type) = .empty;
@@ -141,12 +149,37 @@ pub fn parseDisplayType(
         if (s.len >= 2 and s[1] == ']') {
             return try ta.arrayType(try parseDisplayType(state, ta, s[2..], cycle), null);
         }
-        var i: usize = 1;
-        while (i < s.len and s[i] >= '0' and s[i] <= '9') : (i += 1) {}
-        if (i < s.len and s[i] == ']') {
-            const len = std.fmt.parseInt(usize, s[1..i], 10) catch return error.CompileError;
-            return try ta.arrayType(try parseDisplayType(state, ta, s[i + 1 ..], cycle), len);
+        var depth: i32 = 0;
+        var close: ?usize = null;
+        var i: usize = 0;
+        while (i < s.len) : (i += 1) {
+            const c = s[i];
+            if (c == '[') depth += 1;
+            if (c == ']') {
+                depth -= 1;
+                if (depth == 0) {
+                    close = i;
+                    break;
+                }
+            }
         }
+        const end = close orelse return error.CompileError;
+        const interior = s[1..end];
+        const rest = std.mem.trim(u8, s[end + 1 ..], " \t");
+        if (rest.len > 0) {
+            const len = std.fmt.parseInt(usize, interior, 10) catch return error.CompileError;
+            return try ta.arrayType(try parseDisplayType(state, ta, rest, cycle), len);
+        }
+        const parts = try ir.splitTopLevel(ta.allocator, interior, ", ");
+        defer ta.allocator.free(parts);
+        var elems: std.ArrayList(ir.Type) = .empty;
+        defer elems.deinit(ta.allocator);
+        for (parts) |part| {
+            const p = std.mem.trim(u8, part, " \t");
+            if (p.len == 0) continue;
+            try elems.append(ta.allocator, try parseDisplayType(state, ta, p, cycle));
+        }
+        return try ta.tupleType(elems.items);
     }
     if (try parseFuncDisplayType(state, ta, s, cycle)) |ft| return ft;
     // Literal types stored as displays: `"a"`, `42`, `true`
@@ -618,15 +651,51 @@ pub fn resolveType(state: *state_mod.CompilerState, node: *ast.Node) ?[]const u8
         },
         .array_literal => |a| blk: {
             if (a.elements.len == 0) break :blk "[0]unknown";
-            // Infer from first element; prefer concrete element types.
-            const first = resolveType(state, a.elements[0]) orelse "unknown";
-            // Nested array literal length check is done in typecheck; here best-effort.
-            const s = std.fmt.allocPrint(state.allocator, "[{d}]{s}", .{ a.elements.len, first }) catch break :blk null;
-            state.owned.append(state.allocator, s) catch {};
-            break :blk s;
+            var parts: std.ArrayList([]const u8) = .empty;
+            defer parts.deinit(state.allocator);
+            for (a.elements) |el| {
+                const t = resolveType(state, el) orelse "unknown";
+                parts.append(state.allocator, t) catch break :blk null;
+            }
+            // Homogeneous → `[N]T`; else tuple `[T, U, …]`.
+            var homo = true;
+            const first = parts.items[0];
+            for (parts.items[1..]) |p| {
+                if (!std.mem.eql(u8, p, first)) {
+                    homo = false;
+                    break;
+                }
+            }
+            if (homo) {
+                const s = std.fmt.allocPrint(state.allocator, "[{d}]{s}", .{ a.elements.len, first }) catch break :blk null;
+                state.owned.append(state.allocator, s) catch {};
+                break :blk s;
+            }
+            var total: usize = 2;
+            for (parts.items, 0..) |p, pi| {
+                total += p.len;
+                if (pi > 0) total += 2;
+            }
+            const out = state.allocator.alloc(u8, total) catch break :blk null;
+            out[0] = '[';
+            var off: usize = 1;
+            for (parts.items, 0..) |p, pi| {
+                if (pi > 0) {
+                    @memcpy(out[off .. off + 2], ", ");
+                    off += 2;
+                }
+                @memcpy(out[off .. off + p.len], p);
+                off += p.len;
+            }
+            out[off] = ']';
+            state.owned.append(state.allocator, out) catch {};
+            break :blk out;
         },
         .struct_init => |s| resolveStructName(state, s.type_expr),
         .unary => |u| blk: {
+            if (std.mem.eql(u8, u.operator, "const")) {
+                break :blk resolveTypeLiteral(state, u.arg);
+            }
             if (std.mem.eql(u8, u.operator, "&")) {
                 const inner = resolveType(state, u.arg) orelse break :blk null;
                 const s = std.fmt.allocPrint(state.allocator, "*{s}", .{inner}) catch break :blk null;
@@ -636,6 +705,64 @@ pub fn resolveType(state: *state_mod.CompilerState, node: *ast.Node) ?[]const u8
             break :blk resolveType(state, u.arg);
         },
         else => null,
+    };
+}
+
+/// Emit-time display for `const expr` — singleton / deep-literal forms.
+fn resolveTypeLiteral(state: *state_mod.CompilerState, node: *ast.Node) ?[]const u8 {
+    return switch (node.*) {
+        .literal => |lit| switch (lit.literal_type) {
+            .string => blk: {
+                const s = std.fmt.allocPrint(state.allocator, "\"{s}\"", .{lit.value}) catch break :blk null;
+                state.owned.append(state.allocator, s) catch {};
+                break :blk s;
+            },
+            .boolean => if (std.mem.eql(u8, lit.value, "true")) "true" else "false",
+            .@"null" => "null",
+            .number => blk: {
+                if (std.mem.indexOfScalar(u8, lit.value, '.') != null or
+                    std.mem.indexOfScalar(u8, lit.value, 'e') != null or
+                    std.mem.indexOfScalar(u8, lit.value, 'E') != null)
+                {
+                    break :blk "f64";
+                }
+                break :blk lit.value;
+            },
+            .hex, .octal, .binary => lit.value,
+        },
+        .array_literal => |a| blk: {
+            if (a.elements.len == 0) break :blk "[0]unknown";
+            var parts: std.ArrayList([]const u8) = .empty;
+            defer parts.deinit(state.allocator);
+            for (a.elements) |el| {
+                const t = resolveTypeLiteral(state, el) orelse resolveType(state, el) orelse "unknown";
+                parts.append(state.allocator, t) catch break :blk null;
+            }
+            var total: usize = 2;
+            for (parts.items, 0..) |p, pi| {
+                total += p.len;
+                if (pi > 0) total += 2;
+            }
+            const out = state.allocator.alloc(u8, total) catch break :blk null;
+            out[0] = '[';
+            var off: usize = 1;
+            for (parts.items, 0..) |p, pi| {
+                if (pi > 0) {
+                    @memcpy(out[off .. off + 2], ", ");
+                    off += 2;
+                }
+                @memcpy(out[off .. off + p.len], p);
+                off += p.len;
+            }
+            out[off] = ']';
+            state.owned.append(state.allocator, out) catch {};
+            break :blk out;
+        },
+        .unary => |u| if (std.mem.eql(u8, u.operator, "const"))
+            resolveTypeLiteral(state, u.arg)
+        else
+            resolveType(state, node),
+        else => resolveType(state, node),
     };
 }
 

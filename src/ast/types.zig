@@ -9,6 +9,12 @@ pub const ArrayType = struct {
     loc: Location,
 };
 
+/// `[T, U, …]` fixed heterogeneous product in a type position.
+pub const TupleType = struct {
+    elems: []*Node,
+    loc: Location,
+};
+
 /// `T | U` in a type position.
 pub const UnionType = struct {
     left: *Node,

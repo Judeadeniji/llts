@@ -316,6 +316,16 @@ fn fillStruct(state: *CompilerState, init: *const ast.StructInit, struct_def: st
 pub fn compileMember(state: *CompilerState, mem: *const ast.Member, node: *ast.Node) !void {
     if (try compileEnumVariant(state, mem)) return;
 
+    // Tuple field `.0` / `.1` — same runtime as array index.
+    if (mem.property.* == .primary) {
+        if (std.fmt.parseInt(i64, mem.property.primary.name, 10)) |idx| {
+            try expr.compileExpression(state, mem.object);
+            try emit.emitConstant(state, .{ .i64 = idx });
+            try emit.emitOp(state, .OP_GET_ARRAY);
+            return;
+        } else |_| {}
+    }
+
     if (try path.tryResolveStaticPath(state, node)) |static_path| {
         if (std.mem.indexOf(u8, static_path, "::") != null) {
             var buf: [512]u8 = undefined;

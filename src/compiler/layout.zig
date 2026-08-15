@@ -32,6 +32,7 @@ pub fn sizeOfTypeName(type_name: []const u8) i32 {
     const bare = unwrapTypeName(type_name);
     if (bare.len > 0 and bare[0] == '*') return 8; // pointer / heap handle
     if (std.mem.startsWith(u8, bare, "@func(")) return 8; // function value / handle
+    if (bare.len > 0 and bare[0] == '[' and std.mem.indexOfScalar(u8, bare, ',') != null) return 8; // tuple
     if (widths.fromName(bare)) |w| return w.size();
     if (std.mem.eql(u8, bare, "null"))
         return 0;
@@ -62,6 +63,7 @@ pub fn fieldKind(state: ?*state_mod.CompilerState, type_name: []const u8) FieldK
     const bare = unwrapTypeName(type_name);
     if (bare.len > 0 and bare[0] == '*') return .handle;
     if (std.mem.startsWith(u8, bare, "@func(")) return .handle;
+    if (bare.len > 0 and bare[0] == '[' and std.mem.indexOfScalar(u8, bare, ',') != null) return .handle;
     if (widths.fromName(bare)) |w| return fieldKindFromWidth(w);
     if (std.mem.eql(u8, bare, "ptr"))
         return .ptr;

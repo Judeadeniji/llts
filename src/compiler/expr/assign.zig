@@ -65,6 +65,26 @@ fn assignIndex(state: *CompilerState, idx: *const ast.Index, right: *ast.Node, a
 }
 
 fn assignMember(state: *CompilerState, mem: *const ast.Member, right: *ast.Node, arith: ?OpCode) !void {
+    // Tuple field `.0` / `.1`
+    if (mem.property.* == .primary) {
+        if (std.fmt.parseInt(i64, mem.property.primary.name, 10)) |idx| {
+            if (arith) |op| {
+                try expr.compileExpression(state, mem.object);
+                try emit.emitConstant(state, .{ .i64 = idx });
+                try expr.compileExpression(state, mem.object);
+                try emit.emitConstant(state, .{ .i64 = idx });
+                try emit.emitOp(state, .OP_GET_ARRAY);
+                try expr.compileExpression(state, right);
+                try emit.emitOp(state, op);
+            } else {
+                try expr.compileExpression(state, mem.object);
+                try emit.emitConstant(state, .{ .i64 = idx });
+                try expr.compileExpression(state, right);
+            }
+            try emit.emitOp(state, .OP_SET_ARRAY);
+            return;
+        } else |_| {}
+    }
     if (types.resolveType(state, mem.object)) |type_name| {
         if (mem.property.* == .primary) {
             if (types.lookupStructField(state, type_name, mem.property.primary.name)) |info| {

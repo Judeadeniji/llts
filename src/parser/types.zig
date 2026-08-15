@@ -6,7 +6,7 @@ const Parser = ctx.Parser;
 const ParseError = ctx.ParseError;
 const Node = ast.Node;
 
-/// Parse a type: `?T`, `*T`, `[]T`, `[N]T`, `@func(…): R`, nested `[2][3]int`, `Name`, or `T | U`.
+/// Parse a type: `?T`, `*T`, `[]T`, `[N]T`, `[T, U, …]`, `@func(…): R`, nested `[2][3]int`, `Name`, or `T | U`.
 /// `?T` is sugar for `T | null`. `?` and `*` bind tighter than `|`.
 /// `?*T` parses as optional-of-pointer.
 pub fn parseType(self: *Parser) ParseError!*Node {
@@ -54,16 +54,48 @@ fn parseTypeOperand(self: *Parser) ParseError!*Node {
     if (self.checkDelim("[")) {
         const start = self.peek(0).?;
         _ = self.advance();
-        var length_text: ?[]const u8 = null;
-        if (self.check(.number) or self.check(.hex) or self.check(.octal) or self.check(.binary)) {
-            const num_tok = self.advance().?;
-            length_text = try self.dupe(num_tok.value);
+
+        // `[]T`
+        if (self.checkDelim("]")) {
+            _ = self.advance();
+            const elem = try parseType(self);
+            return self.create(.{ .array_type = .{
+                .elem = elem,
+                .length_text = null,
+                .loc = self.locOf(start),
+            } });
         }
-        _ = try self.consume(.delimiter, "Expected ']' in array type", "]");
-        const elem = try parseType(self);
-        return self.create(.{ .array_type = .{
-            .elem = elem,
-            .length_text = length_text,
+
+        // `[N]T` — length token immediately followed by `]`
+        if (self.check(.number) or self.check(.hex) or self.check(.octal) or self.check(.binary)) {
+            if (self.peek(1)) |n1| {
+                if (n1.type == .delimiter and std.mem.eql(u8, n1.value, "]")) {
+                    const num_tok = self.advance().?;
+                    _ = self.advance(); // `]`
+                    const elem = try parseType(self);
+                    return self.create(.{ .array_type = .{
+                        .elem = elem,
+                        .length_text = try self.dupe(num_tok.value),
+                        .loc = self.locOf(start),
+                    } });
+                }
+            }
+        }
+
+        // `[T, U, …]` or `[T]` one-tuple
+        var elems: std.ArrayList(*Node) = .empty;
+        while (true) {
+            try elems.append(self.arena, try parseType(self));
+            if (self.checkDelim(",")) {
+                _ = self.advance();
+                if (self.checkDelim("]")) break; // trailing comma
+                continue;
+            }
+            break;
+        }
+        _ = try self.consume(.delimiter, "Expected ']' in tuple type", "]");
+        return self.create(.{ .tuple_type = .{
+            .elems = try elems.toOwnedSlice(self.arena),
             .loc = self.locOf(start),
         } });
     }

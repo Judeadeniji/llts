@@ -17,6 +17,8 @@ pub const Env = struct {
     expected_return: ?ir.Type = null,
     annotated_return: ?ir.Type = null,
     const_names: std.StringHashMap(void),
+    /// When set, literals keep singleton types (`"x"`, `0`, `true`) and arrays become deep tuples.
+    prefer_literals: bool = false,
     allocator: std.mem.Allocator,
 
     fn init(allocator: std.mem.Allocator) Env {
@@ -201,24 +203,61 @@ fn isNumericType(t: ir.Type) bool {
 }
 
 /// Same-width numeric ops only (no implicit int↔float or f32↔f64).
+/// Singleton int/bool literals widen to i64/u1 for operators.
 fn requireNumericPair(state: *state_mod.CompilerState, l: ir.Type, r: ir.Type, ctx: []const u8) TypecheckError!ir.Type {
-    if (!isNumericType(l) or !isNumericType(r)) {
+    const lw = numericOpType(l);
+    const rw = numericOpType(r);
+    if (!isNumericType(lw) or !isNumericType(rw)) {
         const dl = try ownDisplay(state, l);
         const dr = try ownDisplay(state, r);
         return compiler_errors.compileFailFmt(state, "{s}: expected matching numeric types, got '{s}' and '{s}'", .{ ctx, dl, dr });
     }
-    if (!ir.typeEquals(l, r)) {
+    if (!ir.typeEquals(lw, rw)) {
         const dl = try ownDisplay(state, l);
         const dr = try ownDisplay(state, r);
         return compiler_errors.compileFailFmt(state, "{s}: mixed '{s}' and '{s}' (use @as)", .{ ctx, dl, dr });
     }
-    return l;
+    return lw;
 }
 
-fn inferLiteral(ta: ir.TypeAlloc, lit: ast.Literal) !ir.Type {
+fn numericOpType(t: ir.Type) ir.Type {
+    return switch (ir.peelDefined(t)) {
+        .int_lit => ir.TInt,
+        .bool_lit => ir.TBool,
+        else => |p| p,
+    };
+}
+
+fn isPureLiteralExpr(node: *ast.Node) bool {
+    return switch (node.*) {
+        .literal => true,
+        .array_literal => |a| blk: {
+            for (a.elements) |el| {
+                if (!isPureLiteralExpr(el)) break :blk false;
+            }
+            break :blk true;
+        },
+        .unary => |u| std.mem.eql(u8, u.operator, "const") and isPureLiteralExpr(u.arg),
+        .struct_init => |init| blk: {
+            for (init.fields) |f| {
+                if (!isPureLiteralExpr(f.value)) break :blk false;
+            }
+            break :blk true;
+        },
+        else => false,
+    };
+}
+
+fn inferLiteral(ta: ir.TypeAlloc, lit: ast.Literal, prefer_literals: bool) !ir.Type {
     return switch (lit.literal_type) {
-        .string => try ta.arrayType(ir.TByte, lit.value.len),
-        .boolean => ir.TBool,
+        .string => blk: {
+            if (prefer_literals) break :blk .{ .str_lit = lit.value };
+            break :blk try ta.arrayType(ir.TByte, lit.value.len);
+        },
+        .boolean => blk: {
+            if (prefer_literals) break :blk .{ .bool_lit = std.mem.eql(u8, lit.value, "true") };
+            break :blk ir.TBool;
+        },
         .null => ir.TNull,
         .number => blk: {
             if (std.mem.indexOfScalar(u8, lit.value, '.') != null or
@@ -227,9 +266,24 @@ fn inferLiteral(ta: ir.TypeAlloc, lit: ast.Literal) !ir.Type {
             {
                 break :blk ir.TF64;
             }
+            if (prefer_literals) {
+                const n = std.fmt.parseInt(i64, lit.value, 10) catch break :blk ir.TInt;
+                break :blk .{ .int_lit = n };
+            }
             break :blk ir.TInt;
         },
-        else => ir.TInt,
+        .hex, .octal, .binary => blk: {
+            if (prefer_literals) {
+                const n: i64 = switch (lit.literal_type) {
+                    .hex => std.fmt.parseInt(i64, lit.value[2..], 16) catch break :blk ir.TInt,
+                    .octal => std.fmt.parseInt(i64, lit.value[2..], 8) catch break :blk ir.TInt,
+                    .binary => std.fmt.parseInt(i64, lit.value[2..], 2) catch break :blk ir.TInt,
+                    else => unreachable,
+                };
+                break :blk .{ .int_lit = n };
+            }
+            break :blk ir.TInt;
+        },
     };
 }
 
@@ -496,7 +550,7 @@ fn noteDiag(state: *state_mod.CompilerState, node: *ast.Node) void {
 pub fn inferExpr(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node: *ast.Node) TypecheckError!ir.Type {
     noteDiag(state, node);
     return switch (node.*) {
-        .literal => |lit| try inferLiteral(ta, lit),
+        .literal => |lit| try inferLiteral(ta, lit, env.prefer_literals),
         .primary => |p| blk: {
             if (p.kind == .identifier or p.kind == .register) {
                 if (env.lookup(p.name)) |t| break :blk t;
@@ -511,6 +565,12 @@ pub fn inferExpr(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, n
             break :blk ir.TUnknown;
         },
         .unary => |u| blk: {
+            if (std.mem.eql(u8, u.operator, "const")) {
+                const prev = env.prefer_literals;
+                env.prefer_literals = true;
+                defer env.prefer_literals = prev;
+                break :blk try inferExpr(state, env, ta, u.arg);
+            }
             const t = try inferExpr(state, env, ta, u.arg);
             if (std.mem.eql(u8, u.operator, "!")) break :blk ir.TBool;
             if (std.mem.eql(u8, u.operator, "&")) {
@@ -573,6 +633,17 @@ pub fn inferExpr(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, n
             if (m.property.* == .primary) {
                 var field_obj = obj;
                 if (field_obj == .defined) field_obj = field_obj.defined.underlying.*;
+                // Tuple field access: `.0`, `.1`, …
+                if (field_obj == .tuple) {
+                    if (std.fmt.parseInt(i64, m.property.primary.name, 10)) |ci| {
+                        if (ci < 0 or ci >= field_obj.tuple.len) {
+                            return compiler_errors.compileFailFmt(state, "Tuple field .{s} out of range (len {d})", .{ m.property.primary.name, field_obj.tuple.len });
+                        }
+                        break :blk field_obj.tuple[@intCast(ci)];
+                    } else |_| {
+                        return compiler_errors.compileFailFmt(state, "Tuple fields are numeric (.0, .1, …), got '.{s}'", .{m.property.primary.name});
+                    }
+                }
                 if (ir.structNameOf(field_obj)) |sname| {
                     if (state.structs.get(sname)) |def| {
                         if (def.types.get(m.property.primary.name) == null) {
@@ -624,6 +695,16 @@ pub fn inferExpr(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, n
             const i = try inferExpr(state, env, ta, start_node);
             if (!ir.involvesUnknown(i)) try requireAssign(state, i, ir.TInt, "index");
             if (obj == .array) break :blk obj.array.elem.*;
+            if (obj == .tuple) {
+                if (try constIntIndex(idx.index.?)) |ci| {
+                    if (ci < 0 or ci >= obj.tuple.len) {
+                        return compiler_errors.compileFailFmt(state, "Tuple index {d} out of range (len {d})", .{ ci, obj.tuple.len });
+                    }
+                    break :blk obj.tuple[@intCast(ci)];
+                }
+                // Non-constant index: gradual
+                break :blk ir.TUnknown;
+            }
             if (!ir.involvesUnknown(obj) and obj != .unknown) {
                 const d = try ownDisplay(state, obj);
                 return compiler_errors.compileFailFmt(state, "Cannot index type '{s}'", .{d});
@@ -671,7 +752,18 @@ pub fn inferExpr(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, n
                 const mem = a.left.member;
                 const obj = try inferExpr(state, env, ta, mem.object);
                 if (mem.property.* == .primary) {
-                    if (ir.structNameOf(obj)) |sname| {
+                    var field_obj = obj;
+                    if (field_obj == .defined) field_obj = field_obj.defined.underlying.*;
+                    if (field_obj == .tuple) {
+                        if (std.fmt.parseInt(i64, mem.property.primary.name, 10)) |ci| {
+                            if (ci < 0 or ci >= field_obj.tuple.len) {
+                                return compiler_errors.compileFailFmt(state, "Tuple field .{s} out of range (len {d})", .{ mem.property.primary.name, field_obj.tuple.len });
+                            }
+                            try requireAssignFrom(state, val, field_obj.tuple[@intCast(ci)], "assignment to tuple field", a.right);
+                        } else |_| {
+                            return compiler_errors.compileFailFmt(state, "Tuple fields are numeric (.0, .1, …), got '.{s}'", .{mem.property.primary.name});
+                        }
+                    } else if (ir.structNameOf(obj)) |sname| {
                         const ft = try fieldTypeFromStruct(state, ta, sname, mem.property.primary.name);
                         try requireAssignFrom(state, val, ft, "assignment to field", a.right);
                     }
@@ -688,6 +780,13 @@ pub fn inferExpr(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, n
                 if (!ir.involvesUnknown(i)) try requireAssign(state, i, ir.TInt, "index");
                 if (obj_t == .array) {
                     try requireAssignFrom(state, val, obj_t.array.elem.*, "assignment to index", a.right);
+                } else if (obj_t == .tuple) {
+                    if (try constIntIndex(start_node)) |ci| {
+                        if (ci < 0 or ci >= obj_t.tuple.len) {
+                            return compiler_errors.compileFailFmt(state, "Tuple index {d} out of range (len {d})", .{ ci, obj_t.tuple.len });
+                        }
+                        try requireAssignFrom(state, val, obj_t.tuple[@intCast(ci)], "assignment to tuple index", a.right);
+                    }
                 }
             }
             break :blk val;
@@ -955,6 +1054,18 @@ fn checkFuncValueCall(
     }
 }
 
+fn constIntIndex(node: *ast.Node) !?i64 {
+    if (node.* != .literal) return null;
+    const lit = node.literal;
+    return switch (lit.literal_type) {
+        .number => std.fmt.parseInt(i64, lit.value, 10) catch null,
+        .hex => std.fmt.parseInt(i64, lit.value[2..], 16) catch null,
+        .octal => std.fmt.parseInt(i64, lit.value[2..], 8) catch null,
+        .binary => std.fmt.parseInt(i64, lit.value[2..], 2) catch null,
+        else => null,
+    };
+}
+
 fn inferArrayLiteral(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, a: ast.ArrayLiteral) TypecheckError!ir.Type {
     if (a.elements.len == 0) return try ta.arrayType(ir.TUnknown, 0);
     var types: std.ArrayList(ir.Type) = .empty;
@@ -962,7 +1073,13 @@ fn inferArrayLiteral(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAllo
     for (a.elements) |el| {
         try types.append(ta.allocator, try inferExpr(state, env, ta, el));
     }
+
+    // `const […]` — always a deep tuple of element types (TS `as const` style).
+    if (env.prefer_literals) return try ta.tupleType(types.items);
+
+    // Homogeneous → fixed array; otherwise heterogeneous tuple.
     var elem = types.items[0];
+    var homogeneous = true;
     var i: usize = 1;
     while (i < types.items.len) : (i += 1) {
         const ti = types.items[i];
@@ -972,16 +1089,12 @@ fn inferArrayLiteral(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAllo
         }
         if (elem == .array and ti == .array) {
             if (elem.array.length != null and ti.array.length != null and elem.array.length.? != ti.array.length.?) {
-                return compiler_errors.compileFailFmt(
-                    state,
-                    "Array elements have inconsistent lengths [{d}] vs [{d}]",
-                    .{ elem.array.length.?, ti.array.length.? },
-                );
+                homogeneous = false;
+                break;
             }
             if (!ir.isSubtype(ti.array.elem.*, elem.array.elem.*) and !ir.isSubtype(elem.array.elem.*, ti.array.elem.*)) {
-                const d1 = try ownDisplay(state, elem);
-                const d2 = try ownDisplay(state, ti);
-                return compiler_errors.compileFailFmt(state, "Array elements have inconsistent types '{s}' and '{s}'", .{ d1, d2 });
+                homogeneous = false;
+                break;
             }
             const len = if (elem.array.length != null) elem.array.length else ti.array.length;
             const inner = if (ir.isSubtype(ti.array.elem.*, elem.array.elem.*)) elem.array.elem.* else ti.array.elem.*;
@@ -989,13 +1102,13 @@ fn inferArrayLiteral(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAllo
             continue;
         }
         if (!ir.isSubtype(ti, elem) and !ir.isSubtype(elem, ti)) {
-            const d1 = try ownDisplay(state, elem);
-            const d2 = try ownDisplay(state, ti);
-            return compiler_errors.compileFailFmt(state, "Array elements have inconsistent types '{s}' and '{s}'", .{ d1, d2 });
+            homogeneous = false;
+            break;
         }
         if (!ir.isSubtype(ti, elem)) elem = ti;
     }
-    return try ta.arrayType(elem, a.elements.len);
+    if (homogeneous) return try ta.arrayType(elem, a.elements.len);
+    return try ta.tupleType(types.items);
 }
 
 fn inferStructInit(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, init: ast.StructInit) TypecheckError!ir.Type {
@@ -1042,6 +1155,11 @@ fn checkStmt(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node:
                 if (d.is_const) try env.const_names.put(d.name, {});
                 return null;
             }
+            const prev_lit = env.prefer_literals;
+            // `@const $k = "x"` → `"x"`; arrays/arithmetic keep ordinary inference.
+            // Explicit `const expr` still enables deep literal typing.
+            if (d.is_const and d.value.* == .literal) env.prefer_literals = true;
+            defer env.prefer_literals = prev_lit;
             const value_type = try inferExpr(state, env, ta, d.value);
             if (d.type_annotation) |ann| {
                 const annot = try from_ast.typeFromAst(ann, state, ta);
@@ -1056,7 +1174,10 @@ fn checkStmt(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node:
             } else if (value_type == .struct_) {
                 try env.define(d.name, value_type);
                 try state.global_types.put(d.name, value_type.struct_);
-            } else if (value_type == .enum_ or value_type == .enum_lit) {
+            } else if (value_type == .enum_ or value_type == .enum_lit or
+                value_type == .str_lit or value_type == .int_lit or value_type == .bool_lit or
+                value_type == .tuple)
+            {
                 try env.define(d.name, value_type);
                 const disp = try ownDisplay(state, value_type);
                 try state.global_types.put(d.name, disp);
