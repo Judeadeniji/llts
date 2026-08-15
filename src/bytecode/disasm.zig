@@ -62,8 +62,16 @@ fn formatValue(
     switch (v) {
         .null => try buf.appendSlice(allocator, "null"),
         .bool => |b| try w.print("{}", .{b}),
-        .int => |n| try w.print("{}", .{n}),
-        .float => |n| try w.print("{}", .{n}),
+        .i64 => |n| try w.print("{}", .{n}),
+        .i8 => |n| try w.print("i8 {}", .{n}),
+        .i16 => |n| try w.print("i16 {}", .{n}),
+        .i32 => |n| try w.print("i32 {}", .{n}),
+        .u8 => |n| try w.print("u8 {}", .{n}),
+        .u16 => |n| try w.print("u16 {}", .{n}),
+        .u32 => |n| try w.print("u32 {}", .{n}),
+        .u64 => |n| try w.print("u64 {}", .{n}),
+        .f32 => |n| try w.print("f32 {}", .{n}),
+        .f64 => |n| try w.print("f64 {}", .{n}),
         .name => |i| {
             try buf.append(allocator, '"');
             try buf.appendSlice(allocator, chunk.stringAt(i));
@@ -74,6 +82,7 @@ fn formatValue(
         .ptr => |p| try w.print("ptr {d}", .{p}),
         .slice => |s| try w.print("slice offset={d} len={d}", .{ s.offset, s.len }),
         .bytes => |b| try w.print("bytes offset={d} len={d}", .{ b.offset, b.len }),
+        .array => |a| try w.print("array offset={d} count={d}", .{ a.offset, a.count }),
         .module => |m| try w.print("module {s}", .{m.name}),
         .list => try buf.appendSlice(allocator, "list"),
         .map => try buf.appendSlice(allocator, "map"),
@@ -203,6 +212,7 @@ fn formatOperands(
         .OP_PACK_REST,
         .OP_MARK_CONST,
         .OP_ASSERT_TYPE,
+        .OP_AS,
         => {
             const b = readByte(code, ip) orelse return false;
             try w.print("{d}", .{b});
@@ -290,7 +300,7 @@ test "disasm smoke chunk" {
     var c = Chunk.init(allocator);
     defer c.deinit();
 
-    const idx = try c.addConstant(.{ .int = 42 });
+    const idx = try c.addConstant(.{ .i64 = 42 });
     try c.writeOp(.OP_CONSTANT);
     try c.write(@intCast((idx >> 8) & 0xff));
     try c.write(@intCast(idx & 0xff));

@@ -71,4 +71,8 @@ pub const OpCode = enum(u8) {
     /// Packed struct field: operands u16 byte_offset, u8 FieldKind.
     OP_LOAD_FIELD,
     OP_STORE_FIELD,
+    /// Explicit numeric cast (`@as`): operand u8 CastKind (0=int, 1=u8, 2=f32, 3=f64).
+    OP_AS,
+    /// Slice view: stack [obj, lo, hi] → view (exclusive hi). Bytes/string only.
+    OP_SLICE,
 };

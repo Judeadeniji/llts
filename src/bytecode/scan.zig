@@ -31,6 +31,7 @@ fn operandBytes(op: OpCode) usize {
         .OP_PACK_REST,
         .OP_MARK_CONST,
         .OP_ASSERT_TYPE,
+        .OP_AS,
         => 1,
         else => 0,
     };
