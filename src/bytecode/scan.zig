@@ -22,6 +22,7 @@ fn operandBytes(op: OpCode) usize {
         => 2,
         .OP_LINE => 4,
         .OP_CALL_STATIC => 3,
+        .OP_FOR_PREP, .OP_FOR_LOOP => 4,
         .OP_GET_LOCAL,
         .OP_SET_LOCAL,
         .OP_PRINT,
@@ -43,15 +44,6 @@ fn readShort(code: []const u8, ip: *usize) ?u16 {
     return (hi << 8) | lo;
 }
 
-fn addNameFromConst(names: *std.StringHashMap(void), chunk: *const Chunk, idx: u16) !void {
-    if (idx >= chunk.constants.items.len) return;
-    const v = chunk.constants.items[idx];
-    switch (v) {
-        .name => |i| try names.put(chunk.stringAt(i), {}),
-        else => {},
-    }
-}
-
 /// Collect global names referenced by `OP_GET_GLOBAL` / `OP_SET_GLOBAL` in `chunk.code`.
 pub fn referencedGlobalNames(allocator: std.mem.Allocator, chunk: *const Chunk) !std.StringHashMap(void) {
     var names = std.StringHashMap(void).init(allocator);
@@ -66,8 +58,10 @@ pub fn referencedGlobalNames(allocator: std.mem.Allocator, chunk: *const Chunk) 
 
         switch (op) {
             .OP_GET_GLOBAL, .OP_SET_GLOBAL => {
-                const idx = readShort(code, &ip) orelse break;
-                try addNameFromConst(&names, chunk, idx);
+                const slot = readShort(code, &ip) orelse break;
+                if (slot < chunk.global_names.items.len) {
+                    try names.put(chunk.global_names.items[slot], {});
+                }
             },
             else => {},
         }
@@ -85,14 +79,14 @@ test "scan finds globals in chunk" {
     var c = Chunk.init(allocator);
     defer c.deinit();
 
-    const print_idx = try c.addStringConstant("print");
-    const host_idx = try c.addStringConstant("__hostLog");
+    const print_slot = try c.internGlobalName("print");
+    const host_slot = try c.internGlobalName("__hostLog");
     try c.writeOp(.OP_GET_GLOBAL);
-    try c.write(@intCast((host_idx >> 8) & 0xff));
-    try c.write(@intCast(host_idx & 0xff));
+    try c.write(@intCast((host_slot >> 8) & 0xff));
+    try c.write(@intCast(host_slot & 0xff));
     try c.writeOp(.OP_GET_GLOBAL);
-    try c.write(@intCast((print_idx >> 8) & 0xff));
-    try c.write(@intCast(print_idx & 0xff));
+    try c.write(@intCast((print_slot >> 8) & 0xff));
+    try c.write(@intCast(print_slot & 0xff));
 
     var names = try referencedGlobalNames(allocator, &c);
     defer names.deinit();

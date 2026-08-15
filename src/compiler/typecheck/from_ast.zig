@@ -178,6 +178,16 @@ pub fn resolveType(state: *state_mod.CompilerState, node: *ast.Node) ?[]const u8
             },
             .boolean => "bool",
             .@"null" => "null",
+            .number => blk: {
+                // Float if the source spelling contains '.' or exponent.
+                if (std.mem.indexOfScalar(u8, lit.value, '.') != null or
+                    std.mem.indexOfScalar(u8, lit.value, 'e') != null or
+                    std.mem.indexOfScalar(u8, lit.value, 'E') != null)
+                {
+                    break :blk "float";
+                }
+                break :blk "int";
+            },
             else => "int",
         },
         .primary => |p| blk: {

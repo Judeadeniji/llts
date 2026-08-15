@@ -133,6 +133,6 @@ pub fn register(vm: *VMState) !void {
     json_parse_n = .{ .name = "__jsonParse", .func = jsonParseFn, .arity = 1 };
     json_stringify_n = .{ .name = "__jsonStringify", .func = jsonStringifyFn, .arity = 1 };
     
-    try vm.globals.put("__jsonParse", .{ .native = &json_parse_n });
-    try vm.globals.put("__jsonStringify", .{ .native = &json_stringify_n });
+    try vm.defineGlobal("__jsonParse", .{ .native = &json_parse_n });
+    try vm.defineGlobal("__jsonStringify", .{ .native = &json_stringify_n });
 }

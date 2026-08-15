@@ -87,5 +87,5 @@ pub fn register(vm: *VMState) !void {
         .func = logFn,
         .arity = -1,
     };
-    try vm.globals.put("__hostLog", .{ .native = &log_native });
+    try vm.defineGlobal("__hostLog", .{ .native = &log_native });
 }

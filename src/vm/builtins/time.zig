@@ -39,6 +39,6 @@ pub fn register(vm: *VMState) !void {
     now_n = .{ .name = "__now", .func = nowFn, .arity = 0 };
     sleep_n = .{ .name = "__sleep", .func = sleepFn, .arity = 1 };
 
-    try vm.globals.put("__now", .{ .native = &now_n });
-    try vm.globals.put("__sleep", .{ .native = &sleep_n });
+    try vm.defineGlobal("__now", .{ .native = &now_n });
+    try vm.defineGlobal("__sleep", .{ .native = &sleep_n });
 }

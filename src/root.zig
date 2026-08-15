@@ -23,8 +23,14 @@ pub const Document = ast.Document;
 pub const RunOptions = pipeline.RunOptions;
 
 /// Run a pre-built chunk (Phase 0 smoke / CO-RE bytecode load).
-pub fn runChunk(allocator: std.mem.Allocator, c: *Chunk) !void {
-    try pipeline.runChunk(allocator, c, c.file, &.{});
+pub fn runChunk(
+    allocator: std.mem.Allocator,
+    c: *Chunk,
+    source_path: []const u8,
+    source_args: []const []const u8,
+    max_memory_slots: usize,
+) !void {
+    try pipeline.runChunk(allocator, c, source_path, source_args, max_memory_slots);
 }
 
 pub fn writeBytecodeFile(allocator: std.mem.Allocator, c: *const Chunk, path: []const u8) !void {
@@ -35,8 +41,13 @@ pub fn readBytecodeFile(allocator: std.mem.Allocator, path: []const u8) !Chunk {
     return try pipeline.readBytecodeFile(allocator, path);
 }
 
-pub fn runBytecodeFile(allocator: std.mem.Allocator, path: []const u8, script_args: []const []const u8) !void {
-    try pipeline.runBytecodeFile(allocator, path, script_args);
+pub fn runBytecodeFile(
+    allocator: std.mem.Allocator,
+    path: []const u8,
+    source_args: []const []const u8,
+    max_memory_slots: usize,
+) !void {
+    try pipeline.runBytecodeFile(allocator, path, source_args, max_memory_slots);
 }
 
 pub fn runSource(

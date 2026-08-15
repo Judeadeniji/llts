@@ -18,7 +18,7 @@ pub fn callStatic(vm: *VMState, ip: *usize, addr: u16, argc: u8) CallError!void 
     if (vm.frames.items.len >= MAX_FRAMES) return error.TooManyFrames;
     var frame = CallFrame.init(vm.allocator);
     frame.return_ip = ip.*;
-    frame.base_slot = vm.stack.items.len - argc;
+    frame.base_slot = stack.depth(vm) - argc;
     frame.arg_count = argc;
     frame.func_name = functionNameAt(vm, addr);
     frame.line = vm.current_line;
@@ -35,12 +35,13 @@ pub fn callStatic(vm: *VMState, ip: *usize, addr: u16, argc: u8) CallError!void 
 }
 
 pub fn callDynamic(vm: *VMState, ip: *usize, argc: u8) CallError!void {
-    const callee_idx = vm.stack.items.len - argc - 1;
-    if (callee_idx >= vm.stack.items.len) return fail(vm, "Stack underflow on call");
-    const callee = vm.stack.items[callee_idx];
+    const depth = stack.depth(vm);
+    const callee_idx = depth - argc - 1;
+    if (callee_idx >= depth) return fail(vm, "Stack underflow on call");
+    const callee = vm.stack_buf[callee_idx];
     switch (callee) {
         .native => |n| {
-            const args = vm.stack.items[callee_idx + 1 ..];
+            const args = stack.slice(vm, callee_idx + 1);
             if (n.arity >= 0 and args.len != @as(usize, @intCast(n.arity))) {
                 return fail(vm, "Wrong arity for native");
             }
@@ -49,15 +50,15 @@ pub fn callDynamic(vm: *VMState, ip: *usize, argc: u8) CallError!void {
                 const msg = std.fmt.bufPrint(&buf, "Native '{s}' failed: {s}", .{ n.name, @errorName(err) }) catch "native call failed";
                 return fail(vm, msg);
             };
-            vm.stack.shrinkRetainingCapacity(callee_idx);
+            stack.setTop(vm, callee_idx);
             try stack.push(vm, result);
         },
         .function => |f| {
             var i: usize = 0;
             while (i < argc) : (i += 1) {
-                vm.stack.items[callee_idx + i] = vm.stack.items[callee_idx + 1 + i];
+                vm.stack_buf[callee_idx + i] = vm.stack_buf[callee_idx + 1 + i];
             }
-            vm.stack.shrinkRetainingCapacity(callee_idx + argc);
+            stack.setTop(vm, callee_idx + argc);
             try callStatic(vm, ip, @intCast(f.address), argc);
         },
         else => return fail(vm, "Can only call functions"),
@@ -65,18 +66,18 @@ pub fn callDynamic(vm: *VMState, ip: *usize, argc: u8) CallError!void {
 }
 
 pub fn doReturn(vm: *VMState, ip: *usize) CallError!bool {
-    const result = if (vm.stack.items.len > 0) stack.pop(vm) else Value.null;
+    const result = if (stack.depth(vm) > 0) stack.pop(vm) else Value.null;
     var frame = vm.frames.pop() orelse return fail(vm, "Return with no frame");
     const ret_ip = frame.return_ip;
     const base = frame.base_slot;
     vm.heap_ptr = frame.heap_watermark;
     frame.deinit();
     if (vm.frames.items.len == 0) {
-        vm.stack.shrinkRetainingCapacity(0);
+        stack.setTop(vm, 0);
         try stack.push(vm, result);
         return true;
     }
-    vm.stack.shrinkRetainingCapacity(base);
+    stack.setTop(vm, base);
     try stack.push(vm, result);
     ip.* = ret_ip;
     return false;
@@ -91,9 +92,9 @@ pub fn packRest(vm: *VMState, named: u8) CallError!void {
     var i: i32 = 0;
     while (i < rest_count) : (i += 1) {
         const slot = frame.base_slot + named + @as(usize, @intCast(i));
-        vm.slot(base + 1 + i).* = vm.stack.items[slot];
+        vm.slot(base + 1 + i).* = vm.stack_buf[slot];
     }
-    vm.stack.shrinkRetainingCapacity(frame.base_slot + named);
+    stack.setTop(vm, frame.base_slot + named);
     try stack.push(vm, .{ .ptr = base + 1 });
 }
 

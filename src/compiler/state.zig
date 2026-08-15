@@ -91,6 +91,8 @@ pub const CompilerState = struct {
     global_consts: std.StringHashMap(void),
     ready_global_consts: std.StringHashMap(void),
     native_globals: std.StringHashMap(void),
+    /// Name → global slot for OP_GET/SET_GLOBAL emit.
+    global_slots: std.StringHashMap(u16),
     inline_return_jumps: std.ArrayList(std.ArrayList(usize)) = .empty,
     owned: std.ArrayList([]const u8) = .empty,
     /// Imported module ASTs (own their arenas). Freed in `deinit`.
@@ -123,6 +125,7 @@ pub fn create(allocator: std.mem.Allocator) !CompilerState {
         .global_consts = std.StringHashMap(void).init(allocator),
         .ready_global_consts = std.StringHashMap(void).init(allocator),
         .native_globals = std.StringHashMap(void).init(allocator),
+        .global_slots = std.StringHashMap(u16).init(allocator),
         .type_of_results = std.AutoHashMap(*ast.Node, []const u8).init(allocator),
         .import_from = std.StringHashMap(ImportFrame).init(allocator),
     };
@@ -194,6 +197,7 @@ pub fn deinit(self: *CompilerState) void {
     self.global_consts.deinit();
     self.ready_global_consts.deinit();
     self.native_globals.deinit();
+    self.global_slots.deinit();
     self.type_of_results.deinit();
     self.import_stack.deinit(self.allocator);
     self.import_from.deinit();

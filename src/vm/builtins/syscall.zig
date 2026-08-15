@@ -474,11 +474,11 @@ fn putSys(vm: *VMState, comptime name: []const u8) !void {
     if (builtin.os.tag != .linux) return;
     if (!@hasField(linux.SYS, name)) return;
     const n = @intFromEnum(@field(linux.SYS, name));
-    try vm.globals.put("__SYS_" ++ name, .{ .int = @intCast(n) });
+    try vm.defineGlobal("__SYS_" ++ name, .{ .int = @intCast(n) });
 }
 
 fn putInt(vm: *VMState, name: []const u8, n: i64) !void {
-    try vm.globals.put(name, .{ .int = n });
+    try vm.defineGlobal(name, .{ .int = n });
 }
 
 pub fn register(vm: *VMState) !void {
@@ -519,42 +519,42 @@ pub fn register(vm: *VMState) !void {
     nanosleep_n = .{ .name = "__sys_nanosleep", .func = nanosleepFn, .arity = 2 };
     fcntl_n = .{ .name = "__sys_fcntl", .func = fcntlFn, .arity = -1 };
 
-    try vm.globals.put("__syscall", .{ .native = &call_n });
-    try vm.globals.put("__sys_nr", .{ .native = &nr_n });
-    try vm.globals.put("__sys_isError", .{ .native = &is_err_n });
-    try vm.globals.put("__sys_errno", .{ .native = &errno_n });
-    try vm.globals.put("__sys_errName", .{ .native = &err_name_n });
-    try vm.globals.put("__sys_read", .{ .native = &read_n });
-    try vm.globals.put("__sys_write", .{ .native = &write_n });
-    try vm.globals.put("__sys_writeAll", .{ .native = &write_all_n });
-    try vm.globals.put("__sys_open", .{ .native = &open_n });
-    try vm.globals.put("__sys_close", .{ .native = &close_n });
-    try vm.globals.put("__sys_lseek", .{ .native = &lseek_n });
-    try vm.globals.put("__sys_fsync", .{ .native = &fsync_n });
-    try vm.globals.put("__sys_pipe", .{ .native = &pipe_n });
-    try vm.globals.put("__sys_dup", .{ .native = &dup_n });
-    try vm.globals.put("__sys_dup2", .{ .native = &dup2_n });
-    try vm.globals.put("__sys_getpid", .{ .native = &getpid_n });
-    try vm.globals.put("__sys_getppid", .{ .native = &getppid_n });
-    try vm.globals.put("__sys_getuid", .{ .native = &getuid_n });
-    try vm.globals.put("__sys_geteuid", .{ .native = &geteuid_n });
-    try vm.globals.put("__sys_getgid", .{ .native = &getgid_n });
-    try vm.globals.put("__sys_getegid", .{ .native = &getegid_n });
-    try vm.globals.put("__sys_kill", .{ .native = &kill_n });
-    try vm.globals.put("__sys_chdir", .{ .native = &chdir_n });
-    try vm.globals.put("__sys_getcwd", .{ .native = &getcwd_n });
-    try vm.globals.put("__sys_unlink", .{ .native = &unlink_n });
-    try vm.globals.put("__sys_rename", .{ .native = &rename_n });
-    try vm.globals.put("__sys_mkdir", .{ .native = &mkdir_n });
-    try vm.globals.put("__sys_rmdir", .{ .native = &rmdir_n });
-    try vm.globals.put("__sys_access", .{ .native = &access_n });
-    try vm.globals.put("__sys_chmod", .{ .native = &chmod_n });
-    try vm.globals.put("__sys_symlink", .{ .native = &symlink_n });
-    try vm.globals.put("__sys_readlink", .{ .native = &readlink_n });
-    try vm.globals.put("__sys_ftruncate", .{ .native = &ftruncate_n });
-    try vm.globals.put("__sys_umask", .{ .native = &umask_n });
-    try vm.globals.put("__sys_nanosleep", .{ .native = &nanosleep_n });
-    try vm.globals.put("__sys_fcntl", .{ .native = &fcntl_n });
+    try vm.defineGlobal("__syscall", .{ .native = &call_n });
+    try vm.defineGlobal("__sys_nr", .{ .native = &nr_n });
+    try vm.defineGlobal("__sys_isError", .{ .native = &is_err_n });
+    try vm.defineGlobal("__sys_errno", .{ .native = &errno_n });
+    try vm.defineGlobal("__sys_errName", .{ .native = &err_name_n });
+    try vm.defineGlobal("__sys_read", .{ .native = &read_n });
+    try vm.defineGlobal("__sys_write", .{ .native = &write_n });
+    try vm.defineGlobal("__sys_writeAll", .{ .native = &write_all_n });
+    try vm.defineGlobal("__sys_open", .{ .native = &open_n });
+    try vm.defineGlobal("__sys_close", .{ .native = &close_n });
+    try vm.defineGlobal("__sys_lseek", .{ .native = &lseek_n });
+    try vm.defineGlobal("__sys_fsync", .{ .native = &fsync_n });
+    try vm.defineGlobal("__sys_pipe", .{ .native = &pipe_n });
+    try vm.defineGlobal("__sys_dup", .{ .native = &dup_n });
+    try vm.defineGlobal("__sys_dup2", .{ .native = &dup2_n });
+    try vm.defineGlobal("__sys_getpid", .{ .native = &getpid_n });
+    try vm.defineGlobal("__sys_getppid", .{ .native = &getppid_n });
+    try vm.defineGlobal("__sys_getuid", .{ .native = &getuid_n });
+    try vm.defineGlobal("__sys_geteuid", .{ .native = &geteuid_n });
+    try vm.defineGlobal("__sys_getgid", .{ .native = &getgid_n });
+    try vm.defineGlobal("__sys_getegid", .{ .native = &getegid_n });
+    try vm.defineGlobal("__sys_kill", .{ .native = &kill_n });
+    try vm.defineGlobal("__sys_chdir", .{ .native = &chdir_n });
+    try vm.defineGlobal("__sys_getcwd", .{ .native = &getcwd_n });
+    try vm.defineGlobal("__sys_unlink", .{ .native = &unlink_n });
+    try vm.defineGlobal("__sys_rename", .{ .native = &rename_n });
+    try vm.defineGlobal("__sys_mkdir", .{ .native = &mkdir_n });
+    try vm.defineGlobal("__sys_rmdir", .{ .native = &rmdir_n });
+    try vm.defineGlobal("__sys_access", .{ .native = &access_n });
+    try vm.defineGlobal("__sys_chmod", .{ .native = &chmod_n });
+    try vm.defineGlobal("__sys_symlink", .{ .native = &symlink_n });
+    try vm.defineGlobal("__sys_readlink", .{ .native = &readlink_n });
+    try vm.defineGlobal("__sys_ftruncate", .{ .native = &ftruncate_n });
+    try vm.defineGlobal("__sys_umask", .{ .native = &umask_n });
+    try vm.defineGlobal("__sys_nanosleep", .{ .native = &nanosleep_n });
+    try vm.defineGlobal("__sys_fcntl", .{ .native = &fcntl_n });
 
     // Arch-correct SYS_* numbers (Linux only).
     try putSys(vm, "read");

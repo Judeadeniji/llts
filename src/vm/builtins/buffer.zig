@@ -251,18 +251,18 @@ pub fn register(vm: *VMState) !void {
     buffer_fill_range_n = .{ .name = "__bufferFillRange", .func = bufferFillRange, .arity = 4 };
     buffer_resize_n = .{ .name = "__bufferResize", .func = bufferResize, .arity = 2 };
 
-    try vm.globals.put("__bufferAlloc", .{ .native = &buffer_alloc_n });
-    try vm.globals.put("__bufferCreate", .{ .native = &buffer_create_n });
-    try vm.globals.put("__bufferWriteString", .{ .native = &buffer_write_string_n });
-    try vm.globals.put("__bufferAppendString", .{ .native = &buffer_append_string_n });
-    try vm.globals.put("__bufferReadString", .{ .native = &buffer_read_string_n });
-    try vm.globals.put("__bufferLen", .{ .native = &buffer_len_n });
-    try vm.globals.put("__bufferGet", .{ .native = &buffer_get_n });
-    try vm.globals.put("__bufferSet", .{ .native = &buffer_set_n });
-    try vm.globals.put("__bufferPush", .{ .native = &buffer_push_n });
-    try vm.globals.put("__bufferFromString", .{ .native = &buffer_from_string_n });
-    try vm.globals.put("__bufferCopy", .{ .native = &buffer_copy_n });
-    try vm.globals.put("__bufferFill", .{ .native = &buffer_fill_n });
-    try vm.globals.put("__bufferFillRange", .{ .native = &buffer_fill_range_n });
-    try vm.globals.put("__bufferResize", .{ .native = &buffer_resize_n });
+    try vm.defineGlobal("__bufferAlloc", .{ .native = &buffer_alloc_n });
+    try vm.defineGlobal("__bufferCreate", .{ .native = &buffer_create_n });
+    try vm.defineGlobal("__bufferWriteString", .{ .native = &buffer_write_string_n });
+    try vm.defineGlobal("__bufferAppendString", .{ .native = &buffer_append_string_n });
+    try vm.defineGlobal("__bufferReadString", .{ .native = &buffer_read_string_n });
+    try vm.defineGlobal("__bufferLen", .{ .native = &buffer_len_n });
+    try vm.defineGlobal("__bufferGet", .{ .native = &buffer_get_n });
+    try vm.defineGlobal("__bufferSet", .{ .native = &buffer_set_n });
+    try vm.defineGlobal("__bufferPush", .{ .native = &buffer_push_n });
+    try vm.defineGlobal("__bufferFromString", .{ .native = &buffer_from_string_n });
+    try vm.defineGlobal("__bufferCopy", .{ .native = &buffer_copy_n });
+    try vm.defineGlobal("__bufferFill", .{ .native = &buffer_fill_n });
+    try vm.defineGlobal("__bufferFillRange", .{ .native = &buffer_fill_range_n });
+    try vm.defineGlobal("__bufferResize", .{ .native = &buffer_resize_n });
 }

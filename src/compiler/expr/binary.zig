@@ -72,14 +72,21 @@ fn extractConstantString(allocator: std.mem.Allocator, node: *const ast.Node) an
 
 fn emitBinOp(state: *CompilerState, bin: *const ast.Binary) !void {
     const op = bin.operator;
+    const both_int = isIntType(types.resolveType(state, bin.left)) and isIntType(types.resolveType(state, bin.right));
     if (std.mem.eql(u8, op, "+")) {
         const str = types.isStringyType(types.resolveType(state, bin.left)) or
             types.isStringyType(types.resolveType(state, bin.right));
-        try emit.emitOp(state, if (str) .OP_STRING_ADD else .OP_ADD);
+        if (str) {
+            try emit.emitOp(state, .OP_STRING_ADD);
+        } else if (both_int) {
+            try emit.emitOp(state, .OP_ADD_I64);
+        } else {
+            try emit.emitOp(state, .OP_ADD);
+        }
     } else if (std.mem.eql(u8, op, "-")) {
-        try emit.emitOp(state, .OP_SUB);
+        try emit.emitOp(state, if (both_int) .OP_SUB_I64 else .OP_SUB);
     } else if (std.mem.eql(u8, op, "*")) {
-        try emit.emitOp(state, .OP_MUL);
+        try emit.emitOp(state, if (both_int) .OP_MUL_I64 else .OP_MUL);
     } else if (std.mem.eql(u8, op, "/")) {
         try emit.emitOp(state, .OP_DIV);
     } else if (std.mem.eql(u8, op, "%")) {
@@ -102,7 +109,7 @@ fn emitBinOp(state: *CompilerState, bin: *const ast.Binary) !void {
         const eq = std.mem.eql(u8, op, "==");
         if (eq) try emit.emitOp(state, if (both) .OP_STRING_EQUAL else .OP_EQUAL) else try emit.emitOp(state, if (both) .OP_STRING_NOT_EQUAL else .OP_NOT_EQUAL);
     } else if (std.mem.eql(u8, op, "<")) {
-        try emit.emitOp(state, .OP_LESS);
+        try emit.emitOp(state, if (both_int) .OP_LT_I64 else .OP_LESS);
     } else if (std.mem.eql(u8, op, "<=")) {
         try emit.emitOp(state, .OP_LESS_EQUAL);
     } else if (std.mem.eql(u8, op, ">")) {
@@ -110,6 +117,11 @@ fn emitBinOp(state: *CompilerState, bin: *const ast.Binary) !void {
     } else if (std.mem.eql(u8, op, ">=")) {
         try emit.emitOp(state, .OP_GREATER_EQUAL);
     }
+}
+
+fn isIntType(t: ?[]const u8) bool {
+    const s = t orelse return false;
+    return std.mem.eql(u8, s, "int") or std.mem.eql(u8, s, "i32") or std.mem.eql(u8, s, "i64") or std.mem.eql(u8, s, "number");
 }
 
 pub fn compileUnary(state: *CompilerState, un: *const ast.Unary) !void {

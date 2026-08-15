@@ -382,12 +382,12 @@ pub fn register(vm: *VMState) !void {
     arena_deinit_native = .{ .name = "__arena_deinit", .func = arenaDeinit, .arity = 1 };
     arena_alloc_bytes_native = .{ .name = "__arena_alloc_bytes", .func = arenaAllocBytes, .arity = 2 };
 
-    try vm.globals.put("__alloc", .{ .native = &alloc_native });
-    try vm.globals.put("__allocImmortal", .{ .native = &alloc_immortal_native });
-    try vm.globals.put("__arena_create", .{ .native = &arena_create_native });
-    try vm.globals.put("__arena_alloc", .{ .native = &arena_alloc_native });
-    try vm.globals.put("__arena_alloc_array", .{ .native = &arena_alloc_array_native });
-    try vm.globals.put("__arena_alloc_bytes", .{ .native = &arena_alloc_bytes_native });
-    try vm.globals.put("__arena_reset", .{ .native = &arena_reset_native });
-    try vm.globals.put("__arena_deinit", .{ .native = &arena_deinit_native });
+    try vm.defineGlobal("__alloc", .{ .native = &alloc_native });
+    try vm.defineGlobal("__allocImmortal", .{ .native = &alloc_immortal_native });
+    try vm.defineGlobal("__arena_create", .{ .native = &arena_create_native });
+    try vm.defineGlobal("__arena_alloc", .{ .native = &arena_alloc_native });
+    try vm.defineGlobal("__arena_alloc_array", .{ .native = &arena_alloc_array_native });
+    try vm.defineGlobal("__arena_alloc_bytes", .{ .native = &arena_alloc_bytes_native });
+    try vm.defineGlobal("__arena_reset", .{ .native = &arena_reset_native });
+    try vm.defineGlobal("__arena_deinit", .{ .native = &arena_deinit_native });
 }

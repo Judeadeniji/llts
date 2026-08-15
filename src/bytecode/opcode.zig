@@ -61,4 +61,11 @@ pub const OpCode = enum(u8) {
     OP_BIT_NOT,
     OP_SHL,
     OP_SHR,
+    // Hot-path fused / specialized (appended — keep prior opcode numbers stable)
+    OP_FOR_PREP,
+    OP_FOR_LOOP,
+    OP_ADD_I64,
+    OP_SUB_I64,
+    OP_MUL_I64,
+    OP_LT_I64,
 };

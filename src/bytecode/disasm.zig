@@ -25,6 +25,7 @@ fn operandBytes(op: OpCode) usize {
         => 2,
         .OP_LINE => 4,
         .OP_CALL_STATIC => 3,
+        .OP_FOR_PREP, .OP_FOR_LOOP => 4,
         .OP_GET_LOCAL,
         .OP_SET_LOCAL,
         .OP_PRINT,
@@ -129,6 +130,14 @@ fn formatOperands(
         },
         .OP_GET_GLOBAL,
         .OP_SET_GLOBAL,
+        => {
+            const slot = readShort(code, ip) orelse return false;
+            if (slot < chunk.global_names.items.len) {
+                try w.print("{d} ({s})", .{ slot, chunk.global_names.items[slot] });
+            } else {
+                try w.print("{d}", .{slot});
+            }
+        },
         .OP_GET_FUNCTION,
         .OP_GET_MODULE,
         .OP_IMPORT,
@@ -168,6 +177,18 @@ fn formatOperands(
             const addr = readShort(code, ip) orelse return false;
             const argc = readByte(code, ip) orelse return false;
             try w.print("addr={d:0>4} argc={d}", .{ addr, argc });
+        },
+        .OP_FOR_PREP, .OP_FOR_LOOP => {
+            const i_slot = readByte(code, ip) orelse return false;
+            const end_slot = readByte(code, ip) orelse return false;
+            const off = readShort(code, ip) orelse return false;
+            if (op == .OP_FOR_PREP) {
+                const target = ip.* + off;
+                try w.print("i={d} end={d} skip={d} -> {d:0>4}", .{ i_slot, end_slot, off, target });
+            } else {
+                const target = ip.* - off;
+                try w.print("i={d} end={d} back={d} -> {d:0>4}", .{ i_slot, end_slot, off, target });
+            }
         },
         .OP_GET_LOCAL,
         .OP_SET_LOCAL,

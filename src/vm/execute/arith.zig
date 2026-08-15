@@ -81,6 +81,41 @@ pub fn binArith(vm: *VMState, op: OpCode) ArithError!void {
     }
 }
 
+pub const I64Op = enum { add, sub, mul };
+
+pub fn binArithI64(vm: *VMState, kind: I64Op) ArithError!void {
+    const b = stack.pop(vm);
+    const a = stack.pop(vm);
+    const ai = switch (a) {
+        .int => |n| n,
+        else => return fail(vm, "Operands must be ints"),
+    };
+    const bi = switch (b) {
+        .int => |n| n,
+        else => return fail(vm, "Operands must be ints"),
+    };
+    const result: i64 = switch (kind) {
+        .add => ai +% bi,
+        .sub => ai -% bi,
+        .mul => ai *% bi,
+    };
+    try stack.push(vm, .{ .int = result });
+}
+
+pub fn ltI64(vm: *VMState) ArithError!void {
+    const b = stack.pop(vm);
+    const a = stack.pop(vm);
+    const ai = switch (a) {
+        .int => |n| n,
+        else => return fail(vm, "Operands must be ints"),
+    };
+    const bi = switch (b) {
+        .int => |n| n,
+        else => return fail(vm, "Operands must be ints"),
+    };
+    try stack.push(vm, .{ .bool = ai < bi });
+}
+
 fn powi(base: i64, exp: i64) i64 {
     if (exp < 0) return 0;
     var result: i64 = 1;

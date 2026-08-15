@@ -93,10 +93,10 @@ pub fn register(vm: *VMState) !void {
     map_delete_n = .{ .name = "__mapDelete", .func = mapDelete, .arity = 2 };
     map_size_n = .{ .name = "__mapSize", .func = mapSize, .arity = 1 };
     
-    try vm.globals.put("__mapCreate", .{ .native = &map_create_n });
-    try vm.globals.put("__mapSet", .{ .native = &map_set_n });
-    try vm.globals.put("__mapGet", .{ .native = &map_get_n });
-    try vm.globals.put("__mapHas", .{ .native = &map_has_n });
-    try vm.globals.put("__mapDelete", .{ .native = &map_delete_n });
-    try vm.globals.put("__mapSize", .{ .native = &map_size_n });
+    try vm.defineGlobal("__mapCreate", .{ .native = &map_create_n });
+    try vm.defineGlobal("__mapSet", .{ .native = &map_set_n });
+    try vm.defineGlobal("__mapGet", .{ .native = &map_get_n });
+    try vm.defineGlobal("__mapHas", .{ .native = &map_has_n });
+    try vm.defineGlobal("__mapDelete", .{ .native = &map_delete_n });
+    try vm.defineGlobal("__mapSize", .{ .native = &map_size_n });
 }

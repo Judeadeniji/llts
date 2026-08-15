@@ -80,6 +80,24 @@ pub fn execute(vm: *VMState, start_ip: usize) RuntimeError!void {
                 if (steps > max_steps) return error.RuntimeError;
                 control.loop(&ip, readShort(vm, &ip));
             },
+            .OP_FOR_PREP => {
+                const i_slot = readByte(vm, &ip);
+                const end_slot = readByte(vm, &ip);
+                const skip = readShort(vm, &ip);
+                control.forPrep(vm, &ip, i_slot, end_slot, skip) catch return error.TypeError;
+            },
+            .OP_FOR_LOOP => {
+                steps += 1;
+                if (steps > max_steps) return error.RuntimeError;
+                const i_slot = readByte(vm, &ip);
+                const end_slot = readByte(vm, &ip);
+                const back = readShort(vm, &ip);
+                control.forLoop(vm, &ip, i_slot, end_slot, back) catch return error.TypeError;
+            },
+            .OP_ADD_I64 => try arith.binArithI64(vm, .add),
+            .OP_SUB_I64 => try arith.binArithI64(vm, .sub),
+            .OP_MUL_I64 => try arith.binArithI64(vm, .mul),
+            .OP_LT_I64 => try arith.ltI64(vm),
             .OP_RETURN => {
                 if (try call.doReturn(vm, &ip)) return;
             },

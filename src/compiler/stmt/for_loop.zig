@@ -81,23 +81,23 @@ fn compileRangeFor(state: *CompilerState, for_expr: *const ast.For) !void {
         .name = for_expr.captures[0].name,
         .depth = state.scope_depth,
         .is_const = true,
+        .type_name = "int",
     });
     const i_index: u8 = @intCast(state.locals.items.len - 1);
 
     try expr.compileExpression(state, end);
-    try state.locals.append(state.allocator, .{ .name = ".range_end", .depth = state.scope_depth });
+    try state.locals.append(state.allocator, .{ .name = ".range_end", .depth = state.scope_depth, .type_name = "int" });
     const end_index: u8 = @intCast(state.locals.items.len - 1);
 
-    const loop_start = state.chunk.code.items.len;
-    try emit.emitOp(state, .OP_GET_LOCAL);
+    // OP_FOR_PREP i end skip — skip patched after FOR_LOOP
+    try emit.emitOp(state, .OP_FOR_PREP);
     try emit.emitByte(state, i_index);
-    try emit.emitOp(state, .OP_GET_LOCAL);
     try emit.emitByte(state, end_index);
-    try emit.emitOp(state, .OP_LESS);
+    const prep_skip = state.chunk.code.items.len;
+    try emit.emitByte(state, 0xff);
+    try emit.emitByte(state, 0xff);
 
-    const exit_jump = try emit.emitJump(state, .OP_JUMP_IF_FALSE);
-    try emit.emitOp(state, .OP_POP);
-
+    const body_start = state.chunk.code.items.len;
     try scope.beginScope(state);
     const body = try bodyBlock(state, for_expr);
     for (body.statements) |s| try stmt.compileStatement(state, s);
@@ -106,17 +106,23 @@ fn compileRangeFor(state: *CompilerState, for_expr: *const ast.For) !void {
     var loop = state.loops.pop().?;
     for (loop.continue_jumps.items) |cj| emit.patchJump(state, cj);
 
-    try emit.emitOp(state, .OP_GET_LOCAL);
+    // OP_FOR_LOOP i end back_offset (distance back to body_start from after this insn)
+    try emit.emitOp(state, .OP_FOR_LOOP);
     try emit.emitByte(state, i_index);
-    try emit.emitConstant(state, .{ .int = 1 });
-    try emit.emitOp(state, .OP_ADD);
-    try emit.emitOp(state, .OP_SET_LOCAL);
-    try emit.emitByte(state, i_index);
-    try emit.emitOp(state, .OP_POP);
+    try emit.emitByte(state, end_index);
+    // offset = (ip after reading operands) - body_start; after emit: len+2 is after short
+    const after_op = state.chunk.code.items.len + 2; // after the two offset bytes we're about to write
+    const back: usize = after_op - body_start;
+    if (back > 0xffff) unreachable;
+    try emit.emitByte(state, @intCast((back >> 8) & 0xff));
+    try emit.emitByte(state, @intCast(back & 0xff));
 
-    try emit.emitLoop(state, loop_start);
-    emit.patchJump(state, exit_jump);
-    try emit.emitOp(state, .OP_POP);
+    // Patch FOR_PREP skip to land here (after FOR_LOOP)
+    const skip = state.chunk.code.items.len - prep_skip - 2;
+    if (skip > 0xffff) unreachable;
+    state.chunk.code.items[prep_skip] = @intCast((skip >> 8) & 0xff);
+    state.chunk.code.items[prep_skip + 1] = @intCast(skip & 0xff);
+
     for (loop.break_jumps.items) |bj| emit.patchJump(state, bj);
     loop.break_jumps.deinit(state.allocator);
     loop.continue_jumps.deinit(state.allocator);

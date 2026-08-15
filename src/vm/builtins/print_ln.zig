@@ -77,5 +77,5 @@ fn printLnFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
 
 pub fn register(vm: *VMState) !void {
     print_ln_native = .{ .name = "__printLn", .func = printLnFn, .arity = -1 };
-    try vm.globals.put("__printLn", .{ .native = &print_ln_native });
+    try vm.defineGlobal("__printLn", .{ .native = &print_ln_native });
 }

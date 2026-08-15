@@ -1,0 +1,19 @@
+# 1M integer loop benchmark (LLTS).
+# Times only the loop body; use: llts run --release benchmarks/loop_1m.lls
+
+@const $std = @import("std/index");
+
+@const $N = 1000000;
+
+$sum = 0;
+$start = std.time.Now();
+
+@for (0..N) |i| {
+    sum = sum + i;
+}
+
+$elapsed_ms = std.time.Milliseconds(std.time.Since(start));
+
+print("llts:", elapsed_ms, "ms", "sum=", sum);
+
+pub @func main() {}

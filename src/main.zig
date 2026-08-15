@@ -237,7 +237,14 @@ fn runBytecode(allocator: std.mem.Allocator, path: []const u8, script_args: []co
     llts.diag.reset();
     llts.runBytecodeFile(allocator, path, script_args, max_memory) catch |err| {
         if (!llts.diag.wasEmitted()) {
-            io.printStderr("Failed to run bytecode {s}: {}\n", .{ path, err });
+            switch (err) {
+                error.FileNotFound => io.printStderr("Bytecode file not found: {s}\n", .{path}),
+                error.AccessDenied => io.printStderr("Permission denied reading bytecode: {s}\n", .{path}),
+                error.TruncatedInput => io.printStderr("Bytecode file is truncated or corrupt: {s}\n", .{path}),
+                error.InvalidMagic => io.printStderr("Not a valid LLTS bytecode file: {s}\n", .{path}),
+                error.UnsupportedVersion => io.printStderr("Unsupported bytecode version: {s}\n", .{path}),
+                else => io.printStderr("Failed to run bytecode {s}: {}\n", .{ path, err }),
+            }
         }
         std.process.exit(1);
     };

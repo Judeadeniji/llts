@@ -63,5 +63,5 @@ fn fetchFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
 
 pub fn register(vm: *VMState) !void {
     fetch_n = .{ .name = "__fetch", .func = fetchFn, .arity = -1 }; // -1 for variadic
-    try vm.globals.put("__fetch", .{ .native = &fetch_n });
+    try vm.defineGlobal("__fetch", .{ .native = &fetch_n });
 }

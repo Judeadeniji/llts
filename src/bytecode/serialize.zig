@@ -6,7 +6,7 @@ const Chunk = chunk_mod.Chunk;
 const Value = value_mod.Value;
 
 pub const magic: [4]u8 = .{ 'L', 'L', 'T', 'S' };
-pub const version: u16 = 2;
+pub const version: u16 = 3;
 
 pub const FormatError = error{
     InvalidMagic,
@@ -14,6 +14,8 @@ pub const FormatError = error{
     TruncatedInput,
     InvalidConstantTag,
     InvalidStringIndex,
+    FileNotFound,
+    AccessDenied,
     OutOfMemory,
 };
 
@@ -211,6 +213,9 @@ pub fn write(chunk: *const Chunk, writer: anytype) !void {
     try writeU32(writer, @intCast(chunk.constants.items.len));
     for (chunk.constants.items) |c| try writeConstant(writer, c, used.remap);
 
+    try writeU32(writer, @intCast(chunk.global_names.items.len));
+    for (chunk.global_names.items) |n| try writeString(writer, n);
+
     try writeU32(writer, @intCast(chunk.functions.count()));
     var func_it = chunk.functions.iterator();
     while (func_it.next()) |entry| {
@@ -247,6 +252,75 @@ fn readV2(allocator: std.mem.Allocator, reader: anytype) FormatError!Chunk {
     var c: u32 = 0;
     while (c < const_count) : (c += 1) {
         try chunk.constants.append(allocator, try readConstant(reader, string_count));
+    }
+
+    const func_count = try readU32(reader);
+    var f: u32 = 0;
+    while (f < func_count) : (f += 1) {
+        const name_idx = try readU32(reader);
+        if (name_idx >= string_count) return error.InvalidStringIndex;
+        const name = chunk.strings.items[name_idx];
+        const address = try readU32(reader);
+        var arity_buf: [1]u8 = undefined;
+        readExact(reader, &arity_buf) catch return error.TruncatedInput;
+        var variadic_buf: [1]u8 = undefined;
+        readExact(reader, &variadic_buf) catch return error.TruncatedInput;
+        try chunk.functions.put(name, .{
+            .name = name,
+            .address = address,
+            .arity = arity_buf[0],
+            .is_variadic = variadic_buf[0] != 0,
+            .source_index = 0,
+        });
+    }
+
+    const file_path = try readString(reader, allocator);
+    errdefer allocator.free(file_path);
+    if (file_path.len > 0) {
+        const empty = try allocator.dupe(u8, "");
+        errdefer allocator.free(empty);
+        try chunk.sources.append(allocator, .{ .path = file_path, .text = empty });
+        chunk.file = chunk.sources.items[0].path;
+        chunk.source = chunk.sources.items[0].text;
+    } else {
+        allocator.free(file_path);
+        chunk.file = "<anonymous>";
+        chunk.source = "";
+    }
+
+    return chunk;
+}
+
+fn readV3(allocator: std.mem.Allocator, reader: anytype) FormatError!Chunk {
+    var chunk = Chunk.init(allocator);
+    errdefer chunk.deinit();
+
+    const code_len = try readU32(reader);
+    try chunk.code.ensureTotalCapacityPrecise(allocator, code_len);
+    chunk.code.items.len = code_len;
+    readExact(reader, chunk.code.items) catch return error.TruncatedInput;
+
+    const string_count = try readU32(reader);
+    try chunk.strings.ensureTotalCapacityPrecise(allocator, string_count);
+    var s: u32 = 0;
+    while (s < string_count) : (s += 1) {
+        const owned = try readString(reader, allocator);
+        try chunk.strings.append(allocator, owned);
+    }
+
+    const const_count = try readU32(reader);
+    try chunk.constants.ensureTotalCapacityPrecise(allocator, const_count);
+    var c: u32 = 0;
+    while (c < const_count) : (c += 1) {
+        try chunk.constants.append(allocator, try readConstant(reader, string_count));
+    }
+
+    const global_count = try readU32(reader);
+    try chunk.global_names.ensureTotalCapacityPrecise(allocator, global_count);
+    var g: u32 = 0;
+    while (g < global_count) : (g += 1) {
+        const owned = try readString(reader, allocator);
+        try chunk.global_names.append(allocator, owned);
     }
 
     const func_count = try readU32(reader);
@@ -383,6 +457,7 @@ pub fn read(allocator: std.mem.Allocator, reader: anytype) FormatError!Chunk {
     return switch (file_version) {
         1 => readV1(allocator, reader),
         2 => readV2(allocator, reader),
+        3 => readV3(allocator, reader),
         else => error.UnsupportedVersion,
     };
 }
@@ -395,7 +470,12 @@ pub fn writeFile(allocator: std.mem.Allocator, chunk: *const Chunk, path: []cons
 }
 
 pub fn readFile(allocator: std.mem.Allocator, path: []const u8) FormatError!Chunk {
-    const data = std.fs.cwd().readFileAlloc(allocator, path, 64 * 1024 * 1024) catch return error.TruncatedInput;
+    const data = std.fs.cwd().readFileAlloc(allocator, path, 64 * 1024 * 1024) catch |err| switch (err) {
+        error.FileNotFound => return error.FileNotFound,
+        error.AccessDenied => return error.AccessDenied,
+        error.OutOfMemory => return error.OutOfMemory,
+        else => return error.TruncatedInput,
+    };
     defer allocator.free(data);
     var stream = std.io.fixedBufferStream(data);
     return read(allocator, stream.reader());

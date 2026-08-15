@@ -16,6 +16,8 @@ pub const Chunk = struct {
     constants: std.ArrayList(Value) = .empty,
     /// Parallel string storage for name/string constants (owned).
     strings: std.ArrayList([]const u8) = .empty,
+    /// Global slot i → name (owned). Used by OP_GET/SET_GLOBAL operands.
+    global_names: std.ArrayList([]const u8) = .empty,
     functions: std.StringHashMap(LltsFunction),
     exports: std.StringHashMap(void),
     /// Entry script path (sources[0].path when sources non-empty).
@@ -38,6 +40,10 @@ pub const Chunk = struct {
             self.allocator.free(s);
         }
         self.strings.deinit(self.allocator);
+        for (self.global_names.items) |s| {
+            self.allocator.free(s);
+        }
+        self.global_names.deinit(self.allocator);
         for (self.sources.items) |s| {
             self.allocator.free(s.path);
             self.allocator.free(s.text);
@@ -108,5 +114,16 @@ pub const Chunk = struct {
 
     pub fn stringAt(self: *const Chunk, idx: u32) []const u8 {
         return self.strings.items[idx];
+    }
+
+    /// Intern a global name into `global_names`; returns its slot index.
+    pub fn internGlobalName(self: *Chunk, name: []const u8) !u16 {
+        for (self.global_names.items, 0..) |n, i| {
+            if (std.mem.eql(u8, n, name)) return @intCast(i);
+        }
+        if (self.global_names.items.len >= 65536) return error.TooManyConstants;
+        const owned = try self.allocator.dupe(u8, name);
+        try self.global_names.append(self.allocator, owned);
+        return @intCast(self.global_names.items.len - 1);
     }
 };

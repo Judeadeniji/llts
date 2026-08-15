@@ -29,5 +29,5 @@ pub fn register(vm: *VMState) !void {
         .func = printFn,
         .arity = -1,
     };
-    try vm.globals.put("print", .{ .native = &print_native });
+    try vm.defineGlobal("print", .{ .native = &print_native });
 }

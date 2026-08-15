@@ -22,5 +22,5 @@ fn lenFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
 
 pub fn register(vm: *VMState) !void {
     len_native = .{ .name = "len", .func = lenFn, .arity = 1 };
-    try vm.globals.put("len", .{ .native = &len_native });
+    try vm.defineGlobal("len", .{ .native = &len_native });
 }

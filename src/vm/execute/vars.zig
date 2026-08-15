@@ -25,7 +25,7 @@ fn resolveName(vm: *VMState, v: Value) ?[]const u8 {
 pub fn getLocal(vm: *VMState, slot: u8) VarError!void {
     const f = frame(vm);
     const idx = f.base_slot + slot;
-    const v = if (idx < vm.stack.items.len) vm.stack.items[idx] else Value.null;
+    const v = if (idx < stack.depth(vm)) vm.stack_buf[idx] else Value.null;
     try stack.push(vm, v);
 }
 
@@ -34,25 +34,22 @@ pub fn setLocal(vm: *VMState, slot: u8) VarError!void {
     if (f.const_slots.contains(slot)) return fail(vm, "Cannot assign to @const binding");
     const val = stack.peek(vm, 0);
     const idx = f.base_slot + slot;
-    while (vm.stack.items.len <= idx) try stack.push(vm, .null);
-    vm.stack.items[idx] = val;
+    while (stack.depth(vm) <= idx) try stack.push(vm, .null);
+    vm.stack_buf[idx] = val;
 }
 
-pub fn getGlobal(vm: *VMState, const_idx: u16) VarError!void {
-    const name_val = vm.chunk.constants.items[const_idx];
-    const name = resolveName(vm, name_val) orelse return fail(vm, "Bad global name");
-    const g = vm.globals.get(name) orelse {
+pub fn getGlobal(vm: *VMState, slot: u16) VarError!void {
+    const g = vm.getGlobalSlot(slot) orelse {
         var buf: [256]u8 = undefined;
+        const name = if (slot < vm.chunk.global_names.items.len) vm.chunk.global_names.items[slot] else "?";
         const msg = std.fmt.bufPrint(&buf, "Undefined variable '{s}'", .{name}) catch "Undefined variable";
         return fail(vm, msg);
     };
     try stack.push(vm, g);
 }
 
-pub fn setGlobal(vm: *VMState, const_idx: u16) VarError!void {
-    const name_val = vm.chunk.constants.items[const_idx];
-    const name = resolveName(vm, name_val) orelse return fail(vm, "Bad global name");
-    try vm.globals.put(name, stack.peek(vm, 0));
+pub fn setGlobal(vm: *VMState, slot: u16) VarError!void {
+    try vm.setGlobalSlot(slot, stack.peek(vm, 0));
 }
 
 pub fn getFunction(vm: *VMState, const_idx: u16) VarError!void {

@@ -142,13 +142,13 @@ pub fn register(vm: *VMState) !void {
     args_n = .{ .name = "__args", .func = argsFn, .arity = 0 };
     platform_n = .{ .name = "__platform", .func = platformFn, .arity = 0 };
 
-    try vm.globals.put("__exec", .{ .native = &exec_n });
-    try vm.globals.put("__getEnv", .{ .native = &getEnv_n });
-    try vm.globals.put("__setEnv", .{ .native = &setEnv_n });
-    try vm.globals.put("__exit", .{ .native = &exit_n });
-    try vm.globals.put("__cwd", .{ .native = &cwd_n });
-    try vm.globals.put("__chdir", .{ .native = &chdir_n });
-    try vm.globals.put("__pid", .{ .native = &pid_n });
-    try vm.globals.put("__args", .{ .native = &args_n });
-    try vm.globals.put("__platform", .{ .native = &platform_n });
+    try vm.defineGlobal("__exec", .{ .native = &exec_n });
+    try vm.defineGlobal("__getEnv", .{ .native = &getEnv_n });
+    try vm.defineGlobal("__setEnv", .{ .native = &setEnv_n });
+    try vm.defineGlobal("__exit", .{ .native = &exit_n });
+    try vm.defineGlobal("__cwd", .{ .native = &cwd_n });
+    try vm.defineGlobal("__chdir", .{ .native = &chdir_n });
+    try vm.defineGlobal("__pid", .{ .native = &pid_n });
+    try vm.defineGlobal("__args", .{ .native = &args_n });
+    try vm.defineGlobal("__platform", .{ .native = &platform_n });
 }

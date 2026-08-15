@@ -33,9 +33,22 @@ pub fn emitString(state: *CompilerState, s: []const u8) !void {
 }
 
 pub fn emitNameGet(state: *CompilerState, op: OpCode, name: []const u8) !void {
+    if (op == .OP_GET_GLOBAL or op == .OP_SET_GLOBAL) {
+        const slot = try internGlobal(state, name);
+        try emitOp(state, op);
+        try emitShort(state, slot);
+        return;
+    }
     const idx = try state.chunk.addStringConstant(name);
     try emitOp(state, op);
     try emitShort(state, idx);
+}
+
+fn internGlobal(state: *CompilerState, name: []const u8) !u16 {
+    if (state.global_slots.get(name)) |slot| return slot;
+    const slot = try state.chunk.internGlobalName(name);
+    try state.global_slots.put(name, slot);
+    return slot;
 }
 
 pub fn emitJump(state: *CompilerState, op: OpCode) !usize {

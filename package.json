@@ -6,7 +6,8 @@
 		"build": "zig build",
 		"test": "zig build && bun test tests/",
 		"test:zig": "zig build test",
-		"test:suite": "bun test tests/"
+		"test:suite": "bun test tests/",
+		"bench:loop": "bun benchmarks/run.ts"
 	},
 	"devDependencies": {
 		"@types/bun": "latest"

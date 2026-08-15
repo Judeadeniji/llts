@@ -14,6 +14,7 @@ pub const HEAP_START: i32 = 1024;
 pub const IMMORTAL_BASE: i32 = 1 << 30;
 pub const ERROR_TAG: i32 = 0xE2202;
 pub const MAX_FRAMES: usize = 256;
+pub const STACK_MAX: usize = 1024;
 
 pub const CallFrame = struct {
     return_ip: usize = 0,
@@ -44,8 +45,13 @@ pub const CallFrame = struct {
 
 pub const VMState = struct {
     allocator: std.mem.Allocator,
-    globals: std.StringHashMap(Value),
-    stack: std.ArrayList(Value) = .empty,
+    /// Slot → value. Hot path for OP_GET/SET_GLOBAL.
+    global_values: []Value = &.{},
+    global_count: u16 = 0,
+    /// Name → slot (builtin register + rare dynamic lookup only).
+    global_name_to_slot: std.StringHashMap(u16),
+    stack_buf: []Value = &.{},
+    sp: usize = 0,
     frames: std.ArrayList(CallFrame) = .empty,
     /// Frame-local Value heap. Grows; rewind is `heap_ptr` (capacity retained).
     memory: std.ArrayList(Value) = .empty,
@@ -76,13 +82,23 @@ pub const VMState = struct {
     max_memory_slots: usize = 1048576,
 
     pub fn init(allocator: std.mem.Allocator, chunk: *Chunk, max_memory_slots: usize) !VMState {
+        const headroom: usize = 512;
+        const initial_globals = @max(chunk.global_names.items.len + headroom, headroom);
         var state: VMState = .{
             .allocator = allocator,
-            .globals = std.StringHashMap(Value).init(allocator),
+            .global_name_to_slot = std.StringHashMap(u16).init(allocator),
             .string_cache = std.AutoHashMap(u32, i32).init(allocator),
             .chunk = chunk,
             .max_memory_slots = max_memory_slots,
+            .stack_buf = try allocator.alloc(Value, STACK_MAX),
+            .global_values = try allocator.alloc(Value, initial_globals),
         };
+        @memset(state.stack_buf, .null);
+        @memset(state.global_values, .null);
+        for (chunk.global_names.items, 0..) |name, i| {
+            try state.global_name_to_slot.put(name, @intCast(i));
+        }
+        state.global_count = @intCast(chunk.global_names.items.len);
         try state.memory.appendNTimes(allocator, .null, @intCast(HEAP_START));
         try state.memory.ensureTotalCapacity(allocator, 4096);
         try state.immortal.ensureTotalCapacity(allocator, 256);
@@ -94,7 +110,6 @@ pub const VMState = struct {
         // Script frame lives until process end — watermark tracks immortal growth.
         frame.heap_watermark = HEAP_START;
         try state.frames.append(allocator, frame);
-        try state.stack.ensureTotalCapacity(allocator, 1024);
         return state;
     }
 
@@ -108,8 +123,9 @@ pub const VMState = struct {
     pub fn deinit(self: *VMState) void {
         for (self.frames.items) |*f| f.deinit();
         self.frames.deinit(self.allocator);
-        self.stack.deinit(self.allocator);
-        self.globals.deinit();
+        self.allocator.free(self.stack_buf);
+        self.allocator.free(self.global_values);
+        self.global_name_to_slot.deinit();
         for (self.modules.items) |mod| {
             mod.deinit(self.allocator);
             self.allocator.destroy(mod);
@@ -230,12 +246,52 @@ pub const VMState = struct {
         try self.buffers.append(self.allocator, buf);
         return buf;
     }
+
+    pub fn ensureGlobalCapacity(self: *VMState, need: usize) !void {
+        if (need <= self.global_values.len) return;
+        var new_cap = self.global_values.len;
+        if (new_cap == 0) new_cap = 64;
+        while (new_cap < need) new_cap *= 2;
+        const old_len = self.global_values.len;
+        self.global_values = try self.allocator.realloc(self.global_values, new_cap);
+        @memset(self.global_values[old_len..new_cap], .null);
+    }
+
+    /// Register or update a global by name (builtins / rare dynamic). Hot bytecode uses slots.
+    pub fn defineGlobal(self: *VMState, name: []const u8, v: Value) !void {
+        if (self.global_name_to_slot.get(name)) |gs| {
+            self.global_values[gs] = v;
+            return;
+        }
+        if (self.global_count == std.math.maxInt(u16)) return error.OutOfMemory;
+        const gs = self.global_count;
+        try self.ensureGlobalCapacity(@as(usize, gs) + 1);
+        try self.global_name_to_slot.put(name, gs);
+        self.global_values[gs] = v;
+        self.global_count += 1;
+    }
+
+    pub fn getGlobalSlot(self: *const VMState, gs: u16) ?Value {
+        if (gs >= self.global_count) return null;
+        return self.global_values[gs];
+    }
+
+    pub fn setGlobalSlot(self: *VMState, gs: u16, v: Value) !void {
+        if (gs >= self.global_count) {
+            // Allow writing compiler-reserved slots that init already counted.
+            if (gs < self.chunk.global_names.items.len) {
+                try self.ensureGlobalCapacity(@as(usize, gs) + 1);
+                self.global_count = @intCast(self.chunk.global_names.items.len);
+            } else return error.OutOfMemory;
+        }
+        self.global_values[gs] = v;
+    }
 };
 
 test "frame heap grows past initial capacity" {
     var c = chunk_mod.Chunk.init(std.testing.allocator);
     defer c.deinit();
-    var vm = try VMState.init(std.testing.allocator, &c);
+    var vm = try VMState.init(std.testing.allocator, &c, 1048576);
     defer vm.deinit();
 
     const a = try vm.allocSlots(8000);
@@ -248,7 +304,7 @@ test "frame heap grows past initial capacity" {
 test "immortal heap and packed bytes grow" {
     var c = chunk_mod.Chunk.init(std.testing.allocator);
     defer c.deinit();
-    var vm = try VMState.init(std.testing.allocator, &c);
+    var vm = try VMState.init(std.testing.allocator, &c, 1048576);
     defer vm.deinit();
 
     const p = try vm.allocImmortal(3);

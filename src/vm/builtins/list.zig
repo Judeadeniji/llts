@@ -68,10 +68,10 @@ pub fn register(vm: *VMState) !void {
     list_get_n = .{ .name = "__listGet", .func = listGet, .arity = 2 };
     list_set_n = .{ .name = "__listSet", .func = listSet, .arity = 3 };
     list_len_n = .{ .name = "__listLen", .func = listLen, .arity = 1 };
-    try vm.globals.put("__listCreate", .{ .native = &list_create_n });
-    try vm.globals.put("__listPush", .{ .native = &list_push_n });
-    try vm.globals.put("__listPop", .{ .native = &list_pop_n });
-    try vm.globals.put("__listGet", .{ .native = &list_get_n });
-    try vm.globals.put("__listSet", .{ .native = &list_set_n });
-    try vm.globals.put("__listLen", .{ .native = &list_len_n });
+    try vm.defineGlobal("__listCreate", .{ .native = &list_create_n });
+    try vm.defineGlobal("__listPush", .{ .native = &list_push_n });
+    try vm.defineGlobal("__listPop", .{ .native = &list_pop_n });
+    try vm.defineGlobal("__listGet", .{ .native = &list_get_n });
+    try vm.defineGlobal("__listSet", .{ .native = &list_set_n });
+    try vm.defineGlobal("__listLen", .{ .native = &list_len_n });
 }
