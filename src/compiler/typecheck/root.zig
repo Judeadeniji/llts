@@ -81,7 +81,8 @@ pub fn requireAssign(state: *state_mod.CompilerState, got: ir.Type, expected: ir
 }
 
 pub fn requireAssignFrom(state: *state_mod.CompilerState, got: ir.Type, expected: ir.Type, ctx: []const u8, from: ?*ast.Node) TypecheckError!void {
-    try requireAssignAt(state, got, expected, ctx, .{}, from);
+    const loc = if (from) |n| n.loc() else ast.Location{};
+    try requireAssignAt(state, got, expected, ctx, loc, from);
 }
 
 fn requireAssignAt(state: *state_mod.CompilerState, got: ir.Type, expected: ir.Type, ctx: []const u8, loc: ast.Location, from: ?*ast.Node) TypecheckError!void {
