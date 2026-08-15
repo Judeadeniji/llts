@@ -281,7 +281,13 @@ fn fnParamTypes(state: *state_mod.CompilerState, ta: ir.TypeAlloc, func_name: []
     };
     out_variadic.* = is_variadic;
     out_rest.* = null;
-    const method_struct: ?[]const u8 = if (std.mem.indexOf(u8, f.name, "::")) |idx| f.name[0..idx] else null;
+    const method_struct: ?[]const u8 = blk: {
+        if (std.mem.indexOf(u8, f.name, "::")) |idx| {
+            const sname = f.name[0..idx];
+            if (state.structs.contains(sname)) break :blk sname;
+        }
+        break :blk null;
+    };
     for (plist, 0..) |pnode, i| {
         var t: ir.Type = ir.TUnknown;
         if (pnode.type_annotation) |ann| {
@@ -853,7 +859,8 @@ fn checkFunction(state: *state_mod.CompilerState, ta: ir.TypeAlloc, f: *ast.Func
         if (pnode.type_annotation) |ann| t = try from_ast.typeFromAst(ann, state, ta);
         if (std.mem.indexOf(u8, f.name, "::")) |idx| {
             const sname = f.name[0..idx];
-            if (i == 0) {
+            // Module-qualified free funcs use `path.lls::name`; only bare struct names are methods.
+            if (state.structs.contains(sname) and i == 0) {
                 if (!std.mem.eql(u8, pnode.name, "self")) {
                     return compiler_errors.compileFailFmt(state, "method '{s}' must have first parameter named 'self'", .{f.name});
                 }

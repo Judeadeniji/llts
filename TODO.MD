@@ -131,12 +131,13 @@ Forcing function: keep writing the self-hosted compiler. Whatever that parser ca
 - [x] **`*T` / `?*T` as types** — pointer IR + parse; `@new` of a struct yields `*T`; field access auto-resolves through `*` / `?*`; `?Node` still works as optional struct (compat).
 - [x] **Address-of (`&x`)** — `&struct_value` → `*T` (same packed handle; type-level). Rejects scalars, optionals, and already-`*T` (no `**T` / interiors yet).
 - [x] **Packed `@sizeOf` layout** — struct/primitive sizes use real field layout (`src/compiler/layout.zig`); `@sizeOf(*T)` is handle-sized (8).
-- [ ] **Methods vs pointers** — `self` already mutates like a handle; document/enforce whether methods take `self: T` or `self: *T`.
+- [x] **Methods vs pointers** — unannotated method `self` defaults to `*T`; `self: T` / `self: *T` allowed; call sites auto-`&` / auto-deref receivers.
 
 #### Bytes and slices
 
-- [ ] **One `[]T` model (ptr + len)** — interned strings and arena packed `@new(a, []byte, n)` already share `vm.bytes`; value arrays are `.array` in the same heap. Remaining: single slice header model / open-ended slices (`arr[i..]`, `arr[..j]`).
+- [ ] **One `[]T` model (ptr + len)** — interned strings and arena packed `@new(a, []byte, n)` already share `vm.bytes`; value arrays are `.array` in the same heap. Remaining: unify slice headers end-to-end.
 - [x] **Slice syntax `arr[i..j]`** — exclusive-end views on `[]byte` / `[N]byte` / string (`.bytes` / `.slice`); bounds-checked; not assignable.
+- [ ] **Open-ended slices `arr[i..]` / `arr[..j]`** — Zig-style; same for strings (`s[i..]`, `s[..j]`). Parser currently requires both bounds after `..`.
 - [ ] **Runtime-enforced `[N]T`** — fixed buffers with capacity traps; `[N]T` is compile-time only today.
 - [ ] **UTF-8 vs byte length** — clarify `len` / `[N]byte` as bytes (not code points) once strings are `[]byte`.
 

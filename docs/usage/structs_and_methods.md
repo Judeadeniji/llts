@@ -82,21 +82,23 @@ Methods are functions bound to a specific struct, enabling behavior encapsulatio
 **Syntax Rules:**
 - Methods are defined **inside** the struct body block.
 - Declared using the `@func` directive followed by the method name.
-- The first parameter must be explicitly named `self`, which acts as the reference to the calling instance.
-- Subsequent parameters do not require explicit type annotations in the signature (based on standard examples).
+- The first parameter must be named `self`.
+- Receiver types:
+  - Unannotated `self` defaults to `*T` (mutable handle).
+  - Explicit `self: *T` or `self: T` are allowed; other types are errors.
+- Calls use Zig-style sugar: `value.method(…)` auto-`&`s a `T` into `*T`; `*T` receivers pass through. `(*T).method` also works when `self: T` (auto-deref).
 - Access instance fields inside the method using `self.fieldName`.
-- Methods are invoked on an instance using dot notation. The `self` parameter is implicitly passed during invocation.
 
 **Example:**
 ```llts
 @const $debug = @import("std/debug");
 
 @struct Vector3 {
-    x: int;
-    y: int;
-    z: int;
+    x: i64;
+    y: i64;
+    z: i64;
 
-    @func translate(self, dx, dy, dz) {
+    @func translate(self: *Vector3, dx: i64, dy: i64, dz: i64) {
         self.x = self.x + dx;
         self.y = self.y + dy;
         self.z = self.z + dz;
@@ -111,7 +113,7 @@ Methods are functions bound to a specific struct, enabling behavior encapsulatio
 
 $v = Vector3 { x: 10, y: 20, z: 30 };
 
-# Invocation: 'self' is implicit
+# Invocation: self is implicit; value auto-& into *Vector3
 v.translate(5, 5, 5);
 v.scale(2);
 ```

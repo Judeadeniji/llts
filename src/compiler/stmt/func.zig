@@ -50,7 +50,8 @@ pub fn compileFunction(state: *CompilerState, node: *ast.FunctionDecl, ast_node:
 
     var method_struct: ?[]const u8 = null;
     if (std.mem.lastIndexOf(u8, node.name, "::")) |idx| {
-        method_struct = node.name[0..idx];
+        const sname = node.name[0..idx];
+        if (state.structs.contains(sname)) method_struct = sname;
     }
 
     const params = switch (node.params.*) {
