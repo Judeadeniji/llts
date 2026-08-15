@@ -68,7 +68,7 @@ pub const Value = union(enum) {
     function: LltsFunction,
     /// Interned name index into the chunk string table (for globals/properties).
     name: u32,
-    /// String view pointing into the VM's global string_bytes buffer.
+    /// String view pointing into the VM's unified packed byte heap (`VMState.bytes`).
     slice: struct { offset: u32, len: u32 },
     /// Packed mutable bytes in `VMState.bytes` (arena `@new` byte buffers).
     bytes: struct { offset: u32, len: u32 },

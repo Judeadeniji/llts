@@ -74,9 +74,9 @@ Value-slot heaps (`memory` / `immortal` as `ArrayList(Value)`) are a footgun for
 Widths (`u8`/`u16`/…) stay out until packed layout exists.
 
 - [x] **Write RFC** — create [`docs/memory-model.md`](docs/memory-model.md) (does **not** exist yet; this checkbox *is* creating it).
-- [ ] **Packed heap region** — one byte bump (frame watermark + immortal/pass region policy).
+- [x] **Packed heap region** — one byte bump (frame watermark + immortal/pass region policy).
 - [ ] **Struct / array layout in bytes** — field offsets; `@sizeOf` = real byte size.
-- [ ] **Unify slices** — strings, `[]byte`, value arrays → ptr+len into that region.
+- [ ] **Unify slices** — strings, `[]byte`, value arrays → ptr+len into that region (strings + `[]byte` already share `vm.bytes`; value arrays still Value-slot).
 - [ ] **Widths as real types** — `u8`/`u16`/… mean the same in source, typechecker, and runtime (not secret `i64`). **No** implicit promote/truncate; convert only via explicit cast (RFC: e.g. `@as(T, expr)`).
 
 ### P0 — Silent Wrong Behaviour (no error, wrong result)

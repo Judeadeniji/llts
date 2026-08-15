@@ -162,7 +162,7 @@ const ArenaSrc = struct {
     len: usize,
 
     fn bytes(self: ArenaSrc, vm: *VMState) []const u8 {
-        if (self.off) |o| return vm.string_bytes.items[o .. o + self.len];
+        if (self.off) |o| return vm.bytes.items[o .. o + self.len];
         return self.interned;
     }
 };
@@ -189,11 +189,12 @@ fn mapCase(vm: *VMState, args: []Value, upper: bool) !Value {
     defer buf.deinit(vm.allocator);
     const src = try srcOf(vm, args[0], &buf);
 
-    const offset: u32 = @intCast(vm.string_bytes.items.len);
-    try vm.string_bytes.ensureUnusedCapacity(vm.allocator, src.len);
+    const offset = vm.bytes_ptr;
+    try vm.ensurePackedCapacity(src.len);
     for (src.bytes(vm)) |c| {
-        vm.string_bytes.appendAssumeCapacity(if (upper) std.ascii.toUpper(c) else std.ascii.toLower(c));
+        vm.bytes.appendAssumeCapacity(if (upper) std.ascii.toUpper(c) else std.ascii.toLower(c));
     }
+    vm.noteImmortalGrowth();
     return .{ .slice = .{ .offset = offset, .len = @intCast(src.len) } };
 }
 
@@ -247,12 +248,13 @@ fn replaceFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const repl = try srcOf(vm, args[2], &buf3);
 
     const out_len = std.mem.replacementSize(u8, str.bytes(vm), search.bytes(vm), repl.bytes(vm));
-    const offset: u32 = @intCast(vm.string_bytes.items.len);
-    try vm.string_bytes.ensureUnusedCapacity(vm.allocator, out_len);
+    const offset = vm.bytes_ptr;
+    try vm.ensurePackedCapacity(out_len);
 
-    const out_slice = vm.string_bytes.unusedCapacitySlice()[0..out_len];
+    const out_slice = vm.bytes.unusedCapacitySlice()[0..out_len];
     _ = std.mem.replace(u8, str.bytes(vm), search.bytes(vm), repl.bytes(vm), out_slice);
-    vm.string_bytes.items.len += out_len;
+    vm.bytes.items.len += out_len;
+    vm.noteImmortalGrowth();
 
     return .{ .slice = .{ .offset = offset, .len = @intCast(out_len) } };
 }
@@ -273,13 +275,14 @@ fn replaceFirstFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
 
     if (std.mem.indexOf(u8, str.bytes(vm), search.bytes(vm))) |idx| {
         const out_len = str.len - search.len + repl.len;
-        const offset: u32 = @intCast(vm.string_bytes.items.len);
-        try vm.string_bytes.ensureUnusedCapacity(vm.allocator, out_len);
+        const offset = vm.bytes_ptr;
+        try vm.ensurePackedCapacity(out_len);
 
         const s = str.bytes(vm);
-        vm.string_bytes.appendSliceAssumeCapacity(s[0..idx]);
-        vm.string_bytes.appendSliceAssumeCapacity(repl.bytes(vm));
-        vm.string_bytes.appendSliceAssumeCapacity(s[idx + search.len ..]);
+        vm.bytes.appendSliceAssumeCapacity(s[0..idx]);
+        vm.bytes.appendSliceAssumeCapacity(repl.bytes(vm));
+        vm.bytes.appendSliceAssumeCapacity(s[idx + search.len ..]);
+        vm.noteImmortalGrowth();
 
         return .{ .slice = .{ .offset = offset, .len = @intCast(out_len) } };
     }
@@ -289,10 +292,10 @@ fn replaceFirstFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
 fn concatFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
     if (args.len < 2) return error.ArityError;
-    const offset: u32 = @intCast(vm.string_bytes.items.len);
+    const offset = vm.bytes_ptr;
     try util.appendStr(vm, args[0]);
     try util.appendStr(vm, args[1]);
-    return .{ .slice = .{ .offset = offset, .len = @intCast(vm.string_bytes.items.len - offset) } };
+    return .{ .slice = .{ .offset = offset, .len = @intCast(vm.bytes_ptr - offset) } };
 }
 
 fn repeatFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
@@ -304,11 +307,12 @@ fn repeatFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const src = try srcOf(vm, args[0], &buf);
     const count: usize = @intCast(@max(try util.asInt(args[1]), 0));
 
-    const offset: u32 = @intCast(vm.string_bytes.items.len);
-    try vm.string_bytes.ensureUnusedCapacity(vm.allocator, src.len * count);
+    const offset = vm.bytes_ptr;
+    try vm.ensurePackedCapacity(src.len * count);
 
     var i: usize = 0;
-    while (i < count) : (i += 1) vm.string_bytes.appendSliceAssumeCapacity(src.bytes(vm));
+    while (i < count) : (i += 1) vm.bytes.appendSliceAssumeCapacity(src.bytes(vm));
+    vm.noteImmortalGrowth();
 
     return .{ .slice = .{ .offset = offset, .len = @intCast(src.len * count) } };
 }
@@ -347,7 +351,7 @@ fn charCodeFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     if (args[0] == .slice) {
         const s = args[0].slice;
         if (index >= s.len) return .{ .int = -1 };
-        return .{ .int = vm.string_bytes.items[s.offset + index] };
+        return .{ .int = vm.bytes.items[s.offset + index] };
     }
     
     var buf: std.ArrayList(u8) = .empty; defer buf.deinit(vm.allocator);
@@ -503,7 +507,7 @@ fn joinFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
     if (args.len < 2) return error.ArityError;
 
-    const offset: u32 = @intCast(vm.string_bytes.items.len);
+    const offset = vm.bytes_ptr;
 
     switch (args[0]) {
         .ptr => |arr_ptr| {
@@ -525,7 +529,7 @@ fn joinFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
         else => return error.TypeError,
     }
 
-    return .{ .slice = .{ .offset = offset, .len = @intCast(vm.string_bytes.items.len - offset) } };
+    return .{ .slice = .{ .offset = offset, .len = @intCast(vm.bytes_ptr - offset) } };
 }
 
 fn padStartFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
@@ -544,16 +548,17 @@ fn padStartFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     if (str.len >= target_len or pad.len == 0) return try util.writeSlice(vm, str.bytes(vm));
 
     const pad_needed = target_len - str.len;
-    const offset: u32 = @intCast(vm.string_bytes.items.len);
-    try vm.string_bytes.ensureUnusedCapacity(vm.allocator, target_len);
+    const offset = vm.bytes_ptr;
+    try vm.ensurePackedCapacity(target_len);
 
     var written: usize = 0;
     while (written < pad_needed) {
         const take = @min(pad.len, pad_needed - written);
-        vm.string_bytes.appendSliceAssumeCapacity(pad.bytes(vm)[0..take]);
+        vm.bytes.appendSliceAssumeCapacity(pad.bytes(vm)[0..take]);
         written += take;
     }
-    vm.string_bytes.appendSliceAssumeCapacity(str.bytes(vm));
+    vm.bytes.appendSliceAssumeCapacity(str.bytes(vm));
+    vm.noteImmortalGrowth();
 
     return .{ .slice = .{ .offset = offset, .len = @intCast(target_len) } };
 }
@@ -574,16 +579,17 @@ fn padEndFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     if (str.len >= target_len or pad.len == 0) return try util.writeSlice(vm, str.bytes(vm));
 
     const pad_needed = target_len - str.len;
-    const offset: u32 = @intCast(vm.string_bytes.items.len);
-    try vm.string_bytes.ensureUnusedCapacity(vm.allocator, target_len);
+    const offset = vm.bytes_ptr;
+    try vm.ensurePackedCapacity(target_len);
 
-    vm.string_bytes.appendSliceAssumeCapacity(str.bytes(vm));
+    vm.bytes.appendSliceAssumeCapacity(str.bytes(vm));
     var written: usize = 0;
     while (written < pad_needed) {
         const take = @min(pad.len, pad_needed - written);
-        vm.string_bytes.appendSliceAssumeCapacity(pad.bytes(vm)[0..take]);
+        vm.bytes.appendSliceAssumeCapacity(pad.bytes(vm)[0..take]);
         written += take;
     }
+    vm.noteImmortalGrowth();
 
     return .{ .slice = .{ .offset = offset, .len = @intCast(target_len) } };
 }

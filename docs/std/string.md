@@ -13,7 +13,7 @@ const string = @import("std/string");
 Runtime strings are **byte slices**, not mutable character arrays.
 
 - **Literals** (`"hello"`) are interned in the bytecode chunk (`.name`).
-- **Built results** (`concat`, `trim`, `slice`, …) are views into the VM’s append-only `string_bytes` arena (`.slice`: `{ offset, len }`).
+- **Built results** (`concat`, `trim`, `slice`, …) are views into the VM’s unified packed byte heap (`.slice`: `{ offset, len }` into `vm.bytes`).
 
 See also [VM value system](../vm.md#2-value-system--stack-representation) and [bytecode `Value`](../bytecode.md#2-runtime-values-value).
 

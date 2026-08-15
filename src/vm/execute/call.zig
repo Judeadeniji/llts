@@ -30,6 +30,7 @@ pub fn callStatic(vm: *VMState, ip: *usize, addr: u16, argc: u8) CallError!void 
         frame.file = vm.chunk.sourceAt(fn_info.source_index).path;
     }
     frame.heap_watermark = vm.heap_ptr;
+    frame.bytes_watermark = vm.bytes_ptr;
     try vm.frames.append(vm.allocator, frame);
     ip.* = addr;
 }
@@ -71,6 +72,7 @@ pub fn doReturn(vm: *VMState, ip: *usize) CallError!bool {
     const ret_ip = frame.return_ip;
     const base = frame.base_slot;
     vm.heap_ptr = frame.heap_watermark;
+    vm.rewindPacked(frame.bytes_watermark);
     frame.deinit();
     if (vm.frames.items.len == 0) {
         stack.setTop(vm, 0);

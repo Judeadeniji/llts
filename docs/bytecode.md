@@ -40,7 +40,8 @@ The VM operates on a tagged union, `Value`, which can represent various primitiv
     *   `buffer: *BufferObject`: Byte buffer for binary IO operations (`std/buffer`).
 *   **Strings & Identifiers**:
     *   `name: u32`: An interned name index pointing into the chunk's `strings` table (used for globals and properties).
-    *   `slice: { offset: u32, len: u32 }`: A string view pointing into the VM's global `string_bytes` buffer.
+    *   `slice: { offset: u32, len: u32 }`: A string view pointing into the VM's unified packed byte heap (`VMState.bytes`).
+    *   `bytes: { offset: u32, len: u32 }`: Mutable packed bytes in the same heap (`[]byte` / `[N]byte`).
 *   **Execution Entities**:
     *   `function: LltsFunction`: A user-defined LLTS function. Tracks its `source_index` to map execution back to the correct file for diagnostics.
     *   `native: *const NativeFunction`: A binding to a Zig native function.

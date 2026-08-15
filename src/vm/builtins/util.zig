@@ -25,47 +25,56 @@ pub fn readString(vm: *VMState, ptr: i32) ![]u8 {
     return buf;
 }
 
-/// Allocate a length-prefixed string; packed via the string arena (not Value-per-byte).
+/// Allocate a length-prefixed string; packed via the unified byte heap (not Value-per-byte).
 pub fn writeString(vm: *VMState, bytes: []const u8) !Value {
     return writeSlice(vm, bytes);
 }
 
-/// Appends string bytes to the zero-alloc string arena and returns a string slice.
-/// If `bytes` already lives in the arena, returns a view (no copy).
+/// Appends string bytes to the packed immortal region and returns a string slice.
+/// If `bytes` already lives in the packed heap, returns a view (no copy).
 pub fn writeSlice(vm: *VMState, bytes: []const u8) !Value {
     if (bytes.len == 0) return .{ .slice = .{ .offset = 0, .len = 0 } };
-    const items = vm.string_bytes.items;
+    const items = vm.bytes.items;
     const b = @intFromPtr(bytes.ptr);
     const a = @intFromPtr(items.ptr);
     if (items.len != 0 and b >= a and b + bytes.len <= a + items.len) {
         return .{ .slice = .{ .offset = @intCast(b - a), .len = @intCast(bytes.len) } };
     }
-    const offset: u32 = @intCast(vm.string_bytes.items.len);
-    try vm.string_bytes.appendSlice(vm.allocator, bytes);
+    const offset = try vm.appendImmortal(bytes);
     return .{ .slice = .{ .offset = offset, .len = @intCast(bytes.len) } };
 }
 
-/// Append a string value onto the arena. Slice sources are copied by offset so
-/// a realloc of `string_bytes` cannot invalidate the source.
+/// Append a string value onto the packed heap. Slice sources are copied by offset so
+/// a realloc of `bytes` cannot invalidate the source.
 pub fn appendStr(vm: *VMState, v: Value) !void {
     switch (v) {
         .slice => |s| {
             if (s.len == 0) return;
-            try vm.string_bytes.ensureUnusedCapacity(vm.allocator, s.len);
-            const src = vm.string_bytes.items[s.offset .. s.offset + s.len];
-            vm.string_bytes.appendSliceAssumeCapacity(src);
+            try vm.ensurePackedCapacity(s.len);
+            const src = vm.bytes.items[s.offset .. s.offset + s.len];
+            vm.bytes.appendSliceAssumeCapacity(src);
+            vm.noteImmortalGrowth();
         },
-        .bytes => |b| try vm.string_bytes.appendSlice(vm.allocator, vm.bytes.items[b.offset..][0..b.len]),
-        .name => |idx| try vm.string_bytes.appendSlice(vm.allocator, vm.chunk.stringAt(idx)),
+        .bytes => |b| {
+            try vm.ensurePackedCapacity(b.len);
+            const src = vm.bytes.items[b.offset..][0..b.len];
+            vm.bytes.appendSliceAssumeCapacity(src);
+            vm.noteImmortalGrowth();
+        },
+        .name => |idx| {
+            const data = vm.chunk.stringAt(idx);
+            _ = try vm.appendImmortal(data);
+        },
         .ptr => |p| {
             const len: usize = @intCast(vm.slot(p - 1).*.int);
-            try vm.string_bytes.ensureUnusedCapacity(vm.allocator, len);
+            try vm.ensurePackedCapacity(len);
             var i: usize = 0;
             while (i < len) : (i += 1) {
                 const val = vm.slot(p + @as(i32, @intCast(i))).*;
                 if (val != .int) return error.TypeError;
-                vm.string_bytes.appendAssumeCapacity(@intCast(val.int));
+                vm.bytes.appendAssumeCapacity(@intCast(val.int));
             }
+            vm.noteImmortalGrowth();
         },
         else => return error.TypeError,
     }
@@ -145,19 +154,19 @@ pub fn valueToOwnedString(vm: *VMState, v: Value) ![]u8 {
     return switch (v) {
         .ptr => |p| try readString(vm, p),
         .name => |idx| try vm.allocator.dupe(u8, vm.chunk.stringAt(idx)),
-        .slice => |s| try vm.allocator.dupe(u8, vm.string_bytes.items[s.offset .. s.offset + s.len]),
+        .slice => |s| try vm.allocator.dupe(u8, vm.bytes.items[s.offset .. s.offset + s.len]),
         .bytes => |b| try vm.allocator.dupe(u8, vm.bytes.items[b.offset..][0..b.len]),
         else => error.TypeError,
     };
 }
 
-/// Zero-allocation slice getter. Arena slices and interned names are views;
+/// Zero-allocation slice getter. Packed slices and interned names are views;
 /// heap ptr strings are copied into `buf`.
-/// Do not grow `vm.string_bytes` while holding a `.slice` view.
+/// Do not grow `vm.bytes` while holding a `.slice` view.
 pub fn valueToStr(vm: *VMState, v: Value, buf: *std.ArrayList(u8)) ![]const u8 {
     switch (v) {
         .name => |idx| return vm.chunk.stringAt(idx),
-        .slice => |s| return vm.string_bytes.items[s.offset .. s.offset + s.len],
+        .slice => |s| return vm.bytes.items[s.offset .. s.offset + s.len],
         .bytes => |b| return vm.bytes.items[b.offset..][0..b.len],
         .ptr => |p| {
             buf.clearRetainingCapacity();
@@ -213,7 +222,7 @@ pub fn stringEquals(vm: *VMState, a: Value, b: Value) bool {
     var i: usize = 0;
     while (i < len_a) : (i += 1) {
         const char_a: u8 = switch (a) {
-            .slice => |s| vm.string_bytes.items[s.offset + i],
+            .slice => |s| vm.bytes.items[s.offset + i],
             .bytes => |by| vm.bytes.items[by.offset + i],
             .name => |idx| vm.chunk.stringAt(idx)[i],
             .ptr => |p| blk: {
@@ -224,7 +233,7 @@ pub fn stringEquals(vm: *VMState, a: Value, b: Value) bool {
             else => unreachable,
         };
         const char_b: u8 = switch (b) {
-            .slice => |s| vm.string_bytes.items[s.offset + i],
+            .slice => |s| vm.bytes.items[s.offset + i],
             .bytes => |by| vm.bytes.items[by.offset + i],
             .name => |idx| vm.chunk.stringAt(idx)[i],
             .ptr => |p| blk: {

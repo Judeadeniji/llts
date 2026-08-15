@@ -191,29 +191,42 @@ pub fn isError(vm: *VMState) HeapError!void {
 pub fn stringAdd(vm: *VMState) HeapError!void {
     const b = stack.pop(vm);
     const a = stack.pop(vm);
-    const offset: u32 = @intCast(vm.string_bytes.items.len);
-    try appendStr(vm, &vm.string_bytes, a);
-    try appendStr(vm, &vm.string_bytes, b);
-    const total_len = vm.string_bytes.items.len - offset;
-    try stack.push(vm, .{ .slice = .{ .offset = offset, .len = @intCast(total_len) } });
+    const offset = vm.bytes_ptr;
+    try appendStr(vm, a);
+    try appendStr(vm, b);
+    const total_len = vm.bytes_ptr - offset;
+    try stack.push(vm, .{ .slice = .{ .offset = offset, .len = total_len } });
 }
 
-fn appendStr(vm: *VMState, list: *std.ArrayList(u8), v: Value) !void {
+fn appendStr(vm: *VMState, v: Value) !void {
     switch (v) {
-        .name => |idx| try list.appendSlice(vm.allocator, vm.chunk.stringAt(idx)),
-        .slice => |s| try list.appendSlice(vm.allocator, vm.string_bytes.items[s.offset .. s.offset + s.len]),
+        .name => |idx| _ = try vm.appendImmortal(vm.chunk.stringAt(idx)),
+        .slice => |s| {
+            if (s.len == 0) return;
+            try vm.ensurePackedCapacity(s.len);
+            const src = vm.bytes.items[s.offset .. s.offset + s.len];
+            vm.bytes.appendSliceAssumeCapacity(src);
+            vm.noteImmortalGrowth();
+        },
         .ptr => |p| {
             const len: usize = @intCast(vm.slot(p - 1).*.int);
+            try vm.ensurePackedCapacity(len);
             var i: usize = 0;
             while (i < len) : (i += 1) {
-                try list.append(vm.allocator, @intCast(vm.slot(p + @as(i32, @intCast(i))).*.int));
+                vm.bytes.appendAssumeCapacity(@intCast(vm.slot(p + @as(i32, @intCast(i))).*.int));
             }
+            vm.noteImmortalGrowth();
         },
-        .bytes => |b| try list.appendSlice(vm.allocator, vm.bytes.items[b.offset..][0..b.len]),
+        .bytes => |b| {
+            try vm.ensurePackedCapacity(b.len);
+            const src = vm.bytes.items[b.offset..][0..b.len];
+            vm.bytes.appendSliceAssumeCapacity(src);
+            vm.noteImmortalGrowth();
+        },
         .int => |n| {
             var buf: [32]u8 = undefined;
             const s = try std.fmt.bufPrint(&buf, "{d}", .{n});
-            try list.appendSlice(vm.allocator, s);
+            _ = try vm.appendImmortal(s);
         },
         else => {},
     }

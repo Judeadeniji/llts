@@ -11,8 +11,7 @@ Key components of `VMState`:
 * **`frames`**: A stack of `CallFrame` objects (max depth: `MAX_FRAMES` = 256).
 * **`memory`**: Frame-local object heap (`ArrayList(Value)`). Starts small and grows; `heap_ptr` rewinds on return.
 * **`immortal`**: Pass-/process-lifetime Values (arenas, errors, escaped `@new`). Separate growable list; pointers are `IMMORTAL_BASE + index`.
-* **`bytes`**: Packed byte heap (`ArrayList(u8)`) for `@new` `[]byte` / `[N]byte`. Grows as needed.
-* **`string_bytes`**: A zero-alloc, append-only `std.ArrayList(u8)` arena for dynamic string data.
+* **`bytes`**: Unified packed byte heap (`ArrayList(u8)`) for `.slice` strings and `.bytes` `[]byte`. Frame bump `bytes_ptr` rewinds on return; `bytes_immortal_floor` never decreases.
 * **`globals` / `modules`**: Hash maps that own and resolve global variables and module instances.
 
 ### Call Frames
@@ -21,14 +20,15 @@ A `CallFrame` (`state.zig`) tracks the execution context of a function.
 * `base_slot`: The absolute stack index where this function's arguments and local variables start.
 * `return_ip`: The instruction pointer to restore on `OP_RETURN`.
 * `arg_count`: The number of arguments passed to the function.
-* `heap_watermark`: An `i32` index tracking the heap's boundary at the time the frame was pushed.
+* `heap_watermark`: Value-slot heap boundary at frame push; restored on return.
+* `bytes_watermark`: Packed-byte bump at frame push; restored on return (subject to immortal floor).
 
 ## 2. Value System & Stack Representation
 
 The VM is dynamically typed at runtime, utilizing a tagged union (`value.zig:Value`) for all stack and heap elements:
 * **Primitives**: `.null`, `.bool`, `.int` (i32), `.float` (f64).
-* **Strings**: Represented as `.slice` (offset/len into `string_bytes arena`) or `.name` (interned constant index).
-* **Packed bytes**: `.bytes { offset, len }` into `VMState.bytes` — mutable `@new` byte buffers. 
+* **Strings**: Represented as `.slice` (offset/len into `VMState.bytes`) or `.name` (interned constant index).
+* **Packed bytes**: `.bytes { offset, len }` into the same `VMState.bytes` — mutable `@new` byte buffers. 
 * **Pointers**: `.ptr` is a simple `i32` index pointing into the `VMState.memory` array.
 * **Objects**: Functions (`.function`, `.native`) and Modules (`.module`).
 

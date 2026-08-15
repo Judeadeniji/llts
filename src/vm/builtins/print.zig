@@ -47,7 +47,7 @@ pub fn writeValue(vm: *VMState, out: *std.ArrayList(u8), v: Value) !void {
             }
         },
         .name => |idx| try out.appendSlice(vm.allocator, vm.chunk.stringAt(idx)),
-        .slice => |s| try out.appendSlice(vm.allocator, vm.string_bytes.items[s.offset..][0..s.len]),
+        .slice => |s| try out.appendSlice(vm.allocator, vm.bytes.items[s.offset..][0..s.len]),
         .bytes => |b| try writePackedBytes(vm, out, b.offset, b.len),
         .module => |m| {
             var tmp: [128]u8 = undefined;

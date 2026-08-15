@@ -27,10 +27,14 @@ pub const CallFrame = struct {
     line: u32 = 1,
     column: u32 = 1,
     source_index: u16 = 0,
-    /// Heap bump at call entry. On return, `heap_ptr` rewinds here so
+    /// Value-slot heap bump at call entry. On return, `heap_ptr` rewinds here so
     /// frame-local implicit allocs (bare `Foo{}` / `[…]`) die with the frame.
-    /// Immortal allocs live in a separate growable list and are not rewound.
+    /// Immortal Value slots live in a separate growable list and are not rewound.
     heap_watermark: i32 = HEAP_START,
+    /// Packed-byte bump at call entry. On return, `bytes_ptr` rewinds to
+    /// `max(bytes_watermark, bytes_immortal_floor)` so frame bytes die with the
+    /// frame without clobbering immortal string/`[]byte` data.
+    bytes_watermark: u32 = 0,
 
     pub fn init(allocator: std.mem.Allocator) CallFrame {
         return .{
@@ -59,8 +63,13 @@ pub const VMState = struct {
     /// Pass-/process-lifetime Values (arenas, errors, escaped `@new`). Grows only.
     immortal: std.ArrayList(Value) = .empty,
     free_chunks: i32 = 0,
-    /// Packed byte heap (`[]byte` / `[N]byte`). Append-only, grows as needed.
+    /// Unified packed byte heap: strings (`.slice`) and `[]byte` / `[N]byte` (`.bytes`).
+    /// Frame bump (`bytes_ptr`) rewinds on return; immortal floor never decreases.
     bytes: std.ArrayList(u8) = .empty,
+    /// Next free offset in `bytes` (== `bytes.items.len`).
+    bytes_ptr: u32 = 0,
+    /// Immortal high-water; frame rewind cannot go below this.
+    bytes_immortal_floor: u32 = 0,
     free_byte_chunks: i32 = 0,
     chunk: *Chunk,
     current_line: u32 = 1,
@@ -73,8 +82,6 @@ pub const VMState = struct {
     buffers: std.ArrayList(*value.BufferObject) = .empty,
     /// Cache: constant string index → heap data pointer, avoids re-allocating the same literal.
     string_cache: std.AutoHashMap(u32, i32),
-    /// Zero-alloc string arena (appended to, never freed during execution).
-    string_bytes: std.ArrayList(u8) = .empty,
     /// Path of the running script (borrowed; used by os.args as argv[0]).
     script_path: []const u8 = "",
     /// Extra argv after the script path (borrowed; used by os.args as argv[1..]).
@@ -107,8 +114,9 @@ pub const VMState = struct {
         frame.func_name = "<anonymous>";
         frame.file = if (chunk.file.len > 0) chunk.file else "<anonymous>";
         frame.source_index = 0;
-        // Script frame lives until process end — watermark tracks immortal growth.
+        // Script frame lives until process end — watermarks track immortal growth.
         frame.heap_watermark = HEAP_START;
+        frame.bytes_watermark = 0;
         try state.frames.append(allocator, frame);
         return state;
     }
@@ -147,7 +155,6 @@ pub const VMState = struct {
         }
         self.buffers.deinit(self.allocator);
         self.string_cache.deinit();
-        self.string_bytes.deinit(self.allocator);
         self.memory.deinit(self.allocator);
         self.immortal.deinit(self.allocator);
         self.bytes.deinit(self.allocator);
@@ -202,17 +209,80 @@ pub const VMState = struct {
         return &self.memory.items[@intCast(ptr)];
     }
 
-    /// Packed bytes for `@new(a, []byte, n)` / `[N]byte`. Grows as needed.
+    fn maxPackedBytes(self: *const VMState) usize {
+        return self.max_memory_slots * 16;
+    }
+
+    fn growPacked(self: *VMState, new_len: usize, fill: u8) !void {
+        if (new_len > self.maxPackedBytes()) return error.OutOfMemory;
+        const old = self.bytes.items.len;
+        if (new_len > old) {
+            try self.bytes.appendNTimes(self.allocator, fill, new_len - old);
+        } else {
+            self.bytes.items.len = new_len;
+        }
+        self.bytes_ptr = @intCast(new_len);
+    }
+
+    /// Pass-/process-lifetime packed bytes (`@new` / arena / strings). Raises immortal floor.
     pub fn allocImmortalBytes(self: *VMState, count: i32) !i32 {
         if (count < 0) return error.OutOfMemory;
-        const new_len = self.bytes.items.len + @as(usize, @intCast(count));
-        if (new_len > self.max_memory_slots * 16) return error.OutOfMemory;
-        const ptr: i32 = @intCast(self.bytes.items.len);
-        try self.bytes.appendNTimes(self.allocator, 0, @intCast(count));
+        const ptr: i32 = @intCast(self.bytes_ptr);
+        try self.growPacked(@as(usize, self.bytes_ptr) + @as(usize, @intCast(count)), 0);
+        self.bytes_immortal_floor = self.bytes_ptr;
         return ptr;
     }
 
+    /// Frame-local packed bytes. Rewound on return (subject to immortal floor).
+    pub fn allocFrameBytes(self: *VMState, count: i32) !i32 {
+        if (count < 0) return error.OutOfMemory;
+        const ptr: i32 = @intCast(self.bytes_ptr);
+        try self.growPacked(@as(usize, self.bytes_ptr) + @as(usize, @intCast(count)), 0);
+        return ptr;
+    }
+
+    /// Append immortal bytes (strings). Returns start offset; raises immortal floor.
+    pub fn appendImmortal(self: *VMState, data: []const u8) !u32 {
+        const off = self.bytes_ptr;
+        try self.growPacked(@as(usize, off) + data.len, 0);
+        @memcpy(self.bytes.items[off..][0..data.len], data);
+        self.bytes_immortal_floor = self.bytes_ptr;
+        return off;
+    }
+
+    /// Reserve `count` immortal bytes (caller fills). Returns start offset.
+    pub fn reserveImmortal(self: *VMState, count: usize) !u32 {
+        const off = self.bytes_ptr;
+        try self.growPacked(@as(usize, off) + count, 0);
+        self.bytes_immortal_floor = self.bytes_ptr;
+        return off;
+    }
+
+    /// Ensure at least `extra` free capacity past `bytes_ptr` without advancing the bump.
+    pub fn ensurePackedCapacity(self: *VMState, extra: usize) !void {
+        const need = @as(usize, self.bytes_ptr) + extra;
+        if (need > self.maxPackedBytes()) return error.OutOfMemory;
+        try self.bytes.ensureTotalCapacity(self.allocator, need);
+    }
+
+    /// Advance bump/floor after `ensurePackedCapacity` + `appendAssumeCapacity` writes.
+    pub fn noteImmortalGrowth(self: *VMState) void {
+        self.bytes_ptr = @intCast(self.bytes.items.len);
+        self.bytes_immortal_floor = self.bytes_ptr;
+    }
+
+    /// Rewind packed bump to the frame watermark (cannot go below immortal floor).
+    pub fn rewindPacked(self: *VMState, watermark: u32) void {
+        const target = @max(watermark, self.bytes_immortal_floor);
+        self.bytes_ptr = target;
+        self.bytes.items.len = target;
+    }
+
     pub fn packedBytes(self: *VMState, offset: u32, len: u32) []u8 {
+        return self.bytes.items[offset..][0..len];
+    }
+
+    pub fn packedBytesConst(self: *const VMState, offset: u32, len: u32) []const u8 {
         return self.bytes.items[offset..][0..len];
     }
 
@@ -315,9 +385,30 @@ test "immortal heap and packed bytes grow" {
     try std.testing.expectEqual(@as(i64, 7), vm.slot(p).*.int);
 
     const off = try vm.allocImmortalBytes(2 * 1024 * 1024);
-    try std.testing.expect(vm.bytes.items.len >= 2 * 1024 * 1024);
+    try std.testing.expect(vm.bytes_ptr >= 2 * 1024 * 1024);
     vm.bytes.items[@intCast(off)] = 9;
     vm.bytes.items[@intCast(off + 2 * 1024 * 1024 - 1)] = 8;
     try std.testing.expectEqual(@as(u8, 9), vm.bytes.items[@intCast(off)]);
     try std.testing.expectEqual(@as(u8, 8), vm.bytes.items[@intCast(off + 2 * 1024 * 1024 - 1)]);
+}
+
+test "packed frame bytes rewind; immortal floor holds" {
+    var c = chunk_mod.Chunk.init(std.testing.allocator);
+    defer c.deinit();
+    var vm = try VMState.init(std.testing.allocator, &c, 1048576);
+    defer vm.deinit();
+
+    const immortal_off = try vm.appendImmortal("hi");
+    try std.testing.expectEqual(@as(u32, 0), immortal_off);
+    const floor = vm.bytes_immortal_floor;
+    try std.testing.expectEqual(@as(u32, 2), floor);
+
+    const frame_off = try vm.allocFrameBytes(100);
+    try std.testing.expectEqual(@as(i32, 2), frame_off);
+    try std.testing.expectEqual(@as(u32, 102), vm.bytes_ptr);
+
+    vm.rewindPacked(floor);
+    try std.testing.expectEqual(floor, vm.bytes_ptr);
+    try std.testing.expectEqual(@as(u8, 'h'), vm.bytes.items[0]);
+    try std.testing.expectEqual(@as(u8, 'i'), vm.bytes.items[1]);
 }

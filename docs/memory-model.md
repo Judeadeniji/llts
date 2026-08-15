@@ -11,7 +11,7 @@
 | Operand stack | Fixed `[]Value` + `sp` | Expression evaluation |
 | `vm.memory` | `ArrayList(Value)` | Frame bump; rewind `heap_ptr` on return |
 | `vm.immortal` | `ArrayList(Value)` | Escape / arena control / errors |
-| `vm.bytes` | `ArrayList(u8)` | Packed `[]byte` only |
+| `vm.bytes` | `ArrayList(u8)` + `bytes_ptr` / `bytes_immortal_floor` | Unified packed heap: `.slice` strings and `.bytes` `[]byte` |
 | Host objects | `List` / `Map` / `Buffer` pointers | Separate heaps |
 
 Pointers into the Value heaps are `Value.ptr: i32` (frame slots from `HEAP_START`, immortal from `IMMORTAL_BASE`).
@@ -20,12 +20,18 @@ Struct / value-array layout today: **one `Value` slot per field** → `@sizeOf` 
 
 Relevant code: `src/vm/state.zig`, `src/vm/execute/heap.zig`, `src/vm/builtins/mem.zig`.
 
+### Packed byte policy (step 1 — done)
+
+- `allocImmortalBytes` / `appendImmortal` / string builders raise `bytes_immortal_floor`.
+- `allocFrameBytes` bumps `bytes_ptr` only; `CallFrame.bytes_watermark` + `rewindPacked` on return reclaim frame bytes down to the immortal floor.
+- Strings and `[]byte` share `vm.bytes` (no separate `string_bytes` arena).
+
 ## Problems
 
 1. Uniform `Value` slots waste memory and cache on aggregates.
 2. `@sizeOf` / arenas cannot describe real layout.
 3. Extra numeric widths (`u8`, `u16`, …) cannot pay off if everything is still a tagged slot.
-4. Multiple parallel heaps (`memory`, `immortal`, `bytes`, host objects) are hard to reason about.
+4. Value-slot `memory` / `immortal` still parallel the packed byte region for structs/arrays.
 
 ## Target model
 
@@ -72,7 +78,7 @@ $n: int = @as(int, b);     # only widen
 
 ## Migration order
 
-1. **Packed region beside old heaps** — move `@new([]byte)` / strings fully onto a unified byte bump (already partly `vm.bytes`).
+1. **Packed region beside old heaps** — ✅ unified `vm.bytes` for strings + `[]byte`; frame watermark + immortal floor.
 2. **Struct fields as byte layout** — field offsets; change `@sizeOf` to real byte sizes (document alignment: start with align(8) for i64/f64/ptr, align(1) for u8).
 3. **Delete Value-slot `memory`/`immortal` arrays for aggregates** — `Value.ptr` becomes a byte offset into the packed heap.
 4. **Storage widths** — first-class `u8`/`u16`/… with explicit casts only.
