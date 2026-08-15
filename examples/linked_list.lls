@@ -9,19 +9,19 @@
 @const $debug = @import("std/debug");
 
 @struct Node {
-    value: int;
-    next: ?Node;
+    value: i64;
+    next: ?*Node;
 }
 
 @struct LinkedList {
     arena: mem.Arena;
-    head: ?Node;
+    head: ?*Node;
 
-    @func pushFront(self, value: int) {
+    @func pushFront(self: *LinkedList, value: i64) {
         self.head = @new(self.arena, Node { value: value, next: self.head });
     }
 
-    @func pushBack(self, value: int) {
+    @func pushBack(self: *LinkedList, value: i64) {
         $n = @new(self.arena, Node { value: value, next: null });
         @if (self.head == null) {
             self.head = n;
@@ -34,7 +34,7 @@
         curr.next = n;
     }
 
-    @func len(self) {
+    @func len(self: *LinkedList) {
         $n = 0;
         $curr = self.head;
         @for (curr != null) {
@@ -44,7 +44,7 @@
         return n;
     }
 
-    @func sum(self) {
+    @func sum(self: *LinkedList) {
         $total = 0;
         $curr = self.head;
         @for (curr != null) {
@@ -54,7 +54,7 @@
         return total;
     }
 
-    @func contains(self, value: int) {
+    @func contains(self: *LinkedList, value: i64) {
         $curr = self.head;
         @for (curr != null) {
             @if (curr.value == value) {
@@ -65,8 +65,8 @@
         return false;
     }
 
-    @func reverse(self) {
-        $prev: ?Node = null;
+    @func reverse(self: *LinkedList) {
+        $prev: ?*Node = null;
         $curr = self.head;
         @for (curr != null) {
             $nxt = curr.next;
@@ -77,7 +77,7 @@
         self.head = prev;
     }
 
-    @func print(self) {
+    @func print(self: *LinkedList) {
         $curr = self.head;
         @for (curr != null) {
             debug.printLn("  {i}", curr.value);
@@ -86,7 +86,7 @@
     }
 }
 
-@func create(arena: mem.Arena): LinkedList {
+@func create(arena: mem.Arena): *LinkedList {
     return @new(arena, LinkedList { arena: arena, head: null });
 }
 
