@@ -55,14 +55,27 @@ pub const BufferObject = struct {
     }
 };
 
-/// Tagged runtime value. Heterogeneous heap objects (arrays, errors, structs) use `.ptr`.
-/// Packed byte arrays (`[]byte` / `[N]byte` / `@new(a, string, n)`) use `.bytes`.
+/// Handle for a packed value array living in `VMState.bytes`.
+pub const ArrayRef = struct {
+    offset: u32,
+    count: u32,
+};
+
+/// Tagged runtime value — numeric tags match Zig-like widths end-to-end.
 pub const Value = union(enum) {
     null,
     bool: bool,
-    int: i64,
-    float: f64,
-    /// Pointer into the Value-slot heap (structs, `[]int`, errors).
+    i8: i8,
+    i16: i16,
+    i32: i32,
+    i64: i64,
+    u8: u8,
+    u16: u16,
+    u32: u32,
+    u64: u64,
+    f32: f32,
+    f64: f64,
+    /// Pointer into the Value-slot heap (errors, arena control).
     ptr: i32,
     native: *const NativeFunction,
     function: LltsFunction,
@@ -70,8 +83,10 @@ pub const Value = union(enum) {
     name: u32,
     /// String view pointing into the VM's unified packed byte heap (`VMState.bytes`).
     slice: struct { offset: u32, len: u32 },
-    /// Packed mutable bytes in `VMState.bytes` (arena `@new` byte buffers).
+    /// Packed mutable bytes in `VMState.bytes` (structs, `[]byte`).
     bytes: struct { offset: u32, len: u32 },
+    /// Packed value array in `VMState.bytes`: `count` elements of `@sizeOf(Value)` at `offset`.
+    array: ArrayRef,
     /// Module object from OP_GET_MODULE.
     module: *ModuleObject,
     /// Growable List (std/list).
@@ -85,11 +100,20 @@ pub const Value = union(enum) {
         return switch (self) {
             .null => false,
             .bool => |b| b,
-            .int => |n| n != 0,
-            .float => |n| n != 0,
+            .i8 => |n| n != 0,
+            .i16 => |n| n != 0,
+            .i32 => |n| n != 0,
+            .i64 => |n| n != 0,
+            .u8 => |n| n != 0,
+            .u16 => |n| n != 0,
+            .u32 => |n| n != 0,
+            .u64 => |n| n != 0,
+            .f32 => |n| n != 0,
+            .f64 => |n| n != 0,
             .ptr => true,
             .slice => |s| s.len > 0,
             .bytes => |b| b.len > 0,
+            .array => |a| a.count > 0,
             .native, .function, .name, .module, .list, .map, .buffer => true,
         };
     }
@@ -99,5 +123,5 @@ test "value truthiness" {
     try std.testing.expect(!(Value{ .null = {} }).isTruthy());
     try std.testing.expect((Value{ .bool = true }).isTruthy());
     try std.testing.expect(!(Value{ .bool = false }).isTruthy());
-    try std.testing.expect(!(Value{ .int = 0 }).isTruthy());
+    try std.testing.expect(!(Value{ .i64 = 0 }).isTruthy());
 }

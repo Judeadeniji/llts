@@ -13,7 +13,12 @@ const CompilerState = state_mod.CompilerState;
 pub fn compileIndex(state: *CompilerState, idx: *const ast.Index) !void {
     try expr.compileExpression(state, idx.object);
     try expr.compileExpression(state, idx.index);
-    try emit.emitOp(state, .OP_GET_ARRAY);
+    if (idx.end) |end| {
+        try expr.compileExpression(state, end);
+        try emit.emitOp(state, .OP_SLICE);
+    } else {
+        try emit.emitOp(state, .OP_GET_ARRAY);
+    }
 }
 
 pub fn compileError(state: *CompilerState, err: *const ast.ErrorExpr) !void {
@@ -45,11 +50,10 @@ pub fn compileTry(state: *CompilerState, try_expr: *const ast.TryExpr) !void {
 }
 
 pub fn compileArray(state: *CompilerState, arr: *const ast.ArrayLiteral) !void {
-    // Frame-local `__alloc` by default; `__allocImmortal` for globals / returned literals.
     const length: i32 = @intCast(arr.elements.len);
-    const alloc = if (state.alloc_immortal) "__allocImmortal" else "__alloc";
+    const alloc = if (state.alloc_immortal) "__allocImmortalArray" else "__allocArray";
     try emit.emitNameGet(state, .OP_GET_GLOBAL, alloc);
-    try emit.emitConstant(state, .{ .int = length + 1 });
+    try emit.emitConstant(state, .{ .i64 = length });
     try emit.emitOp(state, .OP_CALL);
     try emit.emitByte(state, 1);
     try fillArray(state, arr);
@@ -60,7 +64,7 @@ pub fn compileStructInit(state: *CompilerState, init: *const ast.StructInit) !vo
     // Frame bump by default; immortal for module/globals and returned literals (escape.zig).
     const alloc = if (state.alloc_immortal) "__allocImmortalBytes" else "__allocBytes";
     try emit.emitNameGet(state, .OP_GET_GLOBAL, alloc);
-    try emit.emitConstant(state, .{ .int = struct_def.size });
+    try emit.emitConstant(state, .{ .i64 = struct_def.size });
     try emit.emitOp(state, .OP_CALL);
     try emit.emitByte(state, 1);
     try fillStruct(state, init, struct_def);
@@ -88,7 +92,7 @@ pub fn compileNew(state: *CompilerState, c: *const ast.Call) !void {
                 return compiler_errors.compileFailFmt(state, "@new array literal takes (allocator, value)", .{});
             }
             const length: i32 = @intCast(arr.elements.len);
-            try emitArenaAlloc(state, c.args[0], length + 1);
+            try emitArenaAllocArray(state, c.args[0], null, length);
             try fillArray(state, arr);
         },
         .array_type => |*at| {
@@ -102,7 +106,7 @@ pub fn compileNew(state: *CompilerState, c: *const ast.Call) !void {
                 if (isByteElemType(at.elem)) {
                     try emitArenaAllocBytes(state, c.args[0], null, @intCast(length));
                 } else {
-                    try emitArenaAlloc(state, c.args[0], @intCast(length + 1));
+                    try emitArenaAllocArray(state, c.args[0], null, @intCast(length));
                     try zeroFillArray(state, @intCast(length), at.elem);
                 }
             } else {
@@ -113,7 +117,7 @@ pub fn compileNew(state: *CompilerState, c: *const ast.Call) !void {
                 if (isByteElemType(at.elem)) {
                     try emitArenaAllocBytes(state, c.args[0], c.args[2], null);
                 } else {
-                    try emitArenaAllocArray(state, c.args[0], c.args[2]);
+                    try emitArenaAllocArray(state, c.args[0], c.args[2], null);
                 }
             }
         },
@@ -173,15 +177,19 @@ fn requireSimpleElemType(state: *CompilerState, elem_type: *ast.Node) !void {
 fn emitArenaAlloc(state: *CompilerState, allocator_expr: *ast.Node, slots: i32) !void {
     try emit.emitNameGet(state, .OP_GET_GLOBAL, "__arena_alloc");
     try expr.compileExpression(state, allocator_expr);
-    try emit.emitConstant(state, .{ .int = slots });
+    try emit.emitConstant(state, .{ .i64 = slots });
     try emit.emitOp(state, .OP_CALL);
     try emit.emitByte(state, 2);
 }
 
-fn emitArenaAllocArray(state: *CompilerState, allocator_expr: *ast.Node, length_expr: *ast.Node) !void {
+fn emitArenaAllocArray(state: *CompilerState, allocator_expr: *ast.Node, length_expr: ?*ast.Node, const_len: ?i32) !void {
     try emit.emitNameGet(state, .OP_GET_GLOBAL, "__arena_alloc_array");
     try expr.compileExpression(state, allocator_expr);
-    try expr.compileExpression(state, length_expr);
+    if (length_expr) |le| {
+        try expr.compileExpression(state, le);
+    } else {
+        try emit.emitConstant(state, .{ .i64 = const_len orelse 0 });
+    }
     try emit.emitOp(state, .OP_CALL);
     try emit.emitByte(state, 2);
 }
@@ -192,26 +200,20 @@ fn emitArenaAllocBytes(state: *CompilerState, allocator_expr: *ast.Node, length_
     if (length_expr) |le| {
         try expr.compileExpression(state, le);
     } else {
-        try emit.emitConstant(state, .{ .int = const_len orelse 0 });
+        try emit.emitConstant(state, .{ .i64 = const_len orelse 0 });
     }
     try emit.emitOp(state, .OP_CALL);
     try emit.emitByte(state, 2);
 }
 
 fn zeroFillArray(state: *CompilerState, length: i32, elem_type: *ast.Node) !void {
-    try emit.emitOp(state, .OP_DUP);
-    try emit.emitConstant(state, .{ .int = 0 });
-    try emit.emitConstant(state, .{ .int = length });
-    try emit.emitOp(state, .OP_SET_INDEX);
-    try emit.emitOp(state, .OP_POP);
-    try emit.emitConstant(state, .{ .int = 1 });
-    try emit.emitOp(state, .OP_ADD);
+    // Elements already zeroed (.null) by alloc; write typed zeros.
     var i: i32 = 0;
     while (i < length) : (i += 1) {
         try emit.emitOp(state, .OP_DUP);
-        try emit.emitConstant(state, .{ .int = i });
+        try emit.emitConstant(state, .{ .i64 = i });
         try emitZeroForElemType(state, elem_type);
-        try emit.emitOp(state, .OP_SET_INDEX);
+        try emit.emitOp(state, .OP_SET_ARRAY);
         try emit.emitOp(state, .OP_POP);
     }
 }
@@ -242,7 +244,7 @@ fn emitZeroForElemType(state: *CompilerState, elem_type: *ast.Node) !void {
 fn emitZeroForTypeName(state: *CompilerState, name: []const u8) !void {
     const layout = @import("../layout.zig");
     if (std.mem.eql(u8, name, "float") or std.mem.eql(u8, name, "f64") or std.mem.eql(u8, name, "f32")) {
-        try emit.emitConstant(state, .{ .float = 0 });
+        try emit.emitConstant(state, .{ .f64 = 0 });
         return;
     }
     if (std.mem.eql(u8, name, "bool") or std.mem.eql(u8, name, "boolean")) {
@@ -255,7 +257,7 @@ fn emitZeroForTypeName(state: *CompilerState, name: []const u8) !void {
     }
     switch (layout.fieldKind(name)) {
         .handle, .ptr => try emit.emitOp(state, .OP_NULL),
-        .i64, .f64, .bool, .u8 => try emit.emitConstant(state, .{ .int = 0 }),
+        .i64, .f64, .f32, .bool, .u8, .i8, .i16, .i32, .u16, .u32, .u64 => try emit.emitConstant(state, .{ .i64 = 0 }),
     }
 }
 
@@ -274,19 +276,11 @@ fn resolveStructDef(state: *CompilerState, init: *const ast.StructInit) !state_m
 }
 
 fn fillArray(state: *CompilerState, arr: *const ast.ArrayLiteral) !void {
-    const length: i32 = @intCast(arr.elements.len);
-    try emit.emitOp(state, .OP_DUP);
-    try emit.emitConstant(state, .{ .int = 0 });
-    try emit.emitConstant(state, .{ .int = length });
-    try emit.emitOp(state, .OP_SET_INDEX);
-    try emit.emitOp(state, .OP_POP);
-    try emit.emitConstant(state, .{ .int = 1 });
-    try emit.emitOp(state, .OP_ADD);
     for (arr.elements, 0..) |el, i| {
         try emit.emitOp(state, .OP_DUP);
-        try emit.emitConstant(state, .{ .int = @intCast(i) });
+        try emit.emitConstant(state, .{ .i64 = @intCast(i) });
         try expr.compileExpression(state, el);
-        try emit.emitOp(state, .OP_SET_INDEX);
+        try emit.emitOp(state, .OP_SET_ARRAY);
         try emit.emitOp(state, .OP_POP);
     }
 }
@@ -371,6 +365,6 @@ fn compileEnumVariant(state: *CompilerState, mem: *const ast.Member) !bool {
     const value = ed.variants.get(variant) orelse {
         return compiler_errors.compileFailFmt(state, "Unknown enum variant '{s}' on '{s}'", .{ variant, ename });
     };
-    try emit.emitConstant(state, .{ .int = value });
+    try emit.emitConstant(state, .{ .i64 = value });
     return true;
 }
