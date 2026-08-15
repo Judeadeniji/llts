@@ -97,19 +97,39 @@ fn parsePostfix(self: *Parser) ParseError!*Node {
             continue;
         }
         if (tok.type == .delimiter and std.mem.eql(u8, tok.value, "[")) {
+            const start_tok = tok;
             _ = self.advance();
             // Bounds must not consume `..` (range is slice syntax here, not a binary expr).
-            const index_expr = try parseBinary(self, 14);
+            var start_expr: ?*Node = null;
             var end_expr: ?*Node = null;
+            var is_slice = false;
+
             if (self.check(.bin_op) and self.peek(0) != null and std.mem.eql(u8, self.peek(0).?.value, "..")) {
+                // `[..j]` or `[..]`
+                is_slice = true;
                 _ = self.advance(); // '..'
-                end_expr = try parseBinary(self, 14);
+                if (!(self.checkDelim("]"))) {
+                    end_expr = try parseBinary(self, 14);
+                }
+            } else {
+                start_expr = try parseBinary(self, 14);
+                if (self.check(.bin_op) and self.peek(0) != null and std.mem.eql(u8, self.peek(0).?.value, "..")) {
+                    is_slice = true;
+                    _ = self.advance(); // '..'
+                    if (!(self.checkDelim("]"))) {
+                        end_expr = try parseBinary(self, 14);
+                    }
+                }
             }
             _ = try self.consume(.delimiter, "Expected ']'", "]");
+            if (!is_slice and start_expr == null) {
+                return self.failTok(start_tok, "Expected index expression", .{});
+            }
             e = try self.create(.{ .index = .{
                 .object = e,
-                .index = index_expr,
+                .index = start_expr,
                 .end = end_expr,
+                .is_slice = is_slice,
                 .loc = e.loc(),
             } });
             continue;

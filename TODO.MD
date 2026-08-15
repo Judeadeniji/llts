@@ -137,7 +137,8 @@ Forcing function: keep writing the self-hosted compiler. Whatever that parser ca
 
 - [ ] **One `[]T` model (ptr + len)** — interned strings and arena packed `@new(a, []byte, n)` already share `vm.bytes`; value arrays are `.array` in the same heap. Remaining: unify slice headers end-to-end.
 - [x] **Slice syntax `arr[i..j]`** — exclusive-end views on `[]byte` / `[N]byte` / string (`.bytes` / `.slice`); bounds-checked; not assignable.
-- [ ] **Open-ended slices `arr[i..]` / `arr[..j]`** — Zig-style; same for strings (`s[i..]`, `s[..j]`). Parser currently requires both bounds after `..`.
+- [x] **Open-ended slices `arr[i..]` / `arr[..j]`** — Zig-style; same for strings (`s[i..]`, `s[..j]`, `s[..]`); missing start → 0, missing end → len.
+- [ ] **Compile-time bounds for constants** — when length and index/slice bounds are both known literals (string / `[N]T`), reject OOB at compile time. Runtime checks stay; no general const-eval.
 - [ ] **Runtime-enforced `[N]T`** — fixed buffers with capacity traps; `[N]T` is compile-time only today.
 - [ ] **UTF-8 vs byte length** — clarify `len` / `[N]byte` as bytes (not code points) once strings are `[]byte`.
 

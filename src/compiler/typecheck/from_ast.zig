@@ -270,6 +270,17 @@ pub fn resolveType(state: *state_mod.CompilerState, node: *ast.Node) ?[]const u8
         },
         .index => |idx| blk: {
             const obj = resolveType(state, idx.object) orelse break :blk null;
+            if (idx.is_slice) {
+                // Slice views are unsized `[]T` / `[]byte`.
+                if (std.mem.eql(u8, obj, "string") or std.mem.eql(u8, obj, "[]byte")) break :blk "[]byte";
+                if (arrayElemDisplay(state.allocator, obj) catch null) |e| {
+                    const s = std.fmt.allocPrint(state.allocator, "[]{s}", .{e}) catch break :blk null;
+                    state.allocator.free(e);
+                    state.owned.append(state.allocator, s) catch {};
+                    break :blk s;
+                }
+                break :blk null;
+            }
             const elem = arrayElemDisplay(state.allocator, obj) catch break :blk null;
             if (elem) |e| {
                 state.owned.append(state.allocator, e) catch {};

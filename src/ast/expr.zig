@@ -66,9 +66,12 @@ pub const Member = struct {
 
 pub const Index = struct {
     object: *Node,
-    index: *Node,
-    /// When set, this is a slice `object[index..end]` (exclusive end).
+    /// Start index. Null only for open-start slices `[..j]` / `[..]`.
+    index: ?*Node = null,
+    /// Exclusive end when `is_slice`. Null means open end (`[i..]` / `[..]`).
     end: ?*Node = null,
+    /// True for `obj[a..b]`, `obj[a..]`, `obj[..b]`, `obj[..]` (vs plain `obj[i]`).
+    is_slice: bool = false,
     type_annotation: ?*Node = null,
     loc: Location,
 };

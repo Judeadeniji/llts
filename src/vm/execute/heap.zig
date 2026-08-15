@@ -143,35 +143,40 @@ pub fn getArray(vm: *VMState) HeapError!void {
     try stack.push(vm, vm.slot(p + @as(i32, @intCast(i))).*);
 }
 
-/// Stack: [obj, lo, hi] → view into packed bytes/string (exclusive hi).
+/// Stack: [obj, lo, hi|null] → view into packed bytes/string (exclusive hi).
+/// Null `hi` means "to end" (`obj[lo..]`).
 pub fn sliceView(vm: *VMState) HeapError!void {
     const hi_v = stack.pop(vm);
     const lo_v = stack.pop(vm);
     const obj = stack.pop(vm);
-    const lo = switch (lo_v) {
-        .i64 => |x| x,
-        else => return fail(vm, "Slice start must be int"),
-    };
-    const hi = switch (hi_v) {
-        .i64 => |x| x,
-        else => return fail(vm, "Slice end must be int"),
-    };
+    const widths = @import("../../compiler/widths.zig");
+    const lo = widths.valueAsI64(lo_v) orelse return fail(vm, "Slice start must be int");
+
+    if (obj == .name) {
+        const data = vm.chunk.stringAt(obj.name);
+        const hi: i64 = switch (hi_v) {
+            .null => @intCast(data.len),
+            else => widths.valueAsI64(hi_v) orelse return fail(vm, "Slice end must be int"),
+        };
+        if (lo < 0 or hi < lo or hi > data.len) {
+            var buf: [96]u8 = undefined;
+            const msg = std.fmt.bufPrint(&buf, "Slice out of bounds: [{d}..{d}] (len {d})", .{ lo, hi, data.len }) catch "Slice out of bounds";
+            return fail(vm, msg);
+        }
+        const sub = data[@intCast(lo)..@intCast(hi)];
+        const off = try vm.appendImmortal(sub);
+        try stack.push(vm, .{ .slice = .{ .offset = off, .len = @intCast(sub.len) } });
+        return;
+    }
+
     const offset: u32, const len: u32, const as_bytes: bool = switch (obj) {
         .bytes => |b| .{ b.offset, b.len, true },
         .slice => |s| .{ s.offset, s.len, false },
-        .name => |idx| {
-            const data = vm.chunk.stringAt(idx);
-            if (lo < 0 or hi < lo or hi > data.len) {
-                var buf: [96]u8 = undefined;
-                const msg = std.fmt.bufPrint(&buf, "Slice out of bounds: [{d}..{d}] (len {d})", .{ lo, hi, data.len }) catch "Slice out of bounds";
-                return fail(vm, msg);
-            }
-            const sub = data[@intCast(lo)..@intCast(hi)];
-            const off = try vm.appendImmortal(sub);
-            try stack.push(vm, .{ .slice = .{ .offset = off, .len = @intCast(sub.len) } });
-            return;
-        },
         else => return fail(vm, "Slice requires []byte or string"),
+    };
+    const hi: i64 = switch (hi_v) {
+        .null => @intCast(len),
+        else => widths.valueAsI64(hi_v) orelse return fail(vm, "Slice end must be int"),
     };
     if (lo < 0 or hi < lo or hi > len) {
         var buf: [96]u8 = undefined;

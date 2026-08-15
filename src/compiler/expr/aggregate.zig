@@ -12,11 +12,24 @@ const CompilerState = state_mod.CompilerState;
 
 pub fn compileIndex(state: *CompilerState, idx: *const ast.Index) !void {
     try expr.compileExpression(state, idx.object);
-    try expr.compileExpression(state, idx.index);
-    if (idx.end) |end| {
-        try expr.compileExpression(state, end);
+    if (idx.is_slice) {
+        if (idx.index) |start| {
+            try expr.compileExpression(state, start);
+        } else {
+            try emit.emitConstant(state, .{ .i64 = 0 });
+        }
+        if (idx.end) |end| {
+            try expr.compileExpression(state, end);
+        } else {
+            // Null end → runtime uses object length.
+            try emit.emitOp(state, .OP_NULL);
+        }
         try emit.emitOp(state, .OP_SLICE);
     } else {
+        const start = idx.index orelse {
+            return compiler_errors.compileFailFmt(state, "Expected index expression", .{});
+        };
+        try expr.compileExpression(state, start);
         try emit.emitOp(state, .OP_GET_ARRAY);
     }
 }

@@ -246,7 +246,8 @@ fn collectRefs(
         },
         .index => |ix| {
             try collectRefs(state, func_name, ix.object, result, work);
-            try collectRefs(state, func_name, ix.index, result, work);
+            if (ix.index) |start| try collectRefs(state, func_name, start, result, work);
+            if (ix.end) |end| try collectRefs(state, func_name, end, result, work);
         },
         .array_literal => |a| {
             for (a.elements) |e| try collectRefs(state, func_name, e, result, work);

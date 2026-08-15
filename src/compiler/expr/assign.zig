@@ -36,20 +36,23 @@ fn compoundOp(op: []const u8) ?OpCode {
 }
 
 fn assignIndex(state: *CompilerState, idx: *const ast.Index, right: *ast.Node, arith: ?OpCode) !void {
-    if (idx.end != null) {
+    if (idx.is_slice) {
         return @import("../../errors/compile.zig").compileFailFmt(state, "Cannot assign to a slice view", .{});
     }
+    const start = idx.index orelse {
+        return @import("../../errors/compile.zig").compileFailFmt(state, "Expected index expression", .{});
+    };
     if (arith) |op| {
         try expr.compileExpression(state, idx.object);
-        try expr.compileExpression(state, idx.index);
+        try expr.compileExpression(state, start);
         try expr.compileExpression(state, idx.object);
-        try expr.compileExpression(state, idx.index);
+        try expr.compileExpression(state, start);
         try emit.emitOp(state, .OP_GET_ARRAY);
         try expr.compileExpression(state, right);
         try emit.emitOp(state, op);
     } else {
         try expr.compileExpression(state, idx.object);
-        try expr.compileExpression(state, idx.index);
+        try expr.compileExpression(state, start);
         try expr.compileExpression(state, right);
     }
     if (types.resolveType(state, idx.object)) |tn| {

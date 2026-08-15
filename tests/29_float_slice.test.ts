@@ -88,3 +88,52 @@ print(s[0..5]);
 		"Slice out of bounds",
 	);
 });
+
+test("open-ended string slices [i..] / [..j] / [..]", () => {
+	expectOutput(
+		runSource(`
+$s = "hello";
+print(s[1..]);
+print(s[..3]);
+print(s[..]);
+print(len(s[2..]));
+print(len(s[..2]));
+`),
+		["ello", "hel", "hello", "3", "2"],
+	);
+});
+
+test("open-ended []byte slices", () => {
+	expectOutput(
+		runSource(`
+@const $mem = @import("std/mem");
+$a = mem.create(0);
+$buf = @new(a, [5]byte);
+buf[0] = 1;
+buf[1] = 2;
+buf[2] = 3;
+buf[3] = 4;
+buf[4] = 5;
+$tail = buf[2..];
+$head = buf[..3];
+$all = buf[..];
+print(len(tail));
+print(tail[0]);
+print(len(head));
+print(head[2]);
+print(len(all));
+a.deinit();
+`),
+		["3", "3", "3", "3", "5"],
+	);
+});
+
+test("open-ended slice out of bounds", () => {
+	expectError(
+		runSource(`
+$s = "ab";
+print(s[3..]);
+`),
+		"Slice out of bounds",
+	);
+});

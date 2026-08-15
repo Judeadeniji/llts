@@ -416,13 +416,16 @@ pub fn inferExpr(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, n
         },
         .index => |idx| blk: {
             const obj = try inferExpr(state, env, ta, idx.object);
-            const i = try inferExpr(state, env, ta, idx.index);
-            if (!ir.involvesUnknown(i)) try requireAssign(state, i, ir.TInt, "index");
-            if (idx.end) |end_node| {
-                const e = try inferExpr(state, env, ta, end_node);
-                if (!ir.involvesUnknown(e)) try requireAssign(state, e, ir.TInt, "slice end");
+            if (idx.is_slice) {
+                if (idx.index) |start_node| {
+                    const i = try inferExpr(state, env, ta, start_node);
+                    if (!ir.involvesUnknown(i)) try requireAssign(state, i, ir.TInt, "slice start");
+                }
+                if (idx.end) |end_node| {
+                    const e = try inferExpr(state, env, ta, end_node);
+                    if (!ir.involvesUnknown(e)) try requireAssign(state, e, ir.TInt, "slice end");
+                }
                 if (obj == .array) {
-                    // `arr[i..j]` → unsized `[]T` view of the same element type.
                     break :blk try ta.arrayType(obj.array.elem.*, null);
                 }
                 if (!ir.involvesUnknown(obj) and obj != .unknown) {
@@ -431,6 +434,11 @@ pub fn inferExpr(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, n
                 }
                 break :blk ir.TUnknown;
             }
+            const start_node = idx.index orelse {
+                return compiler_errors.compileFailFmt(state, "Expected index expression", .{});
+            };
+            const i = try inferExpr(state, env, ta, start_node);
+            if (!ir.involvesUnknown(i)) try requireAssign(state, i, ir.TInt, "index");
             if (obj == .array) break :blk obj.array.elem.*;
             if (!ir.involvesUnknown(obj) and obj != .unknown) {
                 const d = try ownDisplay(state, obj);
@@ -485,11 +493,14 @@ pub fn inferExpr(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, n
                     }
                 }
             } else if (a.left.* == .index) {
-                if (a.left.index.end != null) {
+                if (a.left.index.is_slice) {
                     return compiler_errors.compileFailFmt(state, "Cannot assign to a slice view", .{});
                 }
                 const obj_t = try inferExpr(state, env, ta, a.left.index.object);
-                const i = try inferExpr(state, env, ta, a.left.index.index);
+                const start_node = a.left.index.index orelse {
+                    return compiler_errors.compileFailFmt(state, "Expected index expression", .{});
+                };
+                const i = try inferExpr(state, env, ta, start_node);
                 if (!ir.involvesUnknown(i)) try requireAssign(state, i, ir.TInt, "index");
                 if (obj_t == .array) {
                     try requireAssignFrom(state, val, obj_t.array.elem.*, "assignment to index", a.right);

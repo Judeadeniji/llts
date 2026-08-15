@@ -117,7 +117,8 @@ fn treeContainsImport(node: *ast.Node) bool {
         .member => |m| return treeContainsImport(m.object),
         .index => |ix| {
             if (treeContainsImport(ix.object)) return true;
-            if (treeContainsImport(ix.index)) return true;
+            if (ix.index) |start| if (treeContainsImport(start)) return true;
+            if (ix.end) |end| if (treeContainsImport(end)) return true;
             if (ix.type_annotation) |ta| if (treeContainsImport(ta)) return true;
             return false;
         },
@@ -221,7 +222,8 @@ fn loadImportsInTree(
         .member => |m| try loadImportsInTree(state, doc, m.object, current_module, out, visited),
         .index => |ix| {
             try loadImportsInTree(state, doc, ix.object, current_module, out, visited);
-            try loadImportsInTree(state, doc, ix.index, current_module, out, visited);
+            if (ix.index) |start| try loadImportsInTree(state, doc, start, current_module, out, visited);
+            if (ix.end) |end| try loadImportsInTree(state, doc, end, current_module, out, visited);
             if (ix.type_annotation) |ta| try loadImportsInTree(state, doc, ta, current_module, out, visited);
         },
         .array_literal => |a| {
@@ -624,7 +626,8 @@ fn rewriteModuleRefs(
         },
         .index => |*ix| {
             try rewriteModuleRefs(state, ix.object, local_map, bound);
-            try rewriteModuleRefs(state, ix.index, local_map, bound);
+            if (ix.index) |start| try rewriteModuleRefs(state, start, local_map, bound);
+            if (ix.end) |end| try rewriteModuleRefs(state, end, local_map, bound);
             if (ix.type_annotation) |ta| try rewriteModuleRefs(state, ta, local_map, bound);
         },
         .array_literal => |*a| {
@@ -720,7 +723,8 @@ fn rewriteRefs(node: *ast.Node, local_map: *std.StringHashMap([]const u8)) void 
         },
         .index => |ix| {
             rewriteRefs(ix.object, local_map);
-            rewriteRefs(ix.index, local_map);
+            if (ix.index) |start| rewriteRefs(start, local_map);
+            if (ix.end) |end| rewriteRefs(end, local_map);
         },
         .array_literal => |a| {
             for (a.elements) |e| rewriteRefs(e, local_map);
