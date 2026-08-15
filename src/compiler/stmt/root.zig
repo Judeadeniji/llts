@@ -18,6 +18,7 @@ pub fn compileStatement(state: *CompilerState, node: *ast.Node) anyerror!void {
         .extern_decl => |*e| try decl.compileExtern(state, e),
         .struct_decl => |*s| try decl.compileStruct(state, s),
         .enum_decl => |*e| try decl.compileEnum(state, e),
+        .type_decl => |*t| try decl.compileTypeDecl(state, t),
         .block => |*b| try func.compileBlock(state, b),
         .defer_stmt => |*d| try func.compileDefer(state, d),
         .return_expr => |*r| try func.compileReturn(state, r),

@@ -201,7 +201,7 @@ fn inferLiteral(ta: ir.TypeAlloc, lit: ast.Literal) !ir.Type {
 fn fieldTypeFromStruct(state: *state_mod.CompilerState, ta: ir.TypeAlloc, struct_name: []const u8, field: []const u8) !ir.Type {
     const def = state.structs.get(struct_name) orelse return ir.TUnknown;
     const raw = def.types.get(field) orelse return ir.TUnknown;
-    return try ir.parseDisplayType(ta, raw);
+    return try from_ast.parseDisplayType(state, ta, raw, null);
 }
 
 /// Field type on a struct union. Discriminant `kind` with enum literals → parent enum.
@@ -263,7 +263,8 @@ fn kindSwitchNarrowing(
     if (mem.property.* != .primary or !std.mem.eql(u8, mem.property.primary.name, "kind")) return null;
     if (mem.object.* != .primary) return null;
     const subject = mem.object.primary.name;
-    const obj_t = env.lookup(subject) orelse return null;
+    var obj_t = env.lookup(subject) orelse return null;
+    if (obj_t == .defined) obj_t = obj_t.defined.underlying.*;
     if (obj_t != .union_) return null;
     const disp = try ownDisplay(state, obj_t);
     const info = (try from_ast.discrimVariantMap(state, state.allocator, disp)) orelse return null;
@@ -303,7 +304,7 @@ fn remainingNarrowType(
 
 fn fnReturnType(state: *state_mod.CompilerState, ta: ir.TypeAlloc, func_name: []const u8) !ir.Type {
     if (state.functions.get(func_name)) |def| {
-        if (def.return_type) |rt| return try ir.parseDisplayType(ta, rt);
+        if (def.return_type) |rt| return try from_ast.parseDisplayType(state, ta, rt, null);
         if (def.node.* == .function_decl) {
             if (def.node.function_decl.return_type) |rt_node| {
                 return try from_ast.typeFromAst(rt_node, state, ta);
@@ -457,7 +458,7 @@ pub fn inferExpr(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, n
                     if (std.mem.startsWith(u8, gt, "module:")) {
                         break :blk .{ .struct_ = gt };
                     }
-                    break :blk try ir.parseDisplayType(ta, gt);
+                    break :blk try from_ast.parseDisplayType(state, ta, gt, null);
                 }
             }
             break :blk ir.TUnknown;
@@ -523,7 +524,9 @@ pub fn inferExpr(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, n
             }
             const obj = try inferExpr(state, env, ta, m.object);
             if (m.property.* == .primary) {
-                if (ir.structNameOf(obj)) |sname| {
+                var field_obj = obj;
+                if (field_obj == .defined) field_obj = field_obj.defined.underlying.*;
+                if (ir.structNameOf(field_obj)) |sname| {
                     if (state.structs.get(sname)) |def| {
                         if (def.types.get(m.property.primary.name) == null) {
                             return compiler_errors.compileFailFmt(state, "Field '{s}' does not exist on '{s}'", .{ m.property.primary.name, sname });
@@ -531,12 +534,12 @@ pub fn inferExpr(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, n
                     }
                     break :blk try fieldTypeFromStruct(state, ta, sname, m.property.primary.name);
                 }
-                if (obj == .union_) {
-                    const ft = try fieldTypeFromUnion(state, ta, obj, m.property.primary.name);
+                if (field_obj == .union_) {
+                    const ft = try fieldTypeFromUnion(state, ta, field_obj, m.property.primary.name);
                     // Hard reject only for discrim struct unions (`Literal | Add`).
                     // Error unions (`T | error`) still allow gradual field access.
                     if (ft == .unknown) {
-                        const d = try ownDisplay(state, obj);
+                        const d = try ownDisplay(state, field_obj);
                         if (try from_ast.discrimVariantMap(state, state.allocator, d)) |info_owned| {
                             var info = info_owned;
                             info.map.deinit();
@@ -991,7 +994,7 @@ fn checkStmt(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node:
             _ = try checkStmt(state, env, ta, d.body);
             return null;
         },
-        .function_decl, .struct_decl, .enum_decl, .extern_decl => return null,
+        .function_decl, .struct_decl, .enum_decl, .type_decl, .extern_decl => return null,
         .block => return try inferExpr(state, env, ta, node),
         else => {
             _ = try inferExpr(state, env, ta, node);
@@ -1015,7 +1018,7 @@ fn checkFunction(state: *state_mod.CompilerState, ta: ir.TypeAlloc, f: *ast.Func
         if (std.mem.startsWith(u8, v, "module:")) {
             try env.globals.put(k, .{ .struct_ = v });
         } else {
-            try env.globals.put(k, try ir.parseDisplayType(ta, v));
+            try env.globals.put(k, try from_ast.parseDisplayType(state, ta, v, null));
         }
     }
     var nit = state.native_globals.keyIterator();
@@ -1142,13 +1145,13 @@ pub fn typecheck(state: *state_mod.CompilerState, doc: *ast.Document) TypecheckE
         } else if (state.structs.contains(v)) {
             try env.globals.put(k, .{ .struct_ = v });
         } else {
-            try env.globals.put(k, try ir.parseDisplayType(ta, v));
+            try env.globals.put(k, try from_ast.parseDisplayType(state, ta, v, null));
         }
     }
 
     for (doc.statements) |s| {
         switch (s.*) {
-            .function_decl, .struct_decl, .enum_decl, .extern_decl => continue,
+            .function_decl, .struct_decl, .enum_decl, .type_decl, .extern_decl => continue,
             else => _ = try checkStmt(state, &env, ta, s),
         }
     }

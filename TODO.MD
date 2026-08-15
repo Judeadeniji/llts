@@ -148,30 +148,83 @@ Forcing function: keep writing the self-hosted compiler. Whatever that parser ca
 
 #### Abstraction without generics
 
-- [ ] **Function types** — e.g. `$f: @func(i64): i64`. First-class functions exist; their types do not.
+- [ ] **Function types** — e.g. `$f: @func(i64): i64`. First-class functions exist; their types do not. (Also listed under `@type` ship order.)
 - [ ] **Nested / capturing functions** — nested `@func` is not supported; closures do not capture. Decide yes (with region rules) or no.
 - [ ] **Allocator / Reader / Writer without generics** — either small interfaces/vtables, or stay concrete (`mem.Arena` + `[]T` only). Untyped native `std/list` / `std/map` should not remain a third language.
 
-#### Tagged data (TS discrim unions + Zig safety — not Zig `Variant(T)`)
+#### Tagged data (done — enums + struct unions)
 
-Goal: exhaustiveness, per-variant fields, and narrowing — while enums stay tag-only and data stays ordinary structs.
+- [x] **Tag-only `@enum`** — TS-style names → ints; no `Variant(T)` payloads.
+- [x] **`@switch` exhaustiveness** — on enum / union `.kind`; value `@switch` may omit `@else` when exhaustive.
+- [x] **Enum literal types `ExprKind.Literal`** — singleton field annotations; `@typeOf` prints `ExprKind.Literal`.
+- [x] **Struct unions `A | B`** + **narrowing on `kind`** + **`@else` remaining-arm narrowing**.
 
-- [x] **Tag-only `@enum`** — TS-style names → ints; no `Variant(T)` payloads (removed).
-- [x] **`@switch` exhaustiveness** — on enum scrutinees; value `@switch` may omit `@else` when exhaustive.
-- [x] **Enum literal types `ExprKind.Literal`** — singleton types for field annotations (`kind: ExprKind.Literal`); only that variant assigns; `@typeOf` prints `ExprKind.Literal`.
-- [x] **Struct unions `A | B`** — arms are structs that share a discriminant field (`kind: SomeEnum` / `Enum.Variant`). Distinct from today’s `T | error` / `T | null`.
-- [x] **Narrowing on `kind`** — in `@switch (e.kind)` / `@if` arms, `e` narrows to the matching struct so only that variant’s fields typecheck.
-- [x] **Exhaustiveness via `kind` on unions** — `@switch (e.kind)` when `e: A | B` must cover every union arm’s kind (or `@else`).
-- [ ] **Optional sugar (later)** — `@enum Expr { Literal { value: i64 }, Add { … } }` desugars to Kind enum + per-variant structs + `Expr = Literal | Add`. Candy only; same model underneath.
-- [ ] **Typed error sets (follow-on)** — error codes as tag enums; payloads as structs / struct unions.
+#### `@type` — Go-style distinct names (not TS aliases)
 
-Preferred spelling:
+`@type Name = T` declares a **new nominal type** with the same runtime layout as `T`. Distinct types with the same underlying representation are **not** assignable without `@as`. Transparent aliases are opt-in via `@alias`.
+
+```llts
+@type UUID = string;
+@type ID = string;
+$u: UUID = "…";
+$i: ID = u;           # error
+$i = @as(ID, u);      # ok
+
+@alias Str = string;  # transparent — Str ≡ string
+```
+
+**What `@type` can declare** (RHS):
+
+| Form | Example |
+|------|---------|
+| Named / width / existing | `@type UserId = i64` |
+| Pointer / array / optional / error | `@type Path = [256]u8`, `@type Opt = ?Node` |
+| Union (`\|`) | `@type Expr = Literal \| Add` — name `Expr` is nominal; arms still assign *into* `Expr` |
+| Intersection (`&`) | `@type Rw = Readable & Writable` — **object shapes only**; merge fields (duplicate names must agree) |
+| Tuple | `@type Pair = [i64, []byte]` — fixed anonymous product; access `.0` / `.1` (or unpack later) |
+| Literals | `@type KindA = "a"`, `@type Z = 0`, `@type Lit = ExprKind.Literal` |
+| Function type | `@type Handler = @func(i64): i64` |
+| Object shape | `@type Counter = { value: i64; inc: @func(): i64 }` — name still nominal vs another identical shape |
+
+**Not planned** (TS advanced / generics): mapped types, conditional types, `keyof`, `infer`.
+
+**Rules:**
+
+- Same wire layout as RHS; `@sizeOf(Name) == @sizeOf(RHS)`.
+- `Name` ≰ `Name2` even when RHS equal — need `@as`.
+- Underlying literals may coerce **into** an expected distinct type at annotated sites (`$u: UUID = "…"` ok); **named values** of another distinct type never coerce.
+- `@typeOf` prints the distinct name (`UUID`), not `string`.
+- `@struct` / `@enum` stay their own decls; `@type` names and composes them.
+- `|` and `&` bind looser than `?` / `*`; `&` only on shape types (error if used on widths/unions/etc.).
+- Tuples are distinct from arrays: `[i64, []byte]` ≠ `[2]any`; fixed length + heterogeneous elems.
+
+**Ship order:**
+
+- [x] **`@type Name = T` (distinct)** + **`@alias Name = T` (transparent)**
+- [x] **Nominal assignability + `@as`** — UUID ≠ ID
+- [ ] **Literal types** — `"a"` / `0` / `true` / `Enum.Variant` as RHS; unions of literals
+- [ ] **Function types** — `@func(params): ret` as a type form
+- [ ] **Object / shape types** — `{ fields; callables }` filled at init
+- [ ] **Tuple types** — `[T, U, …]` values + field/index access
+- [ ] **Shape intersection `&`** — merge object types; `Readable & Writable`
+- [ ] **Optional sugar (later)** — `@enum Expr { Literal { … }, … }` → Kind + structs + `@type Expr = …`
+- [ ] **Typed error sets (follow-on)**
+
+Preferred tagged-data spelling with `@type`:
 
 ```llts
 @enum ExprKind { Literal, Add }
 @struct Literal { kind: ExprKind.Literal; value: i64; }
 @struct Add { kind: ExprKind.Add; left: i64; right: i64; }
-# next: @type Expr = Literal | Add
+@type Expr = Literal | Add;
+
+@type Readable = { read: @func([]byte): i64 };
+@type Writable = { write: @func([]byte): i64 };
+@type Rw = Readable & Writable;
+
+@type Pair = [i64, []byte];
+
+@func eval(e: Expr) { … }
 ```
 
 

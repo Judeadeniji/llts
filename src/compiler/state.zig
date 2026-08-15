@@ -44,6 +44,14 @@ pub const EnumDef = struct {
     variants: std.StringHashMap(i32),
 };
 
+/// `@type` (distinct) or `@alias` (transparent) binding.
+pub const TypeDef = struct {
+    name: []const u8,
+    /// Display string of the RHS (may name another typedef).
+    underlying: []const u8,
+    distinct: bool,
+};
+
 pub const LoopTracker = struct {
     start: usize = 0,
     scope_depth: i32,
@@ -83,6 +91,7 @@ pub const CompilerState = struct {
     functions: std.StringHashMap(FunctionDef),
     structs: std.StringHashMap(StructDef),
     enums: std.StringHashMap(EnumDef),
+    typedefs: std.StringHashMap(TypeDef),
     loops: std.ArrayList(LoopTracker) = .empty,
     exprs: std.ArrayList(ExprTracker) = .empty,
     defer_stacks: std.AutoHashMap(i32, std.ArrayListUnmanaged(DeferEntry)),
@@ -119,6 +128,7 @@ pub fn create(allocator: std.mem.Allocator) !CompilerState {
         .functions = std.StringHashMap(FunctionDef).init(allocator),
         .structs = std.StringHashMap(StructDef).init(allocator),
         .enums = std.StringHashMap(EnumDef).init(allocator),
+        .typedefs = std.StringHashMap(TypeDef).init(allocator),
         .defer_stacks = std.AutoHashMap(i32, std.ArrayListUnmanaged(DeferEntry)).init(allocator),
         .global_vars = std.StringHashMap(void).init(allocator),
         .global_types = std.StringHashMap([]const u8).init(allocator),
@@ -188,6 +198,7 @@ pub fn deinit(self: *CompilerState) void {
         e.value_ptr.variants.deinit();
     }
     self.enums.deinit();
+    self.typedefs.deinit();
     var dit = self.defer_stacks.iterator();
     while (dit.next()) |e| e.value_ptr.deinit(self.allocator);
     self.defer_stacks.deinit();

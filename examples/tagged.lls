@@ -1,4 +1,4 @@
-# Tagged data: enum literal kinds + struct unions + @switch narrowing.
+# Tagged data: enum literal kinds + @type Expr + @switch narrowing.
 #
 #   zig-out/bin/llts run examples/tagged.lls
 
@@ -15,15 +15,17 @@
     right: i64;
 }
 
-@func eval(e: Literal | Add) {
+@type Expr = Literal | Add;
+
+@func eval(e: Expr) {
     return @switch (e.kind) {
         ExprKind.Literal => { break e.value; },
         ExprKind.Add => { break e.left + e.right; },
     };
 }
 
-$a: Literal | Add = Literal{ kind: ExprKind.Literal, value: 42 };
-$b: Literal | Add = Add{ kind: ExprKind.Add, left: 3, right: 4 };
+$a: Expr = Literal{ kind: ExprKind.Literal, value: 42 };
+$b: Expr = Add{ kind: ExprKind.Add, left: 3, right: 4 };
 
 print(a.kind);
 print(b.kind);

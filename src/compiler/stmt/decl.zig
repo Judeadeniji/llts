@@ -136,14 +136,14 @@ fn typesAssignable(state: *CompilerState, got: []const u8, expected: []const u8)
     var arena = std.heap.ArenaAllocator.init(state.allocator);
     defer arena.deinit();
     const ta = ir.TypeAlloc{ .allocator = arena.allocator() };
-    const g = ir.parseDisplayType(ta, got) catch return false;
-    const e = ir.parseDisplayType(ta, expected) catch return false;
+    const g = from_ast.parseDisplayType(state, ta, got, null) catch return false;
+    const e = from_ast.parseDisplayType(state, ta, expected, null) catch return false;
     if (ir.isSubtype(g, e)) return true;
     // Untyped integer literal display still spells "int" (not "i64"); may coerce into any integer width,
     // including nested `[N]int` / `[2][3]int` into matching integer arrays.
     if (isUntypedIntDisplay(got) and untypedIntCoerces(g, e)) return true;
     // Untyped / f64 float literal may narrow to f32.
-    if ((std.mem.eql(u8, got, "float") or std.mem.eql(u8, got, "f64")) and e == .f32) return true;
+    if ((std.mem.eql(u8, got, "float") or std.mem.eql(u8, got, "f64")) and ir.peelDefined(e) == .f32) return true;
     return false;
 }
 
@@ -294,6 +294,26 @@ pub fn compileEnum(state: *CompilerState, e: *const ast.EnumDecl) !void {
     try state.enums.put(e.name, .{
         .name = e.name,
         .variants = variants,
+    });
+}
+
+pub fn compileTypeDecl(state: *CompilerState, td: *const ast.TypeDecl) !void {
+    if (state.structs.contains(td.name) or state.enums.contains(td.name)) {
+        return @import("../../errors/compile.zig").compileFailFmt(state, "Type name '{s}' already used by a struct or enum", .{td.name});
+    }
+    if (state.typedefs.contains(td.name)) {
+        return @import("../../errors/compile.zig").compileFailFmt(state, "Duplicate type '{s}'", .{td.name});
+    }
+    if (ir.isBuiltinTypeName(td.name)) {
+        return @import("../../errors/compile.zig").compileFailFmt(state, "Cannot redefine builtin type '{s}'", .{td.name});
+    }
+    const disp = (try from_ast.typeAstToDisplay(td.type_expr, state)) orelse {
+        return @import("../../errors/compile.zig").compileFailFmt(state, "Invalid type expression for '{s}'", .{td.name});
+    };
+    try state.typedefs.put(td.name, .{
+        .name = td.name,
+        .underlying = disp,
+        .distinct = td.distinct,
     });
 }
 

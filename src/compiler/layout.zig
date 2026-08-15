@@ -42,6 +42,7 @@ pub fn sizeOfTypeName(type_name: []const u8) i32 {
 /// Size of a named type when enum/struct defs are available.
 pub fn sizeOfNamedType(state: *state_mod.CompilerState, type_name: []const u8) i32 {
     const bare = unwrapTypeName(type_name);
+    if (state.typedefs.get(bare)) |td| return sizeOfNamedType(state, td.underlying);
     if (state.enums.contains(bare)) return 8; // tag-only i64
     if (state.structs.get(bare)) |sd| return sd.size;
     return sizeOfTypeName(type_name);
@@ -64,6 +65,7 @@ pub fn fieldKind(state: ?*state_mod.CompilerState, type_name: []const u8) FieldK
         return .ptr;
     // Tag-only enums / enum literals are i64 on the wire.
     if (state) |st| {
+        if (st.typedefs.get(bare)) |td| return fieldKind(state, td.underlying);
         if (st.enums.contains(bare)) return .i64;
         if (std.mem.lastIndexOfScalar(u8, bare, '.')) |dot| {
             const ename = bare[0..dot];

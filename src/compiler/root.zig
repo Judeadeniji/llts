@@ -45,7 +45,7 @@ pub fn compile(
     try registerModuleDecls(&state, doc);
 
     for (doc.statements) |s| {
-        if (s.* == .struct_decl or s.* == .enum_decl) try stmt.compileStatement(&state, s);
+        if (s.* == .struct_decl or s.* == .enum_decl or s.* == .type_decl) try stmt.compileStatement(&state, s);
     }
 
     try typecheck.typecheck(&state, doc);
@@ -88,7 +88,7 @@ pub fn compile(
     emit.patchJump(&state, main_jump);
 
     for (doc.statements) |s| {
-        if (s.* != .function_decl and s.* != .struct_decl and s.* != .enum_decl) {
+        if (s.* != .function_decl and s.* != .struct_decl and s.* != .enum_decl and s.* != .type_decl) {
             if (reach.shouldEmitTopLevel(doc, s)) {
                 try stmt.compileStatement(&state, s);
             }

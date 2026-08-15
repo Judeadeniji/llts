@@ -422,6 +422,7 @@ fn collectLocalBindings(
         const name: ?[]const u8 = switch (s.*) {
             .struct_decl => |st| st.name,
             .enum_decl => |e| e.name,
+            .type_decl => |t| t.name,
             .function_decl => |f| f.name,
             .declaration => |d| d.name,
             .extern_decl => |e| e.name,
@@ -441,6 +442,7 @@ fn isOwnDecl(node: *ast.Node, mod_key: []const u8) bool {
     const name: ?[]const u8 = switch (node.*) {
         .struct_decl => |st| st.name,
         .enum_decl => |e| e.name,
+        .type_decl => |t| t.name,
         .function_decl => |f| f.name,
         .declaration => |d| d.name,
         .extern_decl => |e| e.name,
@@ -524,6 +526,17 @@ fn qualifyNode(
                 break :blk q;
             };
             if (en.is_public) try state.chunk.exports.put(en.name, {});
+        },
+        .type_decl => |*td| {
+            if (std.mem.indexOf(u8, td.name, "::") != null) return;
+            const short = td.name;
+            td.name = local_map.get(short) orelse blk: {
+                const q = try std.fmt.allocPrint(state.allocator, "{s}::{s}", .{ mod_key, short });
+                try state.owned.append(state.allocator, q);
+                break :blk q;
+            };
+            if (td.is_public) try state.chunk.exports.put(td.name, {});
+            rewriteRefs(td.type_expr, local_map);
         },
         else => {},
     }
@@ -687,6 +700,13 @@ fn collectLocal(state: *CompilerState, node: *ast.Node, mod_key: []const u8, map
                 const q = try std.fmt.allocPrint(state.allocator, "{s}::{s}", .{ mod_key, en.name });
                 try state.owned.append(state.allocator, q);
                 try map.put(en.name, q);
+            }
+        },
+        .type_decl => |td| {
+            if (std.mem.indexOf(u8, td.name, "::") == null) {
+                const q = try std.fmt.allocPrint(state.allocator, "{s}::{s}", .{ mod_key, td.name });
+                try state.owned.append(state.allocator, q);
+                try map.put(td.name, q);
             }
         },
         else => {},

@@ -54,6 +54,8 @@ pub fn parseCompilerKeyword(self: *Parser) ParseError!*Node {
     if (std.mem.eql(u8, keyword.value, "switch")) return control.parseSwitchExpression(self);
     if (std.mem.eql(u8, keyword.value, "struct")) return structs.parseCompilerStruct(self);
     if (std.mem.eql(u8, keyword.value, "enum")) return enums.parseCompilerEnum(self);
+    if (std.mem.eql(u8, keyword.value, "type")) return parseTypeDecl(self, true);
+    if (std.mem.eql(u8, keyword.value, "alias")) return parseTypeDecl(self, false);
     if (std.mem.eql(u8, keyword.value, "extern")) return parseCompilerExtern(self);
 
     // Any other `@name(...)` parses as a statement-level expression call
@@ -67,6 +69,20 @@ fn parseCompilerExtern(self: *Parser) ParseError!*Node {
     return self.create(.{ .extern_decl = .{
         .name = try self.dupe(name.value),
         .loc = self.locOf(name),
+    } });
+}
+
+fn parseTypeDecl(self: *Parser, distinct: bool) ParseError!*Node {
+    const kw = self.previous() orelse return error.ParseFailed;
+    const name = try self.consume(.identifier, if (distinct) "Expected name after @type" else "Expected name after @alias", null);
+    _ = try self.consume(.assign_op, "Expected '=' after type name", "=");
+    const type_expr = try types.parseType(self);
+    if (self.checkDelim(";")) _ = self.advance();
+    return self.create(.{ .type_decl = .{
+        .name = try self.dupe(name.value),
+        .type_expr = type_expr,
+        .distinct = distinct,
+        .loc = self.locOf(kw),
     } });
 }
 

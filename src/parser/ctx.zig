@@ -130,6 +130,7 @@ pub const Parser = struct {
         switch (node.*) {
             .struct_decl => |*s| s.is_public = true,
             .enum_decl => |*e| e.is_public = true,
+            .type_decl => |*t| t.is_public = true,
             .function_decl => |*f| f.is_public = true,
             .declaration => |*d| d.is_public = true,
             .extern_decl => |*e| e.is_public = true,

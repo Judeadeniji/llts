@@ -4,13 +4,13 @@ const ir = @import("ir.zig");
 const state_mod = @import("../state.zig");
 const scope = @import("../scope.zig");
 
-pub const FromAstError = error{ OutOfMemory, CompileError };
+pub const FromAstError = error{ OutOfMemory, CompileError, Overflow, InvalidCharacter };
 
 /// Convert AST type node → Type IR. Validates unknown struct names when state is set.
 pub fn typeFromAst(node: ?*ast.Node, state: ?*state_mod.CompilerState, ta: ir.TypeAlloc) FromAstError!ir.Type {
     const n = node orelse return ir.TUnknown;
     return switch (n.*) {
-        .primary => |p| try resolveNamedType(p.name, state),
+        .primary => |p| try resolveNamedType(p.name, state, ta),
         .array_type => |a| blk: {
             const elem = try typeFromAst(a.elem, state, ta);
             var length: ?usize = null;
@@ -31,15 +31,18 @@ pub fn typeFromAst(node: ?*ast.Node, state: ?*state_mod.CompilerState, ta: ir.Ty
             const right = try typeFromAst(u.right, state, ta);
             break :blk try ta.unionType(&.{ left, right });
         },
-        .member => try resolveImportedType(n, state),
+        .member => try resolveImportedType(n, state, ta),
         else => ir.TUnknown,
     };
 }
 
-pub fn resolveNamedType(name: []const u8, state: ?*state_mod.CompilerState) FromAstError!ir.Type {
+pub fn resolveNamedType(name: []const u8, state: ?*state_mod.CompilerState, ta: ir.TypeAlloc) FromAstError!ir.Type {
     const t = ir.namedType(name);
     if (t != .struct_) return t;
     if (state) |st| {
+        if (st.typedefs.contains(name)) {
+            return try resolveTypedef(st, ta, name, null);
+        }
         if (st.enums.contains(name)) return .{ .enum_ = name };
         if (st.structs.contains(name)) return .{ .struct_ = name };
         return @import("../../errors/compile.zig").compileFailFmt(st, "Unknown type '{s}'", .{name});
@@ -47,7 +50,92 @@ pub fn resolveNamedType(name: []const u8, state: ?*state_mod.CompilerState) From
     return t;
 }
 
-fn resolveImportedType(node: *ast.Node, state: ?*state_mod.CompilerState) FromAstError!ir.Type {
+fn resolveTypedef(
+    state: *state_mod.CompilerState,
+    ta: ir.TypeAlloc,
+    name: []const u8,
+    stack: ?*std.StringHashMap(void),
+) FromAstError!ir.Type {
+    const td = state.typedefs.get(name) orelse {
+        return @import("../../errors/compile.zig").compileFailFmt(state, "Unknown type '{s}'", .{name});
+    };
+
+    var owned_stack: ?std.StringHashMap(void) = null;
+    defer if (owned_stack) |*s| s.deinit();
+    const seen = stack orelse blk: {
+        owned_stack = std.StringHashMap(void).init(ta.allocator);
+        break :blk &owned_stack.?;
+    };
+    if (seen.contains(name)) {
+        return @import("../../errors/compile.zig").compileFailFmt(state, "Cyclic type definition involving '{s}'", .{name});
+    }
+    try seen.put(name, {});
+
+    const under = try parseDisplayType(state, ta, td.underlying, seen);
+    if (!td.distinct) return under;
+    return try ta.definedType(td.name, under);
+}
+
+/// Like `ir.parseDisplayType` but resolves `@type` / `@alias` / structs / enums via `state`.
+pub fn parseDisplayType(
+    state: ?*state_mod.CompilerState,
+    ta: ir.TypeAlloc,
+    s_in: []const u8,
+    cycle: ?*std.StringHashMap(void),
+) FromAstError!ir.Type {
+    const s = std.mem.trim(u8, s_in, " \t");
+    const union_parts = try ir.splitTopLevel(ta.allocator, s, " | ");
+    defer ta.allocator.free(union_parts);
+    if (union_parts.len > 1) {
+        var arms: std.ArrayList(ir.Type) = .empty;
+        defer arms.deinit(ta.allocator);
+        for (union_parts) |part| {
+            try arms.append(ta.allocator, try parseDisplayType(state, ta, part, cycle));
+        }
+        return try ta.unionType(arms.items);
+    }
+    if (s.len > 0 and s[0] == '?') {
+        const inner = try parseDisplayType(state, ta, s[1..], cycle);
+        return try ta.unionType(&.{ inner, ir.TNull });
+    }
+    if (s.len > 0 and s[0] == '*') {
+        return try ta.ptrType(try parseDisplayType(state, ta, s[1..], cycle));
+    }
+    if (s.len > 0 and s[0] == '[') {
+        if (s.len >= 2 and s[1] == ']') {
+            return try ta.arrayType(try parseDisplayType(state, ta, s[2..], cycle), null);
+        }
+        var i: usize = 1;
+        while (i < s.len and s[i] >= '0' and s[i] <= '9') : (i += 1) {}
+        if (i < s.len and s[i] == ']') {
+            const len = std.fmt.parseInt(usize, s[1..i], 10) catch return error.CompileError;
+            return try ta.arrayType(try parseDisplayType(state, ta, s[i + 1 ..], cycle), len);
+        }
+    }
+    if (state) |st| {
+        if (st.typedefs.contains(s)) {
+            return try resolveTypedef(st, ta, s, cycle);
+        }
+        // Builtins / widths before struct table (`string` is also a layout struct).
+        const builtin = ir.namedType(s);
+        if (builtin != .struct_) return builtin;
+        if (std.mem.lastIndexOfScalar(u8, s, '.')) |dot| {
+            const ename = s[0..dot];
+            const vname = s[dot + 1 ..];
+            if (st.enums.get(ename)) |ed| {
+                if (ed.variants.contains(vname)) {
+                    return .{ .enum_lit = .{ .enum_name = ename, .variant = vname } };
+                }
+            }
+        }
+        if (st.enums.contains(s)) return .{ .enum_ = s };
+        if (st.structs.contains(s)) return .{ .struct_ = s };
+        return @import("../../errors/compile.zig").compileFailFmt(st, "Unknown type '{s}'", .{s});
+    }
+    return try ir.parseDisplayType(ta, s);
+}
+
+fn resolveImportedType(node: *ast.Node, state: ?*state_mod.CompilerState, ta: ir.TypeAlloc) FromAstError!ir.Type {
     const st = state orelse return ir.TUnknown;
 
     // `ExprKind.Literal` — enum variant as a singleton type.
@@ -66,6 +154,10 @@ fn resolveImportedType(node: *ast.Node, state: ?*state_mod.CompilerState) FromAs
     const q = resolveStructName(st, node) orelse {
         return @import("../../errors/compile.zig").compileFailFmt(st, "Unknown type", .{});
     };
+    if (st.typedefs.contains(q)) {
+        try checkStructInitExport(st, node, q);
+        return try resolveTypedef(st, ta, q, null);
+    }
     if (st.enums.contains(q)) {
         try checkStructInitExport(st, node, q);
         return .{ .enum_ = q };
@@ -99,8 +191,20 @@ pub fn unwrapOptionalDisplay(display: []const u8) []const u8 {
     return t;
 }
 
+/// Unwrap `@alias` fully and `@type` one step for layout / discrim lookup.
+pub fn peelTypedefDisplay(state: *state_mod.CompilerState, display: []const u8) []const u8 {
+    var cur = unwrapOptionalDisplay(display);
+    var guard: usize = 0;
+    while (guard < 32) : (guard += 1) {
+        const td = state.typedefs.get(cur) orelse return cur;
+        cur = unwrapOptionalDisplay(td.underlying);
+        if (td.distinct) return cur; // one step for distinct (keep nominal elsewhere)
+    }
+    return cur;
+}
+
 pub fn lookupStruct(state: *state_mod.CompilerState, display: []const u8) ?state_mod.StructDef {
-    return state.structs.get(unwrapOptionalDisplay(display));
+    return state.structs.get(peelTypedefDisplay(state, display));
 }
 
 /// Split a top-level `A | B | C` display (no nested parens needed for simple struct unions).
@@ -130,7 +234,7 @@ pub fn lookupStructField(
     display: []const u8,
     field: []const u8,
 ) ?struct { def: state_mod.StructDef, offset: i32, field_ty: []const u8 } {
-    const bare = unwrapOptionalDisplay(display);
+    const bare = peelTypedefDisplay(state, display);
     if (lookupStruct(state, bare)) |sd| {
         const off = sd.offsets.get(field) orelse return null;
         const ty = sd.types.get(field) orelse return null;
@@ -167,7 +271,7 @@ pub fn discrimVariantMap(
     allocator: std.mem.Allocator,
     display: []const u8,
 ) !?struct { enum_name: []const u8, map: std.StringHashMap([]const u8) } {
-    const bare = unwrapOptionalDisplay(display);
+    const bare = peelTypedefDisplay(state, display);
     if (std.mem.indexOf(u8, bare, " | ") == null) return null;
     const parts = try splitUnionDisplay(allocator, bare);
     defer allocator.free(parts);

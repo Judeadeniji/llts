@@ -122,3 +122,12 @@ pub const EnumDecl = struct {
     is_public: bool = false,
     loc: Location,
 };
+
+/// `@type Name = T` (distinct) or `@alias Name = T` (transparent).
+pub const TypeDecl = struct {
+    name: []const u8,
+    type_expr: *Node,
+    distinct: bool,
+    is_public: bool = false,
+    loc: Location,
+};

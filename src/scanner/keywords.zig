@@ -1,8 +1,9 @@
 const std = @import("std");
 
 const compiler_map = std.StaticStringMap(void).initComptime(.{
-    .{ "import", {} }, .{ "const", {} }, .{ "func", {} }, .{ "for", {} }, .{ "if", {} }, .{ "else", {} }, 
-    .{ "switch", {} }, .{ "struct", {} }, .{ "enum", {} }, .{ "isError", {} }, .{ "typeOf", {} }, .{ "sizeOf", {} }, .{ "as", {} }, .{ "extern", {} }, .{ "new", {} }
+    .{ "import", {} }, .{ "const", {} }, .{ "func", {} }, .{ "for", {} }, .{ "if", {} }, .{ "else", {} },
+    .{ "switch", {} }, .{ "struct", {} }, .{ "enum", {} }, .{ "type", {} }, .{ "alias", {} },
+    .{ "isError", {} }, .{ "typeOf", {} }, .{ "sizeOf", {} }, .{ "as", {} }, .{ "extern", {} }, .{ "new", {} },
 });
 
 const keyword_map = std.StaticStringMap(void).initComptime(.{

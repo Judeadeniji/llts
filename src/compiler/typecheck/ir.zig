@@ -44,6 +44,8 @@ pub const Type = union(enum) {
     array: struct { elem: *Type, length: ?usize },
     ptr: *Type,
     union_: []Type,
+    /// Go-style distinct `@type Name = T` (aliases unwrap and never appear here).
+    defined: struct { name: []const u8, underlying: *Type },
 };
 
 pub const TUnknown: Type = .{ .unknown = {} };
@@ -122,7 +124,19 @@ pub const TypeAlloc = struct {
         const slice = try unique.toOwnedSlice(self.allocator);
         return .{ .union_ = slice };
     }
+
+    pub fn definedType(self: TypeAlloc, name: []const u8, underlying: Type) !Type {
+        const up = try self.allocType(underlying);
+        return .{ .defined = .{ .name = name, .underlying = up } };
+    }
 };
+
+/// Ultimate non-defined / non-alias shape (follows `.defined` chain).
+pub fn peelDefined(t: Type) Type {
+    var cur = t;
+    while (cur == .defined) cur = cur.defined.underlying.*;
+    return cur;
+}
 
 pub fn typeFromWidth(w: widths.Width) Type {
     return switch (w) {
@@ -142,6 +156,7 @@ pub fn typeFromWidth(w: widths.Width) Type {
 
 pub fn widthOf(t: Type) ?widths.Width {
     return switch (t) {
+        .defined => |d| widthOf(d.underlying.*),
         .u1 => .u1,
         .i8 => .i8,
         .i16 => .i16,
@@ -210,6 +225,7 @@ pub fn displayTypeAlloc(allocator: std.mem.Allocator, t: Type) ![]const u8 {
             defer allocator.free(inner);
             break :blk try std.fmt.allocPrint(allocator, "*{s}", .{inner});
         },
+        .defined => |d| try allocator.dupe(u8, d.name),
         .union_ => |arms| blk: {
             if (optionalPayload(t)) |payload| {
                 const inner = try displayTypeAlloc(allocator, payload);
@@ -254,6 +270,7 @@ pub fn displayTypeSimple(t: Type) ?[]const u8 {
         .enum_lit => null,
         .array => |a| if (a.elem.* == .u8 and a.length == null) "[]byte" else null,
         .ptr, .union_ => null,
+        .defined => |d| d.name,
     };
 }
 
@@ -275,6 +292,7 @@ pub fn typeEquals(a: Type, b: Type) bool {
         .enum_lit => |e| b == .enum_lit and std.mem.eql(u8, e.enum_name, b.enum_lit.enum_name) and std.mem.eql(u8, e.variant, b.enum_lit.variant),
         .array => |aa| b == .array and aa.length == b.array.length and typeEquals(aa.elem.*, b.array.elem.*),
         .ptr => |p| b == .ptr and typeEquals(p.*, b.ptr.*),
+        .defined => |d| b == .defined and std.mem.eql(u8, d.name, b.defined.name),
         .union_ => |arms| blk: {
             if (b != .union_) break :blk false;
             if (arms.len != b.union_.len) break :blk false;
@@ -314,6 +332,7 @@ pub fn structNameOf(t: Type) ?[]const u8 {
     return switch (t) {
         .struct_ => |n| n,
         .ptr => |p| structNameOf(p.*),
+        .defined => |d| structNameOf(d.underlying.*),
         else => if (optionalPayload(t)) |p| structNameOf(p) else null,
     };
 }
@@ -322,6 +341,14 @@ pub fn isSubtype(a: Type, b: Type) bool {
     if (a == .never) return true;
     if (b == .unknown or a == .unknown) return true;
     if (typeEquals(a, b)) return true;
+
+    // Distinct `@type`: coerce *into* Name from underlying-compatible values;
+    // do not silently unwrap Name when used as a value.
+    if (b == .defined) {
+        if (a == .defined) return std.mem.eql(u8, a.defined.name, b.defined.name);
+        return isSubtype(a, b.defined.underlying.*);
+    }
+    if (a == .defined) return false;
 
     if (b == .union_) {
         for (b.union_) |arm| {
@@ -363,6 +390,7 @@ pub fn involvesUnknown(t: Type) bool {
         .unknown => true,
         .array => |a| involvesUnknown(a.elem.*),
         .ptr => |p| involvesUnknown(p.*),
+        .defined => |d| involvesUnknown(d.underlying.*),
         .union_ => |arms| blk: {
             for (arms) |arm| {
                 if (involvesUnknown(arm)) break :blk true;
@@ -376,6 +404,7 @@ pub fn involvesUnknown(t: Type) bool {
 pub fn isErrorUnion(t: Type) bool {
     return switch (t) {
         .error_ => true,
+        .defined => |d| isErrorUnion(d.underlying.*),
         .union_ => |arms| blk: {
             for (arms) |arm| {
                 if (arm == .error_) break :blk true;
@@ -389,6 +418,7 @@ pub fn isErrorUnion(t: Type) bool {
 pub fn allowsError(t: Type) bool {
     return switch (t) {
         .error_, .unknown => true,
+        .defined => |d| allowsError(d.underlying.*),
         .union_ => |arms| blk: {
             for (arms) |arm| {
                 if (arm == .error_) break :blk true;
@@ -402,6 +432,7 @@ pub fn allowsError(t: Type) bool {
 pub fn unwrapError(ta: TypeAlloc, t: Type) !Type {
     return switch (t) {
         .error_ => TNever,
+        .defined => |d| try unwrapError(ta, d.underlying.*),
         .union_ => |arms| blk: {
             var kept: std.ArrayList(Type) = .empty;
             defer kept.deinit(ta.allocator);
@@ -415,11 +446,12 @@ pub fn unwrapError(ta: TypeAlloc, t: Type) !Type {
 }
 
 pub fn isByteSlice(t: Type) bool {
-    return t == .array and t.array.elem.* == .u8;
+    const p = peelDefined(t);
+    return p == .array and p.array.elem.* == .u8;
 }
 
 pub fn typeTag(t: Type) ?TypeTag {
-    return switch (t) {
+    return switch (peelDefined(t)) {
         .i8 => .i8,
         .i16 => .i16,
         .i32 => .i32,
@@ -436,7 +468,7 @@ pub fn typeTag(t: Type) ?TypeTag {
         .array => |a| if (a.elem.* == .u8) .string else .array,
         .struct_ => .struct_,
         .enum_, .enum_lit => .i64,
-        .union_ => if (isErrorUnion(t)) .error_union else null,
+        .union_ => |u| if (isErrorUnion(.{ .union_ = u })) .error_union else null,
         else => null,
     };
 }
@@ -485,7 +517,7 @@ pub fn parseDisplayType(ta: TypeAlloc, s_in: []const u8) !Type {
     return namedType(s);
 }
 
-fn splitTopLevel(allocator: std.mem.Allocator, s: []const u8, sep: []const u8) ![][]const u8 {
+pub fn splitTopLevel(allocator: std.mem.Allocator, s: []const u8, sep: []const u8) ![][]const u8 {
     var parts: std.ArrayList([]const u8) = .empty;
     errdefer parts.deinit(allocator);
     var depth: i32 = 0;

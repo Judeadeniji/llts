@@ -112,7 +112,7 @@ pub fn typecheck(state: *CompilerState, env: *typecheck_root.Env, ta: ir.TypeAll
                         if (std.mem.eql(u8, p.name, "string") or std.mem.eql(u8, p.name, "[]byte")) {
                             break :blk ir.TString;
                         }
-                        if (state.structs.contains(p.name) or state.enums.contains(p.name)) {
+                        if (state.structs.contains(p.name) or state.enums.contains(p.name) or state.typedefs.contains(p.name)) {
                             break :blk try from_ast.typeFromAst(v, state, ta);
                         }
                         const named = ir.namedType(p.name);
@@ -188,6 +188,9 @@ pub fn compile(state: *CompilerState, intr: Intrinsic, node: *ast.Node, c: *cons
                 } else if (state.enums.contains(st)) {
                     is_type = true;
                     size = 8;
+                } else if (state.typedefs.contains(st)) {
+                    is_type = true;
+                    size = layout.sizeOfNamedType(state, st);
                 }
                 if (is_type) {
                     try emit.emitConstant(state, .{ .i64 = size });
@@ -208,10 +211,14 @@ pub fn compile(state: *CompilerState, intr: Intrinsic, node: *ast.Node, c: *cons
             try emit.emitOp(state, .OP_SIZEOF);
         },
         .as => {
-            const kind = try asCastKind(state, c.args[0]);
-            try expr.compileExpression(state, c.args[1]);
-            try emit.emitOp(state, .OP_AS);
-            try emit.emitByte(state, kind);
+            if (try asCastKind(state, c.args[0])) |kind| {
+                try expr.compileExpression(state, c.args[1]);
+                try emit.emitOp(state, .OP_AS);
+                try emit.emitByte(state, kind);
+            } else {
+                // Same representation (e.g. UUID ↔ ID) — value only.
+                try expr.compileExpression(state, c.args[1]);
+            }
         },
         .new => {
             try aggregate.compileNew(state, c);
@@ -219,23 +226,30 @@ pub fn compile(state: *CompilerState, intr: Intrinsic, node: *ast.Node, c: *cons
     }
 }
 
-/// Operand for `OP_AS`: `widths.Width` discriminant.
-fn asCastKind(state: *CompilerState, type_node: *ast.Node) !u8 {
+/// Operand for `OP_AS`: `widths.Width` discriminant, or null when no runtime cast needed.
+fn asCastKind(state: *CompilerState, type_node: *ast.Node) !?u8 {
     const widths = @import("widths.zig");
-    if (type_node.* == .primary and type_node.primary.kind == .identifier) {
-        const n = type_node.primary.name;
-        if (widths.fromName(n)) |w| return @intFromEnum(w);
-        return compile_errors.compileFailFmt(state, "@as target must be a numeric width (got '{s}')", .{n});
-    }
-    return compile_errors.compileFailFmt(state, "@as target must be a type name", .{});
+    var arena = std.heap.ArenaAllocator.init(state.allocator);
+    defer arena.deinit();
+    const ta = ir.TypeAlloc{ .allocator = arena.allocator() };
+    const target = try from_ast.typeFromAst(type_node, state, ta);
+    const peeled = ir.peelDefined(target);
+    if (ir.widthOf(peeled)) |w| return @intFromEnum(w);
+    if (peeled == .enum_ or peeled == .enum_lit) return @intFromEnum(widths.Width.i64);
+    // Same-layout nominal / string / struct / etc. — no OP_AS.
+    return null;
 }
 
 fn checkAsCast(state: *CompilerState, src: ir.Type, target: ir.Type) !void {
     if (ir.involvesUnknown(src) or ir.involvesUnknown(target)) return;
-    const ok = (ir.isNumeric(src) or src == .enum_ or src == .enum_lit) and (ir.isNumeric(target) or target == .enum_ or target == .enum_lit);
-    if (!ok) {
-        const ds = try typecheck_root.ownDisplay(state, src);
-        const dt = try typecheck_root.ownDisplay(state, target);
-        return compile_errors.compileFailFmt(state, "cannot @as({s}, …) from '{s}'", .{ dt, ds });
-    }
+    const su = ir.peelDefined(src);
+    const tu = ir.peelDefined(target);
+    // Numeric / enum casts (existing).
+    const num_ok = (ir.isNumeric(su) or su == .enum_ or su == .enum_lit) and (ir.isNumeric(tu) or tu == .enum_ or tu == .enum_lit);
+    if (num_ok) return;
+    // Same underlying shape (UUID ↔ ID, Expr ↔ Literal|Add, etc.).
+    if (ir.typeEquals(su, tu) or ir.isSubtype(su, tu) or ir.isSubtype(tu, su)) return;
+    const ds = try typecheck_root.ownDisplay(state, src);
+    const dt = try typecheck_root.ownDisplay(state, target);
+    return compile_errors.compileFailFmt(state, "cannot @as({s}, …) from '{s}'", .{ dt, ds });
 }
