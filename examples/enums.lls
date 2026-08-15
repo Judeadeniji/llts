@@ -1,3 +1,8 @@
+# Tag-only enums (TS-style): names → ints. No Variant(T) payloads.
+# Prefer structs + kind for data — see examples/tagged.lls.
+#
+#   zig-out/bin/llts run examples/enums.lls
+
 @enum Color {
     Red,
     Green,
@@ -10,10 +15,19 @@ print(Color.Green);
 print(Color.Blue);
 print(Color.Red == 0);
 print(@typeOf(Color.Blue));
+print(@sizeOf(Color));
 
 @func paint(c: Color) {
     print(c);
 }
 paint(Color.Green);
+
+# Exhaustive @switch — every variant covered, no @else required.
+$name = @switch (Color.Blue) {
+    Color.Red => { break "red"; },
+    Color.Green => { break "green"; },
+    Color.Blue => { break "blue"; },
+};
+print(name);
 
 pub @func main() {}

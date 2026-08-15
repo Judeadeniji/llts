@@ -1,0 +1,40 @@
+# Honest numeric widths: u1 / i8…i64 / u8…u64 / f32 / f64.
+# Aliases: int→i64, byte→u8, float→f64, bool→u1. Cross-width needs @as.
+#
+#   zig-out/bin/llts run examples/widths.lls
+
+print(@typeOf(1));
+print(@typeOf(1.5));
+
+$a: i32 = 100;
+$b: u8 = 255;
+$c: f32 = 1.5;
+$d: f64 = 2.5;
+
+print(@typeOf(a));
+print(@typeOf(b));
+print(@typeOf(c));
+print(@typeOf(d));
+
+print(@sizeOf(i32));
+print(@sizeOf(u8));
+print(@sizeOf(f32));
+print(@sizeOf(f64));
+print(@sizeOf(bool));
+
+# Integer literals coerce into a typed binding when they fit.
+$n: u16 = 42;
+print(n);
+
+# Explicit conversions between widths.
+$as_f = @as(f64, a);
+$back = @as(i32, @as(f32, as_f));
+print(as_f);
+print(back);
+
+# bool / boolean → u1
+$flag: bool = true;
+print(@typeOf(flag));
+print(@sizeOf(u1));
+
+pub @func main() {}

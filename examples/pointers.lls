@@ -1,0 +1,56 @@
+# Pointers: *T / ?*T, address-of (&), @new → *T, field access through pointers.
+# Methods: unannotated self defaults to *T; call sites auto-& / auto-deref.
+#
+#   zig-out/bin/llts run examples/pointers.lls
+#
+# See also examples/linked_list.lls for a fuller ?*Node / *LinkedList demo.
+
+@const $mem = @import("std/mem");
+
+@struct Point {
+    x: i64;
+    y: i64;
+
+    @func move(self, dx: i64, dy: i64) {
+        self.x = self.x + dx;
+        self.y = self.y + dy;
+    }
+
+    @func manhattan(self: *Point) {
+        $ax = self.x;
+        $ay = self.y;
+        @if (ax < 0) { ax = 0 - ax; }
+        @if (ay < 0) { ay = 0 - ay; }
+        return ax + ay;
+    }
+}
+
+# Frame-local struct; &p is *Point (same packed handle, type-level).
+$p = Point{ x: 3, y: 4 };
+$q: *Point = &p;
+print(q.x);
+print(q.y);
+print(@typeOf(q));
+print(@sizeOf(*Point));
+
+# Method on value receiver auto-takes address (self is *Point).
+p.move(1, 1);
+print(p.x);
+print(p.y);
+print(p.manhattan());
+
+# Arena-backed @new yields *Point.
+$arena = mem.create(0);
+defer arena.deinit();
+$r = @new(arena, Point{ x: 10, y: 20 });
+print(@typeOf(r));
+r.move(5, 0);
+print(r.x);
+
+# Optional pointer
+$maybe: ?*Point = r;
+print(maybe.x);
+maybe = null;
+print(maybe == null);
+
+pub @func main() {}
