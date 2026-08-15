@@ -349,6 +349,17 @@ fn fnReturnType(state: *state_mod.CompilerState, ta: ir.TypeAlloc, func_name: []
     return ir.TUnknown;
 }
 
+fn funcTypeOfName(state: *state_mod.CompilerState, ta: ir.TypeAlloc, func_name: []const u8) !?ir.Type {
+    if (!state.functions.contains(func_name)) return null;
+    var params: std.ArrayList(ir.Type) = .empty;
+    defer params.deinit(ta.allocator);
+    var rest: ?ir.Type = null;
+    var variadic = false;
+    if (!try fnParamTypes(state, ta, func_name, &params, &rest, &variadic)) return null;
+    const ret = try fnReturnType(state, ta, func_name);
+    return try ta.funcType(params.items, ret, variadic);
+}
+
 fn resolveMethodSelfType(
     state: *state_mod.CompilerState,
     ta: ir.TypeAlloc,
@@ -495,6 +506,7 @@ pub fn inferExpr(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, n
                     }
                     break :blk try from_ast.parseDisplayType(state, ta, gt, null);
                 }
+                if (try funcTypeOfName(state, ta, p.name)) |ft| break :blk ft;
             }
             break :blk ir.TUnknown;
         },
@@ -836,67 +848,106 @@ fn inferCall(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, call_
 
     const method = try resolveMethodCallee(state, env, ta, c);
     const name: ?[]const u8 = if (method) |m| m.name else resolveCalleeName(state, c);
-    if (name == null) {
-        for (c.args) |a| _ = try inferExpr(state, env, ta, a);
-        return ir.TUnknown;
-    }
+    const named_fn = if (name) |n| state.functions.contains(n) else false;
+    if (method != null or named_fn) {
+        var params: std.ArrayList(ir.Type) = .empty;
+        defer params.deinit(ta.allocator);
+        var rest: ?ir.Type = null;
+        var variadic = false;
+        const has_sig = try fnParamTypes(state, ta, name.?, &params, &rest, &variadic);
 
-    var params: std.ArrayList(ir.Type) = .empty;
-    defer params.deinit(ta.allocator);
-    var rest: ?ir.Type = null;
-    var variadic = false;
-    const has_sig = try fnParamTypes(state, ta, name.?, &params, &rest, &variadic);
-
-    if (has_sig) {
-        const named_count = params.items.len;
-        const any_annotated = blk: {
-            for (params.items) |p| {
-                if (p != .unknown) break :blk true;
-            }
-            break :blk false;
-        };
-        if (method) |m| {
-            // Receiver is prepended; user args must match params after self.
-            const expected_user = if (named_count > 0) named_count - 1 else 0;
-            if (!variadic and rest == null and any_annotated and c.args.len != expected_user) {
-                return compiler_errors.compileFailFmt(state, "Function '{s}' expected {d} arguments, got {d}", .{ name.?, expected_user, c.args.len });
-            }
-            if (named_count > 0) {
-                const recv_ty = try inferExpr(state, env, ta, m.receiver);
-                try requireMethodReceiver(state, recv_ty, params.items[0], name.?, m.receiver);
-            }
-            const ncheck = @min(c.args.len, if (named_count > 0) named_count - 1 else 0);
-            var i: usize = 0;
-            while (i < ncheck) : (i += 1) {
-                const at = try inferExpr(state, env, ta, c.args[i]);
-                var ctx_buf: [96]u8 = undefined;
-                const ctx = std.fmt.bufPrint(&ctx_buf, "argument {d} of '{s}'", .{ i + 1, name.? }) catch "argument";
-                try requireAssignFrom(state, at, params.items[i + 1], ctx, c.args[i]);
-            }
-            while (i < c.args.len) : (i += 1) {
-                _ = try inferExpr(state, env, ta, c.args[i]);
+        if (has_sig) {
+            const named_count = params.items.len;
+            const any_annotated = blk: {
+                for (params.items) |p| {
+                    if (p != .unknown) break :blk true;
+                }
+                break :blk false;
+            };
+            if (method) |m| {
+                // Receiver is prepended; user args must match params after self.
+                const expected_user = if (named_count > 0) named_count - 1 else 0;
+                if (!variadic and rest == null and any_annotated and c.args.len != expected_user) {
+                    return compiler_errors.compileFailFmt(state, "Function '{s}' expected {d} arguments, got {d}", .{ name.?, expected_user, c.args.len });
+                }
+                if (named_count > 0) {
+                    const recv_ty = try inferExpr(state, env, ta, m.receiver);
+                    try requireMethodReceiver(state, recv_ty, params.items[0], name.?, m.receiver);
+                }
+                const ncheck = @min(c.args.len, if (named_count > 0) named_count - 1 else 0);
+                var i: usize = 0;
+                while (i < ncheck) : (i += 1) {
+                    const at = try inferExpr(state, env, ta, c.args[i]);
+                    var ctx_buf: [96]u8 = undefined;
+                    const ctx = std.fmt.bufPrint(&ctx_buf, "argument {d} of '{s}'", .{ i + 1, name.? }) catch "argument";
+                    try requireAssignFrom(state, at, params.items[i + 1], ctx, c.args[i]);
+                }
+                while (i < c.args.len) : (i += 1) {
+                    _ = try inferExpr(state, env, ta, c.args[i]);
+                }
+            } else {
+                if (!variadic and rest == null and any_annotated and c.args.len != named_count) {
+                    return compiler_errors.compileFailFmt(state, "Function '{s}' expected {d} arguments, got {d}", .{ name.?, named_count, c.args.len });
+                }
+                const ncheck = @min(c.args.len, named_count);
+                var i: usize = 0;
+                while (i < ncheck) : (i += 1) {
+                    const at = try inferExpr(state, env, ta, c.args[i]);
+                    var ctx_buf: [96]u8 = undefined;
+                    const ctx = std.fmt.bufPrint(&ctx_buf, "argument {d} of '{s}'", .{ i + 1, name.? }) catch "argument";
+                    try requireAssignFrom(state, at, params.items[i], ctx, c.args[i]);
+                }
+                while (i < c.args.len) : (i += 1) {
+                    _ = try inferExpr(state, env, ta, c.args[i]);
+                }
             }
         } else {
-            if (!variadic and rest == null and any_annotated and c.args.len != named_count) {
-                return compiler_errors.compileFailFmt(state, "Function '{s}' expected {d} arguments, got {d}", .{ name.?, named_count, c.args.len });
-            }
-            const ncheck = @min(c.args.len, named_count);
-            var i: usize = 0;
-            while (i < ncheck) : (i += 1) {
-                const at = try inferExpr(state, env, ta, c.args[i]);
-                var ctx_buf: [96]u8 = undefined;
-                const ctx = std.fmt.bufPrint(&ctx_buf, "argument {d} of '{s}'", .{ i + 1, name.? }) catch "argument";
-                try requireAssignFrom(state, at, params.items[i], ctx, c.args[i]);
-            }
-            while (i < c.args.len) : (i += 1) {
-                _ = try inferExpr(state, env, ta, c.args[i]);
-            }
+            if (method) |m| _ = try inferExpr(state, env, ta, m.receiver);
+            for (c.args) |a| _ = try inferExpr(state, env, ta, a);
         }
-    } else {
-        if (method) |m| _ = try inferExpr(state, env, ta, m.receiver);
-        for (c.args) |a| _ = try inferExpr(state, env, ta, a);
+        return try fnReturnType(state, ta, name.?);
     }
-    return try fnReturnType(state, ta, name.?);
+
+    // First-class / typed function value: `$f(…)` where `$f: @func(…)`.
+    const callee_ty = ir.peelDefined(try inferExpr(state, env, ta, c.callee));
+    if (callee_ty == .func) {
+        try checkFuncValueCall(state, env, ta, callee_ty, c);
+        return callee_ty.func.ret.*;
+    }
+    for (c.args) |a| _ = try inferExpr(state, env, ta, a);
+    return ir.TUnknown;
+}
+
+fn checkFuncValueCall(
+    state: *state_mod.CompilerState,
+    env: *Env,
+    ta: ir.TypeAlloc,
+    fn_ty: ir.Type,
+    c: *const ast.Call,
+) TypecheckError!void {
+    const f = fn_ty.func;
+    const named_count = f.params.len;
+    const any_annotated = blk: {
+        for (f.params) |p| {
+            if (p != .unknown) break :blk true;
+        }
+        break :blk false;
+    };
+    if (!f.variadic and any_annotated and c.args.len != named_count) {
+        const d = try ownDisplay(state, fn_ty);
+        return compiler_errors.compileFailFmt(state, "Function value '{s}' expected {d} arguments, got {d}", .{ d, named_count, c.args.len });
+    }
+    const ncheck = @min(c.args.len, named_count);
+    var i: usize = 0;
+    while (i < ncheck) : (i += 1) {
+        const at = try inferExpr(state, env, ta, c.args[i]);
+        var ctx_buf: [96]u8 = undefined;
+        const ctx = std.fmt.bufPrint(&ctx_buf, "argument {d}", .{i + 1}) catch "argument";
+        try requireAssignFrom(state, at, f.params[i], ctx, c.args[i]);
+    }
+    while (i < c.args.len) : (i += 1) {
+        _ = try inferExpr(state, env, ta, c.args[i]);
+    }
 }
 
 fn inferArrayLiteral(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, a: ast.ArrayLiteral) TypecheckError!ir.Type {
@@ -1006,10 +1057,10 @@ fn checkStmt(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node:
                 try state.global_types.put(d.name, disp);
             } else {
                 try env.define(d.name, value_type);
-                // Persist pointer / array displays so emit can resolve field layout.
+                // Persist pointer / array / function displays so emit can resolve layout / types.
                 // Skip `error` — builtin `error` struct would steal LOAD_FIELD from runtime errors.
                 if (std.mem.indexOf(u8, d.name, "::") == null and
-                    (value_type == .ptr or value_type == .array))
+                    (value_type == .ptr or value_type == .array or value_type == .func))
                 {
                     const disp = try ownDisplay(state, value_type);
                     try state.global_types.put(d.name, disp);

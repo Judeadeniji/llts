@@ -31,6 +31,7 @@ pub fn alignUp(offset: i32, alignment: i32) i32 {
 pub fn sizeOfTypeName(type_name: []const u8) i32 {
     const bare = unwrapTypeName(type_name);
     if (bare.len > 0 and bare[0] == '*') return 8; // pointer / heap handle
+    if (std.mem.startsWith(u8, bare, "@func(")) return 8; // function value / handle
     if (widths.fromName(bare)) |w| return w.size();
     if (std.mem.eql(u8, bare, "null"))
         return 0;
@@ -60,6 +61,7 @@ pub fn alignOfTypeName(type_name: []const u8) i32 {
 pub fn fieldKind(state: ?*state_mod.CompilerState, type_name: []const u8) FieldKind {
     const bare = unwrapTypeName(type_name);
     if (bare.len > 0 and bare[0] == '*') return .handle;
+    if (std.mem.startsWith(u8, bare, "@func(")) return .handle;
     if (widths.fromName(bare)) |w| return fieldKindFromWidth(w);
     if (std.mem.eql(u8, bare, "ptr"))
         return .ptr;

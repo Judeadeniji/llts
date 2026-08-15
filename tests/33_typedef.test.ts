@@ -162,3 +162,40 @@ print(k2);
 		["a", "b"],
 	);
 });
+
+test("function type: annotate, assign, call, @typeOf", () => {
+	expectOutput(
+		runSource(`
+@func add(a: i64, b: i64): i64 { return a + b; }
+@type Handler = @func(i64, i64): i64;
+$f: Handler = add;
+print(@typeOf(f));
+print(@typeOf(add));
+print(f(2, 3));
+print(@sizeOf(Handler));
+`),
+		["Handler", "@func(i64, i64): i64", "5", "8"],
+	);
+});
+
+test("function type arity mismatch is an error", () => {
+	expectError(
+		runSource(`
+@func add(a: i64, b: i64): i64 { return a + b; }
+$f: @func(i64, i64): i64 = add;
+print(f(1));
+`),
+		"expected 2 arguments",
+	);
+});
+
+test("function type assignability rejects wrong signature", () => {
+	expectError(
+		runSource(`
+@func add(a: i64, b: i64): i64 { return a + b; }
+$f: @func(i64): i64 = add;
+print(f(1));
+`),
+		"not assignable",
+	);
+});

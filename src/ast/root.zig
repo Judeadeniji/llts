@@ -50,6 +50,7 @@ pub const TypeDecl = stmt.TypeDecl;
 pub const ArrayType = types.ArrayType;
 pub const UnionType = types.UnionType;
 pub const PointerType = types.PointerType;
+pub const FuncType = types.FuncType;
 
 pub const Node = union(enum) {
     declaration: Declaration,
@@ -83,6 +84,7 @@ pub const Node = union(enum) {
     array_type: ArrayType,
     union_type: UnionType,
     pointer_type: PointerType,
+    func_type: FuncType,
 
     pub fn loc(self: *const Node) Location {
         return switch (self.*) {

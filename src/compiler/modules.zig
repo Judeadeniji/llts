@@ -142,6 +142,11 @@ fn treeContainsImport(node: *ast.Node) bool {
         .array_type => |a| return treeContainsImport(a.elem),
         .pointer_type => |p| return treeContainsImport(p.elem),
         .union_type => |u| return treeContainsImport(u.left) or treeContainsImport(u.right),
+        .func_type => |f| {
+            for (f.params) |p| if (treeContainsImport(p)) return true;
+            if (f.return_type) |rt| return treeContainsImport(rt);
+            return false;
+        },
         else => {},
     }
     return false;
@@ -249,6 +254,10 @@ fn loadImportsInTree(
         .union_type => |u| {
             try loadImportsInTree(state, doc, u.left, current_module, out, visited);
             try loadImportsInTree(state, doc, u.right, current_module, out, visited);
+        },
+        .func_type => |f| {
+            for (f.params) |p| try loadImportsInTree(state, doc, p, current_module, out, visited);
+            if (f.return_type) |rt| try loadImportsInTree(state, doc, rt, current_module, out, visited);
         },
         else => {},
     }
@@ -662,6 +671,10 @@ fn rewriteModuleRefs(
         .union_type => |*u| {
             try rewriteModuleRefs(state, u.left, local_map, bound);
             try rewriteModuleRefs(state, u.right, local_map, bound);
+        },
+        .func_type => |*f| {
+            for (f.params) |p| try rewriteModuleRefs(state, p, local_map, bound);
+            if (f.return_type) |rt| try rewriteModuleRefs(state, rt, local_map, bound);
         },
         else => {},
     }

@@ -148,7 +148,7 @@ Forcing function: keep writing the self-hosted compiler. Whatever that parser ca
 
 #### Abstraction without generics
 
-- [ ] **Function types** — e.g. `$f: @func(i64): i64`. First-class functions exist; their types do not. (Also listed under `@type` ship order.)
+- [x] **Function types** — e.g. `$f: @func(i64): i64`. First-class functions exist; their types do not. (Also listed under `@type` ship order.)
 - [ ] **Nested / capturing functions** — nested `@func` is not supported; closures do not capture. Decide yes (with region rules) or no.
 - [ ] **Allocator / Reader / Writer without generics** — either small interfaces/vtables, or stay concrete (`mem.Arena` + `[]T` only). Untyped native `std/list` / `std/map` should not remain a third language.
 
@@ -203,7 +203,7 @@ $i = @as(ID, u);      # ok
 - [x] **`@type Name = T` (distinct)** + **`@alias Name = T` (transparent)**
 - [x] **Nominal assignability + `@as`** — UUID ≠ ID
 - [x] **Literal types** — `"a"` / `0` / `true` / `Enum.Variant` as RHS; unions of literals
-- [ ] **Function types** — `@func(params): ret` as a type form
+- [x] **Function types** — `@func(params): ret` as a type form
 - [ ] **Object / shape types** — `{ fields; callables }` filled at init
 - [ ] **Tuple types** — `[T, U, …]` values + field/index access
 - [ ] **Shape intersection `&`** — merge object types; `Readable & Writable`

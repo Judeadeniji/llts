@@ -27,6 +27,15 @@ pub fn typeFromAst(node: ?*ast.Node, state: ?*state_mod.CompilerState, ta: ir.Ty
             break :blk try ta.arrayType(elem, length);
         },
         .pointer_type => |p| try ta.ptrType(try typeFromAst(p.elem, state, ta)),
+        .func_type => |f| blk: {
+            var params: std.ArrayList(ir.Type) = .empty;
+            defer params.deinit(ta.allocator);
+            for (f.params) |p| {
+                try params.append(ta.allocator, try typeFromAst(p, state, ta));
+            }
+            const ret = if (f.return_type) |rt| try typeFromAst(rt, state, ta) else ir.TUnknown;
+            break :blk try ta.funcType(params.items, ret, f.is_variadic);
+        },
         .union_type => |u| blk: {
             const left = try typeFromAst(u.left, state, ta);
             const right = try typeFromAst(u.right, state, ta);
@@ -139,6 +148,7 @@ pub fn parseDisplayType(
             return try ta.arrayType(try parseDisplayType(state, ta, s[i + 1 ..], cycle), len);
         }
     }
+    if (try parseFuncDisplayType(state, ta, s, cycle)) |ft| return ft;
     // Literal types stored as displays: `"a"`, `42`, `true`
     if (s.len >= 2 and s[0] == '"' and s[s.len - 1] == '"') {
         const inner = try ta.allocator.dupe(u8, s[1 .. s.len - 1]);
@@ -174,6 +184,33 @@ pub fn parseDisplayType(
         return @import("../../errors/compile.zig").compileFailFmt(st, "Unknown type '{s}'", .{s});
     }
     return try ir.parseDisplayType(ta, s);
+}
+
+fn parseFuncDisplayType(
+    state: ?*state_mod.CompilerState,
+    ta: ir.TypeAlloc,
+    s: []const u8,
+    cycle: ?*std.StringHashMap(void),
+) FromAstError!?ir.Type {
+    const parts = (try ir.splitFuncDisplay(s)) orelse return null;
+    var params: std.ArrayList(ir.Type) = .empty;
+    defer params.deinit(ta.allocator);
+    var variadic = false;
+    if (parts.params.len > 0) {
+        const param_parts = try ir.splitTopLevel(ta.allocator, parts.params, ", ");
+        defer ta.allocator.free(param_parts);
+        for (param_parts, 0..) |part, pi| {
+            var p = std.mem.trim(u8, part, " \t");
+            if (std.mem.startsWith(u8, p, "...")) {
+                if (pi + 1 != param_parts.len) return error.CompileError;
+                variadic = true;
+                p = std.mem.trim(u8, p[3..], " \t");
+            }
+            try params.append(ta.allocator, try parseDisplayType(state, ta, p, cycle));
+        }
+    }
+    const ret = if (parts.ret) |r| try parseDisplayType(state, ta, r, cycle) else ir.TUnknown;
+    return try ta.funcType(params.items, ret, variadic);
 }
 
 fn resolveImportedType(node: *ast.Node, state: ?*state_mod.CompilerState, ta: ir.TypeAlloc) FromAstError!ir.Type {

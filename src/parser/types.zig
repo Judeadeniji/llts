@@ -6,7 +6,7 @@ const Parser = ctx.Parser;
 const ParseError = ctx.ParseError;
 const Node = ast.Node;
 
-/// Parse a type: `?T`, `*T`, `[]T`, `[N]T`, nested `[2][3]int`, `Name`, or `T | U`.
+/// Parse a type: `?T`, `*T`, `[]T`, `[N]T`, `@func(…): R`, nested `[2][3]int`, `Name`, or `T | U`.
 /// `?T` is sugar for `T | null`. `?` and `*` bind tighter than `|`.
 /// `?*T` parses as optional-of-pointer.
 pub fn parseType(self: *Parser) ParseError!*Node {
@@ -74,6 +74,16 @@ fn parseTypeOperand(self: *Parser) ParseError!*Node {
 fn parseTypeAtom(self: *Parser) ParseError!*Node {
     const peek = self.peek(0) orelse return self.failMsg("Expected type name");
 
+    // `@func(T, U): R` — types only (no param names). Named `@func foo` is a declaration.
+    if (peek.type == .compiler_keyword and std.mem.eql(u8, peek.value, "func")) {
+        if (self.peek(1)) |next| {
+            if (next.type == .delimiter and std.mem.eql(u8, next.value, "(")) {
+                return parseFuncType(self);
+            }
+        }
+        return self.failMsg("Expected '(' after @func in type position");
+    }
+
     // Literal types: `"a"`, `0`, `0x10`, `true`, `false`
     if (peek.type == .string) {
         const tok = self.advance().?;
@@ -135,4 +145,49 @@ fn parseTypeAtom(self: *Parser) ParseError!*Node {
         } });
     }
     return node;
+}
+
+/// `@func(T, U, ...V): R` — parameter types only; `...` marks the last param as rest.
+fn parseFuncType(self: *Parser) ParseError!*Node {
+    const start = self.advance().?; // `@func`
+    _ = try self.consume(.delimiter, "Expected '(' after @func", "(");
+
+    var params: std.ArrayList(*Node) = .empty;
+    var is_variadic = false;
+
+    if (!self.checkDelim(")")) {
+        while (true) {
+            if (self.checkDelim("...")) {
+                _ = self.advance();
+                is_variadic = true;
+            }
+            const ty = try parseType(self);
+            try params.append(self.arena, ty);
+            if (is_variadic) {
+                _ = try self.consume(.delimiter, "Expected ')' after variadic parameter type", ")");
+                break;
+            }
+            if (self.checkDelim(",")) {
+                _ = self.advance();
+                continue;
+            }
+            _ = try self.consume(.delimiter, "Expected ',' or ')' in function type", ")");
+            break;
+        }
+    } else {
+        _ = self.advance();
+    }
+
+    var return_type: ?*Node = null;
+    if (self.checkDelim(":")) {
+        _ = self.advance();
+        return_type = try parseType(self);
+    }
+
+    return self.create(.{ .func_type = .{
+        .params = try params.toOwnedSlice(self.arena),
+        .return_type = return_type,
+        .is_variadic = is_variadic,
+        .loc = self.locOf(start),
+    } });
 }

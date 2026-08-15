@@ -50,6 +50,8 @@ pub const Type = union(enum) {
     union_: []Type,
     /// Go-style distinct `@type Name = T` (aliases unwrap and never appear here).
     defined: struct { name: []const u8, underlying: *Type },
+    /// `@func(T, U): R` — first-class function type (structural).
+    func: struct { params: []Type, ret: *Type, variadic: bool },
 };
 
 pub const TUnknown: Type = .{ .unknown = {} };
@@ -132,6 +134,13 @@ pub const TypeAlloc = struct {
     pub fn definedType(self: TypeAlloc, name: []const u8, underlying: Type) !Type {
         const up = try self.allocType(underlying);
         return .{ .defined = .{ .name = name, .underlying = up } };
+    }
+
+    pub fn funcType(self: TypeAlloc, params: []const Type, ret: Type, variadic: bool) !Type {
+        const ps = try self.allocator.alloc(Type, params.len);
+        @memcpy(ps, params);
+        const rp = try self.allocType(ret);
+        return .{ .func = .{ .params = ps, .ret = rp, .variadic = variadic } };
     }
 };
 
@@ -234,6 +243,42 @@ pub fn displayTypeAlloc(allocator: std.mem.Allocator, t: Type) ![]const u8 {
             defer allocator.free(inner);
             break :blk try std.fmt.allocPrint(allocator, "*{s}", .{inner});
         },
+        .func => |f| blk: {
+            var parts: std.ArrayList([]const u8) = .empty;
+            defer {
+                for (parts.items) |p| allocator.free(p);
+                parts.deinit(allocator);
+            }
+            for (f.params, 0..) |p, i| {
+                const d = try displayTypeAlloc(allocator, p);
+                if (f.variadic and i + 1 == f.params.len) {
+                    const with_dots = try std.fmt.allocPrint(allocator, "...{s}", .{d});
+                    allocator.free(d);
+                    try parts.append(allocator, with_dots);
+                } else {
+                    try parts.append(allocator, d);
+                }
+            }
+            var param_total: usize = 0;
+            for (parts.items, 0..) |p, i| {
+                param_total += p.len;
+                if (i > 0) param_total += 2;
+            }
+            const params_s = try allocator.alloc(u8, param_total);
+            defer allocator.free(params_s);
+            var poff: usize = 0;
+            for (parts.items, 0..) |p, i| {
+                if (i > 0) {
+                    @memcpy(params_s[poff .. poff + 2], ", ");
+                    poff += 2;
+                }
+                @memcpy(params_s[poff .. poff + p.len], p);
+                poff += p.len;
+            }
+            const ret = try displayTypeAlloc(allocator, f.ret.*);
+            defer allocator.free(ret);
+            break :blk try std.fmt.allocPrint(allocator, "@func({s}): {s}", .{ params_s, ret });
+        },
         .defined => |d| try allocator.dupe(u8, d.name),
         .union_ => |arms| blk: {
             if (optionalPayload(t)) |payload| {
@@ -279,7 +324,7 @@ pub fn displayTypeSimple(t: Type) ?[]const u8 {
         .enum_lit => null,
         .str_lit, .int_lit, .bool_lit => null,
         .array => |a| if (a.elem.* == .u8 and a.length == null) "[]byte" else null,
-        .ptr, .union_ => null,
+        .ptr, .union_, .func => null,
         .defined => |d| d.name,
     };
 }
@@ -305,6 +350,17 @@ pub fn typeEquals(a: Type, b: Type) bool {
         .bool_lit => |v| b == .bool_lit and v == b.bool_lit,
         .array => |aa| b == .array and aa.length == b.array.length and typeEquals(aa.elem.*, b.array.elem.*),
         .ptr => |p| b == .ptr and typeEquals(p.*, b.ptr.*),
+        .func => |fa| blk: {
+            if (b != .func) break :blk false;
+            const fb = b.func;
+            if (fa.variadic != fb.variadic) break :blk false;
+            if (fa.params.len != fb.params.len) break :blk false;
+            if (!typeEquals(fa.ret.*, fb.ret.*)) break :blk false;
+            for (fa.params, fb.params) |pa, pb| {
+                if (!typeEquals(pa, pb)) break :blk false;
+            }
+            break :blk true;
+        },
         .defined => |d| b == .defined and std.mem.eql(u8, d.name, b.defined.name),
         .union_ => |arms| blk: {
             if (b != .union_) break :blk false;
@@ -380,6 +436,12 @@ pub fn isSubtype(a: Type, b: Type) bool {
             .defined => false,
             else => false,
         },
+        .func => |bf| switch (a) {
+            .func => |af| funcSubtype(af, bf),
+            .union_ => |arms| subtypeAll(arms, b),
+            .defined => false,
+            else => false,
+        },
         .enum_ => |ename| switch (a) {
             .enum_lit => |e| std.mem.eql(u8, e.enum_name, ename),
             .i64 => true,
@@ -435,11 +497,29 @@ fn arraySubtype(a: Type, b: Type) bool {
     return aa.length.? == ba.length.?;
 }
 
+/// `fn(A)→R` ⊑ `fn(B)→S` when params are contravariant and return is covariant.
+fn funcSubtype(a: anytype, b: anytype) bool {
+    if (a.variadic != b.variadic) return false;
+    if (a.params.len != b.params.len) return false;
+    if (!isSubtype(a.ret.*, b.ret.*)) return false;
+    for (a.params, b.params) |ap, bp| {
+        if (!isSubtype(bp, ap)) return false;
+    }
+    return true;
+}
+
 pub fn involvesUnknown(t: Type) bool {
     return switch (t) {
         .unknown => true,
         .array => |a| involvesUnknown(a.elem.*),
         .ptr => |p| involvesUnknown(p.*),
+        .func => |f| blk: {
+            if (involvesUnknown(f.ret.*)) break :blk true;
+            for (f.params) |p| {
+                if (involvesUnknown(p)) break :blk true;
+            }
+            break :blk false;
+        },
         .defined => |d| involvesUnknown(d.underlying.*),
         .union_ => |arms| blk: {
             for (arms) |arm| {
@@ -526,6 +606,34 @@ pub fn typeTag(t: Type) ?TypeTag {
     };
 }
 
+/// Split `@func(…): R` into the params interior and optional return display.
+pub fn splitFuncDisplay(s: []const u8) !?struct { params: []const u8, ret: ?[]const u8 } {
+    if (!std.mem.startsWith(u8, s, "@func(")) return null;
+    const open = "@func(".len - 1; // index of '('
+    var depth: i32 = 0;
+    var close: ?usize = null;
+    var i: usize = open;
+    while (i < s.len) : (i += 1) {
+        const c = s[i];
+        if (c == '(') depth += 1;
+        if (c == ')') {
+            depth -= 1;
+            if (depth == 0) {
+                close = i;
+                break;
+            }
+        }
+    }
+    const end = close orelse return error.CompileError;
+    const params = s[open + 1 .. end];
+    var rest = std.mem.trim(u8, s[end + 1 ..], " \t");
+    var ret: ?[]const u8 = null;
+    if (std.mem.startsWith(u8, rest, ":")) {
+        ret = std.mem.trim(u8, rest[1..], " \t");
+    }
+    return .{ .params = params, .ret = ret };
+}
+
 pub fn parseDisplayType(ta: TypeAlloc, s_in: []const u8) !Type {
     const s = std.mem.trim(u8, s_in, " \t");
     const union_parts = try splitTopLevel(ta.allocator, s, " | ");
@@ -555,6 +663,26 @@ pub fn parseDisplayType(ta: TypeAlloc, s_in: []const u8) !Type {
             const len = try std.fmt.parseInt(usize, s[1..i], 10);
             return try ta.arrayType(try parseDisplayType(ta, s[i + 1 ..]), len);
         }
+    }
+    if (try splitFuncDisplay(s)) |parts| {
+        var params: std.ArrayList(Type) = .empty;
+        defer params.deinit(ta.allocator);
+        var variadic = false;
+        if (parts.params.len > 0) {
+            const param_parts = try splitTopLevel(ta.allocator, parts.params, ", ");
+            defer ta.allocator.free(param_parts);
+            for (param_parts, 0..) |part, pi| {
+                var p = std.mem.trim(u8, part, " \t");
+                if (std.mem.startsWith(u8, p, "...")) {
+                    if (pi + 1 != param_parts.len) return error.CompileError;
+                    variadic = true;
+                    p = std.mem.trim(u8, p[3..], " \t");
+                }
+                try params.append(ta.allocator, try parseDisplayType(ta, p));
+            }
+        }
+        const ret = if (parts.ret) |r| try parseDisplayType(ta, r) else TUnknown;
+        return try ta.funcType(params.items, ret, variadic);
     }
     // Historical display used "int" / "byte".
     if (std.mem.eql(u8, s, "int") or std.mem.eql(u8, s, "number")) return TI64;
@@ -588,8 +716,8 @@ pub fn splitTopLevel(allocator: std.mem.Allocator, s: []const u8, sep: []const u
     var i: usize = 0;
     while (i < s.len) {
         const c = s[i];
-        if (c == '[') depth += 1;
-        if (c == ']') depth -= 1;
+        if (c == '[' or c == '(' or c == '{') depth += 1;
+        if (c == ']' or c == ')' or c == '}') depth -= 1;
         if (depth == 0 and std.mem.startsWith(u8, s[i..], sep)) {
             try parts.append(allocator, std.mem.trim(u8, s[start..i], " \t"));
             i += sep.len;

@@ -259,7 +259,14 @@ fn collectRefs(
         .try_expr => |t| try collectRefs(state, func_name, t.expression, result, work),
         .error_expr => |e| try collectRefs(state, func_name, e.args[0], result, work),
         .primary => |p| {
-            if (p.kind == .identifier) try noteGlobalRead(state, p.name, result);
+            if (p.kind == .identifier) {
+                // First-class function value (`$f = add`) must keep `add` reachable.
+                if (state.functions.contains(p.name)) {
+                    try enqueueFunction(result, work, p.name);
+                } else {
+                    try noteGlobalRead(state, p.name, result);
+                }
+            }
         },
         else => {},
     }

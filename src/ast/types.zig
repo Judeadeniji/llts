@@ -21,3 +21,11 @@ pub const PointerType = struct {
     elem: *Node,
     loc: Location,
 };
+
+/// `@func(T, U): R` in a type position (types only — no param names).
+pub const FuncType = struct {
+    params: []*Node,
+    return_type: ?*Node = null,
+    is_variadic: bool = false,
+    loc: Location,
+};
