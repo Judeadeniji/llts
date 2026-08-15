@@ -6,8 +6,9 @@ const Parser = ctx.Parser;
 const ParseError = ctx.ParseError;
 const Node = ast.Node;
 
-/// Parse a type: `?T`, `[]T`, `[N]T`, nested `[2][3]int`, `Name`, or `T | U`.
-/// `?T` is sugar for `T | null`. `?` binds tighter than `|`.
+/// Parse a type: `?T`, `*T`, `[]T`, `[N]T`, nested `[2][3]int`, `Name`, or `T | U`.
+/// `?T` is sugar for `T | null`. `?` and `*` bind tighter than `|`.
+/// `?*T` parses as optional-of-pointer.
 pub fn parseType(self: *Parser) ParseError!*Node {
     var left = try parseTypeOperand(self);
     while (self.checkDelim("|")) {
@@ -36,6 +37,16 @@ fn parseTypeOperand(self: *Parser) ParseError!*Node {
         return self.create(.{ .union_type = .{
             .left = inner,
             .right = null_node,
+            .loc = self.locOf(start),
+        } });
+    }
+
+    if (self.checkDelim("*")) {
+        const start = self.peek(0).?;
+        _ = self.advance();
+        const elem = try parseTypeOperand(self);
+        return self.create(.{ .pointer_type = .{
+            .elem = elem,
             .loc = self.locOf(start),
         } });
     }

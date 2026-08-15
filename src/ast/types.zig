@@ -15,3 +15,9 @@ pub const UnionType = struct {
     right: *Node,
     loc: Location,
 };
+
+/// `*T` in a type position (pointer to pointee).
+pub const PointerType = struct {
+    elem: *Node,
+    loc: Location,
+};

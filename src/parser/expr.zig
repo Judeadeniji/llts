@@ -96,11 +96,18 @@ fn parsePostfix(self: *Parser) ParseError!*Node {
         }
         if (tok.type == .delimiter and std.mem.eql(u8, tok.value, "[")) {
             _ = self.advance();
-            const index_expr = try parseExpression(self);
+            // Bounds must not consume `..` (range is slice syntax here, not a binary expr).
+            const index_expr = try parseBinary(self, 14);
+            var end_expr: ?*Node = null;
+            if (self.check(.bin_op) and self.peek(0) != null and std.mem.eql(u8, self.peek(0).?.value, "..")) {
+                _ = self.advance(); // '..'
+                end_expr = try parseBinary(self, 14);
+            }
             _ = try self.consume(.delimiter, "Expected ']'", "]");
             e = try self.create(.{ .index = .{
                 .object = e,
                 .index = index_expr,
+                .end = end_expr,
                 .loc = e.loc(),
             } });
             continue;
@@ -284,6 +291,7 @@ fn isArrayLengthToken(tok: ctx.Token) bool {
 fn looksLikeTypeContinuation(tok: ?ctx.Token) bool {
     const t = tok orelse return false;
     if (t.type == .delimiter and (std.mem.eql(u8, t.value, "[") or std.mem.eql(u8, t.value, "?"))) return true;
+    if (t.type == .bin_op and std.mem.eql(u8, t.value, "*")) return true;
     if (t.type == .identifier) return true;
     return t.type == .keyword and (std.mem.eql(u8, t.value, "error") or std.mem.eql(u8, t.value, "null"));
 }

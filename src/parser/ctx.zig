@@ -46,8 +46,11 @@ pub const Parser = struct {
         const next = self.peek(0) orelse return false;
         if (!std.mem.eql(u8, next.value, value)) return false;
         if (next.type == .delimiter) return true;
-        // `|` is bitwise-OR (bin_op) but also capture / type-union punctuation.
-        return std.mem.eql(u8, value, "|") and next.type == .bin_op;
+        // `|` type-union / capture; `*` pointer type — scanned as bin_op.
+        if (next.type == .bin_op) {
+            return std.mem.eql(u8, value, "|") or std.mem.eql(u8, value, "*");
+        }
+        return false;
     }
 
     pub fn advance(self: *Parser) ?Token {
@@ -72,7 +75,8 @@ pub const Parser = struct {
         if (value) |v| {
             const t = self.peek(0) orelse return self.failMsg(message);
             const type_ok = self.check(typ) or
-                (std.mem.eql(u8, v, "|") and typ == .delimiter and t.type == .bin_op);
+                (typ == .delimiter and t.type == .bin_op and
+                    (std.mem.eql(u8, v, "|") or std.mem.eql(u8, v, "*")));
             const ok = (std.mem.eql(u8, t.value, v) and type_ok) or t.type == .eof;
             if (!ok) return self.failTok(t, "{s}", .{message});
             return self.advance() orelse return error.ParseFailed;

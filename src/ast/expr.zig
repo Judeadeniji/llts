@@ -67,6 +67,8 @@ pub const Member = struct {
 pub const Index = struct {
     object: *Node,
     index: *Node,
+    /// When set, this is a slice `object[index..end]` (exclusive end).
+    end: ?*Node = null,
     type_annotation: ?*Node = null,
     loc: Location,
 };
