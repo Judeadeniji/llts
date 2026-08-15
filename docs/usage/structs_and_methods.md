@@ -118,4 +118,4 @@ v.scale(2);
 
 ## 7. `@sizeOf`
 
-Struct size is `field_count * 16` bytes (one VM slot per field). `@sizeOf(Point)` and `@sizeOf(p)` agree when `p` is typed. See [Type introspection](errors.md#sizeof).
+Struct size is the packed byte layout of its fields (widths + alignment), not VM slots. `@sizeOf(Point)` and `@sizeOf(p)` agree when `p` is typed. See [Type introspection](errors.md#sizeof).

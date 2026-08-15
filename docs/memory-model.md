@@ -16,9 +16,9 @@
 
 Pointers into the Value heaps are `Value.ptr: i32` (frame slots from `HEAP_START`, immortal from `IMMORTAL_BASE`).
 
-Struct / value-array layout today: **one `Value` slot per field** → `@sizeOf` ≈ `field_count * 16` (see `src/compiler/intrinsics.zig`). That is a slot footprint, not machine layout.
+Struct / value-array layout: **packed byte offsets** in `vm.bytes` (see `src/compiler/layout.zig`). `@sizeOf` reports real sizes.
 
-Relevant code: `src/vm/state.zig`, `src/vm/execute/heap.zig`, `src/vm/builtins/mem.zig`.
+Relevant code: `src/vm/state.zig`, `src/vm/execute/heap.zig`, `src/vm/builtins/mem.zig`, `src/compiler/widths.zig`.
 
 ### Packed byte policy (step 1 — done)
 
@@ -26,20 +26,20 @@ Relevant code: `src/vm/state.zig`, `src/vm/execute/heap.zig`, `src/vm/builtins/m
 - `allocFrameBytes` bumps `bytes_ptr` only; `CallFrame.bytes_watermark` + `rewindPacked` on return reclaim frame bytes down to the immortal floor.
 - Strings and `[]byte` share `vm.bytes` (no separate `string_bytes` arena).
 
-## Problems
+## Problems (historical)
 
-1. Uniform `Value` slots waste memory and cache on aggregates.
-2. `@sizeOf` / arenas cannot describe real layout.
-3. Extra numeric widths (`u8`, `u16`, …) cannot pay off if everything is still a tagged slot.
-4. Value-slot `memory` / `immortal` still parallel the packed byte region for structs/arrays.
+1. Uniform `Value` slots wasted memory and cache on aggregates.
+2. `@sizeOf` / arenas could not describe real layout.
+3. Extra numeric widths could not pay off if everything was still a tagged slot with lying aliases.
 
 ## Target model
 
 ```
 ┌─────────────────────────────┐
-│ Stack / globals / locals    │  tagged Value (honest types)
-│  int = i64, float = f64     │  (+ ptr / slice handles)
-│  later: real u8/u16/… tags  │
+│ Stack / globals / locals    │  tagged Value (honest widths)
+│  i8..i64, u8..u64, f32/f64  │  (+ ptr / slice handles)
+│  aliases: int→i64, byte→u8  │
+│           float→f64         │
 └──────────────┬──────────────┘
                │ ptr / {offset,len}
                ▼
@@ -60,28 +60,28 @@ Relevant code: `src/vm/state.zig`, `src/vm/execute/heap.zig`, `src/vm/builtins/m
 4. **Lifetime rules stay:** frame vs immortal vs `@new` / escape errors / `defer` / `errdefer`. Only the storage substrate changes.
 5. **No GC. No JIT** in this track.
 
-### Stack numerics (today / Track A)
+### Stack numerics
 
-Only `Value.int` (`i64`) and `Value.float` (`f64`) exist as numeric types — and that is honest. Language aliases that lie (e.g. `i32` → `int`) are separate debt.
+Honest `Value` tags for `i8`…`i64`, `u8`…`u64`, `f32`, `f64`. Language aliases normalize at the type boundary (`int`/`number`→`i64`, `byte`→`u8`, `float`→`f64`); `@typeOf` prints the canonical name.
 
-### When widths land (Track B step 4)
-
-Adding `u8` means typechecker + bytecode/ops + runtime value/layout all know `u8`. Representation may use a compact `Value` tag or typed load/store into the packed heap, but it must remain a true `u8`, not a disguised `i64`.
+Integer literals may coerce into any integer width that fits. Float literals are `f64` and may coerce into `f32`. Runtime cross-width ops require `@as` (`OP_AS`).
 
 Example:
 
 ```llts
 $b: u8 = buf[i];           # stays u8 at runtime
-$n: int = @as(int, b);     # only widen
-# $n = b;                  # illegal once widths exist
+$n: i64 = @as(i64, b);     # only widen
+# $n = b;                  # illegal — mixed widths
+$x: i32 = 42;              # real i32, not an int alias
 ```
 
 ## Migration order
 
 1. **Packed region beside old heaps** — ✅ unified `vm.bytes` for strings + `[]byte`; frame watermark + immortal floor.
 2. **Struct fields as byte layout** — ✅ field byte offsets; `@sizeOf` = real sizes; structs live in `vm.bytes` via `OP_LOAD/STORE_FIELD`.
-3. **Delete Value-slot `memory`/`immortal` arrays for aggregates** — value arrays still Value-slot; then `Value.ptr` becomes a byte offset into the packed heap.
-4. **Storage widths** — first-class `u8`/`u16`/… with explicit casts only.
+3. **Delete Value-slot `memory`/`immortal` arrays for aggregates** — ✅ value arrays are `.array` in `vm.bytes`; Value-slot heap remains for errors / arena control.
+4. **Storage widths** — ✅ full matrix `i8`…`i64`, `u8`…`u64`, `f32`/`f64` + `@as`.
+5. **Slice views** — ✅ `arr[i..j]` on packed bytes / strings (`OP_SLICE`).
 
 ## Non-goals
 
@@ -89,8 +89,7 @@ $n: int = @as(int, b);     # only widen
 - NaN-boxing (optional later micro-opt)
 - Implicit numeric widen/narrow
 - Lying types (annotate `u8` but execute as `i64`)
-- Multi-width tags without packed layout
 
 ## Relation to language P6
 
-This RFC is the substrate for pointers, slices, honest `@sizeOf`, and real widths listed under language roadmap P6. Do not add widths before steps 1–3.
+Packed layout and widths are done. Remaining low-level honesty work is pointers (`*T`), slice polish, and enum payloads — see `TODO.MD` §P6.

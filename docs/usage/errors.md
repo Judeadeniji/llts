@@ -71,36 +71,38 @@ To programmatically check types, use the `@typeOf()` builtin. Useful for asserti
 ```llts
 print(@typeOf(p));     # Point
 print(@typeOf(n));     # i32
-print(@typeOf(msg));   # string
-print(@typeOf(grid));  # [2][2]int
+print(@typeOf(msg));   # []byte
+print(@typeOf(grid));  # [2][2]i64
 ```
 
 ### `@sizeOf`
 
-`@sizeOf(T_or_expr)` returns the VM slot footprint in bytes (compile-time when the argument is a type name or typed value; otherwise `OP_SIZEOF` at runtime).
+`@sizeOf(T_or_expr)` returns the packed layout size in bytes (compile-time when the argument is a type name or typed value; otherwise `OP_SIZEOF` at runtime). See `src/compiler/layout.zig`.
 
 | Argument | Size |
 |---|---|
-| `int` / `float` | `8` |
+| `i8` / `u8` / `byte` | `1` |
+| `i16` / `u16` | `2` |
+| `i32` / `u32` / `f32` | `4` |
+| `i64` / `u64` / `f64` / `int` / `float` | `8` |
 | `bool` | `1` |
 | `null` | `0` |
-| `string` / `[]byte` (type name) | `16` (header: ptr + len) |
-| struct type / typed struct value | `field_count * 16` |
-| runtime fallback (`OP_SIZEOF`) | by value tag (`int`/`float`→8, `bool`→1, heap `ptr`→4, …) |
+| `string` / `[]byte` (type name) | `8` (slice header) |
+| struct type / typed struct value | packed field sizes + alignment |
+| runtime fallback (`OP_SIZEOF`) | by value tag / dynamic layout |
 
 ```llts
 print(@sizeOf(int));       # 8
-print(@sizeOf(Point));     # 48 for three int fields
+print(@sizeOf(u8));        # 1
+print(@sizeOf(Point));     # 24 for three i64 fields
 $p = Point { x: 1, y: 2, z: 3 };
 print(@sizeOf(p));         # same as @sizeOf(Point)
 
 $x = 100;
-print(@sizeOf(x));         # 8 when typed/inferred as int
-$arr = [1, 2, 3, 4];
-print(@sizeOf(arr));       # runtime tag size if no static layout
+print(@sizeOf(x));         # 8 when typed/inferred as i64
 ```
 
-Expects exactly one argument. Covered by `tests/26_sizeof.test.ts` (picked up by `bun test tests/` / `bun run test`).
+Expects exactly one argument. Covered by `tests/26_sizeof.test.ts` and `tests/30_widths.test.ts`.
 
 ## Key Safety Constraints
 1. **Strong Typing on Assignment**: Variables initialized with explicit types (`$var: type = ...`) will reject incompatible runtime or compile-time assignments.

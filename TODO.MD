@@ -70,14 +70,12 @@ Perf gate: `bun benchmarks/run.ts` (1M loop median).
 
 ### P0 — Memory model (layout)
 
-Value-slot heaps (`memory` / `immortal` as `ArrayList(Value)`) are a footgun for density and honest `@sizeOf`.
-Widths (`u8`/`u16`/…) stay out until packed layout exists.
+Packed byte heap + honest numeric widths. See [`docs/memory-model.md`](docs/memory-model.md).
 
-- [x] **Write RFC** — create [`docs/memory-model.md`](docs/memory-model.md) (does **not** exist yet; this checkbox *is* creating it).
+- [x] **Write RFC** — [`docs/memory-model.md`](docs/memory-model.md).
 - [x] **Packed heap region** — one byte bump (frame watermark + immortal/pass region policy).
-- [x] **Struct / array layout in bytes** — struct field offsets + `@sizeOf` = real byte size (value arrays still Value-slot until unify step).
-- [ ] **Unify slices** — strings, `[]byte`, value arrays → ptr+len into that region (strings + `[]byte` + **structs** already share `vm.bytes`; value arrays still Value-slot).
-- [ ] **Widths as real types** — `u8`/`u16`/… mean the same in source, typechecker, and runtime (not secret `i64`). **No** implicit promote/truncate; convert only via explicit cast (RFC: e.g. `@as(T, expr)`).
+- [x] **Unify slices** — strings, `[]byte`, structs, and **value arrays** share `vm.bytes` (`.slice` / `.bytes` / `.array`).
+- [x] **Widths as real types** — full matrix `i8`/`i16`/`i32`/`i64`, `u8`/`u16`/`u32`/`u64`, `f32`/`f64` honest end-to-end; aliases `int`/`number`→`i64`, `byte`→`u8`, `float`→`f64`; convert only via `@as` (integer literals may coerce into any integer width that fits; float literals are `f64` and may coerce into `f32`).
 
 ### P0 — Silent Wrong Behaviour (no error, wrong result)
 
@@ -107,7 +105,7 @@ Widths (`u8`/`u16`/…) stay out until packed layout exists.
 
 - [x] **Type checker pass** — gradual analysis before emit (`src/compiler/typecheck/`).
 - [x] **Return / param / field annotations** when present; unannotated = `Unknown`.
-- [x] **`$name: T`**, `[]T` / `[N]T` (incl. nested), `T | error`, `?T` / `T | null`; aliases `i32`/`number`→`int`, `boolean`→`bool`.
+- [x] **`$name: T`**, `[]T` / `[N]T` (incl. nested), `T | error`, `?T` / `T | null`; numeric aliases `int`/`number`→`i64`, `byte`→`u8`, `float`→`f64`, `boolean`→`bool`.
 - [x] **`string` ≡ `[]byte`**; string literals infer as `[N]byte`.
 - [x] **Structs as types** — including imported `mod.Name` (e.g. `mem.Arena`).
 - [x] **Debug type asserts**; strip with `--release`.
@@ -132,30 +130,29 @@ Forcing function: keep writing the self-hosted compiler. Whatever that parser ca
 
 - [ ] **`*T` / `?*T` as types** — `?Node` is a nullable heap handle pretending to be an optional struct. Linked lists and AST nodes need real pointers.
 - [ ] **Address-of (`&x`)** — take a pointer to a local / field; distinguish value vs handle at the type level, not only by allocation region (`Foo{}` vs `@new`).
-- [ ] **Real `@sizeOf` layout** — today `@sizeOf` is `field_count * 16` (VM slots). Sizes should reflect actual field layout once pointers exist.
+- [x] **Packed `@sizeOf` layout** — struct/primitive sizes use real field layout (`src/compiler/layout.zig`); pointer-sized fields land with `*T`.
 - [ ] **Methods vs pointers** — `self` already mutates like a handle; document/enforce whether methods take `self: T` or `self: *T`.
 
 #### Bytes and slices
 
-- [ ] **One `[]T` model (ptr + len)** — unify interned strings, arena packed `@new(a, []byte, n)`, and value-slot arrays `[1, 2, 3]`. `string ≡ []byte` must be true at runtime, not only in the typechecker.
-- [ ] **Slice syntax `arr[i..j]`** — language-level views; stop using `std/string.slice` as a stand-in.
+- [ ] **One `[]T` model (ptr + len)** — interned strings and arena packed `@new(a, []byte, n)` already share `vm.bytes`; value arrays are `.array` in the same heap. Remaining: single slice header model / open-ended slices (`arr[i..]`, `arr[..j]`).
+- [x] **Slice syntax `arr[i..j]`** — exclusive-end views on `[]byte` / `[N]byte` / string (`.bytes` / `.slice`); bounds-checked; not assignable.
 - [ ] **Runtime-enforced `[N]T`** — fixed buffers with capacity traps; `[N]T` is compile-time only today.
 - [ ] **UTF-8 vs byte length** — clarify `len` / `[N]byte` as bytes (not code points) once strings are `[]byte`.
 
 #### Types that match the VM
 
-- [ ] **`float` as a type** — VM and `std/math` already return floats; the typechecker does not know `float`.
-- [ ] **Stop aliasing `i32` / `number` → `int`** — pick one integer width for the VM era; do not add `u16` / `i64` / packed structs until layout is real.
+- [x] **Numeric width matrix** — `i8`…`i64`, `u8`…`u64`, `f32`/`f64`; aliases `int`/`number`→`i64`, `byte`→`u8`, `float`→`f64`; no implicit cross-width ops (use `@as`).
 
 #### Abstraction without generics
 
-- [ ] **Function types** — e.g. `$f: @func(int): int`. First-class functions exist; their types do not.
+- [ ] **Function types** — e.g. `$f: @func(i64): i64`. First-class functions exist; their types do not.
 - [ ] **Nested / capturing functions** — nested `@func` is not supported; closures do not capture. Decide yes (with region rules) or no.
 - [ ] **Allocator / Reader / Writer without generics** — either small interfaces/vtables, or stay concrete (`mem.Arena` + `[]T` only). Untyped native `std/list` / `std/map` should not remain a third language.
 
 #### Tagged unions
 
-- [ ] **Enum payloads** — `@enum Node { Literal(int), Binary(…), … }` (or equivalent). Enables AST nodes and typed errors without a generic `Node` bag of optional fields.
+- [ ] **Enum payloads** — `@enum Node { Literal(i64), Binary(…), … }` (or equivalent). Enables AST nodes and typed errors without a generic `Node` bag of optional fields.
 - [ ] **`@switch` exhaustiveness** — compile error when enum/union arms are missing and there is no `@else`.
 - [ ] **Typed error sets (optional follow-on)** — once unions exist, `error` codes can be enums instead of strings.
 
@@ -181,4 +178,4 @@ Forcing function: keep writing the self-hosted compiler. Whatever that parser ca
 - C-style `@for ($i=0; i<N; i=i+1)`: not planned; use `@for (0..N) |i|`.
 - **Generics / symbolic `[N]T` type params** — not planned; array lengths stay numeric literals only. Use interfaces or concrete `Arena` + `[]T` instead.
 - **Tracing GC** — not planned; use allocators + `defer` instead.
-- **More `@` directives / extra integer widths** — not until pointers, slices, and layout are real.
+- **More `@` directives** — not until pointers / remaining language surface needs them.
