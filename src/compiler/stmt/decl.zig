@@ -202,17 +202,20 @@ pub fn compileExtern(state: *CompilerState, ext: *const ast.Extern) !void {
 }
 
 pub fn compileStruct(state: *CompilerState, s: *const ast.StructDecl) !void {
-    var offsets = std.StringHashMap(i32).init(state.allocator);
+    const layout = @import("../layout.zig");
     var type_map = std.StringHashMap([]const u8).init(state.allocator);
-    var size: i32 = 0;
+    var field_list: std.ArrayList(layout.FieldSpec) = .empty;
+    defer field_list.deinit(state.allocator);
+
     for (s.fields) |field| {
-        try offsets.put(field.name, size);
-        size += 1;
+        var disp: []const u8 = "int";
         if (field.type_annotation) |ta| {
-            const disp = (try from_ast.typeAstToDisplay(ta, state)) orelse "unknown";
-            try type_map.put(field.name, disp);
+            disp = (try from_ast.typeAstToDisplay(ta, state)) orelse "unknown";
         }
+        try type_map.put(field.name, disp);
+        try field_list.append(state.allocator, .{ .name = field.name, .type_name = disp });
     }
+    const laid = try layout.layoutFields(state.allocator, field_list.items);
     if (state.structs.fetchRemove(s.name)) |kv| {
         var old = kv.value;
         old.offsets.deinit();
@@ -220,8 +223,8 @@ pub fn compileStruct(state: *CompilerState, s: *const ast.StructDecl) !void {
     }
     try state.structs.put(s.name, .{
         .name = s.name,
-        .size = size,
-        .offsets = offsets,
+        .size = laid.size,
+        .offsets = laid.offsets,
         .types = type_map,
     });
 

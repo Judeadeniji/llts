@@ -26,6 +26,7 @@ fn operandBytes(op: OpCode) usize {
         .OP_LINE => 4,
         .OP_CALL_STATIC => 3,
         .OP_FOR_PREP, .OP_FOR_LOOP => 4,
+        .OP_LOAD_FIELD, .OP_STORE_FIELD => 3,
         .OP_GET_LOCAL,
         .OP_SET_LOCAL,
         .OP_PRINT,
@@ -189,6 +190,11 @@ fn formatOperands(
                 const target = ip.* - off;
                 try w.print("i={d} end={d} back={d} -> {d:0>4}", .{ i_slot, end_slot, off, target });
             }
+        },
+        .OP_LOAD_FIELD, .OP_STORE_FIELD => {
+            const off = readShort(code, ip) orelse return false;
+            const kind = readByte(code, ip) orelse return false;
+            try w.print("off={d} kind={d}", .{ off, kind });
         },
         .OP_GET_LOCAL,
         .OP_SET_LOCAL,

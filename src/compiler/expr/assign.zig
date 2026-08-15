@@ -57,20 +57,20 @@ fn assignMember(state: *CompilerState, mem: *const ast.Member, right: *ast.Node,
         if (state.structs.get(types.unwrapOptionalDisplay(type_name))) |sd| {
             if (mem.property.* == .primary) {
                 if (sd.offsets.get(mem.property.primary.name)) |offset| {
+                    const layout = @import("../layout.zig");
+                    const field_ty = sd.types.get(mem.property.primary.name) orelse "int";
+                    const kind: u8 = @intFromEnum(layout.fieldKind(field_ty));
                     if (arith) |op| {
                         try expr.compileExpression(state, mem.object);
-                        try emit.emitConstant(state, .{ .int = offset });
-                        try expr.compileExpression(state, mem.object);
-                        try emit.emitConstant(state, .{ .int = offset });
-                        try emit.emitOp(state, .OP_GET_INDEX);
+                        try emit.emitOp(state, .OP_DUP);
+                        try emit.emitLoadField(state, offset, kind);
                         try expr.compileExpression(state, right);
                         try emit.emitOp(state, op);
                     } else {
                         try expr.compileExpression(state, mem.object);
-                        try emit.emitConstant(state, .{ .int = offset });
                         try expr.compileExpression(state, right);
                     }
-                    try emit.emitOp(state, .OP_SET_INDEX);
+                    try emit.emitStoreField(state, offset, kind);
                     return;
                 }
             }

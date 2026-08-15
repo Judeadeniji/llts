@@ -23,6 +23,7 @@ fn operandBytes(op: OpCode) usize {
         .OP_LINE => 4,
         .OP_CALL_STATIC => 3,
         .OP_FOR_PREP, .OP_FOR_LOOP => 4,
+        .OP_LOAD_FIELD, .OP_STORE_FIELD => 3,
         .OP_GET_LOCAL,
         .OP_SET_LOCAL,
         .OP_PRINT,

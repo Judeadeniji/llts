@@ -58,7 +58,7 @@ pub fn compileArray(state: *CompilerState, arr: *const ast.ArrayLiteral) !void {
 pub fn compileStructInit(state: *CompilerState, init: *const ast.StructInit) !void {
     const struct_def = try resolveStructDef(state, init);
     // Frame bump by default; immortal for module/globals and returned literals (escape.zig).
-    const alloc = if (state.alloc_immortal) "__allocImmortal" else "__alloc";
+    const alloc = if (state.alloc_immortal) "__allocImmortalBytes" else "__allocBytes";
     try emit.emitNameGet(state, .OP_GET_GLOBAL, alloc);
     try emit.emitConstant(state, .{ .int = struct_def.size });
     try emit.emitOp(state, .OP_CALL);
@@ -80,7 +80,7 @@ pub fn compileNew(state: *CompilerState, c: *const ast.Call) !void {
                 return compiler_errors.compileFailFmt(state, "@new struct literal takes (allocator, value)", .{});
             }
             const struct_def = try resolveStructDef(state, init);
-            try emitArenaAlloc(state, c.args[0], struct_def.size);
+            try emitArenaAllocBytes(state, c.args[0], null, struct_def.size);
             try fillStruct(state, init, struct_def);
         },
         .array_literal => |*arr| {
@@ -138,7 +138,7 @@ pub fn compileNew(state: *CompilerState, c: *const ast.Call) !void {
             const struct_def = state.structs.get(struct_name) orelse {
                 return compiler_errors.compileFailFmt(state, "@new unknown type '{s}'", .{p.name});
             };
-            try emitArenaAlloc(state, c.args[0], struct_def.size);
+            try emitArenaAllocBytes(state, c.args[0], null, struct_def.size);
             try zeroFillStruct(state, struct_def);
         },
         else => {
@@ -217,14 +217,15 @@ fn zeroFillArray(state: *CompilerState, length: i32, elem_type: *ast.Node) !void
 }
 
 fn zeroFillStruct(state: *CompilerState, struct_def: state_mod.StructDef) !void {
+    const layout = @import("../layout.zig");
     var it = struct_def.offsets.iterator();
     while (it.next()) |e| {
         const offset = e.value_ptr.*;
         const field_ty = struct_def.types.get(e.key_ptr.*) orelse "int";
+        const kind: u8 = @intFromEnum(layout.fieldKind(field_ty));
         try emit.emitOp(state, .OP_DUP);
-        try emit.emitConstant(state, .{ .int = offset });
         try emitZeroForTypeName(state, field_ty);
-        try emit.emitOp(state, .OP_SET_INDEX);
+        try emit.emitStoreField(state, offset, kind);
         try emit.emitOp(state, .OP_POP);
     }
 }
@@ -239,7 +240,8 @@ fn emitZeroForElemType(state: *CompilerState, elem_type: *ast.Node) !void {
 }
 
 fn emitZeroForTypeName(state: *CompilerState, name: []const u8) !void {
-    if (std.mem.eql(u8, name, "float")) {
+    const layout = @import("../layout.zig");
+    if (std.mem.eql(u8, name, "float") or std.mem.eql(u8, name, "f64") or std.mem.eql(u8, name, "f32")) {
         try emit.emitConstant(state, .{ .float = 0 });
         return;
     }
@@ -251,11 +253,10 @@ fn emitZeroForTypeName(state: *CompilerState, name: []const u8) !void {
         try emit.emitOp(state, .OP_NULL);
         return;
     }
-    // int / byte / stringy headers / unknown scalars → 0
-    if (state.structs.contains(name)) {
-        return compiler_errors.compileFailFmt(state, "@new cannot zero nested struct field of type '{s}' yet", .{name});
+    switch (layout.fieldKind(name)) {
+        .handle, .ptr => try emit.emitOp(state, .OP_NULL),
+        .i64, .f64, .bool, .u8 => try emit.emitConstant(state, .{ .int = 0 }),
     }
-    try emit.emitConstant(state, .{ .int = 0 });
 }
 
 fn resolveStructDef(state: *CompilerState, init: *const ast.StructInit) !state_mod.StructDef {
@@ -291,14 +292,16 @@ fn fillArray(state: *CompilerState, arr: *const ast.ArrayLiteral) !void {
 }
 
 fn fillStruct(state: *CompilerState, init: *const ast.StructInit, struct_def: state_mod.StructDef) !void {
+    const layout = @import("../layout.zig");
     for (init.fields) |field| {
         const offset = struct_def.offsets.get(field.name) orelse {
             return compiler_errors.compileFailFmt(state, "Unknown field {s}", .{field.name});
         };
+        const field_ty = struct_def.types.get(field.name) orelse "int";
+        const kind: u8 = @intFromEnum(layout.fieldKind(field_ty));
         try emit.emitOp(state, .OP_DUP);
-        try emit.emitConstant(state, .{ .int = offset });
         try expr.compileExpression(state, field.value);
-        try emit.emitOp(state, .OP_SET_INDEX);
+        try emit.emitStoreField(state, offset, kind);
         try emit.emitOp(state, .OP_POP);
     }
 }
@@ -331,9 +334,11 @@ pub fn compileMember(state: *CompilerState, mem: *const ast.Member, node: *ast.N
         if (types.lookupStruct(state, type_name)) |sd| {
             if (mem.property.* == .primary) {
                 if (sd.offsets.get(mem.property.primary.name)) |offset| {
+                    const layout = @import("../layout.zig");
+                    const field_ty = sd.types.get(mem.property.primary.name) orelse "int";
+                    const kind: u8 = @intFromEnum(layout.fieldKind(field_ty));
                     try expr.compileExpression(state, mem.object);
-                    try emit.emitConstant(state, .{ .int = offset });
-                    try emit.emitOp(state, .OP_GET_INDEX);
+                    try emit.emitLoadField(state, offset, kind);
                     return;
                 }
             }

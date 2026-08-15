@@ -68,4 +68,7 @@ pub const OpCode = enum(u8) {
     OP_SUB_I64,
     OP_MUL_I64,
     OP_LT_I64,
+    /// Packed struct field: operands u16 byte_offset, u8 FieldKind.
+    OP_LOAD_FIELD,
+    OP_STORE_FIELD,
 };

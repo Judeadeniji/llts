@@ -43,6 +43,8 @@ const DEFAULT_CHUNK: i32 = 64;
 
 var alloc_native: NativeFunction = undefined;
 var alloc_immortal_native: NativeFunction = undefined;
+var alloc_bytes_native: NativeFunction = undefined;
+var alloc_immortal_bytes_native: NativeFunction = undefined;
 var arena_create_native: NativeFunction = undefined;
 var arena_alloc_native: NativeFunction = undefined;
 var arena_alloc_array_native: NativeFunction = undefined;
@@ -64,11 +66,21 @@ fn asHeapPtr(v: Value) !i32 {
 
 /// Resolve Arena object or raw control handle → control block base.
 fn resolveArenaControl(vm: *VMState, v: Value) !i32 {
+    // Packed `Arena { handle: int }` (8 bytes in vm.bytes).
+    if (v == .bytes) {
+        const b = v.bytes;
+        if (b.len < 8) return error.TypeError;
+        const ctrl: i32 = @intCast(std.mem.readInt(i64, vm.bytes.items[b.offset..][0..8], .little));
+        if (!vm.isValidHeapPtr(ctrl)) return error.TypeError;
+        if (vm.slot(ctrl).* == .int and vm.slot(ctrl).*.int == ARENA_MAGIC)
+            return ctrl;
+        return error.TypeError;
+    }
     const raw = try asHeapPtr(v);
     if (!vm.isValidHeapPtr(raw)) return error.TypeError;
     if (vm.slot(raw).* == .int and vm.slot(raw).*.int == ARENA_MAGIC)
         return raw;
-    // Arena struct object: slot 0 = control ptr.
+    // Legacy Value-slot Arena object: slot 0 = control ptr.
     const slot = vm.slot(raw).*;
     const candidate = try asHeapPtr(slot);
     if (!vm.isValidHeapPtr(candidate)) return error.TypeError;
@@ -183,6 +195,30 @@ fn allocImmortalFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     return .{ .ptr = ptr };
 }
 
+fn allocBytesFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
+    const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
+    const n = switch (args[0]) {
+        .int => |x| x,
+        else => return error.TypeError,
+    };
+    if (n < 0) return error.TypeError;
+    if (n == 0) return .{ .bytes = .{ .offset = 0, .len = 0 } };
+    const off = try vm.allocFrameBytes(@intCast(n));
+    return .{ .bytes = .{ .offset = @intCast(off), .len = @intCast(n) } };
+}
+
+fn allocImmortalBytesFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
+    const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
+    const n = switch (args[0]) {
+        .int => |x| x,
+        else => return error.TypeError,
+    };
+    if (n < 0) return error.TypeError;
+    if (n == 0) return .{ .bytes = .{ .offset = 0, .len = 0 } };
+    const off = try vm.allocImmortalBytes(@intCast(n));
+    return .{ .bytes = .{ .offset = @intCast(off), .len = @intCast(n) } };
+}
+
 fn arenaCreate(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
     const hint = switch (args[0]) {
@@ -204,9 +240,10 @@ fn arenaCreate(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     vm.slot(ctrl + 5).* = .{ .ptr = byte_chunk };
     vm.slot(ctrl + 6).* = .{ .ptr = byte_chunk };
 
-    const obj = try vm.allocImmortal(1);
-    vm.slot(obj).* = .{ .ptr = ctrl };
-    return .{ .ptr = obj };
+    // Packed `Arena { handle: int }` — 8-byte object in the byte heap.
+    const off = try vm.allocImmortalBytes(8);
+    std.mem.writeInt(i64, vm.bytes.items[@intCast(off)..][0..8], ctrl, .little);
+    return .{ .bytes = .{ .offset = @intCast(off), .len = 8 } };
 }
 
 fn bumpInChunk(vm: *VMState, chunk: i32, n: i32) ?i32 {
@@ -375,6 +412,8 @@ fn arenaDeinit(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
 pub fn register(vm: *VMState) !void {
     alloc_native = .{ .name = "__alloc", .func = allocFn, .arity = 1 };
     alloc_immortal_native = .{ .name = "__allocImmortal", .func = allocImmortalFn, .arity = 1 };
+    alloc_bytes_native = .{ .name = "__allocBytes", .func = allocBytesFn, .arity = 1 };
+    alloc_immortal_bytes_native = .{ .name = "__allocImmortalBytes", .func = allocImmortalBytesFn, .arity = 1 };
     arena_create_native = .{ .name = "__arena_create", .func = arenaCreate, .arity = 1 };
     arena_alloc_native = .{ .name = "__arena_alloc", .func = arenaAlloc, .arity = 2 };
     arena_alloc_array_native = .{ .name = "__arena_alloc_array", .func = arenaAllocArray, .arity = 2 };
@@ -384,6 +423,8 @@ pub fn register(vm: *VMState) !void {
 
     try vm.defineGlobal("__alloc", .{ .native = &alloc_native });
     try vm.defineGlobal("__allocImmortal", .{ .native = &alloc_immortal_native });
+    try vm.defineGlobal("__allocBytes", .{ .native = &alloc_bytes_native });
+    try vm.defineGlobal("__allocImmortalBytes", .{ .native = &alloc_immortal_bytes_native });
     try vm.defineGlobal("__arena_create", .{ .native = &arena_create_native });
     try vm.defineGlobal("__arena_alloc", .{ .native = &arena_alloc_native });
     try vm.defineGlobal("__arena_alloc_array", .{ .native = &arena_alloc_array_native });

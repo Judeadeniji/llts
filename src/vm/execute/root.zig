@@ -124,6 +124,16 @@ pub fn execute(vm: *VMState, start_ip: usize) RuntimeError!void {
             .OP_STRING_ADD => try heap.stringAdd(vm),
             .OP_GET_INDEX => try heap.getIndex(vm),
             .OP_SET_INDEX => try heap.setIndex(vm),
+            .OP_LOAD_FIELD => {
+                const off = readShort(vm, &ip);
+                const kind = readByte(vm, &ip);
+                try heap.loadField(vm, off, kind);
+            },
+            .OP_STORE_FIELD => {
+                const off = readShort(vm, &ip);
+                const kind = readByte(vm, &ip);
+                try heap.storeField(vm, off, kind);
+            },
             .OP_GET_ARRAY => try heap.getArray(vm),
             .OP_SET_ARRAY => try heap.setArray(vm),
             .OP_MARK_CONST => try debug_ops.markConst(vm, readByte(vm, &ip)),
@@ -135,7 +145,8 @@ pub fn execute(vm: *VMState, start_ip: usize) RuntimeError!void {
                     .bool => 1,
                     .int, .float => 8,
                     .ptr => 4,
-                    .slice, .bytes => 8,
+                    .slice => 8, // string handle footprint
+                    .bytes => |b| b.len, // packed struct / []byte byte size
                     .name => 4,
                     .native, .function, .module, .list, .map, .buffer => 8,
                 };

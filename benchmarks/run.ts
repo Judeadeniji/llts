@@ -40,12 +40,12 @@ function stats(xs: number[]) {
 }
 
 async function ensureLlts() {
-  const exists = await Bun.file(lltsBin).exists();
-  if (exists) return;
+  // Always rebuild ReleaseFast. A plain `zig build` (Debug) overwrites
+  // zig-out/bin/llts and would silently turn this into a ~50× slower "regression".
   console.log("Building llts (ReleaseFast)...");
   await $`zig build -Doptimize=ReleaseFast`.cwd(root);
   if (!(await Bun.file(lltsBin).exists())) {
-    throw new Error(`llts binary missing at ${lltsBin}; run: zig build`);
+    throw new Error(`llts binary missing at ${lltsBin}; run: zig build -Doptimize=ReleaseFast`);
   }
 }
 

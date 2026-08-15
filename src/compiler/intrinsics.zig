@@ -160,9 +160,9 @@ pub fn compile(state: *CompilerState, intr: Intrinsic, node: *ast.Node, c: *cons
                 } else if (std.mem.eql(u8, st, "null")) {
                     is_type = true; size = 0;
                 } else if (std.mem.eql(u8, st, "string") or std.mem.eql(u8, st, "[]byte")) {
-                    is_type = true; size = 16;
+                    is_type = true; size = 8;
                 } else if (state.structs.get(st)) |sd| {
-                    is_type = true; size = sd.size * 16;
+                    is_type = true; size = sd.size;
                 }
                 if (is_type) {
                     try emit.emitConstant(state, .{ .int = size });
@@ -174,7 +174,7 @@ pub fn compile(state: *CompilerState, intr: Intrinsic, node: *ast.Node, c: *cons
                 if (from_ast.lookupStruct(state, type_name)) |sd| {
                     try expr.compileExpression(state, c.args[0]);
                     try emit.emitOp(state, .OP_POP);
-                    try emit.emitConstant(state, .{ .int = sd.size * 16 });
+                    try emit.emitConstant(state, .{ .int = sd.size });
                     return;
                 }
             }

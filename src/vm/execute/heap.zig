@@ -148,7 +148,141 @@ pub fn setArray(vm: *VMState) HeapError!void {
     try stack.push(vm, val);
 }
 
+fn baseBytesOffset(vm: *VMState, base: Value) HeapError!u32 {
+    return switch (base) {
+        .bytes => |b| b.offset,
+        else => return fail(vm, "Packed field access requires a byte object"),
+    };
+}
 
+fn writeU32(vm: *VMState, at: u32, n: u32) void {
+    std.mem.writeInt(u32, vm.bytes.items[at..][0..4], n, .little);
+}
+
+fn readU32(vm: *const VMState, at: u32) u32 {
+    return std.mem.readInt(u32, vm.bytes.items[at..][0..4], .little);
+}
+
+fn writeI64(vm: *VMState, at: u32, n: i64) void {
+    std.mem.writeInt(i64, vm.bytes.items[at..][0..8], n, .little);
+}
+
+fn readI64(vm: *const VMState, at: u32) i64 {
+    return std.mem.readInt(i64, vm.bytes.items[at..][0..8], .little);
+}
+
+fn writeF64(vm: *VMState, at: u32, n: f64) void {
+    const bits: u64 = @bitCast(n);
+    std.mem.writeInt(u64, vm.bytes.items[at..][0..8], bits, .little);
+}
+
+fn readF64(vm: *const VMState, at: u32) f64 {
+    const bits = std.mem.readInt(u64, vm.bytes.items[at..][0..8], .little);
+    return @bitCast(bits);
+}
+
+const HANDLE_NULL_OFFSET: u32 = 0xFFFF_FFFF;
+
+/// Stack: [base] → [field value].
+pub fn loadField(vm: *VMState, byte_offset: u16, kind: u8) HeapError!void {
+    const base = stack.pop(vm);
+    const base_off = try baseBytesOffset(vm, base);
+    const at = base_off + byte_offset;
+    const val: Value = switch (kind) {
+        0 => .{ .int = readI64(vm, at) },
+        1 => .{ .float = readF64(vm, at) },
+        2 => .{ .bool = vm.bytes.items[at] != 0 },
+        3 => blk: {
+            const off = readU32(vm, at);
+            const len = readU32(vm, at + 4);
+            if (off == HANDLE_NULL_OFFSET) break :blk .null;
+            // Nested structs and string/`[]byte` handles share this encoding.
+            break :blk .{ .bytes = .{ .offset = off, .len = len } };
+        },
+        4 => .{ .ptr = @intCast(readI64(vm, at)) },
+        5 => .{ .int = vm.bytes.items[at] },
+        else => return fail(vm, "Unknown field kind"),
+    };
+    try stack.push(vm, val);
+}
+
+/// Stack: [base, value] → [value].
+pub fn storeField(vm: *VMState, byte_offset: u16, kind: u8) HeapError!void {
+    const val = stack.pop(vm);
+    const base = stack.pop(vm);
+    const base_off = try baseBytesOffset(vm, base);
+    const at = base_off + byte_offset;
+    switch (kind) {
+        0 => {
+            const n = switch (val) {
+                .int => |x| x,
+                .bool => |b| @intFromBool(b),
+                .null => @as(i64, 0),
+                else => return fail(vm, "Field store expects int"),
+            };
+            writeI64(vm, at, n);
+        },
+        1 => {
+            const n = switch (val) {
+                .float => |x| x,
+                .int => |x| @as(f64, @floatFromInt(x)),
+                else => return fail(vm, "Field store expects float"),
+            };
+            writeF64(vm, at, n);
+        },
+        2 => {
+            const b = switch (val) {
+                .bool => |x| x,
+                .int => |x| x != 0,
+                .null => false,
+                else => return fail(vm, "Field store expects bool"),
+            };
+            vm.bytes.items[at] = if (b) 1 else 0;
+        },
+        3 => {
+            var off: u32 = HANDLE_NULL_OFFSET;
+            var len: u32 = 0;
+            switch (val) {
+                .null => {},
+                .bytes => |b| {
+                    off = b.offset;
+                    len = b.len;
+                },
+                .slice => |s| {
+                    off = s.offset;
+                    len = s.len;
+                },
+                .name => |idx| {
+                    const data = vm.chunk.stringAt(idx);
+                    off = try vm.appendImmortal(data);
+                    len = @intCast(data.len);
+                },
+                else => return fail(vm, "Field store expects object handle"),
+            }
+            writeU32(vm, at, off);
+            writeU32(vm, at + 4, len);
+        },
+        4 => {
+            const p: i64 = switch (val) {
+                .ptr => |x| x,
+                .null => 0,
+                .int => |x| x,
+                else => return fail(vm, "Field store expects ptr"),
+            };
+            writeI64(vm, at, p);
+        },
+        5 => {
+            const n = switch (val) {
+                .int => |x| x,
+                else => return fail(vm, "Field store expects byte"),
+            };
+            if (n < 0 or n > 255) return fail(vm, "Byte value out of range 0..255");
+            vm.bytes.items[at] = @intCast(n);
+        },
+        else => return fail(vm, "Unknown field kind"),
+    }
+    try stack.push(vm, val);
+}
 
 pub fn makeString(vm: *VMState) HeapError!void {
     const name_val = stack.pop(vm);

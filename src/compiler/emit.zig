@@ -80,6 +80,19 @@ pub fn emitCallStatic(state: *CompilerState, addr: u16, argc: u8) !void {
     try emitByte(state, argc);
 }
 
+/// Packed struct field load/store: u16 byte offset + u8 FieldKind.
+pub fn emitLoadField(state: *CompilerState, offset: i32, kind: u8) !void {
+    try emitOp(state, .OP_LOAD_FIELD);
+    try emitShort(state, @intCast(offset));
+    try emitByte(state, kind);
+}
+
+pub fn emitStoreField(state: *CompilerState, offset: i32, kind: u8) !void {
+    try emitOp(state, .OP_STORE_FIELD);
+    try emitShort(state, @intCast(offset));
+    try emitByte(state, kind);
+}
+
 pub fn noteLoc(state: *CompilerState, line: u32, column: u32, path: []const u8) void {
     if (line > 0) state.diag_line = line;
     if (column > 0) state.diag_column = column;

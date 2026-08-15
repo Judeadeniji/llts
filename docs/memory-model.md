@@ -79,8 +79,8 @@ $n: int = @as(int, b);     # only widen
 ## Migration order
 
 1. **Packed region beside old heaps** — ✅ unified `vm.bytes` for strings + `[]byte`; frame watermark + immortal floor.
-2. **Struct fields as byte layout** — field offsets; change `@sizeOf` to real byte sizes (document alignment: start with align(8) for i64/f64/ptr, align(1) for u8).
-3. **Delete Value-slot `memory`/`immortal` arrays for aggregates** — `Value.ptr` becomes a byte offset into the packed heap.
+2. **Struct fields as byte layout** — ✅ field byte offsets; `@sizeOf` = real sizes; structs live in `vm.bytes` via `OP_LOAD/STORE_FIELD`.
+3. **Delete Value-slot `memory`/`immortal` arrays for aggregates** — value arrays still Value-slot; then `Value.ptr` becomes a byte offset into the packed heap.
 4. **Storage widths** — first-class `u8`/`u16`/… with explicit casts only.
 
 ## Non-goals

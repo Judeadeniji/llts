@@ -8,7 +8,7 @@ print(@sizeOf(float));
 print(@sizeOf(bool));
 print(@sizeOf(null));
 print(@sizeOf(string));
-`), ["8", "8", "1", "0", "16"]);
+`), ["8", "8", "1", "0", "8"]);
 });
 
 test("@sizeOf works for structs statically", () => {
@@ -22,7 +22,7 @@ print(@sizeOf(Point));
 
 $p = Point { x: 1, y: 2, z: 3 };
 print(@sizeOf(p));
-`), ["48", "48"]);
+`), ["24", "24"]);
 });
 
 test("@sizeOf works for runtime dynamic variables", () => {

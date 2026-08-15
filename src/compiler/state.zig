@@ -140,15 +140,16 @@ pub fn create(allocator: std.mem.Allocator) !CompilerState {
 }
 
 fn putStruct(state: *CompilerState, name: []const u8, fields: []const struct { []const u8, []const u8 }) !void {
-    var offsets = std.StringHashMap(i32).init(state.allocator);
+    const layout = @import("layout.zig");
     var types = std.StringHashMap([]const u8).init(state.allocator);
-    var size: i32 = 0;
+    var specs: std.ArrayList(layout.FieldSpec) = .empty;
+    defer specs.deinit(state.allocator);
     for (fields) |f| {
-        try offsets.put(f[0], size);
         try types.put(f[0], f[1]);
-        size += 1;
+        try specs.append(state.allocator, .{ .name = f[0], .type_name = f[1] });
     }
-    try state.structs.put(name, .{ .name = name, .size = size, .offsets = offsets, .types = types });
+    const laid = try layout.layoutFields(state.allocator, specs.items);
+    try state.structs.put(name, .{ .name = name, .size = laid.size, .offsets = laid.offsets, .types = types });
 }
 
 /// Free compiler tables. Does **not** free `chunk` — caller owns it after `compile`.
