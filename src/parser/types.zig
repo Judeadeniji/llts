@@ -73,6 +73,38 @@ fn parseTypeOperand(self: *Parser) ParseError!*Node {
 
 fn parseTypeAtom(self: *Parser) ParseError!*Node {
     const peek = self.peek(0) orelse return self.failMsg("Expected type name");
+
+    // Literal types: `"a"`, `0`, `0x10`, `true`, `false`
+    if (peek.type == .string) {
+        const tok = self.advance().?;
+        return self.create(.{ .literal = .{
+            .literal_type = .string,
+            .value = try self.dupe(tok.value),
+            .loc = self.locOf(tok),
+        } });
+    }
+    if (peek.type == .number or peek.type == .hex or peek.type == .octal or peek.type == .binary) {
+        const tok = self.advance().?;
+        const kind: ast.LiteralKind = switch (peek.type) {
+            .hex => .hex,
+            .octal => .octal,
+            .binary => .binary,
+            else => .number,
+        };
+        return self.create(.{ .literal = .{
+            .literal_type = kind,
+            .value = try self.dupe(tok.value),
+            .loc = self.locOf(tok),
+        } });
+    }
+    if (peek.type == .boolean) {
+        const tok = self.advance().?;
+        return self.create(.{ .literal = .{
+            .literal_type = .boolean,
+            .value = try self.dupe(tok.value),
+            .loc = self.locOf(tok),
+        } });
+    }
     if (peek.type == .keyword and (std.mem.eql(u8, peek.value, "error") or std.mem.eql(u8, peek.value, "null"))) {
         _ = self.advance();
         return self.create(.{ .primary = .{
@@ -87,7 +119,7 @@ fn parseTypeAtom(self: *Parser) ParseError!*Node {
         .name = try self.dupe(type_name.value),
         .loc = self.locOf(type_name),
     } });
-    // `mem.Arena`, `lib.Point`
+    // `mem.Arena`, `lib.Point`, `ExprKind.Literal`
     while (self.checkDelim(".")) {
         _ = self.advance();
         const prop = try self.consume(.identifier, "Expected type name after '.'", null);

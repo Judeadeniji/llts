@@ -72,6 +72,11 @@ pub fn fieldKind(state: ?*state_mod.CompilerState, type_name: []const u8) FieldK
             if (st.enums.contains(ename)) return .i64;
         }
     }
+    // Literal type displays: `"a"`, `0`, `true`
+    if (bare.len >= 2 and bare[0] == '"' and bare[bare.len - 1] == '"') return .handle;
+    if (std.mem.eql(u8, bare, "true") or std.mem.eql(u8, bare, "false")) return .u1;
+    if (bare.len > 0 and bare[0] >= '0' and bare[0] <= '9') return .i64;
+    if (bare.len > 1 and bare[0] == '-' and bare[1] >= '0' and bare[1] <= '9') return .i64;
     return .handle;
 }
 

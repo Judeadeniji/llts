@@ -96,14 +96,18 @@ fn requireAssignAt(state: *state_mod.CompilerState, got: ir.Type, expected: ir.T
             }
         }
     }
+    // Value literal types / `@type` wrapping them (incl. unions of literals): matching literal RHS.
+    if (from) |node| {
+        if (matchesValueLiteralToType(node, expected)) return;
+    }
     // Zig-style: integer literals may coerce into any integer width that fits.
-    if (ir.isInteger(expected) and got == .i64) {
+    if (ir.isInteger(ir.peelDefined(expected)) and got == .i64) {
         if (from) |node| {
             if (intLiteralFits(node, ir.widthOf(expected).?)) return;
         }
     }
     // Float literals are f64; may coerce into f32.
-    if (expected == .f32 and got == .f64) {
+    if (ir.peelDefined(expected) == .f32 and got == .f64) {
         if (from) |node| {
             if (isFloatLiteral(node)) return;
         }
@@ -125,6 +129,37 @@ fn requireAssignAt(state: *state_mod.CompilerState, got: ir.Type, expected: ir.T
         );
     }
     return compiler_errors.compileFailFmt(state, "{s}: type '{s}' is not assignable to '{s}' (use @as)", .{ ctx, g, e });
+}
+
+fn matchesValueLiteralToType(node: *ast.Node, expected: ir.Type) bool {
+    const exp = ir.peelDefined(expected);
+    if (exp == .union_) {
+        for (exp.union_) |arm| {
+            if (matchesValueLiteralToType(node, arm)) return true;
+        }
+        return false;
+    }
+    return matchesValueLiteral(node, exp);
+}
+
+fn matchesValueLiteral(node: *ast.Node, expected: ir.Type) bool {
+    if (node.* != .literal) return false;
+    const lit = node.literal;
+    return switch (expected) {
+        .str_lit => lit.literal_type == .string and std.mem.eql(u8, lit.value, expected.str_lit),
+        .bool_lit => lit.literal_type == .boolean and std.mem.eql(u8, lit.value, if (expected.bool_lit) "true" else "false"),
+        .int_lit => blk: {
+            const n: i64 = switch (lit.literal_type) {
+                .number => std.fmt.parseInt(i64, lit.value, 10) catch break :blk false,
+                .hex => std.fmt.parseInt(i64, lit.value[2..], 16) catch break :blk false,
+                .octal => std.fmt.parseInt(i64, lit.value[2..], 8) catch break :blk false,
+                .binary => std.fmt.parseInt(i64, lit.value[2..], 2) catch break :blk false,
+                else => break :blk false,
+            };
+            break :blk n == expected.int_lit;
+        },
+        else => false,
+    };
 }
 
 fn intLiteralFits(node: *ast.Node, width: @import("../widths.zig").Width) bool {

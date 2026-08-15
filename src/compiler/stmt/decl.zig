@@ -139,11 +139,28 @@ fn typesAssignable(state: *CompilerState, got: []const u8, expected: []const u8)
     const g = from_ast.parseDisplayType(state, ta, got, null) catch return false;
     const e = from_ast.parseDisplayType(state, ta, expected, null) catch return false;
     if (ir.isSubtype(g, e)) return true;
+    // Literal-type annotations: value match was checked in typecheck; emit only checks parent shape.
+    const ep = ir.peelDefined(e);
+    if (literalTypeAcceptsDisplay(ep, got, g)) return true;
     // Untyped integer literal display still spells "int" (not "i64"); may coerce into any integer width,
     // including nested `[N]int` / `[2][3]int` into matching integer arrays.
     if (isUntypedIntDisplay(got) and untypedIntCoerces(g, e)) return true;
     // Untyped / f64 float literal may narrow to f32.
     if ((std.mem.eql(u8, got, "float") or std.mem.eql(u8, got, "f64")) and ir.peelDefined(e) == .f32) return true;
+    return false;
+}
+
+fn literalTypeAcceptsDisplay(expected: ir.Type, got_disp: []const u8, got: ir.Type) bool {
+    const exp = ir.peelDefined(expected);
+    if (exp == .union_) {
+        for (exp.union_) |arm| {
+            if (literalTypeAcceptsDisplay(arm, got_disp, got)) return true;
+        }
+        return false;
+    }
+    if (exp == .str_lit and types.isStringyType(got_disp)) return true;
+    if (exp == .int_lit and (isUntypedIntDisplay(got_disp) or got == .i64 or ir.isInteger(got))) return true;
+    if (exp == .bool_lit and (got == .u1 or std.mem.eql(u8, got_disp, "bool") or std.mem.eql(u8, got_disp, "boolean") or std.mem.eql(u8, got_disp, "u1"))) return true;
     return false;
 }
 

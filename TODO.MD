@@ -202,7 +202,7 @@ $i = @as(ID, u);      # ok
 
 - [x] **`@type Name = T` (distinct)** + **`@alias Name = T` (transparent)**
 - [x] **Nominal assignability + `@as`** — UUID ≠ ID
-- [ ] **Literal types** — `"a"` / `0` / `true` / `Enum.Variant` as RHS; unions of literals
+- [x] **Literal types** — `"a"` / `0` / `true` / `Enum.Variant` as RHS; unions of literals
 - [ ] **Function types** — `@func(params): ret` as a type form
 - [ ] **Object / shape types** — `{ fields; callables }` filled at init
 - [ ] **Tuple types** — `[T, U, …]` values + field/index access

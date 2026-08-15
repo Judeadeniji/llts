@@ -95,3 +95,70 @@ pub @func main() {}
 		"Duplicate type",
 	);
 });
+
+test("string literal types", () => {
+	expectOutput(
+		runSource(`
+@type KindA = "a";
+@type KindB = "b";
+@type Kind = KindA | KindB;
+$k: KindA = "a";
+print(@typeOf(k));
+print(k);
+$m: Kind = "b";
+print(@typeOf(m));
+`),
+		["KindA", "a", "Kind"],
+	);
+});
+
+test("wrong string literal is rejected", () => {
+	expectError(
+		runSource(`
+@type KindA = "a";
+$k: KindA = "b";
+print(k);
+`),
+		"not assignable",
+	);
+});
+
+test("int and bool literal types", () => {
+	expectOutput(
+		runSource(`
+@type Zero = 0;
+@type Yes = true;
+$z: Zero = 0;
+$y: Yes = true;
+print(@typeOf(z));
+print(@typeOf(y));
+print(z);
+print(y);
+`),
+		["Zero", "Yes", "0", "true"],
+	);
+});
+
+test("bare literal type annotation", () => {
+	expectOutput(
+		runSource(`
+$k: "a" = "a";
+print(@typeOf(k));
+print(k);
+`),
+		['"a"', "a"],
+	);
+});
+
+test("literal union KindA | KindB", () => {
+	expectOutput(
+		runSource(`
+@type Kind = "a" | "b";
+$k: Kind = "a";
+print(k);
+$k2: Kind = "b";
+print(k2);
+`),
+		["a", "b"],
+	);
+});

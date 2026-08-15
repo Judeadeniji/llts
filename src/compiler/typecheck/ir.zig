@@ -41,6 +41,10 @@ pub const Type = union(enum) {
     enum_: []const u8,
     /// Singleton enum variant used as a type (`ExprKind.Literal`).
     enum_lit: struct { enum_name: []const u8, variant: []const u8 },
+    /// String / int / bool singleton types (`"a"`, `0`, `true`).
+    str_lit: []const u8,
+    int_lit: i64,
+    bool_lit: bool,
     array: struct { elem: *Type, length: ?usize },
     ptr: *Type,
     union_: []Type,
@@ -157,6 +161,8 @@ pub fn typeFromWidth(w: widths.Width) Type {
 pub fn widthOf(t: Type) ?widths.Width {
     return switch (t) {
         .defined => |d| widthOf(d.underlying.*),
+        .int_lit => .i64,
+        .bool_lit => .u1,
         .u1 => .u1,
         .i8 => .i8,
         .i16 => .i16,
@@ -210,6 +216,9 @@ pub fn displayTypeAlloc(allocator: std.mem.Allocator, t: Type) ![]const u8 {
         .struct_ => |n| try allocator.dupe(u8, n),
         .enum_ => |n| try allocator.dupe(u8, n),
         .enum_lit => |e| try std.fmt.allocPrint(allocator, "{s}.{s}", .{ e.enum_name, e.variant }),
+        .str_lit => |s| try std.fmt.allocPrint(allocator, "\"{s}\"", .{s}),
+        .int_lit => |n| try std.fmt.allocPrint(allocator, "{d}", .{n}),
+        .bool_lit => |b| try allocator.dupe(u8, if (b) "true" else "false"),
         .array => |a| blk: {
             const elem = try displayTypeAlloc(allocator, a.elem.*);
             defer allocator.free(elem);
@@ -268,6 +277,7 @@ pub fn displayTypeSimple(t: Type) ?[]const u8 {
         .struct_ => |n| n,
         .enum_ => |n| n,
         .enum_lit => null,
+        .str_lit, .int_lit, .bool_lit => null,
         .array => |a| if (a.elem.* == .u8 and a.length == null) "[]byte" else null,
         .ptr, .union_ => null,
         .defined => |d| d.name,
@@ -290,6 +300,9 @@ pub fn typeEquals(a: Type, b: Type) bool {
         .struct_ => |n| (b == .struct_ and std.mem.eql(u8, n, b.struct_)) or (b == .enum_ and std.mem.eql(u8, n, b.enum_)),
         .enum_ => |n| (b == .enum_ and std.mem.eql(u8, n, b.enum_)) or (b == .struct_ and std.mem.eql(u8, n, b.struct_)),
         .enum_lit => |e| b == .enum_lit and std.mem.eql(u8, e.enum_name, b.enum_lit.enum_name) and std.mem.eql(u8, e.variant, b.enum_lit.variant),
+        .str_lit => |s| b == .str_lit and std.mem.eql(u8, s, b.str_lit),
+        .int_lit => |n| b == .int_lit and n == b.int_lit,
+        .bool_lit => |v| b == .bool_lit and v == b.bool_lit,
         .array => |aa| b == .array and aa.length == b.array.length and typeEquals(aa.elem.*, b.array.elem.*),
         .ptr => |p| b == .ptr and typeEquals(p.*, b.ptr.*),
         .defined => |d| b == .defined and std.mem.eql(u8, d.name, b.defined.name),
@@ -337,52 +350,89 @@ pub fn structNameOf(t: Type) ?[]const u8 {
     };
 }
 
+/// `a ⊑ b` — assignability. Prefer switching on the *expected* type (`b`).
 pub fn isSubtype(a: Type, b: Type) bool {
-    if (a == .never) return true;
-    if (b == .unknown or a == .unknown) return true;
+    // Hot paths: bottom / top / identical.
+    switch (a) {
+        .never, .unknown => return true,
+        else => {},
+    }
+    if (b == .unknown) return true;
     if (typeEquals(a, b)) return true;
 
-    // Distinct `@type`: coerce *into* Name from underlying-compatible values;
-    // do not silently unwrap Name when used as a value.
-    if (b == .defined) {
-        if (a == .defined) return std.mem.eql(u8, a.defined.name, b.defined.name);
-        return isSubtype(a, b.defined.underlying.*);
-    }
-    if (a == .defined) return false;
+    return switch (b) {
+        // Distinct `@type Name`: coerce *into* Name from underlying; Name values do not unwrap.
+        .defined => |d| switch (a) {
+            .defined => |ad| std.mem.eql(u8, ad.name, d.name),
+            else => isSubtype(a, d.underlying.*),
+        },
+        .union_ => |arms| subtypeOfAny(a, arms),
+        .array => |ba| switch (a) {
+            .array => arraySubtype(a, b),
+            .str_lit => |s| ba.elem.* == .u8 and (ba.length == null or ba.length.? == s.len),
+            .union_ => |arms| subtypeAll(arms, b),
+            .defined => false,
+            else => false,
+        },
+        .ptr => |bp| switch (a) {
+            .ptr => |ap| typeEquals(ap.*, bp.*),
+            .union_ => |arms| subtypeAll(arms, b),
+            .defined => false,
+            else => false,
+        },
+        .enum_ => |ename| switch (a) {
+            .enum_lit => |e| std.mem.eql(u8, e.enum_name, ename),
+            .i64 => true,
+            .union_ => |arms| subtypeAll(arms, b),
+            .defined => false,
+            else => false,
+        },
+        .i64 => switch (a) {
+            .enum_, .enum_lit, .int_lit => true,
+            .union_ => |arms| subtypeAll(arms, b),
+            .defined => false,
+            else => false,
+        },
+        .u1 => switch (a) {
+            .bool_lit => true,
+            .union_ => |arms| subtypeAll(arms, b),
+            .defined => false,
+            else => false,
+        },
+        // Widths and everything else: only union/literal widenings left.
+        else => switch (a) {
+            .defined => false,
+            .union_ => |arms| subtypeAll(arms, b),
+            .str_lit => isByteSlice(b),
+            .int_lit => isInteger(b),
+            .bool_lit => false, // only ⊑ u1, handled above
+            .enum_lit => false,
+            else => false,
+        },
+    };
+}
 
-    if (b == .union_) {
-        for (b.union_) |arm| {
-            if (isSubtype(a, arm)) return true;
-        }
-        return false;
+fn subtypeOfAny(a: Type, arms: []const Type) bool {
+    for (arms) |arm| {
+        if (isSubtype(a, arm)) return true;
     }
-    if (a == .union_) {
-        for (a.union_) |arm| {
-            if (!isSubtype(arm, b)) return false;
-        }
-        return true;
-    }
-
-    if (a == .array and b == .array) {
-        if (!isSubtype(a.array.elem.*, b.array.elem.*)) return false;
-        if (b.array.length == null) return true;
-        if (a.array.length == null) return false;
-        return a.array.length.? == b.array.length.?;
-    }
-    if (a == .ptr and b == .ptr) {
-        return typeEquals(a.ptr.*, b.ptr.*);
-    }
-    // Enum literal ⊑ parent enum; parent enum ≰ literal (need static variant proof).
-    if (a == .enum_lit and b == .enum_) {
-        return std.mem.eql(u8, a.enum_lit.enum_name, b.enum_);
-    }
-    if (a == .enum_lit and b == .enum_lit) {
-        return typeEquals(a, b);
-    }
-    // Tag-only enums / literals are i64-backed.
-    if ((a == .enum_ or a == .enum_lit) and b == .i64) return true;
-    if (a == .i64 and b == .enum_) return true;
     return false;
+}
+
+fn subtypeAll(arms: []const Type, b: Type) bool {
+    for (arms) |arm| {
+        if (!isSubtype(arm, b)) return false;
+    }
+    return true;
+}
+
+fn arraySubtype(a: Type, b: Type) bool {
+    const aa = a.array;
+    const ba = b.array;
+    if (!isSubtype(aa.elem.*, ba.elem.*)) return false;
+    if (ba.length == null) return true;
+    if (aa.length == null) return false;
+    return aa.length.? == ba.length.?;
 }
 
 pub fn involvesUnknown(t: Type) bool {
@@ -468,6 +518,9 @@ pub fn typeTag(t: Type) ?TypeTag {
         .array => |a| if (a.elem.* == .u8) .string else .array,
         .struct_ => .struct_,
         .enum_, .enum_lit => .i64,
+        .int_lit => .i64,
+        .bool_lit => .u1,
+        .str_lit => .string,
         .union_ => |u| if (isErrorUnion(.{ .union_ = u })) .error_union else null,
         else => null,
     };
@@ -506,6 +559,16 @@ pub fn parseDisplayType(ta: TypeAlloc, s_in: []const u8) !Type {
     // Historical display used "int" / "byte".
     if (std.mem.eql(u8, s, "int") or std.mem.eql(u8, s, "number")) return TI64;
     if (std.mem.eql(u8, s, "byte")) return TU8;
+    if (s.len >= 2 and s[0] == '"' and s[s.len - 1] == '"') {
+        return .{ .str_lit = s[1 .. s.len - 1] };
+    }
+    if (std.mem.eql(u8, s, "true")) return .{ .bool_lit = true };
+    if (std.mem.eql(u8, s, "false")) return .{ .bool_lit = false };
+    if (s.len > 0 and (s[0] == '-' or (s[0] >= '0' and s[0] <= '9'))) {
+        if (std.mem.indexOfScalar(u8, s, '.') == null) {
+            if (std.fmt.parseInt(i64, s, 10)) |n| return .{ .int_lit = n } else |_| {}
+        }
+    }
     // `Enum.Variant` literal types (local names; module types use `::`).
     if (std.mem.indexOf(u8, s, "::") == null) {
         if (std.mem.lastIndexOfScalar(u8, s, '.')) |dot| {

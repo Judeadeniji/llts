@@ -11,6 +11,7 @@ pub fn typeFromAst(node: ?*ast.Node, state: ?*state_mod.CompilerState, ta: ir.Ty
     const n = node orelse return ir.TUnknown;
     return switch (n.*) {
         .primary => |p| try resolveNamedType(p.name, state, ta),
+        .literal => |lit| try literalTypeFromAst(state, lit),
         .array_type => |a| blk: {
             const elem = try typeFromAst(a.elem, state, ta);
             var length: ?usize = null;
@@ -33,6 +34,32 @@ pub fn typeFromAst(node: ?*ast.Node, state: ?*state_mod.CompilerState, ta: ir.Ty
         },
         .member => try resolveImportedType(n, state, ta),
         else => ir.TUnknown,
+    };
+}
+
+fn literalTypeFromAst(state: ?*state_mod.CompilerState, lit: ast.Literal) FromAstError!ir.Type {
+    return switch (lit.literal_type) {
+        .string => .{ .str_lit = lit.value },
+        .boolean => .{ .bool_lit = std.mem.eql(u8, lit.value, "true") },
+        .number, .hex, .octal, .binary => blk: {
+            if (std.mem.indexOfScalar(u8, lit.value, '.') != null or
+                std.mem.indexOfScalar(u8, lit.value, 'e') != null or
+                std.mem.indexOfScalar(u8, lit.value, 'E') != null)
+            {
+                if (state) |st| {
+                    return @import("../../errors/compile.zig").compileFailFmt(st, "Float literals are not valid types (use f32/f64)", .{});
+                }
+                return error.CompileError;
+            }
+            const n: i64 = switch (lit.literal_type) {
+                .hex => std.fmt.parseInt(i64, lit.value[2..], 16) catch return error.CompileError,
+                .octal => std.fmt.parseInt(i64, lit.value[2..], 8) catch return error.CompileError,
+                .binary => std.fmt.parseInt(i64, lit.value[2..], 2) catch return error.CompileError,
+                else => std.fmt.parseInt(i64, lit.value, 10) catch return error.CompileError,
+            };
+            break :blk .{ .int_lit = n };
+        },
+        .null => ir.TNull,
     };
 }
 
@@ -110,6 +137,20 @@ pub fn parseDisplayType(
         if (i < s.len and s[i] == ']') {
             const len = std.fmt.parseInt(usize, s[1..i], 10) catch return error.CompileError;
             return try ta.arrayType(try parseDisplayType(state, ta, s[i + 1 ..], cycle), len);
+        }
+    }
+    // Literal types stored as displays: `"a"`, `42`, `true`
+    if (s.len >= 2 and s[0] == '"' and s[s.len - 1] == '"') {
+        const inner = try ta.allocator.dupe(u8, s[1 .. s.len - 1]);
+        return .{ .str_lit = inner };
+    }
+    if (std.mem.eql(u8, s, "true")) return .{ .bool_lit = true };
+    if (std.mem.eql(u8, s, "false")) return .{ .bool_lit = false };
+    if (s.len > 0 and (s[0] == '-' or (s[0] >= '0' and s[0] <= '9'))) {
+        if (std.mem.indexOfScalar(u8, s, '.') == null and std.mem.indexOfScalar(u8, s, 'e') == null and std.mem.indexOfScalar(u8, s, 'E') == null) {
+            if (std.fmt.parseInt(i64, s, 10)) |n| {
+                return .{ .int_lit = n };
+            } else |_| {}
         }
     }
     if (state) |st| {
