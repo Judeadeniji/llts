@@ -43,7 +43,7 @@ test("@new(a, Point) may be returned (Pass region)", () => {
 		runSource(`
 @const $mem = @import("std/mem");
 @struct Point { x: int; y: int; }
-@func make(a): Point {
+@func make(a): *Point {
     $p = @new(a, Point);
     p.x = 1;
     p.y = 2;

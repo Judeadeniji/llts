@@ -25,6 +25,7 @@ pub fn typeFromAst(node: ?*ast.Node, state: ?*state_mod.CompilerState, ta: ir.Ty
             }
             break :blk try ta.arrayType(elem, length);
         },
+        .pointer_type => |p| try ta.ptrType(try typeFromAst(p.elem, state, ta)),
         .union_type => |u| blk: {
             const left = try typeFromAst(u.left, state, ta);
             const right = try typeFromAst(u.right, state, ta);
@@ -66,17 +67,20 @@ fn resolveImportedType(node: *ast.Node, state: ?*state_mod.CompilerState) FromAs
     return @import("../../errors/compile.zig").compileFailFmt(st, "Unknown type '{s}'", .{short});
 }
 
-/// Strip a simple optional wrapper from a type display: `?T` / `T | null` / `null | T` → `T`.
+/// Strip optional / pointer wrappers from a type display for struct name lookup:
+/// `?*Node` / `*Node` / `?Node` / `Node | null` → `Node`.
 pub fn unwrapOptionalDisplay(display: []const u8) []const u8 {
     var t = std.mem.trim(u8, display, " \t");
     while (t.len > 0 and t[0] == '?') {
         t = std.mem.trim(u8, t[1..], " \t");
     }
     if (std.mem.endsWith(u8, t, " | null")) {
-        return std.mem.trim(u8, t[0 .. t.len - 7], " \t");
+        t = std.mem.trim(u8, t[0 .. t.len - 7], " \t");
+    } else if (std.mem.startsWith(u8, t, "null | ")) {
+        t = std.mem.trim(u8, t[7..], " \t");
     }
-    if (std.mem.startsWith(u8, t, "null | ")) {
-        return std.mem.trim(u8, t[7..], " \t");
+    while (t.len > 0 and t[0] == '*') {
+        t = std.mem.trim(u8, t[1..], " \t");
     }
     return t;
 }
@@ -184,7 +188,7 @@ pub fn resolveType(state: *state_mod.CompilerState, node: *ast.Node) ?[]const u8
                     std.mem.indexOfScalar(u8, lit.value, 'e') != null or
                     std.mem.indexOfScalar(u8, lit.value, 'E') != null)
                 {
-                    break :blk "float";
+                    break :blk "f64";
                 }
                 break :blk "int";
             },

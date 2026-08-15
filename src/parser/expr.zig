@@ -258,6 +258,12 @@ pub fn parsePrimary(self: *Parser) ParseError!*Node {
                 return types.parseType(self);
             }
         },
+        .bin_op => {
+            // `*T` as a type expression (e.g. `@sizeOf(*Point)`).
+            if (std.mem.eql(u8, token.value, "*") and looksLikeTypeContinuation(self.peek(1))) {
+                return types.parseType(self);
+            }
+        },
         else => {},
     }
     return self.failTok(token, "Unexpected token in expression: {s} at line {d}", .{ token.value, token.line });

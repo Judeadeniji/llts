@@ -1,7 +1,8 @@
 const std = @import("std");
+const widths = @import("../widths.zig");
 
 pub const TypeTag = enum(u8) {
-    int = 1,
+    i64 = 1,
     bool = 2,
     string = 3,
     null = 4,
@@ -9,13 +10,29 @@ pub const TypeTag = enum(u8) {
     array = 6,
     struct_ = 7,
     error_union = 8,
-    byte = 9,
+    u8 = 9,
+    f32 = 10,
+    f64 = 11,
+    i8 = 12,
+    i16 = 13,
+    i32 = 14,
+    u16 = 15,
+    u32 = 16,
+    u64 = 17,
 };
 
 pub const Type = union(enum) {
-    int,
+    i8,
+    i16,
+    i32,
+    i64,
+    u8,
+    u16,
+    u32,
+    u64,
+    f32,
+    f64,
     bool,
-    byte,
     null,
     error_,
     unknown,
@@ -23,18 +40,31 @@ pub const Type = union(enum) {
     struct_: []const u8,
     enum_: []const u8,
     array: struct { elem: *Type, length: ?usize },
+    ptr: *Type,
     union_: []Type,
 };
 
 pub const TUnknown: Type = .{ .unknown = {} };
-pub const TInt: Type = .{ .int = {} };
+pub const TI8: Type = .{ .i8 = {} };
+pub const TI16: Type = .{ .i16 = {} };
+pub const TI32: Type = .{ .i32 = {} };
+pub const TI64: Type = .{ .i64 = {} };
+/// Alias for the default integer width (`int` / `number` → i64).
+pub const TInt: Type = TI64;
+pub const TU8: Type = .{ .u8 = {} };
+pub const TU16: Type = .{ .u16 = {} };
+pub const TU32: Type = .{ .u32 = {} };
+pub const TU64: Type = .{ .u64 = {} };
+/// Alias for u8 (`byte`).
+pub const TByte: Type = TU8;
 pub const TBool: Type = .{ .bool = {} };
-pub const TByte: Type = .{ .byte = {} };
+pub const TF32: Type = .{ .f32 = {} };
+pub const TF64: Type = .{ .f64 = {} };
 pub const TNull: Type = .{ .null = {} };
 pub const TError: Type = .{ .error_ = {} };
 pub const TNever: Type = .{ .never = {} };
 
-var byte_elem: Type = .{ .byte = {} };
+var byte_elem: Type = .{ .u8 = {} };
 pub const TString: Type = .{ .array = .{ .elem = &byte_elem, .length = null } };
 
 /// Allocator used while building type trees during a typecheck pass.
@@ -52,6 +82,11 @@ pub const TypeAlloc = struct {
         return .{ .array = .{ .elem = ep, .length = length } };
     }
 
+    pub fn ptrType(self: TypeAlloc, elem: Type) !Type {
+        const ep = try self.allocType(elem);
+        return .{ .ptr = ep };
+    }
+
     pub fn unionType(self: TypeAlloc, arms: []const Type) !Type {
         var flat: std.ArrayList(Type) = .empty;
         defer flat.deinit(self.allocator);
@@ -62,7 +97,6 @@ pub const TypeAlloc = struct {
                 else => try flat.append(self.allocator, a),
             }
         }
-        // Dedup by display key (best-effort without owned strings)
         var unique: std.ArrayList(Type) = .empty;
         errdefer unique.deinit(self.allocator);
         for (flat.items) |a| {
@@ -86,11 +120,40 @@ pub const TypeAlloc = struct {
     }
 };
 
+pub fn typeFromWidth(w: widths.Width) Type {
+    return switch (w) {
+        .i8 => TI8,
+        .i16 => TI16,
+        .i32 => TI32,
+        .i64 => TI64,
+        .u8 => TU8,
+        .u16 => TU16,
+        .u32 => TU32,
+        .u64 => TU64,
+        .f32 => TF32,
+        .f64 => TF64,
+    };
+}
+
+pub fn widthOf(t: Type) ?widths.Width {
+    return switch (t) {
+        .i8 => .i8,
+        .i16 => .i16,
+        .i32 => .i32,
+        .i64 => .i64,
+        .u8 => .u8,
+        .u16 => .u16,
+        .u32 => .u32,
+        .u64 => .u64,
+        .f32 => .f32,
+        .f64 => .f64,
+        else => null,
+    };
+}
+
 pub fn namedType(name: []const u8) Type {
-    if (std.mem.eql(u8, name, "int") or std.mem.eql(u8, name, "i32") or std.mem.eql(u8, name, "number"))
-        return TInt;
+    if (widths.fromName(name)) |w| return typeFromWidth(w);
     if (std.mem.eql(u8, name, "bool") or std.mem.eql(u8, name, "boolean")) return TBool;
-    if (std.mem.eql(u8, name, "byte") or std.mem.eql(u8, name, "u8")) return TByte;
     if (std.mem.eql(u8, name, "null")) return TNull;
     if (std.mem.eql(u8, name, "error")) return TError;
     if (std.mem.eql(u8, name, "string")) return TString;
@@ -98,7 +161,6 @@ pub fn namedType(name: []const u8) Type {
     return .{ .struct_ = name };
 }
 
-/// Builtin / primitive type names (not structs/enums).
 pub fn isBuiltinTypeName(name: []const u8) bool {
     return switch (namedType(name)) {
         .struct_ => false,
@@ -106,11 +168,22 @@ pub fn isBuiltinTypeName(name: []const u8) bool {
     };
 }
 
+pub fn isNumeric(t: Type) bool {
+    return widthOf(t) != null;
+}
+
+pub fn isInteger(t: Type) bool {
+    return if (widthOf(t)) |w| !w.isFloat() else false;
+}
+
+fn displayWidth(t: Type) []const u8 {
+    return widthOf(t).?.name();
+}
+
 pub fn displayTypeAlloc(allocator: std.mem.Allocator, t: Type) ![]const u8 {
     return switch (t) {
-        .int => try allocator.dupe(u8, "int"),
+        .i8, .i16, .i32, .i64, .u8, .u16, .u32, .u64, .f32, .f64 => try allocator.dupe(u8, displayWidth(t)),
         .bool => try allocator.dupe(u8, "bool"),
-        .byte => try allocator.dupe(u8, "byte"),
         .null => try allocator.dupe(u8, "null"),
         .error_ => try allocator.dupe(u8, "error"),
         .unknown => try allocator.dupe(u8, "unknown"),
@@ -120,14 +193,21 @@ pub fn displayTypeAlloc(allocator: std.mem.Allocator, t: Type) ![]const u8 {
         .array => |a| blk: {
             const elem = try displayTypeAlloc(allocator, a.elem.*);
             defer allocator.free(elem);
+            // Prefer `[]byte` spelling for u8 slices (string ≡ []byte).
+            const elem_disp = if (a.elem.* == .u8) "byte" else elem;
             if (a.length) |len| {
-                break :blk try std.fmt.allocPrint(allocator, "[{d}]{s}", .{ len, elem });
+                break :blk try std.fmt.allocPrint(allocator, "[{d}]{s}", .{ len, elem_disp });
             }
-            break :blk try std.fmt.allocPrint(allocator, "[]{s}", .{elem});
+            break :blk try std.fmt.allocPrint(allocator, "[]{s}", .{elem_disp});
+        },
+        .ptr => |p| blk: {
+            const inner = try displayTypeAlloc(allocator, p.*);
+            defer allocator.free(inner);
+            break :blk try std.fmt.allocPrint(allocator, "*{s}", .{inner});
         },
         .union_ => |arms| blk: {
-            if (optionalPayload(t)) |p| {
-                const inner = try displayTypeAlloc(allocator, p);
+            if (optionalPayload(t)) |payload| {
+                const inner = try displayTypeAlloc(allocator, payload);
                 defer allocator.free(inner);
                 break :blk try std.fmt.allocPrint(allocator, "?{s}", .{inner});
             }
@@ -136,15 +216,13 @@ pub fn displayTypeAlloc(allocator: std.mem.Allocator, t: Type) ![]const u8 {
                 for (parts.items) |p| allocator.free(p);
                 parts.deinit(allocator);
             }
-            for (arms) |arm| {
-                try parts.append(allocator, try displayTypeAlloc(allocator, arm));
-            }
+            for (arms) |arm| try parts.append(allocator, try displayTypeAlloc(allocator, arm));
             var total: usize = 0;
             for (parts.items, 0..) |p, i| {
                 total += p.len;
-                if (i > 0) total += 3; // " | "
+                if (i > 0) total += 3;
             }
-            var out = try allocator.alloc(u8, total);
+            const out = try allocator.alloc(u8, total);
             var offset: usize = 0;
             for (parts.items, 0..) |p, i| {
                 if (i > 0) {
@@ -159,24 +237,21 @@ pub fn displayTypeAlloc(allocator: std.mem.Allocator, t: Type) ![]const u8 {
     };
 }
 
-/// Static display for simple types (no allocation). Nested arrays/unions return null.
 pub fn displayTypeSimple(t: Type) ?[]const u8 {
     return switch (t) {
-        .int => "int",
+        .i8, .i16, .i32, .i64, .u8, .u16, .u32, .u64, .f32, .f64 => displayWidth(t),
         .bool => "bool",
-        .byte => "byte",
         .null => "null",
         .error_ => "error",
         .unknown => "unknown",
         .never => "never",
         .struct_ => |n| n,
         .enum_ => |n| n,
-        .array => |a| if (a.elem.* == .byte and a.length == null) "[]byte" else null,
-        .union_ => null,
+        .array => |a| if (a.elem.* == .u8 and a.length == null) "[]byte" else null,
+        .ptr, .union_ => null,
     };
 }
 
-/// Back-compat: prefer simple; callers needing full display should use displayTypeAlloc.
 pub fn displayType(t: Type) []const u8 {
     return displayTypeSimple(t) orelse "unknown";
 }
@@ -184,15 +259,16 @@ pub fn displayType(t: Type) []const u8 {
 pub fn typeEquals(a: Type, b: Type) bool {
     if (std.meta.activeTag(a) != std.meta.activeTag(b)) {
         if (a == .union_ or b == .union_) {
-            // Fall through to structural compare
+            // Fall through
         } else if ((a == .struct_ or a == .enum_) and (b == .struct_ or b == .enum_)) {
-            // Fall through to allow struct/enum name comparison
+            // Fall through
         } else return false;
     }
     return switch (a) {
         .struct_ => |n| (b == .struct_ and std.mem.eql(u8, n, b.struct_)) or (b == .enum_ and std.mem.eql(u8, n, b.enum_)),
         .enum_ => |n| (b == .enum_ and std.mem.eql(u8, n, b.enum_)) or (b == .struct_ and std.mem.eql(u8, n, b.struct_)),
         .array => |aa| b == .array and aa.length == b.array.length and typeEquals(aa.elem.*, b.array.elem.*),
+        .ptr => |p| b == .ptr and typeEquals(p.*, b.ptr.*),
         .union_ => |arms| blk: {
             if (b != .union_) break :blk false;
             if (arms.len != b.union_.len) break :blk false;
@@ -208,11 +284,10 @@ pub fn typeEquals(a: Type, b: Type) bool {
             }
             break :blk true;
         },
-        .int, .bool, .byte, .null, .error_, .unknown, .never => std.meta.activeTag(a) == std.meta.activeTag(b),
+        .i8, .i16, .i32, .i64, .u8, .u16, .u32, .u64, .f32, .f64, .bool, .null, .error_, .unknown, .never => std.meta.activeTag(a) == std.meta.activeTag(b),
     };
 }
 
-/// Payload `T` when `t` is a simple optional (`T | null` / `?T`).
 pub fn optionalPayload(t: Type) ?Type {
     if (t != .union_) return null;
     var payload: ?Type = null;
@@ -229,14 +304,11 @@ pub fn optionalPayload(t: Type) ?Type {
     return payload;
 }
 
-/// Struct name for `T` or `?T` / `T | null`.
 pub fn structNameOf(t: Type) ?[]const u8 {
     return switch (t) {
         .struct_ => |n| n,
-        else => if (optionalPayload(t)) |p| switch (p) {
-            .struct_ => |n| n,
-            else => null,
-        } else null,
+        .ptr => |p| structNameOf(p.*),
+        else => if (optionalPayload(t)) |p| structNameOf(p) else null,
     };
 }
 
@@ -264,9 +336,12 @@ pub fn isSubtype(a: Type, b: Type) bool {
         if (a.array.length == null) return false;
         return a.array.length.? == b.array.length.?;
     }
-    // Enums are int-backed: allow enum ↔ int for gradual interop with literals.
-    if (a == .enum_ and b == .int) return true;
-    if (a == .int and b == .enum_) return true;
+    if (a == .ptr and b == .ptr) {
+        return typeEquals(a.ptr.*, b.ptr.*);
+    }
+    // Enums are i64-backed.
+    if (a == .enum_ and b == .i64) return true;
+    if (a == .i64 and b == .enum_) return true;
     return false;
 }
 
@@ -274,6 +349,7 @@ pub fn involvesUnknown(t: Type) bool {
     return switch (t) {
         .unknown => true,
         .array => |a| involvesUnknown(a.elem.*),
+        .ptr => |p| involvesUnknown(p.*),
         .union_ => |arms| blk: {
             for (arms) |arm| {
                 if (involvesUnknown(arm)) break :blk true;
@@ -285,23 +361,16 @@ pub fn involvesUnknown(t: Type) bool {
 }
 
 pub fn isErrorUnion(t: Type) bool {
-    if (t != .union_) return false;
-    for (t.union_) |arm| {
-        if (arm == .error_) return true;
-    }
-    return false;
-}
-
-pub fn unwrapError(ta: TypeAlloc, t: Type) !Type {
-    if (t != .union_) return t;
-    var rest: std.ArrayList(Type) = .empty;
-    defer rest.deinit(ta.allocator);
-    for (t.union_) |arm| {
-        if (arm != .error_) try rest.append(ta.allocator, arm);
-    }
-    if (rest.items.len == 0) return TError;
-    if (rest.items.len == 1) return rest.items[0];
-    return try ta.unionType(rest.items);
+    return switch (t) {
+        .error_ => true,
+        .union_ => |arms| blk: {
+            for (arms) |arm| {
+                if (arm == .error_) break :blk true;
+            }
+            break :blk false;
+        },
+        else => false,
+    };
 }
 
 pub fn allowsError(t: Type) bool {
@@ -317,20 +386,43 @@ pub fn allowsError(t: Type) bool {
     };
 }
 
+pub fn unwrapError(ta: TypeAlloc, t: Type) !Type {
+    return switch (t) {
+        .error_ => TNever,
+        .union_ => |arms| blk: {
+            var kept: std.ArrayList(Type) = .empty;
+            defer kept.deinit(ta.allocator);
+            for (arms) |arm| {
+                if (arm != .error_) try kept.append(ta.allocator, arm);
+            }
+            break :blk try ta.unionType(kept.items);
+        },
+        else => t,
+    };
+}
+
 pub fn isByteSlice(t: Type) bool {
-    return t == .array and t.array.elem.* == .byte;
+    return t == .array and t.array.elem.* == .u8;
 }
 
 pub fn typeTag(t: Type) ?TypeTag {
     return switch (t) {
-        .int => .int,
+        .i8 => .i8,
+        .i16 => .i16,
+        .i32 => .i32,
+        .i64 => .i64,
+        .u8 => .u8,
+        .u16 => .u16,
+        .u32 => .u32,
+        .u64 => .u64,
+        .f32 => .f32,
+        .f64 => .f64,
         .bool => .bool,
-        .byte => .byte,
         .null => .null,
         .error_ => .error_,
-        .array => |a| if (a.elem.* == .byte) .string else .array,
+        .array => |a| if (a.elem.* == .u8) .string else .array,
         .struct_ => .struct_,
-        .enum_ => .int, // runtime values are ints
+        .enum_ => .i64,
         .union_ => if (isErrorUnion(t)) .error_union else null,
         else => null,
     };
@@ -352,18 +444,23 @@ pub fn parseDisplayType(ta: TypeAlloc, s_in: []const u8) !Type {
         const inner = try parseDisplayType(ta, s[1..]);
         return try ta.unionType(&.{ inner, TNull });
     }
+    if (s.len > 0 and s[0] == '*') {
+        return try ta.ptrType(try parseDisplayType(ta, s[1..]));
+    }
     if (s.len > 0 and s[0] == '[') {
         if (s.len >= 2 and s[1] == ']') {
             return try ta.arrayType(try parseDisplayType(ta, s[2..]), null);
         }
         var i: usize = 1;
         while (i < s.len and s[i] >= '0' and s[i] <= '9') : (i += 1) {}
-        if (i < s.len and s[i] == ']' and i > 1) {
+        if (i < s.len and s[i] == ']') {
             const len = try std.fmt.parseInt(usize, s[1..i], 10);
             return try ta.arrayType(try parseDisplayType(ta, s[i + 1 ..]), len);
         }
-        return namedType(s);
     }
+    // Historical display used "int" / "byte".
+    if (std.mem.eql(u8, s, "int") or std.mem.eql(u8, s, "number")) return TI64;
+    if (std.mem.eql(u8, s, "byte")) return TU8;
     return namedType(s);
 }
 
@@ -373,16 +470,18 @@ fn splitTopLevel(allocator: std.mem.Allocator, s: []const u8, sep: []const u8) !
     var depth: i32 = 0;
     var start: usize = 0;
     var i: usize = 0;
-    while (i < s.len) : (i += 1) {
-        const ch = s[i];
-        if (ch == '[') depth += 1 else if (ch == ']') depth -= 1 else if (depth == 0 and std.mem.startsWith(u8, s[i..], sep)) {
-            const part = std.mem.trim(u8, s[start..i], " \t");
-            if (part.len > 0) try parts.append(allocator, part);
-            i += sep.len - 1;
-            start = i + 1;
+    while (i < s.len) {
+        const c = s[i];
+        if (c == '[') depth += 1;
+        if (c == ']') depth -= 1;
+        if (depth == 0 and std.mem.startsWith(u8, s[i..], sep)) {
+            try parts.append(allocator, std.mem.trim(u8, s[start..i], " \t"));
+            i += sep.len;
+            start = i;
+            continue;
         }
+        i += 1;
     }
-    const last = std.mem.trim(u8, s[start..], " \t");
-    if (last.len > 0) try parts.append(allocator, last);
+    try parts.append(allocator, std.mem.trim(u8, s[start..], " \t"));
     return try parts.toOwnedSlice(allocator);
 }

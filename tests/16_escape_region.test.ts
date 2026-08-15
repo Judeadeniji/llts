@@ -37,7 +37,7 @@ test("@new into Arena may return struct", () => {
 $mem = @import("std/mem");
 @struct Point { x: int; y: int; }
 
-@func make(a): Point {
+@func make(a): *Point {
     return @new(a, Point { x: 3, y: 4 });
 }
 
