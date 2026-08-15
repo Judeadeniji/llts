@@ -29,6 +29,12 @@ pub fn compileCall(state: *CompilerState, c: *const ast.Call, node: *ast.Node) !
         return @import("../../errors/compile.zig").compileFailFmt(state, "unknown intrinsic '{s}'", .{name});
     }
 
+    // `T(x)` cast sugar ≡ `@as(T, x)`.
+    if (try intrinsics.tryTypeCastCall(state, c)) |type_node| {
+        try intrinsics.compileCast(state, type_node, c.args[0]);
+        return;
+    }
+
     // Method call: obj.method(args) → Type::method(obj, args...)
     if (c.callee.* == .member) {
         const mem = &c.callee.member;

@@ -96,10 +96,7 @@ pub fn typecheck(state: *CompilerState, env: *typecheck_root.Env, ta: ir.TypeAll
             return ir.TInt;
         },
         .as => {
-            const target = try from_ast.typeFromAst(c.args[0], state, ta);
-            const src = try typecheck_root.inferExpr(state, env, ta, c.args[1]);
-            try checkAsCast(state, src, target);
-            return target;
+            return try typecheckCast(state, env, ta, c.args[0], c.args[1]);
         },
         .new => {
             _ = try typecheck_root.inferExpr(state, env, ta, c.args[0]);
@@ -214,14 +211,7 @@ pub fn compile(state: *CompilerState, intr: Intrinsic, node: *ast.Node, c: *cons
             try emit.emitOp(state, .OP_SIZEOF);
         },
         .as => {
-            if (try asCastKind(state, c.args[0])) |kind| {
-                try expr.compileExpression(state, c.args[1]);
-                try emit.emitOp(state, .OP_AS);
-                try emit.emitByte(state, kind);
-            } else {
-                // Same representation (e.g. UUID ↔ ID) — value only.
-                try expr.compileExpression(state, c.args[1]);
-            }
+            try compileCast(state, c.args[0], c.args[1]);
         },
         .new => {
             try aggregate.compileNew(state, c);
@@ -229,8 +219,79 @@ pub fn compile(state: *CompilerState, intr: Intrinsic, node: *ast.Node, c: *cons
     }
 }
 
+/// `Name(expr)` cast sugar when `Name` is a type and not a function/native.
+/// Returns the type AST node (the callee) on match.
+pub fn tryTypeCastCall(state: *CompilerState, c: *const ast.Call) !?*ast.Node {
+    if (c.args.len != 1) return null;
+
+    if (c.callee.* == .primary) {
+        const name = c.callee.primary.name;
+        if (name.len == 0 or name[0] == '@') return null;
+        if (isCallableName(state, name)) return null;
+        if (!isTypeName(state, name)) return null;
+        return c.callee;
+    }
+
+    if (c.callee.* == .member) {
+        // `Mod.Type(x)` / `Enum.Variant(x)` via static path only — not `obj.field(x)`.
+        const resolved = (path.tryResolveStaticPath(state, c.callee) catch null) orelse return null;
+        if (isCallableName(state, resolved)) return null;
+        if (!isTypeName(state, resolved)) return null;
+        return c.callee;
+    }
+
+    return null;
+}
+
+fn isCallableName(state: *CompilerState, name: []const u8) bool {
+    if (state.functions.contains(name)) return true;
+    if (state.chunk.functions.contains(name)) return true;
+    if (state.native_globals.contains(name)) return true;
+    return false;
+}
+
+fn isTypeName(state: *CompilerState, name: []const u8) bool {
+    if (ir.isBuiltinTypeName(name)) return true;
+    if (std.mem.eql(u8, name, "[]byte")) return true;
+    if (state.typedefs.contains(name)) return true;
+    if (state.structs.contains(name)) return true;
+    if (state.enums.contains(name)) return true;
+    // `Enum.Variant` singleton type
+    if (std.mem.indexOf(u8, name, "::") == null) {
+        if (std.mem.lastIndexOfScalar(u8, name, '.')) |dot| {
+            if (dot > 0 and dot + 1 < name.len) {
+                const ename = name[0..dot];
+                const vname = name[dot + 1 ..];
+                if (state.enums.get(ename)) |ed| {
+                    if (ed.variants.contains(vname)) return true;
+                }
+            }
+        }
+    }
+    return false;
+}
+
+/// Typecheck `T(x)` / `@as(T, x)` — returns the target type.
+pub fn typecheckCast(state: *CompilerState, env: *typecheck_root.Env, ta: ir.TypeAlloc, type_node: *ast.Node, value: *ast.Node) !ir.Type {
+    const target = try from_ast.typeFromAst(type_node, state, ta);
+    const src = try typecheck_root.inferExpr(state, env, ta, value);
+    try checkAsCast(state, src, target);
+    return target;
+}
+
+/// Emit `T(x)` / `@as(T, x)`.
+pub fn compileCast(state: *CompilerState, type_node: *ast.Node, value: *ast.Node) !void {
+    if (try asCastKind(state, type_node)) |kind| {
+        try expr.compileExpression(state, value);
+        try emit.emitOp(state, .OP_AS);
+        try emit.emitByte(state, kind);
+    } else {
+        try expr.compileExpression(state, value);
+    }
+}
+
 /// Operand for `OP_AS`: `widths.Width` discriminant, or null when no runtime cast needed.
-fn asCastKind(state: *CompilerState, type_node: *ast.Node) !?u8 {
+pub fn asCastKind(state: *CompilerState, type_node: *ast.Node) !?u8 {
     const widths = @import("widths.zig");
     var arena = std.heap.ArenaAllocator.init(state.allocator);
     defer arena.deinit();
@@ -243,7 +304,7 @@ fn asCastKind(state: *CompilerState, type_node: *ast.Node) !?u8 {
     return null;
 }
 
-fn checkAsCast(state: *CompilerState, src: ir.Type, target: ir.Type) !void {
+pub fn checkAsCast(state: *CompilerState, src: ir.Type, target: ir.Type) !void {
     if (ir.involvesUnknown(src) or ir.involvesUnknown(target)) return;
     const su = ir.peelDefined(src);
     const tu = ir.peelDefined(target);
@@ -254,5 +315,5 @@ fn checkAsCast(state: *CompilerState, src: ir.Type, target: ir.Type) !void {
     if (ir.typeEquals(su, tu) or ir.isSubtype(su, tu) or ir.isSubtype(tu, su)) return;
     const ds = try typecheck_root.ownDisplay(state, src);
     const dt = try typecheck_root.ownDisplay(state, target);
-    return compile_errors.compileFailFmt(state, "cannot @as({s}, …) from '{s}'", .{ dt, ds });
+    return compile_errors.compileFailFmt(state, "cannot cast to '{s}' from '{s}'", .{ dt, ds });
 }

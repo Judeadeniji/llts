@@ -32,6 +32,41 @@ print(i);
 	);
 });
 
+test("T(x) cast sugar for distinct @type names", () => {
+	expectOutput(
+		runSource(`
+@type UUID = string;
+@type ID = string;
+$u: UUID = "abc";
+$i: ID = ID(u);
+print(@typeOf(i));
+print(i);
+`),
+		["ID", "abc"],
+	);
+});
+
+test("T(x) still calls functions when Name is a function", () => {
+	expectOutput(
+		runSource(`
+@func add(a: i64): i64 { return a + 1; }
+print(add(41));
+`),
+		["42"],
+	);
+});
+
+test("T(x) rejects impossible cast", () => {
+	expectError(
+		runSource(`
+@type UUID = string;
+$n: i64 = 1;
+$u = UUID(n);
+`),
+		"cannot cast",
+	);
+});
+
 test("@alias is transparent", () => {
 	expectOutput(
 		runSource(`

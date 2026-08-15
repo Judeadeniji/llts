@@ -846,6 +846,11 @@ fn inferCall(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, call_
         return compiler_errors.compileFailFmt(state, "unknown intrinsic '{s}'", .{name});
     }
 
+    // `T(x)` cast sugar ≡ `@as(T, x)` when T is a type and not a function.
+    if (try intrinsics.tryTypeCastCall(state, c)) |type_node| {
+        return try intrinsics.typecheckCast(state, env, ta, type_node, c.args[0]);
+    }
+
     const method = try resolveMethodCallee(state, env, ta, c);
     const name: ?[]const u8 = if (method) |m| m.name else resolveCalleeName(state, c);
     const named_fn = if (name) |n| state.functions.contains(n) else false;

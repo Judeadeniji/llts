@@ -77,3 +77,28 @@ print(b);
 		"out of range",
 	);
 });
+
+test("T(x) cast sugar matches @as for widths", () => {
+	expectOutput(
+		runSource(`
+$b: u8 = u8(42);
+print(@typeOf(b));
+print(b);
+$n: int = i64(b);
+print(@typeOf(n));
+print(n);
+`),
+		["u8", "42", "i64", "42"],
+	);
+});
+
+test("T(x) rejects bad width cast at runtime", () => {
+	expectError(
+		runSource(`
+$n: int = 300;
+$b: u8 = u8(n);
+print(b);
+`),
+		"out of range",
+	);
+});
