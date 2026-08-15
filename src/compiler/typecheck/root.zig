@@ -88,6 +88,14 @@ pub fn requireAssignFrom(state: *state_mod.CompilerState, got: ir.Type, expected
 fn requireAssignAt(state: *state_mod.CompilerState, got: ir.Type, expected: ir.Type, ctx: []const u8, loc: ast.Location, from: ?*ast.Node) TypecheckError!void {
     if (ir.involvesUnknown(got) or ir.involvesUnknown(expected)) return;
     if (ir.isSubtype(got, expected)) return;
+    // Whole enum value → literal field only when RHS is that static variant.
+    if (got == .enum_ and expected == .enum_lit) {
+        if (std.mem.eql(u8, got.enum_, expected.enum_lit.enum_name)) {
+            if (from) |node| {
+                if (isEnumVariantValue(state, node, expected.enum_lit.enum_name, expected.enum_lit.variant)) return;
+            }
+        }
+    }
     // Zig-style: integer literals may coerce into any integer width that fits.
     if (ir.isInteger(expected) and got == .i64) {
         if (from) |node| {
@@ -144,6 +152,15 @@ fn isFloatLiteral(node: *ast.Node) bool {
         std.mem.indexOfScalar(u8, lit.value, 'E') != null;
 }
 
+fn isEnumVariantValue(state: *state_mod.CompilerState, node: *ast.Node, enum_name: []const u8, variant: []const u8) bool {
+    if (node.* != .member) return false;
+    const mem = node.member;
+    if (mem.property.* != .primary) return false;
+    if (!std.mem.eql(u8, mem.property.primary.name, variant)) return false;
+    const ename = from_ast.resolveEnumName(state, mem.object) orelse return false;
+    return std.mem.eql(u8, ename, enum_name);
+}
+
 fn isNumericType(t: ir.Type) bool {
     return ir.isNumeric(t);
 }
@@ -185,6 +202,84 @@ fn fieldTypeFromStruct(state: *state_mod.CompilerState, ta: ir.TypeAlloc, struct
     const def = state.structs.get(struct_name) orelse return ir.TUnknown;
     const raw = def.types.get(field) orelse return ir.TUnknown;
     return try ir.parseDisplayType(ta, raw);
+}
+
+/// Field type on a struct union. Discriminant `kind` with enum literals → parent enum.
+fn fieldTypeFromUnion(state: *state_mod.CompilerState, ta: ir.TypeAlloc, union_t: ir.Type, field: []const u8) !ir.Type {
+    if (union_t != .union_) return ir.TUnknown;
+    var field_types: std.ArrayList(ir.Type) = .empty;
+    defer field_types.deinit(ta.allocator);
+    var enum_parent: ?[]const u8 = null;
+    var all_kind_lits = std.mem.eql(u8, field, "kind");
+
+    for (union_t.union_) |arm| {
+        const sname = ir.structNameOf(arm) orelse return ir.TUnknown;
+        const def = state.structs.get(sname) orelse return ir.TUnknown;
+        if (def.types.get(field) == null) return ir.TUnknown;
+        const ft = try fieldTypeFromStruct(state, ta, sname, field);
+        if (ft == .unknown) return ir.TUnknown;
+        if (all_kind_lits) {
+            if (ft == .enum_lit) {
+                if (enum_parent) |ep| {
+                    if (!std.mem.eql(u8, ep, ft.enum_lit.enum_name)) all_kind_lits = false;
+                } else {
+                    enum_parent = ft.enum_lit.enum_name;
+                }
+            } else {
+                all_kind_lits = false;
+            }
+        }
+        try field_types.append(ta.allocator, ft);
+    }
+    if (field_types.items.len == 0) return ir.TUnknown;
+    if (all_kind_lits) {
+        if (enum_parent) |ep| return .{ .enum_ = ep };
+    }
+    // All equal → that type; else union of field types.
+    const first = field_types.items[0];
+    for (field_types.items[1..]) |ft| {
+        if (!ir.typeEquals(first, ft)) {
+            return try ta.unionType(field_types.items);
+        }
+    }
+    return first;
+}
+
+const KindNarrow = struct {
+    subject: []const u8,
+    enum_name: []const u8,
+    map: std.StringHashMap([]const u8),
+};
+
+fn kindSwitchNarrowing(
+    state: *state_mod.CompilerState,
+    ta: ir.TypeAlloc,
+    env: *Env,
+    condition: *ast.Node,
+) TypecheckError!?KindNarrow {
+    _ = ta;
+    if (condition.* != .member) return null;
+    const mem = condition.member;
+    if (mem.property.* != .primary or !std.mem.eql(u8, mem.property.primary.name, "kind")) return null;
+    if (mem.object.* != .primary) return null;
+    const subject = mem.object.primary.name;
+    const obj_t = env.lookup(subject) orelse return null;
+    if (obj_t != .union_) return null;
+    const disp = try ownDisplay(state, obj_t);
+    const info = (try from_ast.discrimVariantMap(state, state.allocator, disp)) orelse return null;
+    return .{ .subject = subject, .enum_name = info.enum_name, .map = info.map };
+}
+
+fn resolveSwitchVariant(state: *state_mod.CompilerState, pat: *ast.Node, enum_name: []const u8) ?[]const u8 {
+    if (pat.* != .member) return null;
+    const mem = &pat.member;
+    if (mem.property.* != .primary) return null;
+    const ename = from_ast.resolveEnumName(state, mem.object) orelse return null;
+    if (!std.mem.eql(u8, ename, enum_name)) return null;
+    if (state.enums.get(ename)) |ed| {
+        if (!ed.variants.contains(mem.property.primary.name)) return null;
+    } else return null;
+    return mem.property.primary.name;
 }
 
 fn fnReturnType(state: *state_mod.CompilerState, ta: ir.TypeAlloc, func_name: []const u8) !ir.Type {
@@ -402,8 +497,7 @@ pub fn inferExpr(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, n
                         if (!ed.variants.contains(m.property.primary.name)) {
                             return compiler_errors.compileFailFmt(state, "Unknown enum variant '{s}' on '{s}'", .{ m.property.primary.name, ename });
                         }
-                        // Bare `Enum.Variant` is allowed for tag-only values and as @switch patterns.
-                        // Payload construction is `Enum.Variant(args)` (checked in inferCall / emit).
+                        // Value `Enum.Variant` has parent enum type; singleton `Enum.Variant` is a *type* annotation.
                         break :blk .{ .enum_ = ename };
                     }
                 }
@@ -412,6 +506,20 @@ pub fn inferExpr(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, n
             if (m.property.* == .primary) {
                 if (ir.structNameOf(obj)) |sname| {
                     break :blk try fieldTypeFromStruct(state, ta, sname, m.property.primary.name);
+                }
+                if (obj == .union_) {
+                    const ft = try fieldTypeFromUnion(state, ta, obj, m.property.primary.name);
+                    // Hard reject only for discrim struct unions (`Literal | Add`).
+                    // Error unions (`T | error`) still allow gradual field access.
+                    if (ft == .unknown) {
+                        const d = try ownDisplay(state, obj);
+                        if (try from_ast.discrimVariantMap(state, state.allocator, d)) |info_owned| {
+                            var info = info_owned;
+                            info.map.deinit();
+                            return compiler_errors.compileFailFmt(state, "Field '{s}' is not available on all arms of '{s}' (narrow with @switch on .kind)", .{ m.property.primary.name, d });
+                        }
+                    }
+                    break :blk ft;
                 }
             }
             break :blk ir.TUnknown;
@@ -534,11 +642,29 @@ pub fn inferExpr(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, n
         },
         .switch_expr => |sw| blk: {
             _ = try inferExpr(state, env, ta, sw.condition);
+            // Narrow subject when switching on `e.kind` for a discrim struct union.
+            var narrow = try kindSwitchNarrowing(state, ta, env, sw.condition);
+            defer if (narrow) |*n| n.map.deinit();
+
+            // Join break payloads while still narrowed (do not re-walk after scopes pop).
+            var acc: ?ir.Type = null;
             for (sw.prongs) |prong| {
                 for (prong.patterns) |pat| _ = try inferExpr(state, env, ta, pat);
+                try env.pushScope();
+                defer env.popScope();
+                if (narrow) |n| {
+                    if (prong.patterns.len == 1) {
+                        if (resolveSwitchVariant(state, prong.patterns[0], n.enum_name)) |vname| {
+                            if (n.map.get(vname)) |sname| {
+                                try env.define(n.subject, .{ .struct_ = sname });
+                            }
+                        }
+                    }
+                }
                 _ = try inferExpr(state, env, ta, prong.body);
+                try walkBreakValues(state, env, ta, prong.body, &acc);
             }
-            break :blk try joinBreakTypes(state, env, ta, node);
+            break :blk acc orelse ir.TUnknown;
         },
         .for_expr => |f| blk: {
             const expr_type = try inferExpr(state, env, ta, f.expr);
@@ -795,9 +921,10 @@ fn checkStmt(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node:
             } else if (value_type == .struct_) {
                 try env.define(d.name, value_type);
                 try state.global_types.put(d.name, value_type.struct_);
-            } else if (value_type == .enum_) {
+            } else if (value_type == .enum_ or value_type == .enum_lit) {
                 try env.define(d.name, value_type);
-                try state.global_types.put(d.name, value_type.enum_);
+                const disp = try ownDisplay(state, value_type);
+                try state.global_types.put(d.name, disp);
             } else {
                 try env.define(d.name, value_type);
                 // Persist pointer / array displays so emit can resolve field layout.

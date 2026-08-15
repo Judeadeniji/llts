@@ -107,6 +107,18 @@ fn typesAssignable(state: *CompilerState, got: []const u8, expected: []const u8)
     // Enum ↔ untyped int (runtime values are ints)
     if (std.mem.eql(u8, got, "int") and state.enums.contains(expected)) return true;
     if ((std.mem.eql(u8, expected, "int") or std.mem.eql(u8, expected, "i64")) and state.enums.contains(got)) return true;
+    // Enum.Variant literal type ↔ parent enum / matching variant value display
+    if (std.mem.lastIndexOfScalar(u8, expected, '.')) |dot| {
+        const ename = expected[0..dot];
+        if (state.enums.contains(ename)) {
+            if (std.mem.eql(u8, got, ename) or std.mem.eql(u8, got, expected)) return true;
+            if (std.mem.eql(u8, got, "int") or std.mem.eql(u8, got, "i64")) return true;
+        }
+    }
+    if (std.mem.lastIndexOfScalar(u8, got, '.')) |dot| {
+        const ename = got[0..dot];
+        if (state.enums.contains(ename) and std.mem.eql(u8, expected, ename)) return true;
+    }
     // string aliases / [N]byte <: []byte
     if (types.isStringyType(got) and types.isStringyType(expected)) {
         // Sized [N]byte is not assignable to [M]byte when N != M

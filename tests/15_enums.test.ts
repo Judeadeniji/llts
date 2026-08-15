@@ -184,3 +184,108 @@ print(m);
 		["42", "7"],
 	);
 });
+
+test("kind: Enum.Variant singleton field types", () => {
+	expectOutput(
+		runSource(`
+@enum ExprKind { Literal, Add }
+@struct Literal {
+    kind: ExprKind.Literal;
+    value: i64;
+}
+$a = Literal{ kind: ExprKind.Literal, value: 42 };
+print(a.value);
+print(@typeOf(a.kind));
+`),
+		["42", "ExprKind.Literal"],
+	);
+});
+
+test("wrong Enum.Variant rejected for singleton kind field", () => {
+	expectError(
+		runSource(`
+@enum ExprKind { Literal, Add }
+@struct Literal {
+    kind: ExprKind.Literal;
+    value: i64;
+}
+$a = Literal{ kind: ExprKind.Add, value: 1 };
+print(a.value);
+`),
+		"not assignable",
+	);
+});
+
+test("struct union Literal | Add with kind narrowing", () => {
+	expectOutput(
+		runSource(`
+@enum ExprKind { Literal, Add }
+@struct Literal {
+    kind: ExprKind.Literal;
+    value: i64;
+}
+@struct Add {
+    kind: ExprKind.Add;
+    left: i64;
+    right: i64;
+}
+@func eval(e: Literal | Add) {
+    return @switch (e.kind) {
+        ExprKind.Literal => { break e.value; },
+        ExprKind.Add => { break e.left + e.right; },
+    };
+}
+$a: Literal | Add = Literal{ kind: ExprKind.Literal, value: 42 };
+$b: Literal | Add = Add{ kind: ExprKind.Add, left: 3, right: 4 };
+print(eval(a));
+print(eval(b));
+`),
+		["42", "7"],
+	);
+});
+
+test("union field without narrowing is rejected", () => {
+	expectError(
+		runSource(`
+@enum ExprKind { Literal, Add }
+@struct Literal {
+    kind: ExprKind.Literal;
+    value: i64;
+}
+@struct Add {
+    kind: ExprKind.Add;
+    left: i64;
+    right: i64;
+}
+@func bad(e: Literal | Add) {
+    return e.value;
+}
+print(bad(Literal{ kind: ExprKind.Literal, value: 1 }));
+`),
+		"not available on all arms",
+	);
+});
+
+test("union kind @switch must cover all arms", () => {
+	expectError(
+		runSource(`
+@enum ExprKind { Literal, Add, Mul }
+@struct Literal {
+    kind: ExprKind.Literal;
+    value: i64;
+}
+@struct Add {
+    kind: ExprKind.Add;
+    left: i64;
+    right: i64;
+}
+@func bad(e: Literal | Add) {
+    return @switch (e.kind) {
+        ExprKind.Literal => { break e.value; },
+    };
+}
+print(bad(Literal{ kind: ExprKind.Literal, value: 1 }));
+`),
+		"missing enum variant",
+	);
+});

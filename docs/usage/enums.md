@@ -14,16 +14,18 @@ Enums are **tag-only** (TypeScript-style): named variants map to auto-incrementi
 }
 ```
 
-Trailing commas are allowed. For data attached to a kind, use **structs + a `kind` field** (TS discriminated unions). Planned: `Literal | Add` unions with narrowing on `kind` — see `TODO.MD` § tagged data. Not Zig-style `Variant(T)` payloads.
+Trailing commas are allowed. For data attached to a kind, use **structs** with a singleton kind type:
 
 ```llts
 @enum ExprKind { Literal, Add }
 
 @struct Literal {
-    kind: ExprKind;
+    kind: ExprKind.Literal;
     value: i64;
 }
 ```
+
+`ExprKind.Literal` is a **literal type** (only that variant assigns). Next: `Literal | Add` unions + narrowing — see `TODO.MD` § tagged data.
 
 ## 2. Enum Usage and Values
 

@@ -62,9 +62,13 @@ pub fn fieldKind(state: ?*state_mod.CompilerState, type_name: []const u8) FieldK
     if (widths.fromName(bare)) |w| return fieldKindFromWidth(w);
     if (std.mem.eql(u8, bare, "ptr"))
         return .ptr;
-    // Tag-only enums are i64 on the wire.
+    // Tag-only enums / enum literals are i64 on the wire.
     if (state) |st| {
         if (st.enums.contains(bare)) return .i64;
+        if (std.mem.lastIndexOfScalar(u8, bare, '.')) |dot| {
+            const ename = bare[0..dot];
+            if (st.enums.contains(ename)) return .i64;
+        }
     }
     return .handle;
 }

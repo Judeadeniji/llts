@@ -338,6 +338,15 @@ pub fn compileMember(state: *CompilerState, mem: *const ast.Member, node: *ast.N
         return;
     }
     if (types.resolveType(state, mem.object)) |type_name| {
+        if (mem.property.* == .primary) {
+            if (types.lookupStructField(state, type_name, mem.property.primary.name)) |info| {
+                const layout = @import("../layout.zig");
+                const kind: u8 = @intFromEnum(layout.fieldKind(state, info.field_ty));
+                try expr.compileExpression(state, mem.object);
+                try emit.emitLoadField(state, info.offset, kind);
+                return;
+            }
+        }
         if (types.lookupStruct(state, type_name)) |sd| {
             if (mem.property.* == .primary) {
                 if (sd.offsets.get(mem.property.primary.name)) |offset| {

@@ -158,19 +158,20 @@ Goal: exhaustiveness, per-variant fields, and narrowing — while enums stay tag
 
 - [x] **Tag-only `@enum`** — TS-style names → ints; no `Variant(T)` payloads (removed).
 - [x] **`@switch` exhaustiveness** — on enum scrutinees; value `@switch` may omit `@else` when exhaustive.
-- [ ] **Struct unions `A | B`** — arms are structs that share a discriminant field (`kind: SomeEnum`). Distinct from today’s `T | error` / `T | null`.
-- [ ] **Narrowing on `kind`** — in `@switch (e.kind)` / `@if` arms, `e` narrows to the matching struct so only that variant’s fields typecheck.
-- [ ] **Exhaustiveness via `kind`** — `@switch (e.kind)` when `e: A | B` must cover every enum variant (or `@else`), same rules as switching the enum directly.
+- [x] **Enum literal types `ExprKind.Literal`** — singleton types for field annotations (`kind: ExprKind.Literal`); only that variant assigns; `@typeOf` prints `ExprKind.Literal`.
+- [x] **Struct unions `A | B`** — arms are structs that share a discriminant field (`kind: SomeEnum` / `Enum.Variant`). Distinct from today’s `T | error` / `T | null`.
+- [x] **Narrowing on `kind`** — in `@switch (e.kind)` / `@if` arms, `e` narrows to the matching struct so only that variant’s fields typecheck.
+- [x] **Exhaustiveness via `kind` on unions** — `@switch (e.kind)` when `e: A | B` must cover every union arm’s kind (or `@else`).
 - [ ] **Optional sugar (later)** — `@enum Expr { Literal { value: i64 }, Add { … } }` desugars to Kind enum + per-variant structs + `Expr = Literal | Add`. Candy only; same model underneath.
 - [ ] **Typed error sets (follow-on)** — error codes as tag enums; payloads as structs / struct unions.
 
-Preferred spelling today (no new syntax yet):
+Preferred spelling:
 
 ```llts
 @enum ExprKind { Literal, Add }
-@struct Literal { kind: ExprKind; value: i64; }
-@struct Add { kind: ExprKind; left: i64; right: i64; }
-# later: @type Expr = Literal | Add
+@struct Literal { kind: ExprKind.Literal; value: i64; }
+@struct Add { kind: ExprKind.Add; left: i64; right: i64; }
+# next: @type Expr = Literal | Add
 ```
 
 

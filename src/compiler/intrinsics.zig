@@ -232,7 +232,7 @@ fn asCastKind(state: *CompilerState, type_node: *ast.Node) !u8 {
 
 fn checkAsCast(state: *CompilerState, src: ir.Type, target: ir.Type) !void {
     if (ir.involvesUnknown(src) or ir.involvesUnknown(target)) return;
-    const ok = (ir.isNumeric(src) or src == .enum_) and (ir.isNumeric(target) or target == .enum_);
+    const ok = (ir.isNumeric(src) or src == .enum_ or src == .enum_lit) and (ir.isNumeric(target) or target == .enum_ or target == .enum_lit);
     if (!ok) {
         const ds = try typecheck_root.ownDisplay(state, src);
         const dt = try typecheck_root.ownDisplay(state, target);

@@ -39,6 +39,8 @@ pub const Type = union(enum) {
     never,
     struct_: []const u8,
     enum_: []const u8,
+    /// Singleton enum variant used as a type (`ExprKind.Literal`).
+    enum_lit: struct { enum_name: []const u8, variant: []const u8 },
     array: struct { elem: *Type, length: ?usize },
     ptr: *Type,
     union_: []Type,
@@ -192,6 +194,7 @@ pub fn displayTypeAlloc(allocator: std.mem.Allocator, t: Type) ![]const u8 {
         .never => try allocator.dupe(u8, "never"),
         .struct_ => |n| try allocator.dupe(u8, n),
         .enum_ => |n| try allocator.dupe(u8, n),
+        .enum_lit => |e| try std.fmt.allocPrint(allocator, "{s}.{s}", .{ e.enum_name, e.variant }),
         .array => |a| blk: {
             const elem = try displayTypeAlloc(allocator, a.elem.*);
             defer allocator.free(elem);
@@ -248,6 +251,7 @@ pub fn displayTypeSimple(t: Type) ?[]const u8 {
         .never => "never",
         .struct_ => |n| n,
         .enum_ => |n| n,
+        .enum_lit => null,
         .array => |a| if (a.elem.* == .u8 and a.length == null) "[]byte" else null,
         .ptr, .union_ => null,
     };
@@ -268,6 +272,7 @@ pub fn typeEquals(a: Type, b: Type) bool {
     return switch (a) {
         .struct_ => |n| (b == .struct_ and std.mem.eql(u8, n, b.struct_)) or (b == .enum_ and std.mem.eql(u8, n, b.enum_)),
         .enum_ => |n| (b == .enum_ and std.mem.eql(u8, n, b.enum_)) or (b == .struct_ and std.mem.eql(u8, n, b.struct_)),
+        .enum_lit => |e| b == .enum_lit and std.mem.eql(u8, e.enum_name, b.enum_lit.enum_name) and std.mem.eql(u8, e.variant, b.enum_lit.variant),
         .array => |aa| b == .array and aa.length == b.array.length and typeEquals(aa.elem.*, b.array.elem.*),
         .ptr => |p| b == .ptr and typeEquals(p.*, b.ptr.*),
         .union_ => |arms| blk: {
@@ -340,8 +345,15 @@ pub fn isSubtype(a: Type, b: Type) bool {
     if (a == .ptr and b == .ptr) {
         return typeEquals(a.ptr.*, b.ptr.*);
     }
-    // Tag-only enums are i64-backed (payload enums are handles — see requireAssign).
-    if (a == .enum_ and b == .i64) return true;
+    // Enum literal ⊑ parent enum; parent enum ≰ literal (need static variant proof).
+    if (a == .enum_lit and b == .enum_) {
+        return std.mem.eql(u8, a.enum_lit.enum_name, b.enum_);
+    }
+    if (a == .enum_lit and b == .enum_lit) {
+        return typeEquals(a, b);
+    }
+    // Tag-only enums / literals are i64-backed.
+    if ((a == .enum_ or a == .enum_lit) and b == .i64) return true;
     if (a == .i64 and b == .enum_) return true;
     return false;
 }
@@ -423,7 +435,7 @@ pub fn typeTag(t: Type) ?TypeTag {
         .error_ => .error_,
         .array => |a| if (a.elem.* == .u8) .string else .array,
         .struct_ => .struct_,
-        .enum_ => .i64,
+        .enum_, .enum_lit => .i64,
         .union_ => if (isErrorUnion(t)) .error_union else null,
         else => null,
     };
@@ -462,6 +474,14 @@ pub fn parseDisplayType(ta: TypeAlloc, s_in: []const u8) !Type {
     // Historical display used "int" / "byte".
     if (std.mem.eql(u8, s, "int") or std.mem.eql(u8, s, "number")) return TI64;
     if (std.mem.eql(u8, s, "byte")) return TU8;
+    // `Enum.Variant` literal types (local names; module types use `::`).
+    if (std.mem.indexOf(u8, s, "::") == null) {
+        if (std.mem.lastIndexOfScalar(u8, s, '.')) |dot| {
+            if (dot > 0 and dot + 1 < s.len) {
+                return .{ .enum_lit = .{ .enum_name = s[0..dot], .variant = s[dot + 1 ..] } };
+            }
+        }
+    }
     return namedType(s);
 }
 

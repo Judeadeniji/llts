@@ -49,6 +49,20 @@ pub fn resolveNamedType(name: []const u8, state: ?*state_mod.CompilerState) From
 
 fn resolveImportedType(node: *ast.Node, state: ?*state_mod.CompilerState) FromAstError!ir.Type {
     const st = state orelse return ir.TUnknown;
+
+    // `ExprKind.Literal` — enum variant as a singleton type.
+    if (node.* == .member and node.member.property.* == .primary) {
+        if (resolveEnumName(st, node.member.object)) |ename| {
+            const vname = node.member.property.primary.name;
+            if (st.enums.get(ename)) |ed| {
+                if (ed.variants.contains(vname)) {
+                    return .{ .enum_lit = .{ .enum_name = ename, .variant = vname } };
+                }
+                return @import("../../errors/compile.zig").compileFailFmt(st, "Unknown enum variant '{s}' on '{s}'", .{ vname, ename });
+            }
+        }
+    }
+
     const q = resolveStructName(st, node) orelse {
         return @import("../../errors/compile.zig").compileFailFmt(st, "Unknown type", .{});
     };
@@ -87,6 +101,114 @@ pub fn unwrapOptionalDisplay(display: []const u8) []const u8 {
 
 pub fn lookupStruct(state: *state_mod.CompilerState, display: []const u8) ?state_mod.StructDef {
     return state.structs.get(unwrapOptionalDisplay(display));
+}
+
+/// Split a top-level `A | B | C` display (no nested parens needed for simple struct unions).
+pub fn splitUnionDisplay(allocator: std.mem.Allocator, display: []const u8) ![][]const u8 {
+    var parts: std.ArrayList([]const u8) = .empty;
+    errdefer parts.deinit(allocator);
+    var start: usize = 0;
+    var i: usize = 0;
+    while (i < display.len) {
+        if (i + 2 < display.len and display[i] == ' ' and display[i + 1] == '|' and display[i + 2] == ' ') {
+            const part = std.mem.trim(u8, display[start..i], " \t");
+            if (part.len > 0) try parts.append(allocator, part);
+            i += 3;
+            start = i;
+            continue;
+        }
+        i += 1;
+    }
+    const last = std.mem.trim(u8, display[start..], " \t");
+    if (last.len > 0) try parts.append(allocator, last);
+    return try parts.toOwnedSlice(allocator);
+}
+
+/// If `display` is a struct union whose arms share field `field` at the same offset, return one arm's def.
+pub fn lookupStructField(
+    state: *state_mod.CompilerState,
+    display: []const u8,
+    field: []const u8,
+) ?struct { def: state_mod.StructDef, offset: i32, field_ty: []const u8 } {
+    const bare = unwrapOptionalDisplay(display);
+    if (lookupStruct(state, bare)) |sd| {
+        const off = sd.offsets.get(field) orelse return null;
+        const ty = sd.types.get(field) orelse return null;
+        return .{ .def = sd, .offset = off, .field_ty = ty };
+    }
+    // Struct union: `Literal | Add`
+    if (std.mem.indexOf(u8, bare, " | ") == null) return null;
+    var arena = std.heap.ArenaAllocator.init(state.allocator);
+    defer arena.deinit();
+    const parts = splitUnionDisplay(arena.allocator(), bare) catch return null;
+    if (parts.len < 2) return null;
+
+    var first_off: ?i32 = null;
+    var first_ty: ?[]const u8 = null;
+    var first_def: ?state_mod.StructDef = null;
+    for (parts) |part| {
+        const sd = state.structs.get(std.mem.trim(u8, part, " \t")) orelse return null;
+        const off = sd.offsets.get(field) orelse return null;
+        const ty = sd.types.get(field) orelse return null;
+        if (first_off) |fo| {
+            if (fo != off) return null; // layout must agree for un-narrowed access
+        } else {
+            first_off = off;
+            first_ty = ty;
+            first_def = sd;
+        }
+    }
+    return .{ .def = first_def.?, .offset = first_off.?, .field_ty = first_ty.? };
+}
+
+/// Map enum variant → struct name for a discriminated struct union (`kind: Enum.Variant` fields).
+pub fn discrimVariantMap(
+    state: *state_mod.CompilerState,
+    allocator: std.mem.Allocator,
+    display: []const u8,
+) !?struct { enum_name: []const u8, map: std.StringHashMap([]const u8) } {
+    const bare = unwrapOptionalDisplay(display);
+    if (std.mem.indexOf(u8, bare, " | ") == null) return null;
+    const parts = try splitUnionDisplay(allocator, bare);
+    defer allocator.free(parts);
+    if (parts.len < 2) return null;
+
+    var map = std.StringHashMap([]const u8).init(allocator);
+    errdefer map.deinit();
+    var enum_name: ?[]const u8 = null;
+
+    for (parts) |part| {
+        const sname = std.mem.trim(u8, part, " \t");
+        const sd = state.structs.get(sname) orelse {
+            map.deinit();
+            return null;
+        };
+        const kind_ty = sd.types.get("kind") orelse {
+            map.deinit();
+            return null;
+        };
+        // Expect `ExprKind.Literal`
+        const dot = std.mem.lastIndexOfScalar(u8, kind_ty, '.') orelse {
+            map.deinit();
+            return null;
+        };
+        const ename = kind_ty[0..dot];
+        const vname = kind_ty[dot + 1 ..];
+        if (!state.enums.contains(ename)) {
+            map.deinit();
+            return null;
+        }
+        if (enum_name) |en| {
+            if (!std.mem.eql(u8, en, ename)) {
+                map.deinit();
+                return null;
+            }
+        } else {
+            enum_name = ename;
+        }
+        try map.put(vname, sname);
+    }
+    return .{ .enum_name = enum_name.?, .map = map };
 }
 
 pub fn parseArrayLengthString(raw: []const u8) FromAstError!usize {
@@ -202,7 +324,15 @@ pub fn resolveType(state: *state_mod.CompilerState, node: *ast.Node) ?[]const u8
             else
                 state.global_types.get(p.name);
             if (type_name) |tn| {
-                if (std.mem.indexOfScalar(u8, tn, '.') != null) {
+                // Don't treat `ExprKind.Literal` as `mod.Type`.
+                const looks_enum_lit = lit: {
+                    if (std.mem.indexOf(u8, tn, "::") != null) break :lit false;
+                    if (std.mem.lastIndexOfScalar(u8, tn, '.')) |dot| {
+                        break :lit state.enums.contains(tn[0..dot]);
+                    }
+                    break :lit false;
+                };
+                if (!looks_enum_lit and std.mem.indexOfScalar(u8, tn, '.') != null) {
                     type_name = @import("../expr/path.zig").resolveModuleType(state, tn) catch tn;
                 }
             }
@@ -236,7 +366,23 @@ pub fn resolveType(state: *state_mod.CompilerState, node: *ast.Node) ?[]const u8
                 }
                 break :blk null;
             }
-            const struct_def = lookupStruct(state, object_type) orelse break :blk null;
+            const struct_def = lookupStruct(state, object_type) orelse {
+                // Struct union field (common fields only, e.g. `kind`).
+                if (m.property.* == .primary) {
+                    if (lookupStructField(state, object_type, m.property.primary.name)) |info| {
+                        // Discrim `kind` on `A | B` → parent enum (not first arm's singleton).
+                        if (std.mem.eql(u8, m.property.primary.name, "kind")) {
+                            if (discrimVariantMap(state, state.allocator, object_type) catch null) |dinfo_owned| {
+                                var dinfo = dinfo_owned;
+                                defer dinfo.map.deinit();
+                                break :blk dinfo.enum_name;
+                            }
+                        }
+                        break :blk info.field_ty;
+                    }
+                }
+                break :blk null;
+            };
             break :blk struct_def.types.get(m.property.primary.name);
         },
         .call => |c| blk: {

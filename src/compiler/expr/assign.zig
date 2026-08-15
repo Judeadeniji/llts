@@ -66,29 +66,26 @@ fn assignIndex(state: *CompilerState, idx: *const ast.Index, right: *ast.Node, a
 
 fn assignMember(state: *CompilerState, mem: *const ast.Member, right: *ast.Node, arith: ?OpCode) !void {
     if (types.resolveType(state, mem.object)) |type_name| {
-        if (state.structs.get(types.unwrapOptionalDisplay(type_name))) |sd| {
-            if (mem.property.* == .primary) {
-                if (sd.offsets.get(mem.property.primary.name)) |offset| {
-                    const layout = @import("../layout.zig");
-                    const field_ty = sd.types.get(mem.property.primary.name) orelse "int";
-                    const kind: u8 = @intFromEnum(layout.fieldKind(state, field_ty));
-                    if (arith) |op| {
-                        try expr.compileExpression(state, mem.object);
-                        try emit.emitOp(state, .OP_DUP);
-                        try emit.emitLoadField(state, offset, kind);
-                        try expr.compileExpression(state, right);
-                        try emit.emitOp(state, op);
-                    } else {
-                        try expr.compileExpression(state, mem.object);
-                        try expr.compileExpression(state, right);
-                    }
-                    if (layout.widthFromFieldKind(@enumFromInt(kind))) |w| {
-                        try emit.emitOp(state, .OP_AS);
-                        try emit.emitByte(state, @intFromEnum(w));
-                    }
-                    try emit.emitStoreField(state, offset, kind);
-                    return;
+        if (mem.property.* == .primary) {
+            if (types.lookupStructField(state, type_name, mem.property.primary.name)) |info| {
+                const layout = @import("../layout.zig");
+                const kind: u8 = @intFromEnum(layout.fieldKind(state, info.field_ty));
+                if (arith) |op| {
+                    try expr.compileExpression(state, mem.object);
+                    try emit.emitOp(state, .OP_DUP);
+                    try emit.emitLoadField(state, info.offset, kind);
+                    try expr.compileExpression(state, right);
+                    try emit.emitOp(state, op);
+                } else {
+                    try expr.compileExpression(state, mem.object);
+                    try expr.compileExpression(state, right);
                 }
+                if (layout.widthFromFieldKind(@enumFromInt(kind))) |w| {
+                    try emit.emitOp(state, .OP_AS);
+                    try emit.emitByte(state, @intFromEnum(w));
+                }
+                try emit.emitStoreField(state, info.offset, kind);
+                return;
             }
         }
     }

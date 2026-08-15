@@ -91,11 +91,75 @@ fn hasElseProng(sw: *const ast.Switch) bool {
     return false;
 }
 
+fn enumNameFromTypeDisplay(state: *CompilerState, display: []const u8) ?[]const u8 {
+    if (state.enums.contains(display)) return display;
+    // `ExprKind.Literal` → parent enum for exhaustiveness.
+    if (std.mem.lastIndexOfScalar(u8, display, '.')) |dot| {
+        const ename = display[0..dot];
+        if (state.enums.contains(ename)) return ename;
+    }
+    return null;
+}
+
 /// Returns true when scrutinee is an enum and every variant is covered (or `@else` present).
 fn checkEnumExhaustiveness(state: *CompilerState, sw: *const ast.Switch) !bool {
     if (hasElseProng(sw)) return true;
     const types = @import("../typecheck/from_ast.zig");
-    const ename = types.resolveType(state, sw.condition) orelse return false;
+
+    // `@switch (e.kind)` on discrim union `Literal | Add` — cover union arms, not full enum.
+    if (sw.condition.* == .member and sw.condition.member.property.* == .primary and
+        std.mem.eql(u8, sw.condition.member.property.primary.name, "kind"))
+    {
+        if (types.resolveType(state, sw.condition.member.object)) |obj_disp| {
+            if (try types.discrimVariantMap(state, state.allocator, obj_disp)) |info_owned| {
+                var info = info_owned;
+                defer info.map.deinit();
+                var covered = std.StringHashMap(void).init(state.allocator);
+                defer covered.deinit();
+                for (sw.prongs) |prong| {
+                    if (prong.is_else) continue;
+                    for (prong.patterns) |pat| {
+                        if (resolveEnumVariantPattern(state, pat, info.enum_name)) |vname| {
+                            try covered.put(vname, {});
+                        }
+                    }
+                }
+                var missing: std.ArrayList([]const u8) = .empty;
+                defer missing.deinit(state.allocator);
+                var kit = info.map.keyIterator();
+                while (kit.next()) |k| {
+                    if (!covered.contains(k.*)) try missing.append(state.allocator, k.*);
+                }
+                if (missing.items.len == 0) return true;
+                return failMissingVariants(state, missing.items);
+            }
+        }
+    }
+
+    const raw = types.resolveType(state, sw.condition) orelse return false;
+
+    // Singleton `ExprKind.Literal` — only that variant must be covered.
+    if (std.mem.lastIndexOfScalar(u8, raw, '.')) |dot| {
+        const ename = raw[0..dot];
+        const vname = raw[dot + 1 ..];
+        if (state.enums.get(ename)) |ed| {
+            if (ed.variants.contains(vname)) {
+                for (sw.prongs) |prong| {
+                    if (prong.is_else) return true;
+                    for (prong.patterns) |pat| {
+                        if (resolveEnumVariantPattern(state, pat, ename)) |pv| {
+                            if (std.mem.eql(u8, pv, vname)) return true;
+                        }
+                    }
+                }
+                var buf: [128]u8 = undefined;
+                const msg = std.fmt.bufPrint(&buf, "@switch is missing enum variant: {s}", .{vname}) catch "@switch is missing enum variant";
+                return fail(state, msg);
+            }
+        }
+    }
+
+    const ename = enumNameFromTypeDisplay(state, raw) orelse return false;
     const ed = state.enums.get(ename) orelse return false;
 
     var covered = std.StringHashMap(void).init(state.allocator);
@@ -117,14 +181,17 @@ fn checkEnumExhaustiveness(state: *CompilerState, sw: *const ast.Switch) !bool {
         if (!covered.contains(k.*)) try missing.append(state.allocator, k.*);
     }
     if (missing.items.len == 0) return true;
+    return failMissingVariants(state, missing.items);
+}
 
+fn failMissingVariants(state: *CompilerState, missing: []const []const u8) error{CompileError} {
     var buf: [256]u8 = undefined;
     var fbs = std.io.fixedBufferStream(&buf);
     const w = fbs.writer();
     w.writeAll("@switch is missing enum variant") catch {};
-    if (missing.items.len > 1) w.writeAll("s") catch {};
+    if (missing.len > 1) w.writeAll("s") catch {};
     w.writeAll(": ") catch {};
-    for (missing.items, 0..) |m, i| {
+    for (missing, 0..) |m, i| {
         if (i > 0) w.writeAll(", ") catch {};
         w.writeAll(m) catch {};
     }
@@ -144,9 +211,30 @@ fn resolveEnumVariantPattern(state: *CompilerState, pat: *ast.Node, expected_enu
 }
 
 fn compileSwitchInner(state: *CompilerState, sw: *const ast.Switch, value_mode: bool) !void {
+    const types = @import("../typecheck/from_ast.zig");
+
     try scope.beginScope(state);
     try expr.compileExpression(state, sw.condition);
     const scrut_slot = try scope.addLocal(state, "", false);
+
+    // Discrim narrowing: `@switch (e.kind)` on `e: A | B`.
+    var narrow_subject: ?[]const u8 = null;
+    var narrow_map: ?std.StringHashMap([]const u8) = null;
+    var narrow_enum: ?[]const u8 = null;
+    defer if (narrow_map) |*m| m.deinit();
+    if (sw.condition.* == .member and sw.condition.member.property.* == .primary and
+        std.mem.eql(u8, sw.condition.member.property.primary.name, "kind") and
+        sw.condition.member.object.* == .primary)
+    {
+        const subject = sw.condition.member.object.primary.name;
+        if (types.resolveType(state, sw.condition.member.object)) |disp| {
+            if (try types.discrimVariantMap(state, state.allocator, disp)) |info| {
+                narrow_subject = subject;
+                narrow_map = info.map;
+                narrow_enum = info.enum_name;
+            }
+        }
+    }
 
     var end_jumps: std.ArrayList(usize) = .empty;
     defer end_jumps.deinit(state.allocator);
@@ -185,6 +273,30 @@ fn compileSwitchInner(state: *CompilerState, sw: *const ast.Switch, value_mode: 
         const no_match = try emit.emitJump(state, .OP_JUMP_IF_FALSE);
         for (matched_jumps.items) |mj| emit.patchJump(state, mj);
         try emit.emitOp(state, .OP_POP);
+
+        // Temporarily narrow subject's type_name for field loads in this arm.
+        var saved_ty: ?[]const u8 = null;
+        var local_i: i32 = -1;
+        if (narrow_subject) |subj| {
+            if (narrow_map) |map| {
+                if (narrow_enum) |ename| {
+                    if (prong.patterns.len == 1) {
+                        if (resolveEnumVariantPattern(state, prong.patterns[0], ename)) |vname| {
+                            if (map.get(vname)) |sname| {
+                                local_i = scope.resolveLocal(state, subj);
+                                if (local_i >= 0) {
+                                    saved_ty = state.locals.items[@intCast(local_i)].type_name;
+                                    state.locals.items[@intCast(local_i)].type_name = sname;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        defer if (local_i >= 0) {
+            state.locals.items[@intCast(local_i)].type_name = saved_ty;
+        };
 
         if (value_mode) {
             try compileValueArm(state, prong.body, "switch prong");
