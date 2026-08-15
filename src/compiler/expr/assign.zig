@@ -71,7 +71,7 @@ fn assignMember(state: *CompilerState, mem: *const ast.Member, right: *ast.Node,
                 if (sd.offsets.get(mem.property.primary.name)) |offset| {
                     const layout = @import("../layout.zig");
                     const field_ty = sd.types.get(mem.property.primary.name) orelse "int";
-                    const kind: u8 = @intFromEnum(layout.fieldKind(field_ty));
+                    const kind: u8 = @intFromEnum(layout.fieldKind(state, field_ty));
                     if (arith) |op| {
                         try expr.compileExpression(state, mem.object);
                         try emit.emitOp(state, .OP_DUP);

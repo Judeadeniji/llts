@@ -185,6 +185,9 @@ pub fn compile(state: *CompilerState, intr: Intrinsic, node: *ast.Node, c: *cons
                 } else if (state.structs.get(st)) |sd| {
                     is_type = true;
                     size = sd.size;
+                } else if (state.enums.contains(st)) {
+                    is_type = true;
+                    size = 8;
                 }
                 if (is_type) {
                     try emit.emitConstant(state, .{ .i64 = size });

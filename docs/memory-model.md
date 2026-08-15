@@ -92,4 +92,4 @@ $x: i32 = 42;              # real i32, not an int alias
 
 ## Relation to language P6
 
-Packed layout and widths are done. `*T` / `?*T`, identity `&struct`, and method `self: *T` landed. Remaining: slice polish, enum payloads — see `TODO.MD` §P6.
+Packed layout and widths are done. `*T` / `?*T`, identity `&struct`, and method `self: *T` landed. Enums stay tag-only (TS-style); tagged data uses structs + `kind`. Remaining: slice polish — see `TODO.MD` §P6.

@@ -39,6 +39,14 @@ pub fn sizeOfTypeName(type_name: []const u8) i32 {
     return 8;
 }
 
+/// Size of a named type when enum/struct defs are available.
+pub fn sizeOfNamedType(state: *state_mod.CompilerState, type_name: []const u8) i32 {
+    const bare = unwrapTypeName(type_name);
+    if (state.enums.contains(bare)) return 8; // tag-only i64
+    if (state.structs.get(bare)) |sd| return sd.size;
+    return sizeOfTypeName(type_name);
+}
+
 pub fn alignOfTypeName(type_name: []const u8) i32 {
     const bare = unwrapTypeName(type_name);
     if (bare.len > 0 and bare[0] == '*') return 8;
@@ -48,12 +56,16 @@ pub fn alignOfTypeName(type_name: []const u8) i32 {
     return 8;
 }
 
-pub fn fieldKind(type_name: []const u8) FieldKind {
+pub fn fieldKind(state: ?*state_mod.CompilerState, type_name: []const u8) FieldKind {
     const bare = unwrapTypeName(type_name);
     if (bare.len > 0 and bare[0] == '*') return .handle;
     if (widths.fromName(bare)) |w| return fieldKindFromWidth(w);
     if (std.mem.eql(u8, bare, "ptr"))
         return .ptr;
+    // Tag-only enums are i64 on the wire.
+    if (state) |st| {
+        if (st.enums.contains(bare)) return .i64;
+    }
     return .handle;
 }
 
@@ -133,7 +145,7 @@ pub fn layoutFields(
     return .{ .size = size, .offsets = offsets };
 }
 
-pub fn fieldKindForStruct(sd: state_mod.StructDef, field: []const u8) FieldKind {
+pub fn fieldKindForStruct(state: *state_mod.CompilerState, sd: state_mod.StructDef, field: []const u8) FieldKind {
     const ty = sd.types.get(field) orelse "i64";
-    return fieldKind(ty);
+    return fieldKind(state, ty);
 }

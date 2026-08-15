@@ -131,3 +131,56 @@ pub @func main() {}
 	);
 	expectError(runFile(entry), "has no export");
 });
+
+test("@switch on enum requires exhaustiveness or @else", () => {
+	expectError(
+		runSource(`
+@enum Color { Red, Green, Blue }
+@switch (Color.Red) {
+    Color.Red => { print("r"); },
+}
+`),
+		"missing enum variant",
+	);
+});
+
+test("exhaustive value @switch needs no @else", () => {
+	expectOutput(
+		runSource(`
+@enum Color { Red, Green }
+$x = @switch (Color.Green) {
+    Color.Red => { break 1; },
+    Color.Green => { break 2; },
+};
+print(x);
+`),
+		["2"],
+	);
+});
+
+test("discriminated struct + kind enum (preferred tagged data)", () => {
+	expectOutput(
+		runSource(`
+@enum ExprKind { Literal, Add }
+@struct Expr {
+    kind: ExprKind;
+    value: i64;
+    left: i64;
+    right: i64;
+}
+$a = Expr{ kind: ExprKind.Literal, value: 42, left: 0, right: 0 };
+$b = Expr{ kind: ExprKind.Add, value: 0, left: 3, right: 4 };
+$n = @switch (a.kind) {
+    ExprKind.Literal => { break a.value; },
+    ExprKind.Add => { break a.left + a.right; },
+};
+$m = @switch (b.kind) {
+    ExprKind.Literal => { break b.value; },
+    ExprKind.Add => { break b.left + b.right; },
+};
+print(n);
+print(m);
+`),
+		["42", "7"],
+	);
+});

@@ -22,7 +22,9 @@ pub fn compileDeclaration(state: *CompilerState, decl: *const ast.Declaration) !
             if (local.is_const) try cenv.const_names.put(local.name, {});
         }
         if (!const_expr.isConstantExpr(state, &cenv, decl.value)) {
-            return @import("../../errors/compile.zig").compileFailFmt(state, "'{s}' is @const but initializer is not a compile-time constant",
+            return @import("../../errors/compile.zig").compileFailFmt(
+                state,
+                "'{s}' is @const but initializer is not a compile-time constant",
                 .{decl.name},
             );
         }
@@ -55,7 +57,9 @@ pub fn compileDeclaration(state: *CompilerState, decl: *const ast.Declaration) !
         if (types.resolveType(state, decl.value)) |got| {
             if (type_name) |expected| {
                 if (!typesAssignable(state, got, expected)) {
-                    return @import("../../errors/compile.zig").compileFailFmt(state, "declaration of '{s}': type '{s}' is not assignable to '{s}'",
+                    return @import("../../errors/compile.zig").compileFailFmt(
+                        state,
+                        "declaration of '{s}': type '{s}' is not assignable to '{s}'",
                         .{ decl.name, got, expected },
                     );
                 }
@@ -179,7 +183,7 @@ fn inferDeclType(state: *CompilerState, value: *ast.Node) ?[]const u8 {
                 break :blk s;
             },
             .boolean => "u1",
-            .@"null" => "null",
+            .null => "null",
             .number, .hex, .octal, .binary => if (std.mem.indexOfScalar(u8, lit.value, '.') != null) "float" else "int",
         },
         .call => types.resolveType(state, value),
@@ -208,7 +212,7 @@ fn checkLocalDup(state: *CompilerState, name: []const u8) !void {
         const local = state.locals.items[i];
         if (local.depth < state.scope_depth) break;
         if (std.mem.eql(u8, local.name, name)) {
-                        return @import("../../errors/compile.zig").compileFailFmt(state, "Variable '{s}' already declared in this scope", .{name});
+            return @import("../../errors/compile.zig").compileFailFmt(state, "Variable '{s}' already declared in this scope", .{name});
         }
     }
 }

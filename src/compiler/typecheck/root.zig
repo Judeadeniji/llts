@@ -402,6 +402,8 @@ pub fn inferExpr(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, n
                         if (!ed.variants.contains(m.property.primary.name)) {
                             return compiler_errors.compileFailFmt(state, "Unknown enum variant '{s}' on '{s}'", .{ m.property.primary.name, ename });
                         }
+                        // Bare `Enum.Variant` is allowed for tag-only values and as @switch patterns.
+                        // Payload construction is `Enum.Variant(args)` (checked in inferCall / emit).
                         break :blk .{ .enum_ = ename };
                     }
                 }

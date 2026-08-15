@@ -6,7 +6,6 @@ const expr = @import("root.zig");
 const path = @import("path.zig");
 
 const types = @import("../typecheck/from_ast.zig");
-const aggregate = @import("aggregate.zig");
 const intrinsics = @import("../intrinsics.zig");
 
 const CompilerState = state_mod.CompilerState;

@@ -70,11 +70,15 @@ fn compileIfValueBody(state: *CompilerState, if_expr: *const ast.If) !void {
 }
 
 pub fn compileSwitch(state: *CompilerState, sw: *const ast.Switch) !void {
+    _ = try checkEnumExhaustiveness(state, sw);
     try compileSwitchInner(state, sw, false);
 }
 
 pub fn compileSwitchValue(state: *CompilerState, sw: *const ast.Switch) !void {
-    if (!hasElseProng(sw)) return fail(state, "value-producing @switch requires @else");
+    const exhaustive = try checkEnumExhaustiveness(state, sw);
+    if (!hasElseProng(sw) and !exhaustive) {
+        return fail(state, "value-producing @switch requires @else (or cover every enum variant)");
+    }
     try beginExprFrame(state, sw.label);
     try compileSwitchInner(state, sw, true);
     try finishExprFrame(state);
@@ -85,6 +89,58 @@ fn hasElseProng(sw: *const ast.Switch) bool {
         if (p.is_else) return true;
     }
     return false;
+}
+
+/// Returns true when scrutinee is an enum and every variant is covered (or `@else` present).
+fn checkEnumExhaustiveness(state: *CompilerState, sw: *const ast.Switch) !bool {
+    if (hasElseProng(sw)) return true;
+    const types = @import("../typecheck/from_ast.zig");
+    const ename = types.resolveType(state, sw.condition) orelse return false;
+    const ed = state.enums.get(ename) orelse return false;
+
+    var covered = std.StringHashMap(void).init(state.allocator);
+    defer covered.deinit();
+
+    for (sw.prongs) |prong| {
+        if (prong.is_else) continue;
+        for (prong.patterns) |pat| {
+            if (resolveEnumVariantPattern(state, pat, ename)) |vname| {
+                try covered.put(vname, {});
+            }
+        }
+    }
+
+    var missing: std.ArrayList([]const u8) = .empty;
+    defer missing.deinit(state.allocator);
+    var vit = ed.variants.keyIterator();
+    while (vit.next()) |k| {
+        if (!covered.contains(k.*)) try missing.append(state.allocator, k.*);
+    }
+    if (missing.items.len == 0) return true;
+
+    var buf: [256]u8 = undefined;
+    var fbs = std.io.fixedBufferStream(&buf);
+    const w = fbs.writer();
+    w.writeAll("@switch is missing enum variant") catch {};
+    if (missing.items.len > 1) w.writeAll("s") catch {};
+    w.writeAll(": ") catch {};
+    for (missing.items, 0..) |m, i| {
+        if (i > 0) w.writeAll(", ") catch {};
+        w.writeAll(m) catch {};
+    }
+    return fail(state, fbs.getWritten());
+}
+
+fn resolveEnumVariantPattern(state: *CompilerState, pat: *ast.Node, expected_enum: []const u8) ?[]const u8 {
+    const types = @import("../typecheck/from_ast.zig");
+    if (pat.* != .member) return null;
+    const mem = &pat.member;
+    if (mem.property.* != .primary) return null;
+    const ename = types.resolveEnumName(state, mem.object) orelse return null;
+    if (!std.mem.eql(u8, ename, expected_enum)) return null;
+    const ed = state.enums.get(ename) orelse return null;
+    if (!ed.variants.contains(mem.property.primary.name)) return null;
+    return mem.property.primary.name;
 }
 
 fn compileSwitchInner(state: *CompilerState, sw: *const ast.Switch, value_mode: bool) !void {

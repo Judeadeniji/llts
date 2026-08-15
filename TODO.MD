@@ -152,11 +152,27 @@ Forcing function: keep writing the self-hosted compiler. Whatever that parser ca
 - [ ] **Nested / capturing functions** — nested `@func` is not supported; closures do not capture. Decide yes (with region rules) or no.
 - [ ] **Allocator / Reader / Writer without generics** — either small interfaces/vtables, or stay concrete (`mem.Arena` + `[]T` only). Untyped native `std/list` / `std/map` should not remain a third language.
 
-#### Tagged unions
+#### Tagged data (TS discrim unions + Zig safety — not Zig `Variant(T)`)
 
-- [ ] **Enum payloads** — `@enum Node { Literal(i64), Binary(…), … }` (or equivalent). Enables AST nodes and typed errors without a generic `Node` bag of optional fields.
-- [ ] **`@switch` exhaustiveness** — compile error when enum/union arms are missing and there is no `@else`.
-- [ ] **Typed error sets (optional follow-on)** — once unions exist, `error` codes can be enums instead of strings.
+Goal: exhaustiveness, per-variant fields, and narrowing — while enums stay tag-only and data stays ordinary structs.
+
+- [x] **Tag-only `@enum`** — TS-style names → ints; no `Variant(T)` payloads (removed).
+- [x] **`@switch` exhaustiveness** — on enum scrutinees; value `@switch` may omit `@else` when exhaustive.
+- [ ] **Struct unions `A | B`** — arms are structs that share a discriminant field (`kind: SomeEnum`). Distinct from today’s `T | error` / `T | null`.
+- [ ] **Narrowing on `kind`** — in `@switch (e.kind)` / `@if` arms, `e` narrows to the matching struct so only that variant’s fields typecheck.
+- [ ] **Exhaustiveness via `kind`** — `@switch (e.kind)` when `e: A | B` must cover every enum variant (or `@else`), same rules as switching the enum directly.
+- [ ] **Optional sugar (later)** — `@enum Expr { Literal { value: i64 }, Add { … } }` desugars to Kind enum + per-variant structs + `Expr = Literal | Add`. Candy only; same model underneath.
+- [ ] **Typed error sets (follow-on)** — error codes as tag enums; payloads as structs / struct unions.
+
+Preferred spelling today (no new syntax yet):
+
+```llts
+@enum ExprKind { Literal, Add }
+@struct Literal { kind: ExprKind; value: i64; }
+@struct Add { kind: ExprKind; left: i64; right: i64; }
+# later: @type Expr = Literal | Add
+```
+
 
 ### P7 — Tooling
 

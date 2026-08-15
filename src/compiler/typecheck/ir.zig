@@ -340,7 +340,7 @@ pub fn isSubtype(a: Type, b: Type) bool {
     if (a == .ptr and b == .ptr) {
         return typeEquals(a.ptr.*, b.ptr.*);
     }
-    // Enums are i64-backed.
+    // Tag-only enums are i64-backed (payload enums are handles — see requireAssign).
     if (a == .enum_ and b == .i64) return true;
     if (a == .i64 and b == .enum_) return true;
     return false;

@@ -237,7 +237,7 @@ fn zeroFillStruct(state: *CompilerState, struct_def: state_mod.StructDef) !void 
     while (it.next()) |e| {
         const offset = e.value_ptr.*;
         const field_ty = struct_def.types.get(e.key_ptr.*) orelse "int";
-        const kind: u8 = @intFromEnum(layout.fieldKind(field_ty));
+        const kind: u8 = @intFromEnum(layout.fieldKind(state, field_ty));
         try emit.emitOp(state, .OP_DUP);
         try emitZeroForTypeName(state, field_ty);
         try emit.emitStoreField(state, offset, kind);
@@ -268,7 +268,7 @@ fn emitZeroForTypeName(state: *CompilerState, name: []const u8) !void {
         try emit.emitOp(state, .OP_NULL);
         return;
     }
-    switch (layout.fieldKind(name)) {
+    switch (layout.fieldKind(state, name)) {
         .handle, .ptr => try emit.emitOp(state, .OP_NULL),
         .i64, .f64, .f32, .u1, .u8, .i8, .i16, .i32, .u16, .u32, .u64 => try emit.emitConstant(state, .{ .i64 = 0 }),
     }
@@ -305,7 +305,7 @@ fn fillStruct(state: *CompilerState, init: *const ast.StructInit, struct_def: st
             return compiler_errors.compileFailFmt(state, "Unknown field {s}", .{field.name});
         };
         const field_ty = struct_def.types.get(field.name) orelse "int";
-        const kind: u8 = @intFromEnum(layout.fieldKind(field_ty));
+        const kind: u8 = @intFromEnum(layout.fieldKind(state, field_ty));
         try emit.emitOp(state, .OP_DUP);
         try expr.compileExpression(state, field.value);
         try emit.emitStoreField(state, offset, kind);
@@ -343,7 +343,7 @@ pub fn compileMember(state: *CompilerState, mem: *const ast.Member, node: *ast.N
                 if (sd.offsets.get(mem.property.primary.name)) |offset| {
                     const layout = @import("../layout.zig");
                     const field_ty = sd.types.get(mem.property.primary.name) orelse "int";
-                    const kind: u8 = @intFromEnum(layout.fieldKind(field_ty));
+                    const kind: u8 = @intFromEnum(layout.fieldKind(state, field_ty));
                     try expr.compileExpression(state, mem.object);
                     try emit.emitLoadField(state, offset, kind);
                     return;
