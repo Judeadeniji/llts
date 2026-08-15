@@ -289,3 +289,127 @@ print(bad(Literal{ kind: ExprKind.Literal, value: 1 }));
 		"missing enum variant",
 	);
 });
+
+test("wrong-arm field after narrowing is rejected", () => {
+	expectError(
+		runSource(`
+@enum ExprKind { Literal, Add }
+@struct Literal {
+    kind: ExprKind.Literal;
+    value: i64;
+}
+@struct Add {
+    kind: ExprKind.Add;
+    left: i64;
+    right: i64;
+}
+@func bad(e: Literal | Add) {
+    return @switch (e.kind) {
+        ExprKind.Literal => { break e.left; },
+        ExprKind.Add => { break e.left; },
+    };
+}
+print(bad(Literal{ kind: ExprKind.Literal, value: 1 }));
+`),
+		"does not exist on 'Literal'",
+	);
+});
+
+test("union @else narrows to remaining arm", () => {
+	expectOutput(
+		runSource(`
+@enum ExprKind { Literal, Add }
+@struct Literal {
+    kind: ExprKind.Literal;
+    value: i64;
+}
+@struct Add {
+    kind: ExprKind.Add;
+    left: i64;
+    right: i64;
+}
+@func eval(e: Literal | Add) {
+    return @switch (e.kind) {
+        ExprKind.Literal => { break e.value; },
+        @else => { break e.left + e.right; },
+    };
+}
+print(eval(Literal{ kind: ExprKind.Literal, value: 9 }));
+print(eval(Add{ kind: ExprKind.Add, left: 2, right: 5 }));
+`),
+		["9", "7"],
+	);
+});
+
+test("un-narrowed shared kind field is allowed", () => {
+	expectOutput(
+		runSource(`
+@enum ExprKind { Literal, Add }
+@struct Literal {
+    kind: ExprKind.Literal;
+    value: i64;
+}
+@struct Add {
+    kind: ExprKind.Add;
+    left: i64;
+    right: i64;
+}
+$a: Literal | Add = Literal{ kind: ExprKind.Literal, value: 3 };
+$b: Literal | Add = Add{ kind: ExprKind.Add, left: 1, right: 2 };
+print(a.kind);
+print(b.kind);
+`),
+		["0", "1"],
+	);
+});
+
+test("struct outside union is not assignable", () => {
+	expectError(
+		runSource(`
+@enum ExprKind { Literal, Add, Mul }
+@struct Literal {
+    kind: ExprKind.Literal;
+    value: i64;
+}
+@struct Add {
+    kind: ExprKind.Add;
+    left: i64;
+    right: i64;
+}
+@struct Mul {
+    kind: ExprKind.Mul;
+    left: i64;
+    right: i64;
+}
+$a: Literal | Add = Mul{ kind: ExprKind.Mul, left: 2, right: 3 };
+print(a.kind);
+`),
+		"not assignable",
+	);
+});
+
+test("statement @switch narrows union arms", () => {
+	expectOutput(
+		runSource(`
+@enum ExprKind { Literal, Add }
+@struct Literal {
+    kind: ExprKind.Literal;
+    value: i64;
+}
+@struct Add {
+    kind: ExprKind.Add;
+    left: i64;
+    right: i64;
+}
+@func show(e: Literal | Add) {
+    @switch (e.kind) {
+        ExprKind.Literal => { print(e.value); },
+        ExprKind.Add => { print(e.left + e.right); },
+    }
+}
+show(Literal{ kind: ExprKind.Literal, value: 11 });
+show(Add{ kind: ExprKind.Add, left: 4, right: 5 });
+`),
+		["11", "9"],
+	);
+});

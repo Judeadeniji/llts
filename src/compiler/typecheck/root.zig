@@ -282,6 +282,25 @@ fn resolveSwitchVariant(state: *state_mod.CompilerState, pat: *ast.Node, enum_na
     return mem.property.primary.name;
 }
 
+/// Remaining discrim arms after named patterns are covered (for `@else` narrowing).
+fn remainingNarrowType(
+    ta: ir.TypeAlloc,
+    n: KindNarrow,
+    covered: *const std.StringHashMap(void),
+) TypecheckError!?ir.Type {
+    var arms: std.ArrayList(ir.Type) = .empty;
+    defer arms.deinit(ta.allocator);
+    var it = n.map.iterator();
+    while (it.next()) |e| {
+        if (!covered.contains(e.key_ptr.*)) {
+            try arms.append(ta.allocator, .{ .struct_ = e.value_ptr.* });
+        }
+    }
+    if (arms.items.len == 0) return null;
+    if (arms.items.len == 1) return arms.items[0];
+    return try ta.unionType(arms.items);
+}
+
 fn fnReturnType(state: *state_mod.CompilerState, ta: ir.TypeAlloc, func_name: []const u8) !ir.Type {
     if (state.functions.get(func_name)) |def| {
         if (def.return_type) |rt| return try ir.parseDisplayType(ta, rt);
@@ -505,6 +524,11 @@ pub fn inferExpr(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, n
             const obj = try inferExpr(state, env, ta, m.object);
             if (m.property.* == .primary) {
                 if (ir.structNameOf(obj)) |sname| {
+                    if (state.structs.get(sname)) |def| {
+                        if (def.types.get(m.property.primary.name) == null) {
+                            return compiler_errors.compileFailFmt(state, "Field '{s}' does not exist on '{s}'", .{ m.property.primary.name, sname });
+                        }
+                    }
                     break :blk try fieldTypeFromStruct(state, ta, sname, m.property.primary.name);
                 }
                 if (obj == .union_) {
@@ -646,6 +670,19 @@ pub fn inferExpr(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, n
             var narrow = try kindSwitchNarrowing(state, ta, env, sw.condition);
             defer if (narrow) |*n| n.map.deinit();
 
+            var covered = std.StringHashMap(void).init(ta.allocator);
+            defer covered.deinit();
+            if (narrow) |n| {
+                for (sw.prongs) |prong| {
+                    if (prong.is_else) continue;
+                    for (prong.patterns) |pat| {
+                        if (resolveSwitchVariant(state, pat, n.enum_name)) |vname| {
+                            try covered.put(vname, {});
+                        }
+                    }
+                }
+            }
+
             // Join break payloads while still narrowed (do not re-walk after scopes pop).
             var acc: ?ir.Type = null;
             for (sw.prongs) |prong| {
@@ -653,7 +690,11 @@ pub fn inferExpr(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, n
                 try env.pushScope();
                 defer env.popScope();
                 if (narrow) |n| {
-                    if (prong.patterns.len == 1) {
+                    if (prong.is_else) {
+                        if (try remainingNarrowType(ta, n, &covered)) |rt| {
+                            try env.define(n.subject, rt);
+                        }
+                    } else if (prong.patterns.len == 1) {
                         if (resolveSwitchVariant(state, prong.patterns[0], n.enum_name)) |vname| {
                             if (n.map.get(vname)) |sname| {
                                 try env.define(n.subject, .{ .struct_ = sname });

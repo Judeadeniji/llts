@@ -236,11 +236,75 @@ fn compileSwitchInner(state: *CompilerState, sw: *const ast.Switch, value_mode: 
         }
     }
 
+    var covered = std.StringHashMap(void).init(state.allocator);
+    defer covered.deinit();
+    if (narrow_map) |map| {
+        if (narrow_enum) |ename| {
+            for (sw.prongs) |prong| {
+                if (prong.is_else) continue;
+                for (prong.patterns) |pat| {
+                    if (resolveEnumVariantPattern(state, pat, ename)) |vname| {
+                        if (map.contains(vname)) try covered.put(vname, {});
+                    }
+                }
+            }
+        }
+    }
+
     var end_jumps: std.ArrayList(usize) = .empty;
     defer end_jumps.deinit(state.allocator);
 
     for (sw.prongs) |prong| {
         if (prong.is_else) {
+            var saved_ty: ?[]const u8 = null;
+            var local_i: i32 = -1;
+            if (narrow_subject) |subj| {
+                if (narrow_map) |map| {
+                    var rem: std.ArrayList([]const u8) = .empty;
+                    defer rem.deinit(state.allocator);
+                    var it = map.iterator();
+                    while (it.next()) |e| {
+                        if (!covered.contains(e.key_ptr.*)) try rem.append(state.allocator, e.value_ptr.*);
+                    }
+                    if (rem.items.len == 1) {
+                        local_i = scope.resolveLocal(state, subj);
+                        if (local_i >= 0) {
+                            saved_ty = state.locals.items[@intCast(local_i)].type_name;
+                            state.locals.items[@intCast(local_i)].type_name = rem.items[0];
+                        }
+                    } else if (rem.items.len > 1) {
+                        var parts: std.ArrayList([]const u8) = .empty;
+                        defer parts.deinit(state.allocator);
+                        for (rem.items) |s| try parts.append(state.allocator, s);
+                        // "A | B | …"
+                        var len: usize = 0;
+                        for (parts.items, 0..) |p, i| {
+                            len += p.len;
+                            if (i > 0) len += 3;
+                        }
+                        const joined = try state.allocator.alloc(u8, len);
+                        try state.owned.append(state.allocator, joined);
+                        var off: usize = 0;
+                        for (parts.items, 0..) |p, i| {
+                            if (i > 0) {
+                                @memcpy(joined[off .. off + 3], " | ");
+                                off += 3;
+                            }
+                            @memcpy(joined[off .. off + p.len], p);
+                            off += p.len;
+                        }
+                        local_i = scope.resolveLocal(state, subj);
+                        if (local_i >= 0) {
+                            saved_ty = state.locals.items[@intCast(local_i)].type_name;
+                            state.locals.items[@intCast(local_i)].type_name = joined;
+                        }
+                    }
+                }
+            }
+            defer if (local_i >= 0) {
+                state.locals.items[@intCast(local_i)].type_name = saved_ty;
+            };
+
             if (value_mode) {
                 try compileValueArm(state, prong.body, "switch @else");
             } else {
