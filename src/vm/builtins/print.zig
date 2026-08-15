@@ -30,12 +30,18 @@ pub fn writeValue(vm: *VMState, out: *std.ArrayList(u8), v: Value) !void {
     switch (v) {
         .null => try out.appendSlice(vm.allocator, "null"),
         .bool => |b| try out.appendSlice(vm.allocator, if (b) "true" else "false"),
-        .int => |n| {
+        .i8, .i16, .i32, .i64, .u8, .u16, .u32, .u64 => {
+            const n = @import("../../compiler/widths.zig").valueAsI64(v) orelse 0;
             var tmp: [32]u8 = undefined;
             const s = try std.fmt.bufPrint(&tmp, "{d}", .{n});
             try out.appendSlice(vm.allocator, s);
         },
-        .float => |n| {
+        .f32 => |n| {
+            var tmp: [64]u8 = undefined;
+            const s = try std.fmt.bufPrint(&tmp, "{d}", .{n});
+            try out.appendSlice(vm.allocator, s);
+        },
+        .f64 => |n| {
             var tmp: [64]u8 = undefined;
             // Prefer integer formatting when exact (math.ceil etc. return ints; pi/e stay float)
             if (n == @floor(n) and n >= @as(f64, @floatFromInt(std.math.minInt(i32))) and n <= @as(f64, @floatFromInt(std.math.maxInt(i32)))) {
@@ -55,6 +61,7 @@ pub fn writeValue(vm: *VMState, out: *std.ArrayList(u8), v: Value) !void {
             try out.appendSlice(vm.allocator, s);
         },
         .ptr => |p| try writePtr(vm, out, p),
+        .array => |a| try writeArray(vm, out, a),
         .native => |n| {
             var tmp: [64]u8 = undefined;
             const s = try std.fmt.bufPrint(&tmp, "<native {s}>", .{n.name});
@@ -109,7 +116,7 @@ fn writePtr(vm: *VMState, out: *std.ArrayList(u8), p: i32) anyerror!void {
         return;
     }
     const header_val = vm.slot(p - 1).*;
-    if (header_val == .int and header_val.int == ERROR_TAG) {
+    if (header_val == .i64 and header_val.i64 == ERROR_TAG) {
         try out.appendSlice(vm.allocator, "Error: ");
         try writeValue(vm, out, vm.slot(p).*);
         const payload = vm.slot(p + 1).*;
@@ -119,15 +126,15 @@ fn writePtr(vm: *VMState, out: *std.ArrayList(u8), p: i32) anyerror!void {
         }
         return;
     }
-    if (header_val == .int and header_val.int >= 0 and header_val.int < 64 * 1024 * 1024) {
-        const len: usize = @intCast(header_val.int);
+    if (header_val == .i64 and header_val.i64 >= 0 and header_val.i64 < 64 * 1024 * 1024) {
+        const len: usize = @intCast(header_val.i64);
         if (len == 0) return;
         var printable = true;
         var i: usize = 0;
         while (i < len) : (i += 1) {
             const val = vm.slot(p + @as(i32, @intCast(i))).*;
-            if (val != .int) { printable = false; break; }
-            const ch = val.int;
+            if (val != .i64) { printable = false; break; }
+            const ch = val.i64;
             if (ch < 32 or ch > 126) {
                 if (ch != '\n' and ch != '\t') {
                     printable = false;
@@ -138,7 +145,7 @@ fn writePtr(vm: *VMState, out: *std.ArrayList(u8), p: i32) anyerror!void {
         if (printable) {
             i = 0;
             while (i < len) : (i += 1) {
-                const ch: u8 = @intCast(vm.slot(p + @as(i32, @intCast(i))).*.int);
+                const ch: u8 = @intCast(vm.slot(p + @as(i32, @intCast(i))).*.i64);
                 try out.append(vm.allocator, ch);
             }
             return;
@@ -156,6 +163,44 @@ fn writePtr(vm: *VMState, out: *std.ArrayList(u8), p: i32) anyerror!void {
     var tmp: [32]u8 = undefined;
     const s = try std.fmt.bufPrint(&tmp, "<ptr {d}>", .{p});
     try out.appendSlice(vm.allocator, s);
+}
+
+fn writeArray(vm: *VMState, out: *std.ArrayList(u8), a: @import("../../bytecode/value.zig").ArrayRef) anyerror!void {
+    if (a.count == 0) {
+        try out.appendSlice(vm.allocator, "[]");
+        return;
+    }
+    // Printable byte-like int array → string; otherwise [a, b, c].
+    var printable = true;
+    var i: u32 = 0;
+    while (i < a.count) : (i += 1) {
+        const val = vm.arrayElemConst(a, i);
+        if (val != .i64) {
+            printable = false;
+            break;
+        }
+        const ch = val.i64;
+        if (ch < 32 or ch > 126) {
+            if (ch != '\n' and ch != '\t') {
+                printable = false;
+                break;
+            }
+        }
+    }
+    if (printable) {
+        i = 0;
+        while (i < a.count) : (i += 1) {
+            try out.append(vm.allocator, @intCast(vm.arrayElemConst(a, i).i64));
+        }
+        return;
+    }
+    try out.append(vm.allocator, '[');
+    i = 0;
+    while (i < a.count) : (i += 1) {
+        if (i > 0) try out.appendSlice(vm.allocator, ", ");
+        try writeValue(vm, out, vm.arrayElemConst(a, i));
+    }
+    try out.append(vm.allocator, ']');
 }
 
 pub const register = @import("print_reg.zig").register;

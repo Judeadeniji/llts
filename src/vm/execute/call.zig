@@ -88,16 +88,16 @@ pub fn doReturn(vm: *VMState, ip: *usize) CallError!bool {
 pub fn packRest(vm: *VMState, named: u8) CallError!void {
     const frame = &vm.frames.items[vm.frames.items.len - 1];
     const total = frame.arg_count;
-    const rest_count: i32 = if (total > named) @intCast(total - named) else 0;
-    const base = try vm.allocSlots(rest_count + 1);
-    vm.slot(base).* = .{ .int = rest_count };
-    var i: i32 = 0;
+    const rest_count: u32 = if (total > named) @intCast(total - named) else 0;
+    const arr_v = try vm.allocFrameArray(rest_count);
+    const a = arr_v.array;
+    var i: u32 = 0;
     while (i < rest_count) : (i += 1) {
-        const slot = frame.base_slot + named + @as(usize, @intCast(i));
-        vm.slot(base + 1 + i).* = vm.stack_buf[slot];
+        const slot = frame.base_slot + named + i;
+        vm.arrayElemPtr(a, i).* = vm.stack_buf[slot];
     }
     stack.setTop(vm, frame.base_slot + named);
-    try stack.push(vm, .{ .ptr = base + 1 });
+    try stack.push(vm, arr_v);
 }
 
 fn functionNameAt(vm: *VMState, address: u16) []const u8 {

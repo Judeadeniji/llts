@@ -11,8 +11,8 @@ var sleep_n: NativeFunction = undefined;
 
 fn asNanos(v: Value) !i64 {
     return switch (v) {
-        .int => |n| n,
-        .float => |f| @intFromFloat(f),
+        .i64 => |n| n,
+        .f64 => |f| @intFromFloat(f),
         else => error.TypeError,
     };
 }
@@ -21,7 +21,7 @@ fn asNanos(v: Value) !i64 {
 fn nowFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     _ = args;
-    return .{ .int = @intCast(std.time.nanoTimestamp()) };
+    return .{ .i64 = @intCast(std.time.nanoTimestamp()) };
 }
 
 /// Sleep for `d` nanoseconds (Go: time.Sleep(d Duration)).
@@ -29,10 +29,10 @@ fn sleepFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     if (args.len < 1) return error.ArityError;
     const ns_i = try asNanos(args[0]);
-    if (ns_i <= 0) return .{ .int = 0 };
+    if (ns_i <= 0) return .{ .i64 = 0 };
     const ns: u64 = @intCast(ns_i);
     std.Thread.sleep(ns);
-    return .{ .int = 0 };
+    return .{ .i64 = 0 };
 }
 
 pub fn register(vm: *VMState) !void {

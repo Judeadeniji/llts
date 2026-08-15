@@ -36,6 +36,9 @@ fn compoundOp(op: []const u8) ?OpCode {
 }
 
 fn assignIndex(state: *CompilerState, idx: *const ast.Index, right: *ast.Node, arith: ?OpCode) !void {
+    if (idx.end != null) {
+        return @import("../../errors/compile.zig").compileFailFmt(state, "Cannot assign to a slice view", .{});
+    }
     if (arith) |op| {
         try expr.compileExpression(state, idx.object);
         try expr.compileExpression(state, idx.index);
@@ -48,6 +51,12 @@ fn assignIndex(state: *CompilerState, idx: *const ast.Index, right: *ast.Node, a
         try expr.compileExpression(state, idx.object);
         try expr.compileExpression(state, idx.index);
         try expr.compileExpression(state, right);
+    }
+    if (types.resolveType(state, idx.object)) |tn| {
+        if (types.isStringyType(tn) or std.mem.endsWith(u8, tn, "byte")) {
+            try emit.emitOp(state, .OP_AS);
+            try emit.emitByte(state, @intFromEnum(@import("../widths.zig").Width.u8));
+        }
     }
     try emit.emitOp(state, .OP_SET_ARRAY);
 }
@@ -69,6 +78,10 @@ fn assignMember(state: *CompilerState, mem: *const ast.Member, right: *ast.Node,
                     } else {
                         try expr.compileExpression(state, mem.object);
                         try expr.compileExpression(state, right);
+                    }
+                    if (layout.widthFromFieldKind(@enumFromInt(kind))) |w| {
+                        try emit.emitOp(state, .OP_AS);
+                        try emit.emitByte(state, @intFromEnum(w));
                     }
                     try emit.emitStoreField(state, offset, kind);
                     return;
@@ -107,6 +120,19 @@ fn assignPrimary(state: *CompilerState, prim: *const ast.Primary, right: *ast.No
     } else {
         try expr.compileExpression(state, right);
     }
+    if (local_arg != -1) {
+        if (state.locals.items[@intCast(local_arg)].type_name) |tn| {
+            if (widthCastKindName(tn)) |kind| {
+                try emit.emitOp(state, .OP_AS);
+                try emit.emitByte(state, kind);
+            }
+        }
+    } else if (state.global_types.get(prim.name)) |tn| {
+        if (widthCastKindName(tn)) |kind| {
+            try emit.emitOp(state, .OP_AS);
+            try emit.emitByte(state, kind);
+        }
+    }
     const arg = scope.resolveLocal(state, prim.name);
     if (arg != -1) {
         // Track region so `return t` after `$t = Foo{}` vs `@new(a, Foo{})` is checked.
@@ -120,4 +146,10 @@ fn assignPrimary(state: *CompilerState, prim: *const ast.Primary, right: *ast.No
 
 fn failConst(state: *CompilerState, name: []const u8) error{CompileError} {
     return @import("../../errors/compile.zig").compileFailFmt(state, "Cannot reassign to constant variable '{s}'", .{name});
+}
+
+fn widthCastKindName(tn: []const u8) ?u8 {
+    const widths = @import("../widths.zig");
+    if (widths.fromName(tn)) |w| return @intFromEnum(w);
+    return null;
 }

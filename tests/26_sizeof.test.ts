@@ -4,11 +4,12 @@ import { runSource, expectOutput } from "./helpers";
 test("@sizeOf works for primitive types statically", () => {
 	expectOutput(runSource(`
 print(@sizeOf(int));
-print(@sizeOf(float));
+print(@sizeOf(f64));
+print(@sizeOf(f32));
 print(@sizeOf(bool));
 print(@sizeOf(null));
 print(@sizeOf(string));
-`), ["8", "8", "1", "0", "8"]);
+`), ["8", "8", "4", "1", "0", "8"]);
 });
 
 test("@sizeOf works for structs statically", () => {
@@ -38,5 +39,5 @@ print(@sizeOf(s));
 
 $arr = [1, 2, 3, 4];
 print(@sizeOf(arr));
-`), ["8", "1", "4", "4"]);
+`), ["8", "1", "4", "128"]);
 });

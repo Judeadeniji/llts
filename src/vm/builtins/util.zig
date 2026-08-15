@@ -9,13 +9,13 @@ const ERROR_TAG = state_mod.ERROR_TAG;
 /// Read a length-prefixed heap string at `ptr` into an owned buffer.
 pub fn readString(vm: *VMState, ptr: i32) ![]u8 {
     if (ptr < 1 or !vm.isValidHeapPtr(ptr)) return error.TypeError;
-    const len: usize = @intCast(vm.slot(ptr - 1).*.int);
+    const len: usize = @intCast(vm.slot(ptr - 1).*.i64);
     const buf = try vm.allocator.alloc(u8, len);
     var i: usize = 0;
     while (i < len) : (i += 1) {
         const val = vm.slot(ptr + @as(i32, @intCast(i))).*;
         switch (val) {
-            .int => |ch| buf[i] = @intCast(ch),
+            .i64 => |ch| buf[i] = @intCast(ch),
             else => {
                 vm.allocator.free(buf);
                 return error.TypeError;
@@ -66,13 +66,13 @@ pub fn appendStr(vm: *VMState, v: Value) !void {
             _ = try vm.appendImmortal(data);
         },
         .ptr => |p| {
-            const len: usize = @intCast(vm.slot(p - 1).*.int);
+            const len: usize = @intCast(vm.slot(p - 1).*.i64);
             try vm.ensurePackedCapacity(len);
             var i: usize = 0;
             while (i < len) : (i += 1) {
                 const val = vm.slot(p + @as(i32, @intCast(i))).*;
-                if (val != .int) return error.TypeError;
-                vm.bytes.appendAssumeCapacity(@intCast(val.int));
+                if (val != .i64) return error.TypeError;
+                vm.bytes.appendAssumeCapacity(@intCast(val.i64));
             }
             vm.noteImmortalGrowth();
         },
@@ -84,7 +84,7 @@ pub fn appendStr(vm: *VMState, v: Value) !void {
 pub fn makeError(vm: *VMState, msg: []const u8) !Value {
     const msg_val = try writeSlice(vm, msg);
     const p = try vm.allocImmortal(3);
-    vm.slot(p).* = .{ .int = ERROR_TAG };
+    vm.slot(p).* = .{ .i64 = ERROR_TAG };
     vm.slot(p + 1).* = msg_val;
     vm.slot(p + 2).* = .null;
     return .{ .ptr = p + 1 };
@@ -93,7 +93,7 @@ pub fn makeError(vm: *VMState, msg: []const u8) !Value {
 pub fn makeErrorWithPayload(vm: *VMState, msg: []const u8, payload: Value) !Value {
     const msg_val = try writeSlice(vm, msg);
     const p = try vm.allocImmortal(3);
-    vm.slot(p).* = .{ .int = ERROR_TAG };
+    vm.slot(p).* = .{ .i64 = ERROR_TAG };
     vm.slot(p + 1).* = msg_val;
     vm.slot(p + 2).* = payload;
     return .{ .ptr = p + 1 };
@@ -117,34 +117,24 @@ pub fn makeIoError(vm: *VMState, err: anyerror, path: []const u8) !Value {
     return makeErrorWithPayload(vm, ioErrorCode(err), try writeSlice(vm, path));
 }
 
-/// Write an array of i32 values (length-prefixed); returns data pointer.
-/// Immortal: returned from natives like `__split` through LLTS wrappers.
-/// Heap addresses are stored as `.ptr` so `print` / string ops see strings, not raw ints.
+/// Write an array of values into a packed immortal `.array`.
 pub fn writeArray(vm: *VMState, items: []const Value) !Value {
-    const len: i64 = @intCast(items.len);
-    const base = try vm.allocImmortal(@intCast(len + 1));
-    vm.slot(base).* = .{ .int = len };
+    const arr_v = try vm.allocImmortalArray(@intCast(items.len));
+    const a = arr_v.array;
     for (items, 0..) |item, i| {
-        vm.slot(base + 1 + @as(i32, @intCast(i))).* = item;
+        vm.arrayElemPtr(a, @intCast(i)).* = item;
     }
-    return .{ .ptr = base + 1 };
+    return arr_v;
 }
 
 pub fn asInt(v: Value) !i64 {
-    return switch (v) {
-        .int => |n| n,
-        .ptr => |p| p,
-        .bool => |b| @intFromBool(b),
-        .float => |n| @intFromFloat(n),
-        .null => 0,
-        else => error.TypeError,
-    };
+    return @import("../../compiler/widths.zig").valueAsI64(v) orelse error.TypeError;
 }
 
 pub fn asPtr(v: Value) !i32 {
     return switch (v) {
         .ptr => |p| p,
-        .int => |n| if (n >= state_mod.HEAP_START) @intCast(n) else error.TypeError,
+        .i64 => |n| if (n >= state_mod.HEAP_START) @intCast(n) else error.TypeError,
         else => error.TypeError,
     };
 }
@@ -170,13 +160,13 @@ pub fn valueToStr(vm: *VMState, v: Value, buf: *std.ArrayList(u8)) ![]const u8 {
         .bytes => |b| return vm.bytes.items[b.offset..][0..b.len],
         .ptr => |p| {
             buf.clearRetainingCapacity();
-            const len: usize = @intCast(vm.slot(p - 1).*.int);
+            const len: usize = @intCast(vm.slot(p - 1).*.i64);
             try buf.ensureTotalCapacity(vm.allocator, len);
             var i: usize = 0;
             while (i < len) : (i += 1) {
                 const val = vm.slot(p + @as(i32, @intCast(i))).*;
                 switch (val) {
-                    .int => |ch| buf.appendAssumeCapacity(@intCast(ch)),
+                    .i64 => |ch| buf.appendAssumeCapacity(@intCast(ch)),
                     else => return error.TypeError,
                 }
             }
@@ -204,7 +194,7 @@ pub fn stringEquals(vm: *VMState, a: Value, b: Value) bool {
         .slice => |s| s.len,
         .bytes => |ba| ba.len,
         .name => |idx| vm.chunk.stringAt(idx).len,
-        .ptr => |p| @intCast(vm.slot(p - 1).*.int),
+        .ptr => |p| @intCast(vm.slot(p - 1).*.i64),
         else => unreachable,
     };
     
@@ -212,7 +202,7 @@ pub fn stringEquals(vm: *VMState, a: Value, b: Value) bool {
         .slice => |s| s.len,
         .bytes => |by| by.len,
         .name => |idx| vm.chunk.stringAt(idx).len,
-        .ptr => |p| @intCast(vm.slot(p - 1).*.int),
+        .ptr => |p| @intCast(vm.slot(p - 1).*.i64),
         else => unreachable,
     };
     
@@ -227,8 +217,8 @@ pub fn stringEquals(vm: *VMState, a: Value, b: Value) bool {
             .name => |idx| vm.chunk.stringAt(idx)[i],
             .ptr => |p| blk: {
                 const val = vm.slot(p + @as(i32, @intCast(i))).*;
-                if (val != .int) return false;
-                break :blk @intCast(val.int);
+                if (val != .i64) return false;
+                break :blk @intCast(val.i64);
             },
             else => unreachable,
         };
@@ -238,8 +228,8 @@ pub fn stringEquals(vm: *VMState, a: Value, b: Value) bool {
             .name => |idx| vm.chunk.stringAt(idx)[i],
             .ptr => |p| blk: {
                 const val = vm.slot(p + @as(i32, @intCast(i))).*;
-                if (val != .int) return false;
-                break :blk @intCast(val.int);
+                if (val != .i64) return false;
+                break :blk @intCast(val.i64);
             },
             else => unreachable,
         };

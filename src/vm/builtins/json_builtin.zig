@@ -14,8 +14,8 @@ fn parseJsonNode(vm: *VMState, val: std.json.Value) anyerror!Value {
     switch (val) {
         .null => return .null,
         .bool => |b| return .{ .bool = b },
-        .integer => |i| return .{ .int = @intCast(i) },
-        .float => |f| return .{ .float = f },
+        .integer => |i| return .{ .i64 = @intCast(i) },
+        .float => |f| return .{ .f64 = f },
         .string => |s| return try util.writeSlice(vm, s),
         .array => |arr| {
             var items = try vm.allocator.alloc(Value, arr.items.len);
@@ -57,8 +57,10 @@ fn stringifyNode(vm: *VMState, val: Value, out: *std.io.Writer.Allocating) !void
     switch (val) {
         .null => try out.writer.writeAll("null"),
         .bool => |b| try out.writer.print("{}", .{b}),
-        .int => |i| try out.writer.print("{d}", .{i}),
-        .float => |f| try out.writer.print("{d}", .{f}),
+        .i64 => |i| try out.writer.print("{d}", .{i}),
+        .u8 => |i| try out.writer.print("{d}", .{i}),
+        .f32 => |f| try out.writer.print("{d}", .{f}),
+        .f64 => |f| try out.writer.print("{d}", .{f}),
         .name => |idx| try out.writer.print("{f}", .{std.json.fmt(vm.chunk.stringAt(idx), .{})}),
         .slice => |s| try out.writer.print("{f}", .{std.json.fmt(vm.bytes.items[s.offset .. s.offset + s.len], .{})}),
         .bytes => |b| try out.writer.print("{f}", .{std.json.fmt(vm.bytes.items[b.offset..][0..b.len], .{})}),
@@ -77,16 +79,25 @@ fn stringifyNode(vm: *VMState, val: Value, out: *std.io.Writer.Allocating) !void
         },
         .ptr => |p| {
             const tag = vm.slot(p - 1).*;
-            if (tag == .int and tag.int == state_mod.ERROR_TAG) {
+            if (tag == .i64 and tag.i64 == state_mod.ERROR_TAG) {
                 try out.writer.writeAll("\"[Error]\"");
                 return;
             }
-            const len: usize = @intCast(tag.int);
+            const len: usize = @intCast(tag.i64);
             try out.writer.writeAll("[");
             var i: usize = 0;
             while (i < len) : (i += 1) {
                 if (i > 0) try out.writer.writeAll(",");
                 try stringifyNode(vm, vm.slot(p + @as(i32, @intCast(i))).*, out);
+            }
+            try out.writer.writeAll("]");
+        },
+        .array => |a| {
+            try out.writer.writeAll("[");
+            var i: u32 = 0;
+            while (i < a.count) : (i += 1) {
+                if (i > 0) try out.writer.writeAll(",");
+                try stringifyNode(vm, vm.arrayElemConst(a, i), out);
             }
             try out.writer.writeAll("]");
         },

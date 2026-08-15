@@ -14,13 +14,14 @@ print(x);
 	);
 });
 
-test("$x: i32 accepts int literal via alias normalize", () => {
+test("$x: i32 is a real width (not an int alias)", () => {
 	expectOutput(
 		runSource(`
 $x: i32 = 42;
+print(@typeOf(x));
 print(x);
 `),
-		["42"],
+		["i32", "42"],
 	);
 });
 
@@ -130,7 +131,7 @@ print(@typeOf(a));
 print(@typeOf(b));
 print(a[1]);
 `),
-		["[3]int", "[2]int", "2"],
+		["[3]i64", "[2]i64", "2"],
 	);
 });
 
@@ -152,7 +153,7 @@ print(@typeOf(grid));
 print(@typeOf(grid[0]));
 print(grid[1][2]);
 `),
-		["[2][3]int", "[3]int", "6"],
+		["[2][3]i64", "[3]i64", "6"],
 	);
 });
 
@@ -230,7 +231,7 @@ print(@typeOf(y));
 print(@typeOf(z));
 print(@typeOf(true));
 `),
-		["int", "[2]byte", "[]int", "bool"],
+		["i64", "[2]byte", "[]i64", "bool"],
 	);
 });
 
@@ -265,7 +266,7 @@ print(@typeOf(x));
 x = 7;
 print(x);
 `),
-		["?int", "7"],
+		["?i64", "7"],
 	);
 });
 
@@ -298,26 +299,27 @@ print(n);
 	);
 });
 
-test("self-referential ?Node linked list", () => {
+test("self-referential ?*Node linked list", () => {
 	expectOutput(
 		runSource(`
 @const $mem = @import("std/mem");
 @struct Node {
-    value: int;
-    next: ?Node;
+    value: i64;
+    next: ?*Node;
 }
 pub @func main() {
     $a = mem.create(0);
     defer a.deinit();
-    $head: ?Node = null;
+    $head: ?*Node = null;
     head = @new(a, Node { value: 1, next: head });
     head = @new(a, Node { value: 2, next: head });
     print(@typeOf(head));
+    print(@typeOf(@new(a, Node)));
     print(head.value);
     print(head.next.value);
     print(head.next.next);
 }
 `),
-		["?Node", "2", "1", "null"],
+		["?*Node", "*Node", "2", "1", "null"],
 	);
 });

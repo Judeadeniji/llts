@@ -154,11 +154,11 @@ fn writeConstant(w: anytype, v: Value, remap: []const u32) !void {
             try w.writeAll(&.{@intFromEnum(ConstTag.bool_val)});
             try w.writeAll(&.{@intFromBool(b)});
         },
-        .int => |n| {
+        .i64 => |n| {
             try w.writeAll(&.{@intFromEnum(ConstTag.int_val)});
             try writeI64(w, n);
         },
-        .float => |n| {
+        .f64 => |n| {
             try w.writeAll(&.{@intFromEnum(ConstTag.float_val)});
             try writeF64(w, n);
         },
@@ -183,8 +183,8 @@ fn readConstant(r: anytype, string_count: u32) FormatError!Value {
             readExact(r, &b_buf) catch return error.TruncatedInput;
             break :blk Value{ .bool = b_buf[0] != 0 };
         },
-        .int_val => .{ .int = try readI64(r) },
-        .float_val => .{ .float = try readF64(r) },
+        .int_val => .{ .i64 = try readI64(r) },
+        .float_val => .{ .f64 = try readF64(r) },
         .name_val => blk: {
             const idx = try readU32(r);
             if (idx >= string_count) return error.InvalidStringIndex;
@@ -496,7 +496,7 @@ test "round-trip lean chunk" {
     c.source = c.sources.items[0].text;
 
     const name_idx = try c.addStringConstant("print");
-    const int_idx = try c.addConstant(.{ .int = 42 });
+    const int_idx = try c.addConstant(.{ .i64 = 42 });
     try c.writeOp(.OP_CONSTANT);
     try c.write(@intCast((int_idx >> 8) & 0xff));
     try c.write(@intCast(int_idx & 0xff));

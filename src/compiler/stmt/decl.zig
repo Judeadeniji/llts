@@ -36,6 +36,13 @@ pub fn compileDeclaration(state: *CompilerState, decl: *const ast.Declaration) !
 
     try expr.compileExpression(state, decl.value);
 
+    if (decl.type_annotation) |ta| {
+        if (widthCastKind(ta)) |kind| {
+            try emit.emitOp(state, .OP_AS);
+            try emit.emitByte(state, kind);
+        }
+    }
+
     var type_name: ?[]const u8 = null;
     if (decl.type_annotation) |ta| {
         // Prefer type already validated/normalized by the typecheck pass.
@@ -93,9 +100,9 @@ fn typesAssignable(state: *CompilerState, got: []const u8, expected: []const u8)
     if (std.mem.eql(u8, got, expected)) return true;
     if (std.mem.eql(u8, expected, "unknown") or std.mem.eql(u8, got, "unknown")) return true;
     if (std.mem.indexOf(u8, got, "unknown") != null or std.mem.indexOf(u8, expected, "unknown") != null) return true;
-    // Enum ↔ int (runtime values are ints)
+    // Enum ↔ untyped int (runtime values are ints)
     if (std.mem.eql(u8, got, "int") and state.enums.contains(expected)) return true;
-    if (std.mem.eql(u8, expected, "int") and state.enums.contains(got)) return true;
+    if ((std.mem.eql(u8, expected, "int") or std.mem.eql(u8, expected, "i64")) and state.enums.contains(got)) return true;
     // string aliases / [N]byte <: []byte
     if (types.isStringyType(got) and types.isStringyType(expected)) {
         // Sized [N]byte is not assignable to [M]byte when N != M
@@ -110,27 +117,36 @@ fn typesAssignable(state: *CompilerState, got: []const u8, expected: []const u8)
         }
         return true;
     }
-    // [N]T <: []T when element types match
-    if (std.mem.startsWith(u8, got, "[") and std.mem.startsWith(u8, expected, "[]")) {
-        // Compare element suffixes
-        const got_elem = arrayElemSuffix(got) orelse return false;
-        const exp_elem = expected[2..];
-        return std.mem.eql(u8, got_elem, exp_elem);
-    }
-    // Same element, different size → not assignable
-    if (std.mem.startsWith(u8, got, "[") and std.mem.startsWith(u8, expected, "[")) {
-        const ge = arrayElemSuffix(got) orelse return false;
-        const ee = arrayElemSuffix(expected) orelse return false;
-        if (!std.mem.eql(u8, ge, ee)) return false;
-        // lengths differ
-        return false;
-    }
     var arena = std.heap.ArenaAllocator.init(state.allocator);
     defer arena.deinit();
     const ta = ir.TypeAlloc{ .allocator = arena.allocator() };
     const g = ir.parseDisplayType(ta, got) catch return false;
     const e = ir.parseDisplayType(ta, expected) catch return false;
-    return ir.isSubtype(g, e);
+    if (ir.isSubtype(g, e)) return true;
+    // Untyped integer literal display still spells "int" (not "i64"); may coerce into any integer width,
+    // including nested `[N]int` / `[2][3]int` into matching integer arrays.
+    if (isUntypedIntDisplay(got) and untypedIntCoerces(g, e)) return true;
+    // Untyped / f64 float literal may narrow to f32.
+    if ((std.mem.eql(u8, got, "float") or std.mem.eql(u8, got, "f64")) and e == .f32) return true;
+    return false;
+}
+
+/// `int` / `number` as spelled by literal inference (before alias normalize to `i64`).
+fn isUntypedIntDisplay(s: []const u8) bool {
+    if (std.mem.eql(u8, s, "int") or std.mem.eql(u8, s, "number")) return true;
+    if (arrayElemSuffix(s)) |elem| return isUntypedIntDisplay(elem);
+    return false;
+}
+
+fn untypedIntCoerces(g: ir.Type, e: ir.Type) bool {
+    if (ir.isInteger(e) and g == .i64) return true;
+    if (g == .array and e == .array) {
+        if (!untypedIntCoerces(g.array.elem.*, e.array.elem.*)) return false;
+        if (e.array.length == null) return true;
+        if (g.array.length == null) return false;
+        return g.array.length.? == e.array.length.?;
+    }
+    return false;
 }
 
 fn arrayElemSuffix(display: []const u8) ?[]const u8 {
@@ -263,4 +279,11 @@ pub fn compileEnum(state: *CompilerState, e: *const ast.EnumDecl) !void {
         .name = e.name,
         .variants = variants,
     });
+}
+
+fn widthCastKind(node: *ast.Node) ?u8 {
+    if (node.* != .primary or node.primary.kind != .identifier) return null;
+    const widths = @import("../widths.zig");
+    if (widths.fromName(node.primary.name)) |w| return @intFromEnum(w);
+    return null;
 }

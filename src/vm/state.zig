@@ -286,6 +286,49 @@ pub const VMState = struct {
         return self.bytes.items[offset..][0..len];
     }
 
+    pub const value_size: usize = @sizeOf(Value);
+    pub const value_align: usize = @alignOf(Value);
+
+    fn alignPackedBump(self: *VMState, immortal: bool) !void {
+        const cur = @as(usize, self.bytes_ptr);
+        const aligned = std.mem.alignForward(usize, cur, value_align);
+        const pad: i32 = @intCast(aligned - cur);
+        if (pad == 0) return;
+        _ = if (immortal)
+            try self.allocImmortalBytes(pad)
+        else
+            try self.allocFrameBytes(pad);
+    }
+
+    fn allocArrayStorage(self: *VMState, count: u32, immortal: bool) !Value {
+        try self.alignPackedBump(immortal);
+        const nbytes: i32 = @intCast(@as(usize, count) * value_size);
+        const off: i32 = if (immortal)
+            try self.allocImmortalBytes(nbytes)
+        else
+            try self.allocFrameBytes(nbytes);
+        return .{ .array = .{ .offset = @intCast(off), .count = count } };
+    }
+
+    pub fn allocFrameArray(self: *VMState, count: u32) !Value {
+        return self.allocArrayStorage(count, false);
+    }
+
+    pub fn allocImmortalArray(self: *VMState, count: u32) !Value {
+        return self.allocArrayStorage(count, true);
+    }
+
+    pub fn arrayElemPtr(self: *VMState, arr: value.ArrayRef, index: u32) *Value {
+        const at = arr.offset + index * value_size;
+        return @ptrCast(@alignCast(self.bytes.items[at..][0..value_size].ptr));
+    }
+
+    pub fn arrayElemConst(self: *const VMState, arr: value.ArrayRef, index: u32) Value {
+        const at = arr.offset + index * value_size;
+        const p: *const Value = @ptrCast(@alignCast(self.bytes.items[at..][0..value_size].ptr));
+        return p.*;
+    }
+
     pub fn allocModule(self: *VMState, name: []const u8) !*ModuleObject {
         const mod = try self.allocator.create(ModuleObject);
         mod.* = .{
@@ -367,8 +410,8 @@ test "frame heap grows past initial capacity" {
     const a = try vm.allocSlots(8000);
     try std.testing.expectEqual(HEAP_START, a);
     try std.testing.expectEqual(HEAP_START + 8000, vm.heap_ptr);
-    vm.slot(a).* = .{ .int = 42 };
-    try std.testing.expectEqual(@as(i64, 42), vm.slot(a).*.int);
+    vm.slot(a).* = .{ .i64 = 42 };
+    try std.testing.expectEqual(@as(i64, 42), vm.slot(a).*.i64);
 }
 
 test "immortal heap and packed bytes grow" {
@@ -379,10 +422,10 @@ test "immortal heap and packed bytes grow" {
 
     const p = try vm.allocImmortal(3);
     try std.testing.expect(p >= IMMORTAL_BASE);
-    vm.slot(p).* = .{ .int = 7 };
+    vm.slot(p).* = .{ .i64 = 7 };
     _ = try vm.allocImmortal(5000);
     try std.testing.expect(vm.immortal.items.len >= 5003);
-    try std.testing.expectEqual(@as(i64, 7), vm.slot(p).*.int);
+    try std.testing.expectEqual(@as(i64, 7), vm.slot(p).*.i64);
 
     const off = try vm.allocImmortalBytes(2 * 1024 * 1024);
     try std.testing.expect(vm.bytes_ptr >= 2 * 1024 * 1024);

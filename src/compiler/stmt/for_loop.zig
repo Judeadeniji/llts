@@ -137,7 +137,7 @@ fn compileIterFor(state: *CompilerState, for_expr: *const ast.For) !void {
 
     const i_index: u8 = @intCast(state.locals.items.len);
     try state.locals.append(state.allocator, .{ .name = ".i", .depth = state.scope_depth });
-    try emit.emitConstant(state, .{ .int = 0 });
+    try emit.emitConstant(state, .{ .i64 = 0 });
 
     const loop_start = state.chunk.code.items.len;
     try emit.emitOp(state, .OP_GET_LOCAL);
@@ -182,7 +182,7 @@ fn compileIterFor(state: *CompilerState, for_expr: *const ast.For) !void {
 
     try emit.emitOp(state, .OP_GET_LOCAL);
     try emit.emitByte(state, i_index);
-    try emit.emitConstant(state, .{ .int = 1 });
+    try emit.emitConstant(state, .{ .i64 = 1 });
     try emit.emitOp(state, .OP_ADD);
     try emit.emitOp(state, .OP_SET_LOCAL);
     try emit.emitByte(state, i_index);

@@ -19,6 +19,7 @@ pub const Intrinsic = enum {
     typeOf,
     isError,
     sizeOf,
+    as,
     new,
 };
 
@@ -27,6 +28,7 @@ pub fn match(callee: []const u8) ?Intrinsic {
     if (std.mem.eql(u8, callee, "@typeOf")) return .typeOf;
     if (std.mem.eql(u8, callee, "@isError")) return .isError;
     if (std.mem.eql(u8, callee, "@sizeOf")) return .sizeOf;
+    if (std.mem.eql(u8, callee, "@as")) return .as;
     if (std.mem.eql(u8, callee, "@new")) return .new;
     return null;
 }
@@ -42,6 +44,7 @@ pub fn arity(intr: Intrinsic) Arity {
         .typeOf => .{ .exact = 1 },
         .isError => .{ .exact = 1 },
         .sizeOf => .{ .exact = 1 },
+        .as => .{ .exact = 2 },
         .new => .{ .range = .{ .min = 2, .max = 3 } },
     };
 }
@@ -92,27 +95,37 @@ pub fn typecheck(state: *CompilerState, env: *typecheck_root.Env, ta: ir.TypeAll
             _ = try typecheck_root.inferExpr(state, env, ta, c.args[0]);
             return ir.TInt;
         },
+        .as => {
+            const target = try from_ast.typeFromAst(c.args[0], state, ta);
+            const src = try typecheck_root.inferExpr(state, env, ta, c.args[1]);
+            try checkAsCast(state, src, target);
+            return target;
+        },
         .new => {
             _ = try typecheck_root.inferExpr(state, env, ta, c.args[0]);
             const v = c.args[1];
             if (c.args.len == 3) _ = try typecheck_root.inferExpr(state, env, ta, c.args[2]);
-            switch (v.*) {
-                .array_type, .union_type => return try from_ast.typeFromAst(v, state, ta),
-                .primary => |p| {
+            const base: ir.Type = switch (v.*) {
+                .array_type, .union_type, .pointer_type => try from_ast.typeFromAst(v, state, ta),
+                .primary => |p| blk: {
                     if (p.kind == .identifier) {
                         if (std.mem.eql(u8, p.name, "string") or std.mem.eql(u8, p.name, "[]byte")) {
-                            return ir.TString;
+                            break :blk ir.TString;
                         }
                         if (state.structs.contains(p.name) or state.enums.contains(p.name)) {
-                            return try from_ast.typeFromAst(v, state, ta);
+                            break :blk try from_ast.typeFromAst(v, state, ta);
                         }
                         const named = ir.namedType(p.name);
-                        if (named != .struct_) return named;
+                        if (named != .struct_) break :blk named;
                     }
-                    return try typecheck_root.inferExpr(state, env, ta, v);
+                    break :blk try typecheck_root.inferExpr(state, env, ta, v);
                 },
-                else => return try typecheck_root.inferExpr(state, env, ta, v),
-            }
+                else => try typecheck_root.inferExpr(state, env, ta, v),
+            };
+            // Heap-allocated structs are pointers (handles into packed bytes).
+            if (base == .struct_) return try ta.ptrType(base);
+            if (base == .ptr) return base;
+            return base;
         },
     }
 }
@@ -146,26 +159,38 @@ pub fn compile(state: *CompilerState, intr: Intrinsic, node: *ast.Node, c: *cons
             var static_type: ?[]const u8 = null;
             if (c.args[0].* == .primary and c.args[0].primary.kind == .identifier) {
                 static_type = c.args[0].primary.name;
+            } else if (c.args[0].* == .pointer_type or c.args[0].* == .array_type or c.args[0].* == .union_type) {
+                static_type = try from_ast.typeAstToDisplay(c.args[0], state);
             } else if (try path.tryResolveStaticPath(state, c.args[0])) |p| {
                 static_type = p;
             }
-            
+
             if (static_type) |st| {
                 var is_type = false;
                 var size: i32 = 0;
-                if (std.mem.eql(u8, st, "int") or std.mem.eql(u8, st, "float")) {
-                    is_type = true; size = 8;
-                } else if (std.mem.eql(u8, st, "bool")) {
-                    is_type = true; size = 1;
+                const layout = @import("layout.zig");
+                const widths = @import("widths.zig");
+                if (st.len > 0 and (st[0] == '*' or st[0] == '?')) {
+                    is_type = true;
+                    size = layout.sizeOfTypeName(st);
+                } else if (widths.fromName(st)) |w| {
+                    is_type = true;
+                    size = w.size();
+                } else if (std.mem.eql(u8, st, "bool") or std.mem.eql(u8, st, "boolean")) {
+                    is_type = true;
+                    size = 1;
                 } else if (std.mem.eql(u8, st, "null")) {
-                    is_type = true; size = 0;
+                    is_type = true;
+                    size = 0;
                 } else if (std.mem.eql(u8, st, "string") or std.mem.eql(u8, st, "[]byte")) {
-                    is_type = true; size = 8;
+                    is_type = true;
+                    size = 8;
                 } else if (state.structs.get(st)) |sd| {
-                    is_type = true; size = sd.size;
+                    is_type = true;
+                    size = sd.size;
                 }
                 if (is_type) {
-                    try emit.emitConstant(state, .{ .int = size });
+                    try emit.emitConstant(state, .{ .i64 = size });
                     return;
                 }
             }
@@ -174,7 +199,7 @@ pub fn compile(state: *CompilerState, intr: Intrinsic, node: *ast.Node, c: *cons
                 if (from_ast.lookupStruct(state, type_name)) |sd| {
                     try expr.compileExpression(state, c.args[0]);
                     try emit.emitOp(state, .OP_POP);
-                    try emit.emitConstant(state, .{ .int = sd.size });
+                    try emit.emitConstant(state, .{ .i64 = sd.size });
                     return;
                 }
             }
@@ -182,8 +207,35 @@ pub fn compile(state: *CompilerState, intr: Intrinsic, node: *ast.Node, c: *cons
             try expr.compileExpression(state, c.args[0]);
             try emit.emitOp(state, .OP_SIZEOF);
         },
+        .as => {
+            const kind = try asCastKind(state, c.args[0]);
+            try expr.compileExpression(state, c.args[1]);
+            try emit.emitOp(state, .OP_AS);
+            try emit.emitByte(state, kind);
+        },
         .new => {
             try aggregate.compileNew(state, c);
         },
+    }
+}
+
+/// Operand for `OP_AS`: `widths.Width` discriminant.
+fn asCastKind(state: *CompilerState, type_node: *ast.Node) !u8 {
+    const widths = @import("widths.zig");
+    if (type_node.* == .primary and type_node.primary.kind == .identifier) {
+        const n = type_node.primary.name;
+        if (widths.fromName(n)) |w| return @intFromEnum(w);
+        return compile_errors.compileFailFmt(state, "@as target must be a numeric width (got '{s}')", .{n});
+    }
+    return compile_errors.compileFailFmt(state, "@as target must be a type name", .{});
+}
+
+fn checkAsCast(state: *CompilerState, src: ir.Type, target: ir.Type) !void {
+    if (ir.involvesUnknown(src) or ir.involvesUnknown(target)) return;
+    const ok = (ir.isNumeric(src) or src == .enum_) and (ir.isNumeric(target) or target == .enum_);
+    if (!ok) {
+        const ds = try typecheck_root.ownDisplay(state, src);
+        const dt = try typecheck_root.ownDisplay(state, target);
+        return compile_errors.compileFailFmt(state, "cannot @as({s}, …) from '{s}'", .{ dt, ds });
     }
 }

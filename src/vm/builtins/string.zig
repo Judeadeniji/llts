@@ -43,10 +43,10 @@ fn strlenFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
     if (args.len < 1) return error.ArityError;
     return switch (args[0]) {
-        .slice => |s| .{ .int = @intCast(s.len) },
-        .bytes => |b| .{ .int = b.len },
-        .name => |idx| .{ .int = @intCast(vm.chunk.stringAt(idx).len) },
-        .ptr => |p| .{ .int = vm.slot(p - 1).*.int },
+        .slice => |s| .{ .i64 = @intCast(s.len) },
+        .bytes => |b| .{ .i64 = b.len },
+        .name => |idx| .{ .i64 = @intCast(vm.chunk.stringAt(idx).len) },
+        .ptr => |p| .{ .i64 = vm.slot(p - 1).*.i64 },
         else => error.TypeError,
     };
 }
@@ -83,8 +83,8 @@ fn indexOfFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const str = try util.valueToStr(vm, args[0], &buf1);
     const search = try util.valueToStr(vm, args[1], &buf2);
     
-    if (std.mem.indexOf(u8, str, search)) |idx| return .{ .int = @intCast(idx) };
-    return .{ .int = -1 };
+    if (std.mem.indexOf(u8, str, search)) |idx| return .{ .i64 = @intCast(idx) };
+    return .{ .i64 = -1 };
 }
 
 fn containsFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
@@ -108,8 +108,8 @@ fn lastIndexOfFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const str = try util.valueToStr(vm, args[0], &buf1);
     const search = try util.valueToStr(vm, args[1], &buf2);
     
-    if (std.mem.lastIndexOf(u8, str, search)) |idx| return .{ .int = @intCast(idx) };
-    return .{ .int = -1 };
+    if (std.mem.lastIndexOf(u8, str, search)) |idx| return .{ .i64 = @intCast(idx) };
+    return .{ .i64 = -1 };
 }
 
 fn indexOfFromFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
@@ -122,10 +122,10 @@ fn indexOfFromFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const search = try util.valueToStr(vm, args[1], &buf2);
     const from: usize = @intCast(@max(try util.asInt(args[2]), 0));
     
-    if (from >= str.len) return .{ .int = -1 };
+    if (from >= str.len) return .{ .i64 = -1 };
     
-    if (std.mem.indexOfPos(u8, str, from, search)) |idx| return .{ .int = @intCast(idx) };
-    return .{ .int = -1 };
+    if (std.mem.indexOfPos(u8, str, from, search)) |idx| return .{ .i64 = @intCast(idx) };
+    return .{ .i64 = -1 };
 }
 
 fn splitFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
@@ -350,15 +350,15 @@ fn charCodeFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     
     if (args[0] == .slice) {
         const s = args[0].slice;
-        if (index >= s.len) return .{ .int = -1 };
-        return .{ .int = vm.bytes.items[s.offset + index] };
+        if (index >= s.len) return .{ .i64 = -1 };
+        return .{ .i64 = vm.bytes.items[s.offset + index] };
     }
     
     var buf: std.ArrayList(u8) = .empty; defer buf.deinit(vm.allocator);
     const str = try util.valueToStr(vm, args[0], &buf);
     
-    if (index >= str.len) return .{ .int = -1 };
-    return .{ .int = str[index] };
+    if (index >= str.len) return .{ .i64 = -1 };
+    return .{ .i64 = str[index] };
 }
 
 fn parseIntFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
@@ -369,8 +369,8 @@ fn parseIntFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const base: u8 = if (args.len > 1) @intCast(@max(try util.asInt(args[1]), 2)) else 10;
     
     // allow negative sign
-    const val = std.fmt.parseInt(i64, str, base) catch return .{ .int = 0 }; // or error?
-    return .{ .int = val };
+    const val = std.fmt.parseInt(i64, str, base) catch return .{ .i64 = 0 }; // or error?
+    return .{ .i64 = val };
 }
 
 fn parseFloatFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
@@ -379,8 +379,8 @@ fn parseFloatFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     var buf: std.ArrayList(u8) = .empty; defer buf.deinit(vm.allocator);
     const str = try util.valueToStr(vm, args[0], &buf);
     
-    const val = std.fmt.parseFloat(f64, str) catch return .{ .float = std.math.nan(f64) };
-    return .{ .float = val };
+    const val = std.fmt.parseFloat(f64, str) catch return .{ .f64 = std.math.nan(f64) };
+    return .{ .f64 = val };
 }
 
 fn fromCharCodeFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
@@ -388,7 +388,7 @@ fn fromCharCodeFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     if (args.len < 1) return error.ArityError;
     const code = try util.asInt(args[0]);
     
-    if (code < 0 or code > 255) return try util.makeErrorWithPayload(vm, "InvalidCharCode", .{ .int = code });
+    if (code < 0 or code > 255) return try util.makeErrorWithPayload(vm, "InvalidCharCode", .{ .i64 = code });
     var buf: [1]u8 = .{ @intCast(code) };
     return try util.writeSlice(vm, &buf);
 }
@@ -442,9 +442,9 @@ fn compareFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     
     const order = std.mem.order(u8, a, b);
     return switch (order) {
-        .lt => .{ .int = -1 },
-        .eq => .{ .int = 0 },
-        .gt => .{ .int = 1 },
+        .lt => .{ .i64 = -1 },
+        .eq => .{ .i64 = 0 },
+        .gt => .{ .i64 = 1 },
     };
 }
 
@@ -511,12 +511,19 @@ fn joinFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
 
     switch (args[0]) {
         .ptr => |arr_ptr| {
-            const array_len: usize = @intCast(vm.slot(arr_ptr - 1).*.int);
+            const array_len: usize = @intCast(vm.slot(arr_ptr - 1).*.i64);
             var i: usize = 0;
             while (i < array_len) : (i += 1) {
                 const item_val = vm.slot(arr_ptr + @as(i32, @intCast(i))).*;
                 try util.appendStr(vm, item_val);
                 if (i + 1 < array_len) try util.appendStr(vm, args[1]);
+            }
+        },
+        .array => |a| {
+            var i: u32 = 0;
+            while (i < a.count) : (i += 1) {
+                try util.appendStr(vm, vm.arrayElemConst(a, i));
+                if (i + 1 < a.count) try util.appendStr(vm, args[1]);
             }
         },
         .list => |lst| {

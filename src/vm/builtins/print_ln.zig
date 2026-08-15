@@ -11,7 +11,8 @@ var print_ln_native: NativeFunction = undefined;
 
 fn formatInt(buf: *[32]u8, v: Value) []const u8 {
     return switch (v) {
-        .int => |n| std.fmt.bufPrint(buf, "{d}", .{n}) catch "?",
+        .i64 => |n| std.fmt.bufPrint(buf, "{d}", .{n}) catch "?",
+        .u8 => |n| std.fmt.bufPrint(buf, "{d}", .{n}) catch "?",
         .bool => |b| if (b) "true" else "false",
         .null => "null",
         .ptr => |p| std.fmt.bufPrint(buf, "{d}", .{p}) catch "?",

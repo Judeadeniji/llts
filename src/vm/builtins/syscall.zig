@@ -73,12 +73,20 @@ fn callFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     if (args.len >= 2) {
         switch (args[1]) {
             .ptr => |p| {
-                const len: usize = @intCast(vm.slot(p - 1).*.int);
+                const len: usize = @intCast(vm.slot(p - 1).*.i64);
                 if (len > 6) return error.ArityError;
                 n = len;
                 var i: usize = 0;
                 while (i < len) : (i += 1) {
                     a[i] = try asUsize(vm.slot(p + @as(i32, @intCast(i))).*);
+                }
+            },
+            .array => |arr| {
+                if (arr.count > 6) return error.ArityError;
+                n = arr.count;
+                var i: u32 = 0;
+                while (i < arr.count) : (i += 1) {
+                    a[i] = try asUsize(vm.arrayElemConst(arr, i));
                 }
             },
             else => {
@@ -103,7 +111,7 @@ fn callFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
         5 => linux.syscall5(sys, a[0], a[1], a[2], a[3], a[4]),
         else => linux.syscall6(sys, a[0], a[1], a[2], a[3], a[4], a[5]),
     };
-    return .{ .int = rcToInt(rc) };
+    return .{ .i64 = rcToInt(rc) };
 }
 
 fn nrFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
@@ -117,7 +125,7 @@ fn nrFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
 
     inline for (@typeInfo(linux.SYS).@"enum".fields) |f| {
         if (std.mem.eql(u8, f.name, name)) {
-            return .{ .int = @intCast(f.value) };
+            return .{ .i64 = @intCast(f.value) };
         }
     }
     return try util.makeErrorWithPayload(vm, "SyscallError", try util.writeSlice(vm, "UnknownSyscall"));
@@ -134,7 +142,7 @@ fn errnoFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     if (args.len < 1) return error.ArityError;
     const rc: usize = @bitCast(@as(isize, @intCast(try util.asInt(args[0]))));
-    return .{ .int = @intFromEnum(linux.E.init(rc)) };
+    return .{ .i64 = @intFromEnum(linux.E.init(rc)) };
 }
 
 fn errNameFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
@@ -156,7 +164,7 @@ fn readFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
         else => return error.TypeError,
     };
     const n = std.posix.read(fd, buf) catch |err| return try makeSyscallError(vm, err);
-    return .{ .int = @intCast(n) };
+    return .{ .i64 = @intCast(n) };
 }
 
 fn writeFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
@@ -168,21 +176,21 @@ fn writeFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
         const n = std.posix.write(fd, args[1].buffer.bytes.items) catch |err| {
             return try makeSyscallError(vm, err);
         };
-        return .{ .int = @intCast(n) };
+        return .{ .i64 = @intCast(n) };
     }
     if (args[1] == .bytes) {
         const b = args[1].bytes;
         const n = std.posix.write(fd, vm.bytes.items[b.offset..][0..b.len]) catch |err| {
             return try makeSyscallError(vm, err);
         };
-        return .{ .int = @intCast(n) };
+        return .{ .i64 = @intCast(n) };
     }
 
     var tmp: std.ArrayList(u8) = .empty;
     defer tmp.deinit(vm.allocator);
     const s = try util.valueToStr(vm, args[1], &tmp);
     const n = std.posix.write(fd, s) catch |err| return try makeSyscallError(vm, err);
-    return .{ .int = @intCast(n) };
+    return .{ .i64 = @intCast(n) };
 }
 
 fn writeAllFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
@@ -208,7 +216,7 @@ fn writeAllFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
         if (n == 0) return try util.makeErrorWithPayload(vm, "SyscallError", try util.writeSlice(vm, "ShortWrite"));
         remaining = remaining[n..];
     }
-    return .{ .int = @intCast(bytes.len) };
+    return .{ .i64 = @intCast(bytes.len) };
 }
 
 fn openFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
@@ -220,7 +228,7 @@ fn openFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const mode: std.posix.mode_t = if (args.len > 2) @intCast(try util.asInt(args[2])) else 0;
     const flags: std.posix.O = @bitCast(flags_i);
     const fd = std.posix.open(path, flags, mode) catch |err| return try makeSyscallError(vm, err);
-    return .{ .int = @intCast(fd) };
+    return .{ .i64 = @intCast(fd) };
 }
 
 fn closeFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
@@ -250,7 +258,7 @@ fn lseekFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
         else => return try util.makeErrorWithPayload(vm, "SyscallError", try util.writeSlice(vm, "INVAL")),
     }
     const pos = std.posix.lseek_CUR_get(fd) catch |err| return try makeSyscallError(vm, err);
-    return .{ .int = @intCast(pos) };
+    return .{ .i64 = @intCast(pos) };
 }
 
 fn fsyncFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
@@ -266,8 +274,8 @@ fn pipeFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = args;
     const fds = std.posix.pipe() catch |err| return try makeSyscallError(vm, err);
     return try util.writeArray(vm, &.{
-        .{ .int = @intCast(fds[0]) },
-        .{ .int = @intCast(fds[1]) },
+        .{ .i64 = @intCast(fds[0]) },
+        .{ .i64 = @intCast(fds[1]) },
     });
 }
 
@@ -276,7 +284,7 @@ fn dupFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     if (args.len < 1) return error.ArityError;
     const fd: std.posix.fd_t = @intCast(try util.asInt(args[0]));
     const new_fd = std.posix.dup(fd) catch |err| return try makeSyscallError(vm, err);
-    return .{ .int = @intCast(new_fd) };
+    return .{ .i64 = @intCast(new_fd) };
 }
 
 fn dup2Fn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
@@ -291,7 +299,7 @@ fn dup2Fn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
 fn getpidFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     _ = args;
-    return .{ .int = @intCast(std.os.linux.getpid()) };
+    return .{ .i64 = @intCast(std.os.linux.getpid()) };
 }
 
 fn getppidFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
@@ -299,33 +307,33 @@ fn getppidFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = args;
     if (builtin.os.tag != .linux) return error.UnsupportedPlatform;
     const rc = linux.syscall0(.getppid);
-    return .{ .int = rcToInt(rc) };
+    return .{ .i64 = rcToInt(rc) };
 }
 
 fn getuidFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     _ = args;
-    return .{ .int = @intCast(std.posix.getuid()) };
+    return .{ .i64 = @intCast(std.posix.getuid()) };
 }
 
 fn geteuidFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     _ = args;
-    return .{ .int = @intCast(std.posix.geteuid()) };
+    return .{ .i64 = @intCast(std.posix.geteuid()) };
 }
 
 fn getgidFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     _ = args;
     if (builtin.os.tag != .linux) return error.UnsupportedPlatform;
-    return .{ .int = rcToInt(linux.syscall0(.getgid)) };
+    return .{ .i64 = rcToInt(linux.syscall0(.getgid)) };
 }
 
 fn getegidFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     _ = args;
     if (builtin.os.tag != .linux) return error.UnsupportedPlatform;
-    return .{ .int = rcToInt(linux.syscall0(.getegid)) };
+    return .{ .i64 = rcToInt(linux.syscall0(.getegid)) };
 }
 
 fn killFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
@@ -448,7 +456,7 @@ fn umaskFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     if (args.len < 1) return error.ArityError;
     const mask: std.posix.mode_t = @intCast(try util.asInt(args[0]));
     const old = std.c.umask(mask);
-    return .{ .int = @intCast(old) };
+    return .{ .i64 = @intCast(old) };
 }
 
 fn nanosleepFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
@@ -467,18 +475,18 @@ fn fcntlFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const cmd: i32 = @intCast(try util.asInt(args[1]));
     const arg: usize = if (args.len > 2) try asUsize(args[2]) else 0;
     const rc = std.posix.fcntl(fd, cmd, arg) catch |err| return try makeSyscallError(vm, err);
-    return .{ .int = @intCast(rc) };
+    return .{ .i64 = @intCast(rc) };
 }
 
 fn putSys(vm: *VMState, comptime name: []const u8) !void {
     if (builtin.os.tag != .linux) return;
     if (!@hasField(linux.SYS, name)) return;
     const n = @intFromEnum(@field(linux.SYS, name));
-    try vm.defineGlobal("__SYS_" ++ name, .{ .int = @intCast(n) });
+    try vm.defineGlobal("__SYS_" ++ name, .{ .i64 = @intCast(n) });
 }
 
 fn putInt(vm: *VMState, name: []const u8, n: i64) !void {
-    try vm.defineGlobal(name, .{ .int = n });
+    try vm.defineGlobal(name, .{ .i64 = n });
 }
 
 pub fn register(vm: *VMState) !void {

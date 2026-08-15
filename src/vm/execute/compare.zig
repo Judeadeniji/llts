@@ -25,15 +25,33 @@ fn valuesEqual(vm: *VMState, a: Value, b: Value) bool {
             .bool => |y| x == y,
             else => false,
         },
-        .int => |x| switch (b) {
-            .int => |y| x == y,
+        .i64 => |x| switch (b) {
+            .i64 => |y| x == y,
+            .u8 => |y| x == y,
             .ptr => |y| x == y,
-            .float => |y| @as(f64, @floatFromInt(x)) == y,
+            .f32 => |y| @as(f64, @floatFromInt(x)) == @as(f64, y),
+            .f64 => |y| @as(f64, @floatFromInt(x)) == y,
             else => false,
         },
-        .float => |x| switch (b) {
-            .float => |y| x == y,
-            .int => |y| x == @as(f64, @floatFromInt(y)),
+        .u8 => |x| switch (b) {
+            .u8 => |y| x == y,
+            .i64 => |y| x == y,
+            .f32 => |y| @as(f64, @floatFromInt(x)) == @as(f64, y),
+            .f64 => |y| @as(f64, @floatFromInt(x)) == y,
+            else => false,
+        },
+        .f64 => |x| switch (b) {
+            .f64 => |y| x == y,
+            .f32 => |y| x == @as(f64, y),
+            .i64 => |y| x == @as(f64, @floatFromInt(y)),
+            .u8 => |y| x == @as(f64, @floatFromInt(y)),
+            else => false,
+        },
+        .f32 => |x| switch (b) {
+            .f32 => |y| x == y,
+            .f64 => |y| @as(f64, x) == y,
+            .i64 => |y| @as(f64, x) == @as(f64, @floatFromInt(y)),
+            .u8 => |y| @as(f64, x) == @as(f64, @floatFromInt(y)),
             else => false,
         },
         .ptr, .name, .slice, .bytes => switch (b) {
@@ -42,7 +60,7 @@ fn valuesEqual(vm: *VMState, a: Value, b: Value) bool {
                 if (b == .ptr and isErrorPtr(vm, b.ptr)) break :blk false;
                 break :blk @import("../builtins/util.zig").stringEquals(vm, a, b);
             },
-            .int => |y| if (a == .ptr) a.ptr == y else false,
+            .i64 => |y| if (a == .ptr) a.ptr == y else false,
             else => false,
         },
         else => false,
@@ -52,7 +70,7 @@ fn valuesEqual(vm: *VMState, a: Value, b: Value) bool {
 fn isErrorPtr(vm: *VMState, p: i32) bool {
     if (p < 1 or !vm.isValidHeapPtr(p - 1)) return false;
     const tag = vm.slot(p - 1).*;
-    return tag == .int and tag.int == state_mod.ERROR_TAG;
+    return tag == .i64 and tag.i64 == state_mod.ERROR_TAG;
 }
 
 pub fn compareOrd(vm: *VMState, op: OpCode) CmpError!void {
@@ -72,10 +90,12 @@ pub fn compareOrd(vm: *VMState, op: OpCode) CmpError!void {
 
 fn asOrdFloat(v: Value) ?f64 {
     return switch (v) {
-        .int => |n| @floatFromInt(n),
+        .i64 => |n| @floatFromInt(n),
+        .u8 => |n| @floatFromInt(n),
+        .f32 => |n| n,
+        .f64 => |n| n,
         .ptr => |p| @floatFromInt(p),
         .bool => |b| @floatFromInt(@intFromBool(b)),
-        .float => |n| n,
         else => null,
     };
 }

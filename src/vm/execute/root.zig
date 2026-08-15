@@ -14,6 +14,7 @@ const runtime = @import("../../errors/runtime.zig");
 
 const OpCode = opcode.OpCode;
 const VMState = state_mod.VMState;
+const Value = state_mod.Value;
 
 pub const RuntimeError = error{
     RuntimeError,
@@ -136,6 +137,7 @@ pub fn execute(vm: *VMState, start_ip: usize) RuntimeError!void {
             },
             .OP_GET_ARRAY => try heap.getArray(vm),
             .OP_SET_ARRAY => try heap.setArray(vm),
+            .OP_SLICE => try heap.sliceView(vm),
             .OP_MARK_CONST => try debug_ops.markConst(vm, readByte(vm, &ip)),
             .OP_ASSERT_TYPE => try debug_ops.assertType(vm, readByte(vm, &ip)),
             .OP_SIZEOF => {
@@ -143,14 +145,29 @@ pub fn execute(vm: *VMState, start_ip: usize) RuntimeError!void {
                 const size: i64 = switch (val) {
                     .null => 0,
                     .bool => 1,
-                    .int, .float => 8,
+                    .i8, .u8 => 1,
+                    .i16, .u16 => 2,
+                    .i32, .u32, .f32 => 4,
+                    .i64, .u64, .f64 => 8,
                     .ptr => 4,
-                    .slice => 8, // string handle footprint
-                    .bytes => |b| b.len, // packed struct / []byte byte size
+                    .slice => 8,
+                    .bytes => |b| b.len,
+                    .array => |a| @as(i64, a.count) * @as(i64, @intCast(state_mod.VMState.value_size)),
                     .name => 4,
                     .native, .function, .module, .list, .map, .buffer => 8,
                 };
-                try stack.push(vm, .{ .int = size });
+                try stack.push(vm, .{ .i64 = size });
+            },
+            .OP_AS => {
+                const kind = readByte(vm, &ip);
+                const val = stack.pop(vm);
+                const widths = @import("../../compiler/widths.zig");
+                const w: widths.Width = @enumFromInt(kind);
+                const out = widths.castValue(val, w) catch |err| switch (err) {
+                    error.OutOfRange => return runtime.runtimeFail(vm, "@as: value out of range for target width"),
+                    else => return error.RuntimeError,
+                };
+                try stack.push(vm, out);
             },
             .OP_STRING_EQUAL, .OP_STRING_NOT_EQUAL => try compare.compareEq(vm, op == .OP_STRING_NOT_EQUAL),
             .OP_IMPORT => {
@@ -183,7 +200,7 @@ fn getProperty(vm: *VMState, const_idx: u16) RuntimeError!void {
         switch (obj) {
             .ptr => |p| {
                 const tag = vm.slot(p - 1).*;
-                if (tag == .int and tag.int == state_mod.ERROR_TAG) {
+                if (tag == .i64 and tag.i64 == state_mod.ERROR_TAG) {
                     try stack.push(vm, vm.slot(p).*);
                     return;
                 }
@@ -195,7 +212,7 @@ fn getProperty(vm: *VMState, const_idx: u16) RuntimeError!void {
         switch (obj) {
             .ptr => |p| {
                 const tag = vm.slot(p - 1).*;
-                if (tag == .int and tag.int == state_mod.ERROR_TAG) {
+                if (tag == .i64 and tag.i64 == state_mod.ERROR_TAG) {
                     try stack.push(vm, vm.slot(p + 1).*);
                     return;
                 }

@@ -56,7 +56,7 @@ fn fetchFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const mod = try vm.allocModule("Response");
     const status_key = try vm.allocator.dupe(u8, "status");
     const body_key = try vm.allocator.dupe(u8, "body");
-    try mod.props.put(status_key, .{ .int = @intCast(@intFromEnum(fetch_res.status)) });
+    try mod.props.put(status_key, .{ .i64 = @intCast(@intFromEnum(fetch_res.status)) });
     try mod.props.put(body_key, try util.writeSlice(vm, out.written()));
     return .{ .module = mod };
 }

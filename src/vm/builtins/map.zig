@@ -82,7 +82,7 @@ fn mapSize(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     if (args.len < 1) return error.ArityError;
     if (args[0] != .map) return error.TypeError;
-    return .{ .int = @intCast(args[0].map.entries.count()) };
+    return .{ .i64 = @intCast(args[0].map.entries.count()) };
 }
 
 pub fn register(vm: *VMState) !void {

@@ -128,9 +128,9 @@ Forcing function: keep writing the self-hosted compiler. Whatever that parser ca
 
 #### Pointers vs values
 
-- [ ] **`*T` / `?*T` as types** — `?Node` is a nullable heap handle pretending to be an optional struct. Linked lists and AST nodes need real pointers.
+- [x] **`*T` / `?*T` as types** — pointer IR + parse; `@new` of a struct yields `*T`; field access auto-resolves through `*` / `?*`; `?Node` still works as optional struct (compat). Address-of (`&x`) still to follow.
 - [ ] **Address-of (`&x`)** — take a pointer to a local / field; distinguish value vs handle at the type level, not only by allocation region (`Foo{}` vs `@new`).
-- [x] **Packed `@sizeOf` layout** — struct/primitive sizes use real field layout (`src/compiler/layout.zig`); pointer-sized fields land with `*T`.
+- [x] **Packed `@sizeOf` layout** — struct/primitive sizes use real field layout (`src/compiler/layout.zig`); `@sizeOf(*T)` is handle-sized (8).
 - [ ] **Methods vs pointers** — `self` already mutates like a handle; document/enforce whether methods take `self: T` or `self: *T`.
 
 #### Bytes and slices

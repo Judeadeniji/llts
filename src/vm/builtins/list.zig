@@ -38,8 +38,8 @@ fn listPop(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
 fn listGet(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     if (args.len < 2) return error.ArityError;
-    if (args[0] != .list or args[1] != .int) return error.TypeError;
-    const idx: usize = @intCast(args[1].int);
+    if (args[0] != .list or args[1] != .i64) return error.TypeError;
+    const idx: usize = @intCast(args[1].i64);
     if (idx >= args[0].list.items.items.len) return error.IndexOutOfBounds;
     return args[0].list.items.items[idx];
 }
@@ -47,8 +47,8 @@ fn listGet(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
 fn listSet(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     if (args.len < 3) return error.ArityError;
-    if (args[0] != .list or args[1] != .int) return error.TypeError;
-    const idx: usize = @intCast(args[1].int);
+    if (args[0] != .list or args[1] != .i64) return error.TypeError;
+    const idx: usize = @intCast(args[1].i64);
     if (idx >= args[0].list.items.items.len) return error.IndexOutOfBounds;
     args[0].list.items.items[idx] = args[2];
     return args[2];
@@ -58,7 +58,7 @@ fn listLen(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     if (args.len < 1) return error.ArityError;
     if (args[0] != .list) return error.TypeError;
-    return .{ .int = @intCast(args[0].list.items.items.len) };
+    return .{ .i64 = @intCast(args[0].list.items.items.len) };
 }
 
 pub fn register(vm: *VMState) !void {

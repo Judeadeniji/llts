@@ -202,17 +202,17 @@ fn statFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
 
     var list: std.ArrayListUnmanaged(Value) = .empty;
     defer list.deinit(vm.allocator);
-    try list.append(vm.allocator, .{ .float = @floatFromInt(stat.size) });
-    try list.append(vm.allocator, .{ .float = @floatFromInt(@divTrunc(stat.mtime, 1000000)) }); // ms
-    try list.append(vm.allocator, .{ .float = @floatFromInt(@divTrunc(stat.atime, 1000000)) });
-    try list.append(vm.allocator, .{ .float = @floatFromInt(@divTrunc(stat.ctime, 1000000)) });
+    try list.append(vm.allocator, .{ .f64 = @floatFromInt(stat.size) });
+    try list.append(vm.allocator, .{ .f64 = @floatFromInt(@divTrunc(stat.mtime, 1000000)) }); // ms
+    try list.append(vm.allocator, .{ .f64 = @floatFromInt(@divTrunc(stat.atime, 1000000)) });
+    try list.append(vm.allocator, .{ .f64 = @floatFromInt(@divTrunc(stat.ctime, 1000000)) });
     const kind: i32 = switch (stat.kind) {
         .file => 1,
         .directory => 2,
         .sym_link => 3,
         else => 0,
     };
-    try list.append(vm.allocator, .{ .int = kind });
+    try list.append(vm.allocator, .{ .i64 = kind });
     return try util.writeArray(vm, list.items);
 }
 
@@ -283,7 +283,7 @@ fn chmodFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     _ = args;
     // zig std.fs doesn't have a simple chmod in standard API across all platforms
-    return .{ .int = 0 }; // stub
+    return .{ .i64 = 0 }; // stub
 }
 
 pub fn register(vm: *VMState) !void {

@@ -34,8 +34,10 @@ var sign_n: NativeFunction = undefined;
 
 fn asFloat(v: Value) !f64 {
     return switch (v) {
-        .int => |n| @floatFromInt(n),
-        .float => |n| n,
+        .i64 => |n| @floatFromInt(n),
+        .u8 => |n| @floatFromInt(n),
+        .f32 => |n| n,
+        .f64 => |n| n,
         .ptr => |p| @floatFromInt(p),
         .bool => |b| @floatFromInt(@intFromBool(b)),
         else => error.TypeError,
@@ -45,19 +47,19 @@ fn asFloat(v: Value) !f64 {
 fn floorFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     if (args.len < 1) return error.ArityError;
-    return .{ .int = @intFromFloat(@floor(try asFloat(args[0]))) };
+    return .{ .i64 = @intFromFloat(@floor(try asFloat(args[0]))) };
 }
 
 fn ceilFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     if (args.len < 1) return error.ArityError;
-    return .{ .int = @intFromFloat(@ceil(try asFloat(args[0]))) };
+    return .{ .i64 = @intFromFloat(@ceil(try asFloat(args[0]))) };
 }
 
 fn roundFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     if (args.len < 1) return error.ArityError;
-    return .{ .int = @intFromFloat(@round(try asFloat(args[0]))) };
+    return .{ .i64 = @intFromFloat(@round(try asFloat(args[0]))) };
 }
 
 fn sqrtFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
@@ -67,30 +69,45 @@ fn sqrtFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     if (val < 0) {
         return try util.makeError(vm, "DomainError");
     }
-    return .{ .int = @intFromFloat(@sqrt(@as(f64, @floatFromInt(val)))) };
+    return .{ .i64 = @intFromFloat(@sqrt(@as(f64, @floatFromInt(val)))) };
 }
 
 fn minMax(vm: *VMState, args: []Value, find_max: bool) !Value {
     if (args.len < 1) return error.ArityError;
-    const ptr = try util.asPtr(args[0]);
-    const len = vm.slot(ptr - 1).*.int;
-    if (len == 0) return .{ .float = std.math.inf(f64) * (if (find_max) @as(f64, -1) else @as(f64, 1)) };
-    var best: f64 = switch (vm.slot(ptr).*) {
-        .float => |f| f,
-        .int => |n| @floatFromInt(n),
-        else => return error.TypeError,
+
+    const get = struct {
+        fn elem(v: *VMState, base: Value, i: u32) !f64 {
+            const el = switch (base) {
+                .array => |a| v.arrayElemConst(a, i),
+                .ptr => |p| v.slot(p + @as(i32, @intCast(i))).*,
+                else => return error.TypeError,
+            };
+            return switch (el) {
+                .f64 => |f| f,
+                .i64 => |n| @floatFromInt(n),
+                else => error.TypeError,
+            };
+        }
+        fn lenOf(v: *VMState, base: Value) !u32 {
+            return switch (base) {
+                .array => |a| a.count,
+                .ptr => |p| @intCast(v.slot(p - 1).*.i64),
+                else => error.TypeError,
+            };
+        }
     };
-    var i: i32 = 1;
+
+    const base = args[0];
+    const len = try get.lenOf(vm, base);
+    if (len == 0) return .{ .f64 = std.math.inf(f64) * (if (find_max) @as(f64, -1) else @as(f64, 1)) };
+    var best = try get.elem(vm, base, 0);
+    var i: u32 = 1;
     while (i < len) : (i += 1) {
-        const n: f64 = switch (vm.slot(ptr + i).*) {
-            .float => |f| f,
-            .int => |m| @floatFromInt(m),
-            else => return error.TypeError,
-        };
+        const n = try get.elem(vm, base, i);
         if (find_max and n > best) best = n;
         if (!find_max and n < best) best = n;
     }
-    return .{ .float = best };
+    return .{ .f64 = best };
 }
 
 fn minFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
@@ -108,101 +125,101 @@ fn powFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     if (args.len < 2) return error.ArityError;
     const a = try asFloat(args[0]);
     const b = try asFloat(args[1]);
-    return .{ .int = @intFromFloat(std.math.pow(f64, a, b)) };
+    return .{ .i64 = @intFromFloat(std.math.pow(f64, a, b)) };
 }
 
 fn randomFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     _ = args;
     const r = std.crypto.random.float(f64);
-    return .{ .float = r };
+    return .{ .f64 = r };
 }
 
 fn sinFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     if (args.len < 1) return error.ArityError;
-    return .{ .float = std.math.sin(try asFloat(args[0])) };
+    return .{ .f64 = std.math.sin(try asFloat(args[0])) };
 }
 
 fn cosFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     if (args.len < 1) return error.ArityError;
-    return .{ .float = std.math.cos(try asFloat(args[0])) };
+    return .{ .f64 = std.math.cos(try asFloat(args[0])) };
 }
 
 fn tanFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     if (args.len < 1) return error.ArityError;
-    return .{ .float = std.math.tan(try asFloat(args[0])) };
+    return .{ .f64 = std.math.tan(try asFloat(args[0])) };
 }
 
 fn asinFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     if (args.len < 1) return error.ArityError;
-    return .{ .float = std.math.asin(try asFloat(args[0])) };
+    return .{ .f64 = std.math.asin(try asFloat(args[0])) };
 }
 
 fn acosFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     if (args.len < 1) return error.ArityError;
-    return .{ .float = std.math.acos(try asFloat(args[0])) };
+    return .{ .f64 = std.math.acos(try asFloat(args[0])) };
 }
 
 fn atanFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     if (args.len < 1) return error.ArityError;
-    return .{ .float = std.math.atan(try asFloat(args[0])) };
+    return .{ .f64 = std.math.atan(try asFloat(args[0])) };
 }
 
 fn atan2Fn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     if (args.len < 2) return error.ArityError;
-    return .{ .float = std.math.atan2(try asFloat(args[0]), try asFloat(args[1])) };
+    return .{ .f64 = std.math.atan2(try asFloat(args[0]), try asFloat(args[1])) };
 }
 
 fn logFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     if (args.len < 1) return error.ArityError;
-    return .{ .float = @log(try asFloat(args[0])) };
+    return .{ .f64 = @log(try asFloat(args[0])) };
 }
 
 fn log10Fn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     if (args.len < 1) return error.ArityError;
-    return .{ .float = std.math.log10(try asFloat(args[0])) };
+    return .{ .f64 = std.math.log10(try asFloat(args[0])) };
 }
 
 fn log2Fn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     if (args.len < 1) return error.ArityError;
-    return .{ .float = std.math.log2(try asFloat(args[0])) };
+    return .{ .f64 = std.math.log2(try asFloat(args[0])) };
 }
 
 fn expFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     if (args.len < 1) return error.ArityError;
-    return .{ .float = std.math.exp(try asFloat(args[0])) };
+    return .{ .f64 = std.math.exp(try asFloat(args[0])) };
 }
 
 fn cbrtFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     if (args.len < 1) return error.ArityError;
-    return .{ .float = std.math.cbrt(try asFloat(args[0])) };
+    return .{ .f64 = std.math.cbrt(try asFloat(args[0])) };
 }
 
 fn truncFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     if (args.len < 1) return error.ArityError;
-    return .{ .float = std.math.trunc(try asFloat(args[0])) };
+    return .{ .f64 = std.math.trunc(try asFloat(args[0])) };
 }
 
 fn signFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     if (args.len < 1) return error.ArityError;
     const v = try asFloat(args[0]);
-    if (v > 0) return .{ .int = 1 };
-    if (v < 0) return .{ .int = -1 };
-    return .{ .int = 0 };
+    if (v > 0) return .{ .i64 = 1 };
+    if (v < 0) return .{ .i64 = -1 };
+    return .{ .i64 = 0 };
 }
 
 var acosh_n: NativeFunction = undefined;
@@ -264,105 +281,105 @@ fn acoshFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     if (args.len < 1) return error.ArityError;
     const res = c.acosh(try asFloat(args[0]));
-    return .{ .float = @floatCast(res) };
+    return .{ .f64 = @floatCast(res) };
 }
 
 fn asinhFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     if (args.len < 1) return error.ArityError;
     const res = c.asinh(try asFloat(args[0]));
-    return .{ .float = @floatCast(res) };
+    return .{ .f64 = @floatCast(res) };
 }
 
 fn atanhFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     if (args.len < 1) return error.ArityError;
     const res = c.atanh(try asFloat(args[0]));
-    return .{ .float = @floatCast(res) };
+    return .{ .f64 = @floatCast(res) };
 }
 
 fn copysignFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     if (args.len < 2) return error.ArityError;
     const res = c.copysign(try asFloat(args[0]), try asFloat(args[1]));
-    return .{ .float = @floatCast(res) };
+    return .{ .f64 = @floatCast(res) };
 }
 
 fn coshFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     if (args.len < 1) return error.ArityError;
     const res = c.cosh(try asFloat(args[0]));
-    return .{ .float = @floatCast(res) };
+    return .{ .f64 = @floatCast(res) };
 }
 
 fn erfFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     if (args.len < 1) return error.ArityError;
     const res = c.erf(try asFloat(args[0]));
-    return .{ .float = @floatCast(res) };
+    return .{ .f64 = @floatCast(res) };
 }
 
 fn erfcFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     if (args.len < 1) return error.ArityError;
     const res = c.erfc(try asFloat(args[0]));
-    return .{ .float = @floatCast(res) };
+    return .{ .f64 = @floatCast(res) };
 }
 
 fn exp2Fn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     if (args.len < 1) return error.ArityError;
     const res = c.exp2(try asFloat(args[0]));
-    return .{ .float = @floatCast(res) };
+    return .{ .f64 = @floatCast(res) };
 }
 
 fn expm1Fn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     if (args.len < 1) return error.ArityError;
     const res = c.expm1(try asFloat(args[0]));
-    return .{ .float = @floatCast(res) };
+    return .{ .f64 = @floatCast(res) };
 }
 
 fn fabsFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     if (args.len < 1) return error.ArityError;
     const res = c.fabs(try asFloat(args[0]));
-    return .{ .float = @floatCast(res) };
+    return .{ .f64 = @floatCast(res) };
 }
 
 fn fdimFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     if (args.len < 2) return error.ArityError;
     const res = c.fdim(try asFloat(args[0]), try asFloat(args[1]));
-    return .{ .float = @floatCast(res) };
+    return .{ .f64 = @floatCast(res) };
 }
 
 fn fmaFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     if (args.len < 3) return error.ArityError;
     const res = c.fma(try asFloat(args[0]), try asFloat(args[1]), try asFloat(args[2]));
-    return .{ .float = @floatCast(res) };
+    return .{ .f64 = @floatCast(res) };
 }
 
 fn fmaxFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     if (args.len < 2) return error.ArityError;
     const res = c.fmax(try asFloat(args[0]), try asFloat(args[1]));
-    return .{ .float = @floatCast(res) };
+    return .{ .f64 = @floatCast(res) };
 }
 
 fn fminFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     if (args.len < 2) return error.ArityError;
     const res = c.fmin(try asFloat(args[0]), try asFloat(args[1]));
-    return .{ .float = @floatCast(res) };
+    return .{ .f64 = @floatCast(res) };
 }
 
 fn fmodFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     if (args.len < 2) return error.ArityError;
     const res = c.fmod(try asFloat(args[0]), try asFloat(args[1]));
-    return .{ .float = @floatCast(res) };
+    return .{ .f64 = @floatCast(res) };
 }
 
 fn frexpFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
@@ -370,21 +387,21 @@ fn frexpFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     if (args.len < 1) return error.ArityError;
     var exp: c_int = 0;
     const res = c.frexp(try asFloat(args[0]), &exp);
-    return .{ .float = res };
+    return .{ .f64 = res };
 }
 
 fn hypotFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     if (args.len < 2) return error.ArityError;
     const res = c.hypot(try asFloat(args[0]), try asFloat(args[1]));
-    return .{ .float = @floatCast(res) };
+    return .{ .f64 = @floatCast(res) };
 }
 
 fn ilogbFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     if (args.len < 1) return error.ArityError;
     const res = c.ilogb(try asFloat(args[0]));
-    return .{ .int = @intCast(res) };
+    return .{ .i64 = @intCast(res) };
 }
 
 fn ldexpFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
@@ -392,56 +409,56 @@ fn ldexpFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     if (args.len < 2) return error.ArityError;
     const exp: c_int = @intFromFloat(try asFloat(args[1]));
     const res = c.ldexp(try asFloat(args[0]), exp);
-    return .{ .float = @floatCast(res) };
+    return .{ .f64 = @floatCast(res) };
 }
 
 fn lgammaFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     if (args.len < 1) return error.ArityError;
     const res = c.lgamma(try asFloat(args[0]));
-    return .{ .float = @floatCast(res) };
+    return .{ .f64 = @floatCast(res) };
 }
 
 fn llrintFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     if (args.len < 1) return error.ArityError;
     const res = c.llrint(try asFloat(args[0]));
-    return .{ .int = @intCast(res) };
+    return .{ .i64 = @intCast(res) };
 }
 
 fn llroundFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     if (args.len < 1) return error.ArityError;
     const res = c.llround(try asFloat(args[0]));
-    return .{ .int = @intCast(res) };
+    return .{ .i64 = @intCast(res) };
 }
 
 fn log1pFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     if (args.len < 1) return error.ArityError;
     const res = c.log1p(try asFloat(args[0]));
-    return .{ .float = @floatCast(res) };
+    return .{ .f64 = @floatCast(res) };
 }
 
 fn logbFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     if (args.len < 1) return error.ArityError;
     const res = c.logb(try asFloat(args[0]));
-    return .{ .float = @floatCast(res) };
+    return .{ .f64 = @floatCast(res) };
 }
 
 fn lrintFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     if (args.len < 1) return error.ArityError;
     const res = c.lrint(try asFloat(args[0]));
-    return .{ .int = @intCast(res) };
+    return .{ .i64 = @intCast(res) };
 }
 
 fn lroundFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     if (args.len < 1) return error.ArityError;
     const res = c.lround(try asFloat(args[0]));
-    return .{ .int = @intCast(res) };
+    return .{ .i64 = @intCast(res) };
 }
 
 fn modfFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
@@ -449,59 +466,59 @@ fn modfFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     if (args.len < 1) return error.ArityError;
     var iptr: f64 = 0;
     const res = c.modf(try asFloat(args[0]), &iptr);
-    return .{ .float = res };
+    return .{ .f64 = res };
 }
 
 fn nanFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     _ = args;
-    return .{ .float = std.math.nan(f64) };
+    return .{ .f64 = std.math.nan(f64) };
 }
 
 fn hugeValFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     _ = args;
-    return .{ .float = std.math.inf(f64) };
+    return .{ .f64 = std.math.inf(f64) };
 }
 
 fn infinityFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     _ = args;
-    return .{ .float = std.math.inf(f64) };
+    return .{ .f64 = std.math.inf(f64) };
 }
 
 fn nanValueFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     _ = args;
-    return .{ .float = std.math.nan(f64) };
+    return .{ .f64 = std.math.nan(f64) };
 }
 
 fn nearbyintFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     if (args.len < 1) return error.ArityError;
     const res = c.nearbyint(try asFloat(args[0]));
-    return .{ .float = @floatCast(res) };
+    return .{ .f64 = @floatCast(res) };
 }
 
 fn nextafterFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     if (args.len < 2) return error.ArityError;
     const res = c.nextafter(try asFloat(args[0]), try asFloat(args[1]));
-    return .{ .float = @floatCast(res) };
+    return .{ .f64 = @floatCast(res) };
 }
 
 fn nexttowardFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     if (args.len < 2) return error.ArityError;
     const res = c.nexttoward(try asFloat(args[0]), try asFloat(args[1]));
-    return .{ .float = @floatCast(res) };
+    return .{ .f64 = @floatCast(res) };
 }
 
 fn remainderFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     if (args.len < 2) return error.ArityError;
     const res = c.remainder(try asFloat(args[0]), try asFloat(args[1]));
-    return .{ .float = @floatCast(res) };
+    return .{ .f64 = @floatCast(res) };
 }
 
 fn remquoFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
@@ -509,14 +526,14 @@ fn remquoFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     if (args.len < 2) return error.ArityError;
     var quo: c_int = 0;
     const res = c.remquo(try asFloat(args[0]), try asFloat(args[1]), &quo);
-    return .{ .float = res };
+    return .{ .f64 = res };
 }
 
 fn rintFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     if (args.len < 1) return error.ArityError;
     const res = c.rint(try asFloat(args[0]));
-    return .{ .float = @floatCast(res) };
+    return .{ .f64 = @floatCast(res) };
 }
 
 fn scalblnFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
@@ -524,7 +541,7 @@ fn scalblnFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     if (args.len < 2) return error.ArityError;
     const n: c_long = @intFromFloat(try asFloat(args[1]));
     const res = c.scalbln(try asFloat(args[0]), n);
-    return .{ .float = @floatCast(res) };
+    return .{ .f64 = @floatCast(res) };
 }
 
 fn scalbnFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
@@ -532,28 +549,28 @@ fn scalbnFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     if (args.len < 2) return error.ArityError;
     const n: c_int = @intFromFloat(try asFloat(args[1]));
     const res = c.scalbn(try asFloat(args[0]), n);
-    return .{ .float = @floatCast(res) };
+    return .{ .f64 = @floatCast(res) };
 }
 
 fn sinhFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     if (args.len < 1) return error.ArityError;
     const res = c.sinh(try asFloat(args[0]));
-    return .{ .float = @floatCast(res) };
+    return .{ .f64 = @floatCast(res) };
 }
 
 fn tanhFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     if (args.len < 1) return error.ArityError;
     const res = c.tanh(try asFloat(args[0]));
-    return .{ .float = @floatCast(res) };
+    return .{ .f64 = @floatCast(res) };
 }
 
 fn tgammaFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     if (args.len < 1) return error.ArityError;
     const res = c.tgamma(try asFloat(args[0]));
-    return .{ .float = @floatCast(res) };
+    return .{ .f64 = @floatCast(res) };
 }
 
 fn fpclassifyFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
@@ -571,7 +588,7 @@ fn fpclassifyFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
         4 // FP_NORMAL
     else
         3; // FP_SUBNORMAL
-    return .{ .int = res };
+    return .{ .i64 = res };
 }
 
 fn isfiniteFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
@@ -810,16 +827,16 @@ pub fn register(vm: *VMState) !void {
     nan_value_n = .{ .name = "__nanValue", .func = nanValueFn, .arity = 0 };
     try vm.defineGlobal("__nanValue", .{ .native = &nan_value_n });
 
-    try vm.defineGlobal("HUGE_VAL", .{ .float = std.math.inf(f64) });
-    try vm.defineGlobal("INFINITY", .{ .float = std.math.inf(f64) });
-    try vm.defineGlobal("NAN", .{ .float = std.math.nan(f64) });
-    try vm.defineGlobal("FP_INFINITE", .{ .int = 1 });
-    try vm.defineGlobal("FP_NAN", .{ .int = 0 });
-    try vm.defineGlobal("FP_NORMAL", .{ .int = 4 });
-    try vm.defineGlobal("FP_SUBNORMAL", .{ .int = 3 });
-    try vm.defineGlobal("FP_ZERO", .{ .int = 2 });
-    try vm.defineGlobal("MATH_ERRNO", .{ .int = 1 });
-    try vm.defineGlobal("MATH_ERREXCEPT", .{ .int = 2 });
-    try vm.defineGlobal("math_errhandling", .{ .int = 3 });
+    try vm.defineGlobal("HUGE_VAL", .{ .f64 = std.math.inf(f64) });
+    try vm.defineGlobal("INFINITY", .{ .f64 = std.math.inf(f64) });
+    try vm.defineGlobal("NAN", .{ .f64 = std.math.nan(f64) });
+    try vm.defineGlobal("FP_INFINITE", .{ .i64 = 1 });
+    try vm.defineGlobal("FP_NAN", .{ .i64 = 0 });
+    try vm.defineGlobal("FP_NORMAL", .{ .i64 = 4 });
+    try vm.defineGlobal("FP_SUBNORMAL", .{ .i64 = 3 });
+    try vm.defineGlobal("FP_ZERO", .{ .i64 = 2 });
+    try vm.defineGlobal("MATH_ERRNO", .{ .i64 = 1 });
+    try vm.defineGlobal("MATH_ERREXCEPT", .{ .i64 = 2 });
+    try vm.defineGlobal("math_errhandling", .{ .i64 = 3 });
 
 }

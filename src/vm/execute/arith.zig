@@ -16,23 +16,11 @@ fn fail(vm: *VMState, msg: []const u8) ArithError {
 const ArithOp = enum { add, sub, mul, div, mod, pow };
 
 fn asInt(v: Value) ?i64 {
-    return switch (v) {
-        .int => |n| n,
-        .ptr => |p| p,
-        .bool => |b| @intFromBool(b),
-        .float => |n| @intFromFloat(n),
-        else => null,
-    };
+    return @import("../../compiler/widths.zig").valueAsI64(v);
 }
 
 fn asFloat(v: Value) ?f64 {
-    return switch (v) {
-        .int => |n| @floatFromInt(n),
-        .float => |n| n,
-        .ptr => |p| @floatFromInt(p),
-        .bool => |b| @floatFromInt(@intFromBool(b)),
-        else => null,
-    };
+    return @import("../../compiler/widths.zig").valueAsF64(v);
 }
 
 pub fn binArith(vm: *VMState, op: OpCode) ArithError!void {
@@ -47,7 +35,22 @@ pub fn binArith(vm: *VMState, op: OpCode) ArithError!void {
     };
     const b = stack.pop(vm);
     const a = stack.pop(vm);
-    const use_float = a == .float or b == .float;
+    // Preserve f32 when both sides are f32; otherwise float math is f64.
+    if (a == .f32 and b == .f32) {
+        const af = a.f32;
+        const bf = b.f32;
+        const result: f32 = switch (kind) {
+            .add => af + bf,
+            .sub => af - bf,
+            .mul => af * bf,
+            .div => if (bf == 0) return fail(vm, "Division by zero") else af / bf,
+            .mod => if (bf == 0) return fail(vm, "Division by zero") else @mod(af, bf),
+            .pow => @floatCast(std.math.pow(f64, af, bf)),
+        };
+        try stack.push(vm, .{ .f32 = result });
+        return;
+    }
+    const use_float = a == .f64 or b == .f64 or a == .f32 or b == .f32;
     if (use_float) {
         const af = asFloat(a) orelse return fail(vm, "Operands must be numbers");
         const bf = asFloat(b) orelse return fail(vm, "Operands must be numbers");
@@ -59,7 +62,7 @@ pub fn binArith(vm: *VMState, op: OpCode) ArithError!void {
             .mod => if (bf == 0) return fail(vm, "Division by zero") else @mod(af, bf),
             .pow => std.math.pow(f64, af, bf),
         };
-        try stack.push(vm, .{ .float = result });
+        try stack.push(vm, .{ .f64 = result });
         return;
     }
     const ai = asInt(a) orelse return fail(vm, "Operands must be numbers");
@@ -77,7 +80,7 @@ pub fn binArith(vm: *VMState, op: OpCode) ArithError!void {
     if (kind == .add and (a == .ptr or b == .ptr)) {
         try stack.push(vm, .{ .ptr = @intCast(result) });
     } else {
-        try stack.push(vm, .{ .int = result });
+        try stack.push(vm, .{ .i64 = result });
     }
 }
 
@@ -87,11 +90,11 @@ pub fn binArithI64(vm: *VMState, kind: I64Op) ArithError!void {
     const b = stack.pop(vm);
     const a = stack.pop(vm);
     const ai = switch (a) {
-        .int => |n| n,
+        .i64 => |n| n,
         else => return fail(vm, "Operands must be ints"),
     };
     const bi = switch (b) {
-        .int => |n| n,
+        .i64 => |n| n,
         else => return fail(vm, "Operands must be ints"),
     };
     const result: i64 = switch (kind) {
@@ -99,18 +102,18 @@ pub fn binArithI64(vm: *VMState, kind: I64Op) ArithError!void {
         .sub => ai -% bi,
         .mul => ai *% bi,
     };
-    try stack.push(vm, .{ .int = result });
+    try stack.push(vm, .{ .i64 = result });
 }
 
 pub fn ltI64(vm: *VMState) ArithError!void {
     const b = stack.pop(vm);
     const a = stack.pop(vm);
     const ai = switch (a) {
-        .int => |n| n,
+        .i64 => |n| n,
         else => return fail(vm, "Operands must be ints"),
     };
     const bi = switch (b) {
-        .int => |n| n,
+        .i64 => |n| n,
         else => return fail(vm, "Operands must be ints"),
     };
     try stack.push(vm, .{ .bool = ai < bi });
@@ -131,8 +134,10 @@ fn powi(base: i64, exp: i64) i64 {
 pub fn negate(vm: *VMState) ArithError!void {
     const a = stack.pop(vm);
     switch (a) {
-        .int => |n| try stack.push(vm, .{ .int = -n }),
-        .float => |n| try stack.push(vm, .{ .float = -n }),
+        .i64 => |n| try stack.push(vm, .{ .i64 = -n }),
+        .u8 => |n| try stack.push(vm, .{ .i64 = -@as(i64, n) }),
+        .f32 => |n| try stack.push(vm, .{ .f32 = -n }),
+        .f64 => |n| try stack.push(vm, .{ .f64 = -n }),
         else => return fail(vm, "Operand must be a number"),
     }
 }
@@ -156,7 +161,7 @@ pub fn binBitwise(vm: *VMState, op: OpCode) ArithError!void {
     };
     const b = stack.pop(vm);
     const a = stack.pop(vm);
-    if (a == .float or b == .float) return fail(vm, "Bitwise operands must be integers");
+    if (a == .f64 or b == .f64) return fail(vm, "Bitwise operands must be integers");
     const ai = asInt(a) orelse return fail(vm, "Bitwise operands must be integers");
     const bi = asInt(b) orelse return fail(vm, "Bitwise operands must be integers");
     const result: i64 = switch (kind) {
@@ -172,12 +177,12 @@ pub fn binBitwise(vm: *VMState, op: OpCode) ArithError!void {
             break :blk ai >> @intCast(bi);
         },
     };
-    try stack.push(vm, .{ .int = result });
+    try stack.push(vm, .{ .i64 = result });
 }
 
 pub fn bitNot(vm: *VMState) ArithError!void {
     const a = stack.pop(vm);
-    if (a == .float) return fail(vm, "Bitwise operand must be an integer");
+    if (a == .f64) return fail(vm, "Bitwise operand must be an integer");
     const n = asInt(a) orelse return fail(vm, "Bitwise operand must be an integer");
-    try stack.push(vm, .{ .int = ~n });
+    try stack.push(vm, .{ .i64 = ~n });
 }

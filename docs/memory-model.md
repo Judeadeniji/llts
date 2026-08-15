@@ -92,4 +92,4 @@ $x: i32 = 42;              # real i32, not an int alias
 
 ## Relation to language P6
 
-Packed layout and widths are done. Remaining low-level honesty work is pointers (`*T`), slice polish, and enum payloads — see `TODO.MD` §P6.
+Packed layout and widths are done. `*T` / `?*T` type IR landed (`@new` → `*Struct`). Remaining: address-of (`&x`), method `self: *T`, slice polish, enum payloads — see `TODO.MD` §P6.

@@ -58,7 +58,7 @@ fn bufferWriteString(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     }
     
     @memcpy(buf.bytes.items[offset .. offset + str.len], str);
-    return .{ .int = @intCast(str.len) };
+    return .{ .i64 = @intCast(str.len) };
 }
 
 fn bufferAppendString(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
@@ -71,7 +71,7 @@ fn bufferAppendString(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     
     const buf = args[0].buffer;
     try buf.bytes.appendSlice(vm.allocator, str);
-    return .{ .int = @intCast(str.len) };
+    return .{ .i64 = @intCast(str.len) };
 }
 
 fn bufferReadString(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
@@ -99,7 +99,7 @@ fn bufferLen(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     if (args.len < 1) return error.ArityError;
     if (args[0] != .buffer) return error.TypeError;
-    return .{ .int = @intCast(args[0].buffer.bytes.items.len) };
+    return .{ .i64 = @intCast(args[0].buffer.bytes.items.len) };
 }
 
 fn bufferGet(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
@@ -112,7 +112,7 @@ fn bufferGet(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     
     const buf = args[0].buffer;
     if (index >= buf.bytes.items.len) return error.IndexOutOfBounds;
-    return .{ .int = @intCast(buf.bytes.items[index]) };
+    return .{ .i64 = @intCast(buf.bytes.items[index]) };
 }
 
 fn bufferSet(vm_ptr: *anyopaque, args: []Value) anyerror!Value {

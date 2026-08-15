@@ -269,7 +269,7 @@ test("@const @import and @typeOf are allowed", () => {
 @const $t = @typeOf(a);
 print(t);
 print(mem.alloc(1) > 0);
-`), ["int", "true"]);
+`), ["i64", "true"]);
 });
 
 test("@const string and bool literals are allowed", () => {

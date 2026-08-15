@@ -25,7 +25,7 @@ fn localInt(vm: *VMState, slot: u8) !i64 {
     const idx = f.base_slot + slot;
     if (idx >= stack.depth(vm)) return error.TypeError;
     return switch (vm.stack_buf[idx]) {
-        .int => |n| n,
+        .i64 => |n| n,
         else => error.TypeError,
     };
 }
@@ -34,7 +34,7 @@ fn setLocalInt(vm: *VMState, slot: u8, n: i64) !void {
     const f = frame(vm);
     const idx = f.base_slot + slot;
     while (stack.depth(vm) <= idx) try stack.push(vm, .null);
-    vm.stack_buf[idx] = .{ .int = n };
+    vm.stack_buf[idx] = .{ .i64 = n };
 }
 
 /// If local[i] >= local[end], jump forward by `skip` (to after FOR_LOOP); else fall into body.

@@ -77,30 +77,89 @@ fn sourceFor(state: *state_mod.CompilerState, file_path: []const u8) []const u8 
 }
 
 pub fn requireAssign(state: *state_mod.CompilerState, got: ir.Type, expected: ir.Type, ctx: []const u8) TypecheckError!void {
-    try requireAssignAt(state, got, expected, ctx, .{});
+    try requireAssignAt(state, got, expected, ctx, .{}, null);
 }
 
-fn requireAssignAt(state: *state_mod.CompilerState, got: ir.Type, expected: ir.Type, ctx: []const u8, loc: ast.Location) TypecheckError!void {
+pub fn requireAssignFrom(state: *state_mod.CompilerState, got: ir.Type, expected: ir.Type, ctx: []const u8, from: ?*ast.Node) TypecheckError!void {
+    try requireAssignAt(state, got, expected, ctx, .{}, from);
+}
+
+fn requireAssignAt(state: *state_mod.CompilerState, got: ir.Type, expected: ir.Type, ctx: []const u8, loc: ast.Location, from: ?*ast.Node) TypecheckError!void {
     if (ir.involvesUnknown(got) or ir.involvesUnknown(expected)) return;
-    if (!ir.isSubtype(got, expected)) {
-        const g = try ownDisplay(state, got);
-        const e = try ownDisplay(state, expected);
-        if (loc.line > 0 or loc.path.len > 0) {
-            const file_path = if (loc.path.len > 0) loc.path else state.chunk.file;
-            const line = if (loc.line > 0) loc.line else 1;
-            const col = if (loc.column > 0) loc.column else 1;
-            return compiler_errors.compileFailAt(
-                state,
-                file_path,
-                sourceFor(state, file_path),
-                line,
-                col,
-                "{s}: type '{s}' is not assignable to '{s}'",
-                .{ ctx, g, e },
-            );
+    if (ir.isSubtype(got, expected)) return;
+    // Zig-style: integer literals may coerce into any integer width that fits.
+    if (ir.isInteger(expected) and got == .i64) {
+        if (from) |node| {
+            if (intLiteralFits(node, ir.widthOf(expected).?)) return;
         }
-        return compiler_errors.compileFailFmt(state, "{s}: type '{s}' is not assignable to '{s}'", .{ ctx, g, e });
     }
+    // Float literals are f64; may coerce into f32.
+    if (expected == .f32 and got == .f64) {
+        if (from) |node| {
+            if (isFloatLiteral(node)) return;
+        }
+    }
+    const g = try ownDisplay(state, got);
+    const e = try ownDisplay(state, expected);
+    if (loc.line > 0 or loc.path.len > 0) {
+        const file_path = if (loc.path.len > 0) loc.path else state.chunk.file;
+        const line = if (loc.line > 0) loc.line else 1;
+        const col = if (loc.column > 0) loc.column else 1;
+        return compiler_errors.compileFailAt(
+            state,
+            file_path,
+            sourceFor(state, file_path),
+            line,
+            col,
+            "{s}: type '{s}' is not assignable to '{s}' (use @as)",
+            .{ ctx, g, e },
+        );
+    }
+    return compiler_errors.compileFailFmt(state, "{s}: type '{s}' is not assignable to '{s}' (use @as)", .{ ctx, g, e });
+}
+
+fn intLiteralFits(node: *ast.Node, width: @import("../widths.zig").Width) bool {
+    if (node.* != .literal) return false;
+    const lit = node.literal;
+    const n: i64 = switch (lit.literal_type) {
+        .number => blk: {
+            if (std.mem.indexOfScalar(u8, lit.value, '.') != null) return false;
+            break :blk std.fmt.parseInt(i64, lit.value, 10) catch return false;
+        },
+        .hex => std.fmt.parseInt(i64, lit.value[2..], 16) catch return false,
+        .octal => std.fmt.parseInt(i64, lit.value[2..], 8) catch return false,
+        .binary => std.fmt.parseInt(i64, lit.value[2..], 2) catch return false,
+        else => return false,
+    };
+    return @import("../widths.zig").i64Fits(width, n);
+}
+
+fn isFloatLiteral(node: *ast.Node) bool {
+    if (node.* != .literal) return false;
+    const lit = node.literal;
+    if (lit.literal_type != .number) return false;
+    return std.mem.indexOfScalar(u8, lit.value, '.') != null or
+        std.mem.indexOfScalar(u8, lit.value, 'e') != null or
+        std.mem.indexOfScalar(u8, lit.value, 'E') != null;
+}
+
+fn isNumericType(t: ir.Type) bool {
+    return ir.isNumeric(t);
+}
+
+/// Same-width numeric ops only (no implicit int↔float or f32↔f64).
+fn requireNumericPair(state: *state_mod.CompilerState, l: ir.Type, r: ir.Type, ctx: []const u8) TypecheckError!ir.Type {
+    if (!isNumericType(l) or !isNumericType(r)) {
+        const dl = try ownDisplay(state, l);
+        const dr = try ownDisplay(state, r);
+        return compiler_errors.compileFailFmt(state, "{s}: expected matching numeric types, got '{s}' and '{s}'", .{ ctx, dl, dr });
+    }
+    if (!ir.typeEquals(l, r)) {
+        const dl = try ownDisplay(state, l);
+        const dr = try ownDisplay(state, r);
+        return compiler_errors.compileFailFmt(state, "{s}: mixed '{s}' and '{s}' (use @as)", .{ ctx, dl, dr });
+    }
+    return l;
 }
 
 fn inferLiteral(ta: ir.TypeAlloc, lit: ast.Literal) !ir.Type {
@@ -108,6 +167,15 @@ fn inferLiteral(ta: ir.TypeAlloc, lit: ast.Literal) !ir.Type {
         .string => try ta.arrayType(ir.TByte, lit.value.len),
         .boolean => ir.TBool,
         .null => ir.TNull,
+        .number => blk: {
+            if (std.mem.indexOfScalar(u8, lit.value, '.') != null or
+                std.mem.indexOfScalar(u8, lit.value, 'e') != null or
+                std.mem.indexOfScalar(u8, lit.value, 'E') != null)
+            {
+                break :blk ir.TF64;
+            }
+            break :blk ir.TInt;
+        },
         else => ir.TInt,
     };
 }
@@ -210,8 +278,7 @@ pub fn inferExpr(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, n
             if (isCmpOrLogic(op)) {
                 if (std.mem.eql(u8, op, "<") or std.mem.eql(u8, op, "<=") or std.mem.eql(u8, op, ">") or std.mem.eql(u8, op, ">=")) {
                     if (!ir.involvesUnknown(l) and !ir.involvesUnknown(r)) {
-                        try requireAssign(state, l, ir.TInt, "operator left");
-                        try requireAssign(state, r, ir.TInt, "operator right");
+                        _ = try requireNumericPair(state, l, r, "comparison");
                     }
                 }
                 break :blk ir.TBool;
@@ -219,15 +286,13 @@ pub fn inferExpr(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, n
             if (std.mem.eql(u8, op, "+")) {
                 if (ir.isByteSlice(l) or ir.isByteSlice(r)) break :blk ir.TString;
                 if (!ir.involvesUnknown(l) and !ir.involvesUnknown(r)) {
-                    try requireAssign(state, l, ir.TInt, "numeric +");
-                    try requireAssign(state, r, ir.TInt, "numeric +");
+                    break :blk try requireNumericPair(state, l, r, "numeric +");
                 }
                 break :blk ir.TInt;
             }
             if (isArith(op)) {
                 if (!ir.involvesUnknown(l) and !ir.involvesUnknown(r)) {
-                    try requireAssign(state, l, ir.TInt, "operator");
-                    try requireAssign(state, r, ir.TInt, "operator");
+                    break :blk try requireNumericPair(state, l, r, "operator");
                 }
                 break :blk ir.TInt;
             }
@@ -257,6 +322,19 @@ pub fn inferExpr(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, n
             const obj = try inferExpr(state, env, ta, idx.object);
             const i = try inferExpr(state, env, ta, idx.index);
             if (!ir.involvesUnknown(i)) try requireAssign(state, i, ir.TInt, "index");
+            if (idx.end) |end_node| {
+                const e = try inferExpr(state, env, ta, end_node);
+                if (!ir.involvesUnknown(e)) try requireAssign(state, e, ir.TInt, "slice end");
+                if (obj == .array) {
+                    // `arr[i..j]` → unsized `[]T` view of the same element type.
+                    break :blk try ta.arrayType(obj.array.elem.*, null);
+                }
+                if (!ir.involvesUnknown(obj) and obj != .unknown) {
+                    const d = try ownDisplay(state, obj);
+                    return compiler_errors.compileFailFmt(state, "Cannot slice type '{s}'", .{d});
+                }
+                break :blk ir.TUnknown;
+            }
             if (obj == .array) break :blk obj.array.elem.*;
             if (!ir.involvesUnknown(obj) and obj != .unknown) {
                 const d = try ownDisplay(state, obj);
@@ -299,7 +377,7 @@ pub fn inferExpr(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, n
             const val = try inferExpr(state, env, ta, a.right);
             if (a.left.* == .primary) {
                 if (env.lookup(a.left.primary.name)) |existing| {
-                    try requireAssign(state, val, existing, "assignment");
+                    try requireAssignFrom(state, val, existing, "assignment", a.right);
                 }
             } else if (a.left.* == .member) {
                 const mem = a.left.member;
@@ -307,11 +385,19 @@ pub fn inferExpr(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, n
                 if (mem.property.* == .primary) {
                     if (ir.structNameOf(obj)) |sname| {
                         const ft = try fieldTypeFromStruct(state, ta, sname, mem.property.primary.name);
-                        try requireAssign(state, val, ft, "assignment to field");
+                        try requireAssignFrom(state, val, ft, "assignment to field", a.right);
                     }
                 }
             } else if (a.left.* == .index) {
-                _ = try inferExpr(state, env, ta, a.left);
+                if (a.left.index.end != null) {
+                    return compiler_errors.compileFailFmt(state, "Cannot assign to a slice view", .{});
+                }
+                const obj_t = try inferExpr(state, env, ta, a.left.index.object);
+                const i = try inferExpr(state, env, ta, a.left.index.index);
+                if (!ir.involvesUnknown(i)) try requireAssign(state, i, ir.TInt, "index");
+                if (obj_t == .array) {
+                    try requireAssignFrom(state, val, obj_t.array.elem.*, "assignment to index", a.right);
+                }
             }
             break :blk val;
         },
@@ -466,7 +552,7 @@ fn inferCall(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, call_
             const at = try inferExpr(state, env, ta, c.args[i]);
             var ctx_buf: [96]u8 = undefined;
             const ctx = std.fmt.bufPrint(&ctx_buf, "argument {d} of '{s}'", .{ i + 1, name.? }) catch "argument";
-            try requireAssign(state, at, params.items[i], ctx);
+            try requireAssignFrom(state, at, params.items[i], ctx, c.args[i]);
         }
         while (i < c.args.len) : (i += 1) {
             _ = try inferExpr(state, env, ta, c.args[i]);
@@ -537,7 +623,7 @@ fn inferStructInit(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc,
         const got = try inferExpr(state, env, ta, field.value);
         var ctx_buf: [128]u8 = undefined;
         const ctx = std.fmt.bufPrint(&ctx_buf, "field '{s}' of '{s}'", .{ field.name, struct_name }) catch "field";
-        try requireAssign(state, got, expected, ctx);
+        try requireAssignFrom(state, got, expected, ctx, field.value);
     }
     return .{ .struct_ = struct_name };
 }
@@ -569,7 +655,7 @@ fn checkStmt(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node:
                 const annot = try from_ast.typeFromAst(ann, state, ta);
                 var ctx_buf: [160]u8 = undefined;
                 const ctx = std.fmt.bufPrint(&ctx_buf, "declaration of '{s}'", .{d.name}) catch "declaration";
-                try requireAssignAt(state, value_type, annot, ctx, d.loc);
+                try requireAssignAt(state, value_type, annot, ctx, d.loc, d.value);
                 try env.define(d.name, annot);
                 if (std.mem.indexOf(u8, d.name, "::") == null) {
                     const disp = try ownDisplay(state, annot);
@@ -583,6 +669,14 @@ fn checkStmt(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node:
                 try state.global_types.put(d.name, value_type.enum_);
             } else {
                 try env.define(d.name, value_type);
+                // Persist pointer / array displays so emit can resolve field layout.
+                // Skip `error` — builtin `error` struct would steal LOAD_FIELD from runtime errors.
+                if (std.mem.indexOf(u8, d.name, "::") == null and
+                    (value_type == .ptr or value_type == .array))
+                {
+                    const disp = try ownDisplay(state, value_type);
+                    try state.global_types.put(d.name, disp);
+                }
             }
             if (d.is_const) try env.const_names.put(d.name, {});
             return null;

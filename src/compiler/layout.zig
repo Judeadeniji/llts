@@ -1,19 +1,24 @@
 //! Packed byte layout for structs (Track B step 2).
-//! Alignment: 8 for i64/f64/handles, 1 for bool/u8. No implicit padding beyond align rules.
 
 const std = @import("std");
 const state_mod = @import("state.zig");
+const widths = @import("widths.zig");
 
+/// Packed field storage kinds. Numeric kinds 10+ match `widths.Width` + offset.
 pub const FieldKind = enum(u8) {
     i64 = 0,
     f64 = 1,
     bool = 2,
-    /// `.slice` / `.bytes` / nested packed struct handle: u32 offset + u32 len.
     handle = 3,
-    /// Value-slot `.ptr` (errors / legacy): i32, 8-byte aligned slot.
     ptr = 4,
-    /// Single byte 0..255 (future `u8` / `byte` fields).
     u8 = 5,
+    f32 = 6,
+    i8 = 7,
+    i16 = 8,
+    i32 = 9,
+    u16 = 10,
+    u32 = 11,
+    u64 = 12,
 };
 
 pub const HANDLE_NULL_OFFSET: u32 = 0xFFFF_FFFF;
@@ -25,27 +30,22 @@ pub fn alignUp(offset: i32, alignment: i32) i32 {
 
 pub fn sizeOfTypeName(type_name: []const u8) i32 {
     const bare = unwrapTypeName(type_name);
-    if (std.mem.eql(u8, bare, "int") or std.mem.eql(u8, bare, "i32") or
-        std.mem.eql(u8, bare, "i64") or std.mem.eql(u8, bare, "number"))
-        return 8;
-    if (std.mem.eql(u8, bare, "float") or std.mem.eql(u8, bare, "f64") or std.mem.eql(u8, bare, "f32"))
-        return 8;
+    if (bare.len > 0 and bare[0] == '*') return 8; // pointer / heap handle
+    if (widths.fromName(bare)) |w| return w.size();
     if (std.mem.eql(u8, bare, "bool") or std.mem.eql(u8, bare, "boolean"))
         return 1;
     if (std.mem.eql(u8, bare, "null"))
         return 0;
-    if (std.mem.eql(u8, bare, "byte") or std.mem.eql(u8, bare, "u8"))
-        return 1;
     if (std.mem.eql(u8, bare, "string") or std.mem.eql(u8, bare, "[]byte"))
         return 8;
-    // Named structs / optionals / unions → packed handle.
     return 8;
 }
 
 pub fn alignOfTypeName(type_name: []const u8) i32 {
     const bare = unwrapTypeName(type_name);
+    if (bare.len > 0 and bare[0] == '*') return 8;
+    if (widths.fromName(bare)) |w| return w.alignment();
     if (std.mem.eql(u8, bare, "bool") or std.mem.eql(u8, bare, "boolean") or
-        std.mem.eql(u8, bare, "byte") or std.mem.eql(u8, bare, "u8") or
         std.mem.eql(u8, bare, "null"))
         return 1;
     return 8;
@@ -53,25 +53,49 @@ pub fn alignOfTypeName(type_name: []const u8) i32 {
 
 pub fn fieldKind(type_name: []const u8) FieldKind {
     const bare = unwrapTypeName(type_name);
-    if (std.mem.eql(u8, bare, "int") or std.mem.eql(u8, bare, "i32") or
-        std.mem.eql(u8, bare, "i64") or std.mem.eql(u8, bare, "number"))
-        return .i64;
-    if (std.mem.eql(u8, bare, "float") or std.mem.eql(u8, bare, "f64") or std.mem.eql(u8, bare, "f32"))
-        return .f64;
+    if (bare.len > 0 and bare[0] == '*') return .handle;
+    if (widths.fromName(bare)) |w| return fieldKindFromWidth(w);
     if (std.mem.eql(u8, bare, "bool") or std.mem.eql(u8, bare, "boolean"))
         return .bool;
-    if (std.mem.eql(u8, bare, "byte") or std.mem.eql(u8, bare, "u8"))
-        return .u8;
-    // error message field etc. — handle; Value-heap ptrs use .ptr only when annotated "ptr" (rare).
     if (std.mem.eql(u8, bare, "ptr"))
         return .ptr;
     return .handle;
 }
 
-/// Strip `?T` / `T | null` / `T | error` to the payload type name for layout sizing.
+pub fn fieldKindFromWidth(w: widths.Width) FieldKind {
+    return switch (w) {
+        .i8 => .i8,
+        .i16 => .i16,
+        .i32 => .i32,
+        .i64 => .i64,
+        .u8 => .u8,
+        .u16 => .u16,
+        .u32 => .u32,
+        .u64 => .u64,
+        .f32 => .f32,
+        .f64 => .f64,
+    };
+}
+
+pub fn widthFromFieldKind(kind: FieldKind) ?widths.Width {
+    return switch (kind) {
+        .i8 => .i8,
+        .i16 => .i16,
+        .i32 => .i32,
+        .i64 => .i64,
+        .u8 => .u8,
+        .u16 => .u16,
+        .u32 => .u32,
+        .u64 => .u64,
+        .f32 => .f32,
+        .f64 => .f64,
+        else => null,
+    };
+}
+
 pub fn unwrapTypeName(type_name: []const u8) []const u8 {
     var s = type_name;
-    if (std.mem.startsWith(u8, s, "?")) s = s[1..];
+    while (s.len > 0 and s[0] == '?') s = s[1..];
     if (std.mem.indexOf(u8, s, " | ")) |idx| {
         s = std.mem.trim(u8, s[0..idx], " ");
     }
@@ -88,7 +112,6 @@ pub const FieldSpec = struct {
     type_name: []const u8,
 };
 
-/// Compute packed field offsets and total byte size (aligned to 8).
 pub fn layoutFields(
     allocator: std.mem.Allocator,
     fields: []const FieldSpec,
@@ -114,6 +137,6 @@ pub fn layoutFields(
 }
 
 pub fn fieldKindForStruct(sd: state_mod.StructDef, field: []const u8) FieldKind {
-    const ty = sd.types.get(field) orelse "int";
+    const ty = sd.types.get(field) orelse "i64";
     return fieldKind(ty);
 }
