@@ -75,7 +75,7 @@ Packed byte heap + honest numeric widths. See [`docs/memory-model.md`](docs/memo
 - [x] **Write RFC** — [`docs/memory-model.md`](docs/memory-model.md).
 - [x] **Packed heap region** — one byte bump (frame watermark + immortal/pass region policy).
 - [x] **Unify slices** — strings, `[]byte`, structs, and **value arrays** share `vm.bytes` (`.slice` / `.bytes` / `.array`).
-- [x] **Widths as real types** — full matrix `i8`/`i16`/`i32`/`i64`, `u8`/`u16`/`u32`/`u64`, `f32`/`f64` honest end-to-end; aliases `int`/`number`→`i64`, `byte`→`u8`, `float`→`f64`; convert only via `@as` (integer literals may coerce into any integer width that fits; float literals are `f64` and may coerce into `f32`).
+- [x] **Widths as real types** — full matrix `u1`/`i8`/`i16`/`i32`/`i64`, `u8`/`u16`/`u32`/`u64`, `f32`/`f64` honest end-to-end; aliases `int`/`number`→`i64`, `byte`→`u8`, `float`→`f64`, `bool`/`boolean`→`u1`; convert only via `@as` (integer literals may coerce into any integer width that fits; float literals are `f64` and may coerce into `f32`).
 
 ### P0 — Silent Wrong Behaviour (no error, wrong result)
 
@@ -105,7 +105,7 @@ Packed byte heap + honest numeric widths. See [`docs/memory-model.md`](docs/memo
 
 - [x] **Type checker pass** — gradual analysis before emit (`src/compiler/typecheck/`).
 - [x] **Return / param / field annotations** when present; unannotated = `Unknown`.
-- [x] **`$name: T`**, `[]T` / `[N]T` (incl. nested), `T | error`, `?T` / `T | null`; numeric aliases `int`/`number`→`i64`, `byte`→`u8`, `float`→`f64`, `boolean`→`bool`.
+- [x] **`$name: T`**, `[]T` / `[N]T` (incl. nested), `T | error`, `?T` / `T | null`; numeric aliases `int`/`number`→`i64`, `byte`→`u8`, `float`→`f64`, `bool`/`boolean`→`u1`.
 - [x] **`string` ≡ `[]byte`**; string literals infer as `[N]byte`.
 - [x] **Structs as types** — including imported `mod.Name` (e.g. `mem.Arena`).
 - [x] **Debug type asserts**; strip with `--release`.
@@ -128,8 +128,8 @@ Forcing function: keep writing the self-hosted compiler. Whatever that parser ca
 
 #### Pointers vs values
 
-- [x] **`*T` / `?*T` as types** — pointer IR + parse; `@new` of a struct yields `*T`; field access auto-resolves through `*` / `?*`; `?Node` still works as optional struct (compat). Address-of (`&x`) still to follow.
-- [ ] **Address-of (`&x`)** — take a pointer to a local / field; distinguish value vs handle at the type level, not only by allocation region (`Foo{}` vs `@new`).
+- [x] **`*T` / `?*T` as types** — pointer IR + parse; `@new` of a struct yields `*T`; field access auto-resolves through `*` / `?*`; `?Node` still works as optional struct (compat).
+- [x] **Address-of (`&x`)** — `&struct_value` → `*T` (same packed handle; type-level). Rejects scalars, optionals, and already-`*T` (no `**T` / interiors yet).
 - [x] **Packed `@sizeOf` layout** — struct/primitive sizes use real field layout (`src/compiler/layout.zig`); `@sizeOf(*T)` is handle-sized (8).
 - [ ] **Methods vs pointers** — `self` already mutates like a handle; document/enforce whether methods take `self: T` or `self: *T`.
 
@@ -142,7 +142,7 @@ Forcing function: keep writing the self-hosted compiler. Whatever that parser ca
 
 #### Types that match the VM
 
-- [x] **Numeric width matrix** — `i8`…`i64`, `u8`…`u64`, `f32`/`f64`; aliases `int`/`number`→`i64`, `byte`→`u8`, `float`→`f64`; no implicit cross-width ops (use `@as`).
+- [x] **Numeric width matrix** — `u1`, `i8`…`i64`, `u8`…`u64`, `f32`/`f64`; aliases `int`/`number`→`i64`, `byte`→`u8`, `float`→`f64`, `bool`/`boolean`→`u1`; no implicit cross-width ops (use `@as`).
 
 #### Abstraction without generics
 

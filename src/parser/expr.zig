@@ -59,7 +59,9 @@ fn parseUnary(self: *Parser) ParseError!*Node {
             .loc = arg.loc(),
         } });
     }
-    if (tok.type == .bin_op and (std.mem.eql(u8, tok.value, "+") or std.mem.eql(u8, tok.value, "-") or std.mem.eql(u8, tok.value, "~"))) {
+    if (tok.type == .bin_op and (std.mem.eql(u8, tok.value, "+") or std.mem.eql(u8, tok.value, "-") or
+        std.mem.eql(u8, tok.value, "~") or std.mem.eql(u8, tok.value, "&")))
+    {
         _ = self.advance();
         const arg = try parseUnary(self);
         return self.create(.{ .unary = .{

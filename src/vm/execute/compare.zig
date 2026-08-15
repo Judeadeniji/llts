@@ -15,14 +15,14 @@ pub fn compareEq(vm: *VMState, invert: bool) CmpError!void {
     const b = stack.pop(vm);
     const a = stack.pop(vm);
     const eq = valuesEqual(vm, a, b);
-    try stack.push(vm, .{ .bool = if (invert) !eq else eq });
+    try stack.push(vm, Value.fromBool(if (invert) !eq else eq ));
 }
 
 fn valuesEqual(vm: *VMState, a: Value, b: Value) bool {
     return switch (a) {
         .null => b == .null,
-        .bool => |x| switch (b) {
-            .bool => |y| x == y,
+        .u1 => |x| switch (b) {
+            .u1 => |y| x == y,
             else => false,
         },
         .i64 => |x| switch (b) {
@@ -85,7 +85,7 @@ pub fn compareOrd(vm: *VMState, op: OpCode) CmpError!void {
         .OP_GREATER_EQUAL => af >= bf,
         else => unreachable,
     };
-    try stack.push(vm, .{ .bool = result });
+    try stack.push(vm, Value.fromBool(result ));
 }
 
 fn asOrdFloat(v: Value) ?f64 {
@@ -95,7 +95,7 @@ fn asOrdFloat(v: Value) ?f64 {
         .f32 => |n| n,
         .f64 => |n| n,
         .ptr => |p| @floatFromInt(p),
-        .bool => |b| @floatFromInt(@intFromBool(b)),
+        .u1 => |b| @floatFromInt(b),
         else => null,
     };
 }

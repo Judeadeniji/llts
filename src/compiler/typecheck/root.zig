@@ -198,6 +198,75 @@ fn fnReturnType(state: *state_mod.CompilerState, ta: ir.TypeAlloc, func_name: []
     return ir.TUnknown;
 }
 
+fn resolveMethodSelfType(
+    state: *state_mod.CompilerState,
+    ta: ir.TypeAlloc,
+    struct_name: []const u8,
+    has_annotation: bool,
+    annotated: ir.Type,
+) TypecheckError!ir.Type {
+    const bare: ir.Type = .{ .struct_ = struct_name };
+    if (!has_annotation) return try ta.ptrType(bare);
+    if (annotated == .struct_ and std.mem.eql(u8, annotated.struct_, struct_name)) return annotated;
+    if (annotated == .ptr and annotated.ptr.* == .struct_ and std.mem.eql(u8, annotated.ptr.*.struct_, struct_name))
+        return annotated;
+    const d = try ownDisplay(state, annotated);
+    return compiler_errors.compileFailFmt(
+        state,
+        "method self must be '{s}' or '*{s}', got '{s}'",
+        .{ struct_name, struct_name, d },
+    );
+}
+
+fn requireMethodReceiver(
+    state: *state_mod.CompilerState,
+    got: ir.Type,
+    expected: ir.Type,
+    method_name: []const u8,
+    from: ?*ast.Node,
+) TypecheckError!void {
+    if (ir.involvesUnknown(got) or ir.involvesUnknown(expected)) return;
+    if (ir.isSubtype(got, expected)) return;
+    // Zig-style: value receiver auto-& into *T; *T auto-deref into value receiver.
+    if (expected == .ptr and got == .struct_) {
+        if (expected.ptr.* == .struct_ and std.mem.eql(u8, got.struct_, expected.ptr.*.struct_)) return;
+    }
+    if (got == .ptr and expected == .struct_) {
+        if (got.ptr.* == .struct_ and std.mem.eql(u8, got.ptr.*.struct_, expected.struct_)) return;
+    }
+    if (ir.optionalPayload(got)) |payload| {
+        return requireMethodReceiver(state, payload, expected, method_name, from);
+    }
+    const g = try ownDisplay(state, got);
+    const e = try ownDisplay(state, expected);
+    return compiler_errors.compileFailFmt(
+        state,
+        "method '{s}' receiver: type '{s}' is not assignable to '{s}'",
+        .{ method_name, g, e },
+    );
+}
+
+fn resolveMethodCallee(
+    state: *state_mod.CompilerState,
+    env: *Env,
+    ta: ir.TypeAlloc,
+    c: *const ast.Call,
+) TypecheckError!?struct { name: []const u8, receiver: *ast.Node } {
+    if (c.callee.* != .member) return null;
+    const mem = c.callee.member;
+    if (mem.property.* != .primary) return null;
+    const prop = mem.property.primary.name;
+    const obj_ty = try inferExpr(state, env, ta, mem.object);
+    const sname = ir.structNameOf(obj_ty) orelse return null;
+    if (state.structs.get(sname)) |sd| {
+        if (sd.offsets.contains(prop)) return null; // field, not method
+    }
+    const method_name = try std.fmt.allocPrint(state.allocator, "{s}::{s}", .{ sname, prop });
+    try state.owned.append(state.allocator, method_name);
+    if (!state.functions.contains(method_name)) return null;
+    return .{ .name = method_name, .receiver = mem.object };
+}
+
 fn fnParamTypes(state: *state_mod.CompilerState, ta: ir.TypeAlloc, func_name: []const u8, out_params: *std.ArrayList(ir.Type), out_rest: *?ir.Type, out_variadic: *bool) !bool {
     const def = state.functions.get(func_name) orelse return false;
     if (def.node.* != .function_decl) return false;
@@ -212,10 +281,16 @@ fn fnParamTypes(state: *state_mod.CompilerState, ta: ir.TypeAlloc, func_name: []
     };
     out_variadic.* = is_variadic;
     out_rest.* = null;
+    const method_struct: ?[]const u8 = if (std.mem.indexOf(u8, f.name, "::")) |idx| f.name[0..idx] else null;
     for (plist, 0..) |pnode, i| {
         var t: ir.Type = ir.TUnknown;
         if (pnode.type_annotation) |ann| {
             t = try from_ast.typeFromAst(ann, state, ta);
+        }
+        if (method_struct) |sname| {
+            if (i == 0 and std.mem.eql(u8, pnode.name, "self")) {
+                t = try resolveMethodSelfType(state, ta, sname, pnode.type_annotation != null, t);
+            }
         }
 
         const is_rest = pnode.is_rest;
@@ -269,6 +344,20 @@ pub fn inferExpr(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, n
         .unary => |u| blk: {
             const t = try inferExpr(state, env, ta, u.arg);
             if (std.mem.eql(u8, u.operator, "!")) break :blk ir.TBool;
+            if (std.mem.eql(u8, u.operator, "&")) {
+                if (ir.involvesUnknown(t)) break :blk ir.TUnknown;
+                if (t == .ptr) {
+                    return compiler_errors.compileFailFmt(state, "cannot take address of a pointer (no **T yet)", .{});
+                }
+                if (ir.optionalPayload(t) != null) {
+                    return compiler_errors.compileFailFmt(state, "cannot take address of an optional; use a non-optional struct value", .{});
+                }
+                if (t != .struct_) {
+                    const d = try ownDisplay(state, t);
+                    return compiler_errors.compileFailFmt(state, "address-of requires a struct value, got '{s}'", .{d});
+                }
+                break :blk try ta.ptrType(t);
+            }
             break :blk t;
         },
         .binary => |b| blk: {
@@ -520,7 +609,8 @@ fn inferCall(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, call_
         return compiler_errors.compileFailFmt(state, "unknown intrinsic '{s}'", .{name});
     }
 
-    const name = resolveCalleeName(state, c);
+    const method = try resolveMethodCallee(state, env, ta, c);
+    const name: ?[]const u8 = if (method) |m| m.name else resolveCalleeName(state, c);
     if (name == null) {
         for (c.args) |a| _ = try inferExpr(state, env, ta, a);
         return ir.TUnknown;
@@ -532,9 +622,6 @@ fn inferCall(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, call_
     var variadic = false;
     const has_sig = try fnParamTypes(state, ta, name.?, &params, &rest, &variadic);
 
-    // Method calls with Struct::method — receiver prepended in TS; skipped for module paths.
-    _ = c.args;
-
     if (has_sig) {
         const named_count = params.items.len;
         const any_annotated = blk: {
@@ -543,21 +630,45 @@ fn inferCall(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, call_
             }
             break :blk false;
         };
-        if (!variadic and rest == null and any_annotated and c.args.len != named_count) {
-            return compiler_errors.compileFailFmt(state, "Function '{s}' expected {d} arguments, got {d}", .{ name.?, named_count, c.args.len });
-        }
-        const ncheck = @min(c.args.len, named_count);
-        var i: usize = 0;
-        while (i < ncheck) : (i += 1) {
-            const at = try inferExpr(state, env, ta, c.args[i]);
-            var ctx_buf: [96]u8 = undefined;
-            const ctx = std.fmt.bufPrint(&ctx_buf, "argument {d} of '{s}'", .{ i + 1, name.? }) catch "argument";
-            try requireAssignFrom(state, at, params.items[i], ctx, c.args[i]);
-        }
-        while (i < c.args.len) : (i += 1) {
-            _ = try inferExpr(state, env, ta, c.args[i]);
+        if (method) |m| {
+            // Receiver is prepended; user args must match params after self.
+            const expected_user = if (named_count > 0) named_count - 1 else 0;
+            if (!variadic and rest == null and any_annotated and c.args.len != expected_user) {
+                return compiler_errors.compileFailFmt(state, "Function '{s}' expected {d} arguments, got {d}", .{ name.?, expected_user, c.args.len });
+            }
+            if (named_count > 0) {
+                const recv_ty = try inferExpr(state, env, ta, m.receiver);
+                try requireMethodReceiver(state, recv_ty, params.items[0], name.?, m.receiver);
+            }
+            const ncheck = @min(c.args.len, if (named_count > 0) named_count - 1 else 0);
+            var i: usize = 0;
+            while (i < ncheck) : (i += 1) {
+                const at = try inferExpr(state, env, ta, c.args[i]);
+                var ctx_buf: [96]u8 = undefined;
+                const ctx = std.fmt.bufPrint(&ctx_buf, "argument {d} of '{s}'", .{ i + 1, name.? }) catch "argument";
+                try requireAssignFrom(state, at, params.items[i + 1], ctx, c.args[i]);
+            }
+            while (i < c.args.len) : (i += 1) {
+                _ = try inferExpr(state, env, ta, c.args[i]);
+            }
+        } else {
+            if (!variadic and rest == null and any_annotated and c.args.len != named_count) {
+                return compiler_errors.compileFailFmt(state, "Function '{s}' expected {d} arguments, got {d}", .{ name.?, named_count, c.args.len });
+            }
+            const ncheck = @min(c.args.len, named_count);
+            var i: usize = 0;
+            while (i < ncheck) : (i += 1) {
+                const at = try inferExpr(state, env, ta, c.args[i]);
+                var ctx_buf: [96]u8 = undefined;
+                const ctx = std.fmt.bufPrint(&ctx_buf, "argument {d} of '{s}'", .{ i + 1, name.? }) catch "argument";
+                try requireAssignFrom(state, at, params.items[i], ctx, c.args[i]);
+            }
+            while (i < c.args.len) : (i += 1) {
+                _ = try inferExpr(state, env, ta, c.args[i]);
+            }
         }
     } else {
+        if (method) |m| _ = try inferExpr(state, env, ta, m.receiver);
         for (c.args) |a| _ = try inferExpr(state, env, ta, a);
     }
     return try fnReturnType(state, ta, name.?);
@@ -740,9 +851,13 @@ fn checkFunction(state: *state_mod.CompilerState, ta: ir.TypeAlloc, f: *ast.Func
     for (plist, 0..) |pnode, i| {
         var t: ir.Type = ir.TUnknown;
         if (pnode.type_annotation) |ann| t = try from_ast.typeFromAst(ann, state, ta);
-        if (std.mem.eql(u8, pnode.name, "self")) {
-            if (std.mem.indexOf(u8, f.name, "::")) |idx| {
-                t = .{ .struct_ = f.name[0..idx] };
+        if (std.mem.indexOf(u8, f.name, "::")) |idx| {
+            const sname = f.name[0..idx];
+            if (i == 0) {
+                if (!std.mem.eql(u8, pnode.name, "self")) {
+                    return compiler_errors.compileFailFmt(state, "method '{s}' must have first parameter named 'self'", .{f.name});
+                }
+                t = try resolveMethodSelfType(state, ta, sname, pnode.type_annotation != null, t);
             }
         }
 

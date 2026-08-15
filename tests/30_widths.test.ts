@@ -39,19 +39,23 @@ print(x); print(y);
 	);
 });
 
-test("aliases int/byte/float normalize to i64/u8/f64", () => {
+test("aliases int/byte/float/bool normalize to i64/u8/f64/u1", () => {
 	expectOutput(
 		runSource(`
 $a: int = 1;
 $b: byte = 2;
 $c: float = 3.25;
 $d: number = 4;
+$e: bool = true;
+$f: boolean = false;
 print(@typeOf(a));
 print(@typeOf(b));
 print(@typeOf(c));
 print(@typeOf(d));
+print(@typeOf(e));
+print(@typeOf(f));
 `),
-		["i64", "u8", "f64", "i64"],
+		["i64", "u8", "f64", "i64", "u1", "u1"],
 	);
 });
 
@@ -60,6 +64,8 @@ test("@sizeOf matches width sizes", () => {
 		runSource(`
 print(@sizeOf(i8));
 print(@sizeOf(u8));
+print(@sizeOf(u1));
+print(@sizeOf(bool));
 print(@sizeOf(i16));
 print(@sizeOf(u16));
 print(@sizeOf(i32));
@@ -72,7 +78,7 @@ print(@sizeOf(int));
 print(@sizeOf(byte));
 print(@sizeOf(float));
 `),
-		["1", "1", "2", "2", "4", "4", "4", "8", "8", "8", "8", "1", "8"],
+		["1", "1", "1", "1", "2", "2", "4", "4", "4", "8", "8", "8", "8", "1", "8"],
 	);
 });
 

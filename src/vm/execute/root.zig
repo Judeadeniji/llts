@@ -59,8 +59,8 @@ pub fn execute(vm: *VMState, start_ip: usize) RuntimeError!void {
             .OP_SOURCE => debug_ops.source(vm, readShort(vm, &ip)),
             .OP_CONSTANT => try stack.push(vm, vm.chunk.constants.items[readShort(vm, &ip)]),
             .OP_NULL => try stack.push(vm, .null),
-            .OP_TRUE => try stack.push(vm, .{ .bool = true }),
-            .OP_FALSE => try stack.push(vm, .{ .bool = false }),
+            .OP_TRUE => try stack.push(vm, Value.fromBool(true)),
+            .OP_FALSE => try stack.push(vm, Value.fromBool(false)),
             .OP_POP => {
                 _ = stack.pop(vm);
             },
@@ -144,7 +144,7 @@ pub fn execute(vm: *VMState, start_ip: usize) RuntimeError!void {
                 const val = stack.pop(vm);
                 const size: i64 = switch (val) {
                     .null => 0,
-                    .bool => 1,
+                    .u1 => 1,
                     .i8, .u8 => 1,
                     .i16, .u16 => 2,
                     .i32, .u32, .f32 => 4,

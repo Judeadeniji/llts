@@ -176,9 +176,6 @@ pub fn compile(state: *CompilerState, intr: Intrinsic, node: *ast.Node, c: *cons
                 } else if (widths.fromName(st)) |w| {
                     is_type = true;
                     size = w.size();
-                } else if (std.mem.eql(u8, st, "bool") or std.mem.eql(u8, st, "boolean")) {
-                    is_type = true;
-                    size = 1;
                 } else if (std.mem.eql(u8, st, "null")) {
                     is_type = true;
                     size = 0;

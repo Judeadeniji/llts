@@ -126,6 +126,7 @@ fn isIntType(t: ?[]const u8) bool {
 
 pub fn compileUnary(state: *CompilerState, un: *const ast.Unary) !void {
     try expr.compileExpression(state, un.arg);
+    // `&` is type-level only for struct handles (identity at runtime).
     if (std.mem.eql(u8, un.operator, "-")) try emit.emitOp(state, .OP_NEGATE);
     if (std.mem.eql(u8, un.operator, "!")) try emit.emitOp(state, .OP_NOT);
     if (std.mem.eql(u8, un.operator, "~")) try emit.emitOp(state, .OP_BIT_NOT);

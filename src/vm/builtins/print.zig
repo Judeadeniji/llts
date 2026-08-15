@@ -29,7 +29,7 @@ pub fn printArgs(vm: *VMState, argc: u8) !void {
 pub fn writeValue(vm: *VMState, out: *std.ArrayList(u8), v: Value) !void {
     switch (v) {
         .null => try out.appendSlice(vm.allocator, "null"),
-        .bool => |b| try out.appendSlice(vm.allocator, if (b) "true" else "false"),
+        .u1 => |b| try out.appendSlice(vm.allocator, if (b != 0) "true" else "false"),
         .i8, .i16, .i32, .i64, .u8, .u16, .u32, .u64 => {
             const n = @import("../../compiler/widths.zig").valueAsI64(v) orelse 0;
             var tmp: [32]u8 = undefined;

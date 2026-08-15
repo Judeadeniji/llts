@@ -180,7 +180,7 @@ pub fn resolveType(state: *state_mod.CompilerState, node: *ast.Node) ?[]const u8
                 state.owned.append(state.allocator, s) catch {};
                 break :blk s;
             },
-            .boolean => "bool",
+            .boolean => "u1",
             .@"null" => "null",
             .number => blk: {
                 // Float if the source spelling contains '.' or exponent.
@@ -287,7 +287,15 @@ pub fn resolveType(state: *state_mod.CompilerState, node: *ast.Node) ?[]const u8
             break :blk s;
         },
         .struct_init => |s| resolveStructName(state, s.type_expr),
-        .unary => |u| resolveType(state, u.arg),
+        .unary => |u| blk: {
+            if (std.mem.eql(u8, u.operator, "&")) {
+                const inner = resolveType(state, u.arg) orelse break :blk null;
+                const s = std.fmt.allocPrint(state.allocator, "*{s}", .{inner}) catch break :blk null;
+                state.owned.append(state.allocator, s) catch {};
+                break :blk s;
+            }
+            break :blk resolveType(state, u.arg);
+        },
         else => null,
     };
 }

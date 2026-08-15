@@ -135,7 +135,7 @@ fn isErrFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     if (args.len < 1) return error.ArityError;
     const rc: usize = @bitCast(@as(isize, @intCast(try util.asInt(args[0]))));
-    return .{ .bool = linux.E.init(rc) != .SUCCESS };
+    return Value.fromBool(linux.E.init(rc) != .SUCCESS );
 }
 
 fn errnoFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {

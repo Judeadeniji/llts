@@ -210,13 +210,14 @@ pub @func main(): string | error {
 	);
 });
 
-test("boolean alias normalizes to bool", () => {
+test("boolean alias normalizes to u1", () => {
 	expectOutput(
 		runSource(`
 $b: boolean = true;
 print(b);
+print(@typeOf(b));
 `),
-		["true"],
+		["true", "u1"],
 	);
 });
 
@@ -231,7 +232,7 @@ print(@typeOf(y));
 print(@typeOf(z));
 print(@typeOf(true));
 `),
-		["i64", "[2]byte", "[]i64", "bool"],
+		["i64", "[2]byte", "[]i64", "u1"],
 	);
 });
 

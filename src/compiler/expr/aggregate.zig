@@ -247,7 +247,7 @@ fn emitZeroForTypeName(state: *CompilerState, name: []const u8) !void {
         try emit.emitConstant(state, .{ .f64 = 0 });
         return;
     }
-    if (std.mem.eql(u8, name, "bool") or std.mem.eql(u8, name, "boolean")) {
+    if (std.mem.eql(u8, name, "u1") or std.mem.eql(u8, name, "bool") or std.mem.eql(u8, name, "boolean")) {
         try emit.emitOp(state, .OP_FALSE);
         return;
     }
@@ -257,7 +257,7 @@ fn emitZeroForTypeName(state: *CompilerState, name: []const u8) !void {
     }
     switch (layout.fieldKind(name)) {
         .handle, .ptr => try emit.emitOp(state, .OP_NULL),
-        .i64, .f64, .f32, .bool, .u8, .i8, .i16, .i32, .u16, .u32, .u64 => try emit.emitConstant(state, .{ .i64 = 0 }),
+        .i64, .f64, .f32, .u1, .u8, .i8, .i16, .i32, .u16, .u32, .u64 => try emit.emitConstant(state, .{ .i64 = 0 }),
     }
 }
 

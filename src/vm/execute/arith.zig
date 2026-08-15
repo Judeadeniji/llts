@@ -116,7 +116,7 @@ pub fn ltI64(vm: *VMState) ArithError!void {
         .i64 => |n| n,
         else => return fail(vm, "Operands must be ints"),
     };
-    try stack.push(vm, .{ .bool = ai < bi });
+    try stack.push(vm, Value.fromBool(ai < bi ));
 }
 
 fn powi(base: i64, exp: i64) i64 {
@@ -144,7 +144,7 @@ pub fn negate(vm: *VMState) ArithError!void {
 
 pub fn not_(vm: *VMState) ArithError!void {
     const a = stack.pop(vm);
-    try stack.push(vm, .{ .bool = !a.isTruthy() });
+    try stack.push(vm, Value.fromBool(!a.isTruthy() ));
 }
 
 const BitOp = enum { band, bor, bxor, shl, shr };

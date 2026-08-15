@@ -15,10 +15,12 @@ pub const Width = enum(u8) {
     u64 = 7,
     f32 = 8,
     f64 = 9,
+    /// 1-bit unsigned; `bool` / `boolean` alias this.
+    u1 = 10,
 
     pub fn size(self: Width) i32 {
         return switch (self) {
-            .i8, .u8 => 1,
+            .u1, .i8, .u8 => 1,
             .i16, .u16 => 2,
             .i32, .u32, .f32 => 4,
             .i64, .u64, .f64 => 8,
@@ -31,6 +33,7 @@ pub const Width = enum(u8) {
 
     pub fn name(self: Width) []const u8 {
         return switch (self) {
+            .u1 => "u1",
             .i8 => "i8",
             .i16 => "i16",
             .i32 => "i32",
@@ -50,14 +53,17 @@ pub const Width = enum(u8) {
 
     pub fn isUnsigned(self: Width) bool {
         return switch (self) {
-            .u8, .u16, .u32, .u64 => true,
+            .u1, .u8, .u16, .u32, .u64 => true,
             else => false,
         };
     }
 };
 
-/// Resolve a type name to a width. Aliases: `int`/`number`→i64, `byte`→u8, `float`→f64.
+/// Resolve a type name to a width.
+/// Aliases: `int`/`number`→i64, `byte`→u8, `float`→f64, `bool`/`boolean`→u1.
 pub fn fromName(name: []const u8) ?Width {
+    if (std.mem.eql(u8, name, "u1") or std.mem.eql(u8, name, "bool") or std.mem.eql(u8, name, "boolean"))
+        return .u1;
     if (std.mem.eql(u8, name, "i8")) return .i8;
     if (std.mem.eql(u8, name, "i16")) return .i16;
     if (std.mem.eql(u8, name, "i32")) return .i32;
@@ -72,13 +78,14 @@ pub fn fromName(name: []const u8) ?Width {
     return null;
 }
 
-/// Canonical display name (aliases normalize: int→i64, byte→u8, float→f64).
+/// Canonical display name (aliases normalize: int→i64, byte→u8, float→f64, bool→u1).
 pub fn displayName(name: []const u8) ?[]const u8 {
     return if (fromName(name)) |w| w.name() else null;
 }
 
 pub fn i64Fits(width: Width, n: i64) bool {
     return switch (width) {
+        .u1 => n == 0 or n == 1,
         .i8 => n >= std.math.minInt(i8) and n <= std.math.maxInt(i8),
         .i16 => n >= std.math.minInt(i16) and n <= std.math.maxInt(i16),
         .i32 => n >= std.math.minInt(i32) and n <= std.math.maxInt(i32),
@@ -96,6 +103,7 @@ const Value = value_mod.Value;
 
 pub fn valueAsI64(v: Value) ?i64 {
     return switch (v) {
+        .u1 => |n| n,
         .i8 => |n| n,
         .i16 => |n| n,
         .i32 => |n| n,
@@ -104,7 +112,6 @@ pub fn valueAsI64(v: Value) ?i64 {
         .u16 => |n| n,
         .u32 => |n| n,
         .u64 => |n| if (n <= std.math.maxInt(i64)) @intCast(n) else null,
-        .bool => |b| @intFromBool(b),
         .f32 => |n| @intFromFloat(n),
         .f64 => |n| @intFromFloat(n),
         .ptr => |p| p,
@@ -116,6 +123,7 @@ pub fn valueAsF64(v: Value) ?f64 {
     return switch (v) {
         .f64 => |n| n,
         .f32 => |n| n,
+        .u1 => |n| @floatFromInt(n),
         .i8 => |n| @floatFromInt(n),
         .i16 => |n| @floatFromInt(n),
         .i32 => |n| @floatFromInt(n),
@@ -124,7 +132,6 @@ pub fn valueAsF64(v: Value) ?f64 {
         .u16 => |n| @floatFromInt(n),
         .u32 => |n| @floatFromInt(n),
         .u64 => |n| @floatFromInt(n),
-        .bool => |b| @floatFromInt(@intFromBool(b)),
         .ptr => |p| @floatFromInt(p),
         else => null,
     };
@@ -142,6 +149,7 @@ pub fn castValue(v: Value, to: Width) !Value {
     const n = valueAsI64(v) orelse return error.TypeError;
     if (!i64Fits(to, n)) return error.OutOfRange;
     return switch (to) {
+        .u1 => .{ .u1 = @intCast(n) },
         .i8 => .{ .i8 = @intCast(n) },
         .i16 => .{ .i16 = @intCast(n) },
         .i32 => .{ .i32 = @intCast(n) },
@@ -153,4 +161,3 @@ pub fn castValue(v: Value, to: Width) !Value {
         else => unreachable,
     };
 }
-

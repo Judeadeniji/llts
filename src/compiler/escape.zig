@@ -52,6 +52,10 @@ pub fn regionOf(state: *CompilerState, node: *ast.Node) AllocRegion {
         },
         // `error(…)` is immortal at runtime — treat as non-frame.
         .error_expr => return .pass,
+        .unary => |u| {
+            if (std.mem.eql(u8, u.operator, "&")) return regionOf(state, u.arg);
+            return .unknown;
+        },
         else => return .unknown,
     }
 }

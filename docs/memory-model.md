@@ -37,9 +37,9 @@ Relevant code: `src/vm/state.zig`, `src/vm/execute/heap.zig`, `src/vm/builtins/m
 ```
 ┌─────────────────────────────┐
 │ Stack / globals / locals    │  tagged Value (honest widths)
-│  i8..i64, u8..u64, f32/f64  │  (+ ptr / slice handles)
+│  u1, i8..i64, u8..u64, f32/f64 │  (+ ptr / slice handles)
 │  aliases: int→i64, byte→u8  │
-│           float→f64         │
+│           float→f64, bool→u1│
 └──────────────┬──────────────┘
                │ ptr / {offset,len}
                ▼
@@ -62,7 +62,7 @@ Relevant code: `src/vm/state.zig`, `src/vm/execute/heap.zig`, `src/vm/builtins/m
 
 ### Stack numerics
 
-Honest `Value` tags for `i8`…`i64`, `u8`…`u64`, `f32`, `f64`. Language aliases normalize at the type boundary (`int`/`number`→`i64`, `byte`→`u8`, `float`→`f64`); `@typeOf` prints the canonical name.
+Honest `Value` tags for `u1`, `i8`…`i64`, `u8`…`u64`, `f32`, `f64`. Language aliases normalize at the type boundary (`int`/`number`→`i64`, `byte`→`u8`, `float`→`f64`, `bool`/`boolean`→`u1`); `@typeOf` prints the canonical name.
 
 Integer literals may coerce into any integer width that fits. Float literals are `f64` and may coerce into `f32`. Runtime cross-width ops require `@as` (`OP_AS`).
 
@@ -92,4 +92,4 @@ $x: i32 = 42;              # real i32, not an int alias
 
 ## Relation to language P6
 
-Packed layout and widths are done. `*T` / `?*T` type IR landed (`@new` → `*Struct`). Remaining: address-of (`&x`), method `self: *T`, slice polish, enum payloads — see `TODO.MD` §P6.
+Packed layout and widths are done. `*T` / `?*T` and identity `&struct` landed. Remaining: method `self: *T`, slice polish, enum payloads — see `TODO.MD` §P6.

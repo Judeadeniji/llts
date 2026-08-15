@@ -60,7 +60,7 @@ fn mapHas(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     var buf: std.ArrayList(u8) = .empty; defer buf.deinit(vm.allocator);
     const key = try util.valueToStr(vm, args[1], &buf);
     
-    return .{ .bool = args[0].map.entries.contains(key) };
+    return Value.fromBool(args[0].map.entries.contains(key) );
 }
 
 fn mapDelete(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
@@ -73,9 +73,9 @@ fn mapDelete(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     
     if (args[0].map.entries.fetchRemove(key)) |kv| {
         vm.allocator.free(kv.key);
-        return .{ .bool = true };
+        return Value.fromBool(true);
     }
-    return .{ .bool = false };
+    return Value.fromBool(false);
 }
 
 fn mapSize(vm_ptr: *anyopaque, args: []Value) anyerror!Value {

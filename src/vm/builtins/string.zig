@@ -96,7 +96,7 @@ fn containsFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const str = try util.valueToStr(vm, args[0], &buf1);
     const search = try util.valueToStr(vm, args[1], &buf2);
     
-    return .{ .bool = std.mem.indexOf(u8, str, search) != null };
+    return Value.fromBool(std.mem.indexOf(u8, str, search) != null );
 }
 
 fn lastIndexOfFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
@@ -327,7 +327,7 @@ fn startsWithFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const str = try util.valueToStr(vm, args[0], &buf1);
     const prefix = try util.valueToStr(vm, args[1], &buf2);
     
-    return .{ .bool = std.mem.startsWith(u8, str, prefix) };
+    return Value.fromBool(std.mem.startsWith(u8, str, prefix) );
 }
 
 fn endsWithFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
@@ -340,7 +340,7 @@ fn endsWithFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const str = try util.valueToStr(vm, args[0], &buf1);
     const suffix = try util.valueToStr(vm, args[1], &buf2);
     
-    return .{ .bool = std.mem.endsWith(u8, str, suffix) };
+    return Value.fromBool(std.mem.endsWith(u8, str, suffix) );
 }
 
 fn charCodeFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
@@ -451,7 +451,7 @@ fn compareFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
 fn eqlFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
     if (args.len < 2) return error.ArityError;
-    return .{ .bool = util.stringEquals(vm, args[0], args[1]) };
+    return Value.fromBool(util.stringEquals(vm, args[0], args[1]) );
 }
 
 fn splitMaxFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
@@ -606,12 +606,12 @@ fn isEmptyFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     if (args.len < 1) return error.ArityError;
     
     if (args[0] == .slice) {
-        return .{ .bool = args[0].slice.len == 0 };
+        return Value.fromBool(args[0].slice.len == 0 );
     }
     
     var buf: std.ArrayList(u8) = .empty; defer buf.deinit(vm.allocator);
     const str = try util.valueToStr(vm, args[0], &buf);
-    return .{ .bool = str.len == 0 };
+    return Value.fromBool(str.len == 0 );
 }
 
 fn isBlankFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
@@ -621,7 +621,7 @@ fn isBlankFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     var buf: std.ArrayList(u8) = .empty; defer buf.deinit(vm.allocator);
     const str = try util.valueToStr(vm, args[0], &buf);
     const trimmed = std.mem.trim(u8, str, &std.ascii.whitespace);
-    return .{ .bool = trimmed.len == 0 };
+    return Value.fromBool(trimmed.len == 0 );
 }
 
 pub fn register(vm: *VMState) !void {

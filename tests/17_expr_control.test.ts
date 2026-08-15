@@ -140,7 +140,7 @@ $flag: bool = check: {
 print(flag);
 print(@typeOf(flag));
 `),
-		["true", "bool"],
+		["true", "u1"],
 	);
 });
 

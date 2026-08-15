@@ -142,8 +142,8 @@ fn existsFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     if (args.len < 1) return error.ArityError;
     const path = try util.valueToOwnedString(vm, args[0]);
     defer vm.allocator.free(path);
-    std.fs.cwd().access(path, .{}) catch return .{ .bool = false };
-    return .{ .bool = true };
+    std.fs.cwd().access(path, .{}) catch return Value.fromBool(false);
+    return Value.fromBool(true);
 }
 
 fn mkdirFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {

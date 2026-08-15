@@ -320,7 +320,7 @@ pub fn loadField(vm: *VMState, byte_offset: u16, kind: u8) HeapError!void {
     const val: Value = switch (kind) {
         0 => .{ .i64 = readI64(vm, at) },
         1 => .{ .f64 = readF64(vm, at) },
-        2 => .{ .bool = vm.bytes.items[at] != 0 },
+        2 => .{ .u1 = if (vm.bytes.items[at] != 0) 1 else 0 },
         3 => blk: {
             const off = readU32(vm, at);
             const len = readU32(vm, at + 4);
@@ -374,10 +374,10 @@ pub fn storeField(vm: *VMState, byte_offset: u16, kind: u8) HeapError!void {
         },
         2 => {
             const b = switch (val) {
-                .bool => |x| x,
+                .u1 => |x| x != 0,
                 .i64 => |x| x != 0,
                 .null => false,
-                else => return fail(vm, "Field store expects bool"),
+                else => return fail(vm, "Field store expects u1"),
             };
             vm.bytes.items[at] = if (b) 1 else 0;
         },
@@ -453,7 +453,7 @@ pub fn isError(vm: *VMState) HeapError!void {
         ptr >= state_mod.HEAP_START and vm.isValidHeapPtr(ptr - 1) and vm.slot(ptr - 1).* == .i64 and vm.slot(ptr - 1).*.i64 == ERROR_TAG
     else
         false;
-    try stack.push(vm, .{ .bool = ok });
+    try stack.push(vm, Value.fromBool(ok ));
 }
 
 pub fn stringAdd(vm: *VMState) HeapError!void {

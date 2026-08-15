@@ -64,7 +64,8 @@ pub const ArrayRef = struct {
 /// Tagged runtime value — numeric tags match Zig-like widths end-to-end.
 pub const Value = union(enum) {
     null,
-    bool: bool,
+    /// 1-bit unsigned (`bool` / `boolean` alias `u1`).
+    u1: u1,
     i8: i8,
     i16: i16,
     i32: i32,
@@ -96,10 +97,14 @@ pub const Value = union(enum) {
     /// Byte Buffer (std/buffer).
     buffer: *BufferObject,
 
+    pub fn fromBool(b: bool) Value {
+        return .{ .u1 = @intFromBool(b) };
+    }
+
     pub fn isTruthy(self: Value) bool {
         return switch (self) {
             .null => false,
-            .bool => |b| b,
+            .u1 => |n| n != 0,
             .i8 => |n| n != 0,
             .i16 => |n| n != 0,
             .i32 => |n| n != 0,
@@ -121,7 +126,7 @@ pub const Value = union(enum) {
 
 test "value truthiness" {
     try std.testing.expect(!(Value{ .null = {} }).isTruthy());
-    try std.testing.expect((Value{ .bool = true }).isTruthy());
-    try std.testing.expect(!(Value{ .bool = false }).isTruthy());
+    try std.testing.expect(Value.fromBool(true).isTruthy());
+    try std.testing.expect(!Value.fromBool(false).isTruthy());
     try std.testing.expect(!(Value{ .i64 = 0 }).isTruthy());
 }

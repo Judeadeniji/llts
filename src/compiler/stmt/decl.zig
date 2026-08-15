@@ -178,7 +178,7 @@ fn inferDeclType(state: *CompilerState, value: *ast.Node) ?[]const u8 {
                 state.owned.append(state.allocator, s) catch {};
                 break :blk s;
             },
-            .boolean => "bool",
+            .boolean => "u1",
             .@"null" => "null",
             .number, .hex, .octal, .binary => if (std.mem.indexOfScalar(u8, lit.value, '.') != null) "float" else "int",
         },

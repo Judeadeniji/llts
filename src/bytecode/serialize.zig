@@ -150,9 +150,9 @@ fn collectUsedStrings(allocator: std.mem.Allocator, chunk: *const Chunk) !UsedSt
 fn writeConstant(w: anytype, v: Value, remap: []const u32) !void {
     switch (v) {
         .null => try w.writeAll(&.{@intFromEnum(ConstTag.null_val)}),
-        .bool => |b| {
+        .u1 => |b| {
             try w.writeAll(&.{@intFromEnum(ConstTag.bool_val)});
-            try w.writeAll(&.{@intFromBool(b)});
+            try w.writeAll(&.{b});
         },
         .i64 => |n| {
             try w.writeAll(&.{@intFromEnum(ConstTag.int_val)});
@@ -181,7 +181,7 @@ fn readConstant(r: anytype, string_count: u32) FormatError!Value {
         .bool_val => blk: {
             var b_buf: [1]u8 = undefined;
             readExact(r, &b_buf) catch return error.TruncatedInput;
-            break :blk Value{ .bool = b_buf[0] != 0 };
+            break :blk Value{ .u1 = if (b_buf[0] != 0) 1 else 0 };
         },
         .int_val => .{ .i64 = try readI64(r) },
         .float_val => .{ .f64 = try readF64(r) },

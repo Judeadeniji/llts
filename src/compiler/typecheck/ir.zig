@@ -3,7 +3,7 @@ const widths = @import("../widths.zig");
 
 pub const TypeTag = enum(u8) {
     i64 = 1,
-    bool = 2,
+    u1 = 2, // was bool; bool/boolean alias u1
     string = 3,
     null = 4,
     error_ = 5,
@@ -22,6 +22,7 @@ pub const TypeTag = enum(u8) {
 };
 
 pub const Type = union(enum) {
+    u1,
     i8,
     i16,
     i32,
@@ -32,7 +33,6 @@ pub const Type = union(enum) {
     u64,
     f32,
     f64,
-    bool,
     null,
     error_,
     unknown,
@@ -45,6 +45,9 @@ pub const Type = union(enum) {
 };
 
 pub const TUnknown: Type = .{ .unknown = {} };
+pub const TU1: Type = .{ .u1 = {} };
+/// Alias for u1 (`bool` / `boolean`).
+pub const TBool: Type = TU1;
 pub const TI8: Type = .{ .i8 = {} };
 pub const TI16: Type = .{ .i16 = {} };
 pub const TI32: Type = .{ .i32 = {} };
@@ -57,7 +60,6 @@ pub const TU32: Type = .{ .u32 = {} };
 pub const TU64: Type = .{ .u64 = {} };
 /// Alias for u8 (`byte`).
 pub const TByte: Type = TU8;
-pub const TBool: Type = .{ .bool = {} };
 pub const TF32: Type = .{ .f32 = {} };
 pub const TF64: Type = .{ .f64 = {} };
 pub const TNull: Type = .{ .null = {} };
@@ -122,6 +124,7 @@ pub const TypeAlloc = struct {
 
 pub fn typeFromWidth(w: widths.Width) Type {
     return switch (w) {
+        .u1 => TU1,
         .i8 => TI8,
         .i16 => TI16,
         .i32 => TI32,
@@ -137,6 +140,7 @@ pub fn typeFromWidth(w: widths.Width) Type {
 
 pub fn widthOf(t: Type) ?widths.Width {
     return switch (t) {
+        .u1 => .u1,
         .i8 => .i8,
         .i16 => .i16,
         .i32 => .i32,
@@ -153,7 +157,6 @@ pub fn widthOf(t: Type) ?widths.Width {
 
 pub fn namedType(name: []const u8) Type {
     if (widths.fromName(name)) |w| return typeFromWidth(w);
-    if (std.mem.eql(u8, name, "bool") or std.mem.eql(u8, name, "boolean")) return TBool;
     if (std.mem.eql(u8, name, "null")) return TNull;
     if (std.mem.eql(u8, name, "error")) return TError;
     if (std.mem.eql(u8, name, "string")) return TString;
@@ -182,8 +185,7 @@ fn displayWidth(t: Type) []const u8 {
 
 pub fn displayTypeAlloc(allocator: std.mem.Allocator, t: Type) ![]const u8 {
     return switch (t) {
-        .i8, .i16, .i32, .i64, .u8, .u16, .u32, .u64, .f32, .f64 => try allocator.dupe(u8, displayWidth(t)),
-        .bool => try allocator.dupe(u8, "bool"),
+        .u1, .i8, .i16, .i32, .i64, .u8, .u16, .u32, .u64, .f32, .f64 => try allocator.dupe(u8, displayWidth(t)),
         .null => try allocator.dupe(u8, "null"),
         .error_ => try allocator.dupe(u8, "error"),
         .unknown => try allocator.dupe(u8, "unknown"),
@@ -239,8 +241,7 @@ pub fn displayTypeAlloc(allocator: std.mem.Allocator, t: Type) ![]const u8 {
 
 pub fn displayTypeSimple(t: Type) ?[]const u8 {
     return switch (t) {
-        .i8, .i16, .i32, .i64, .u8, .u16, .u32, .u64, .f32, .f64 => displayWidth(t),
-        .bool => "bool",
+        .u1, .i8, .i16, .i32, .i64, .u8, .u16, .u32, .u64, .f32, .f64 => displayWidth(t),
         .null => "null",
         .error_ => "error",
         .unknown => "unknown",
@@ -284,7 +285,7 @@ pub fn typeEquals(a: Type, b: Type) bool {
             }
             break :blk true;
         },
-        .i8, .i16, .i32, .i64, .u8, .u16, .u32, .u64, .f32, .f64, .bool, .null, .error_, .unknown, .never => std.meta.activeTag(a) == std.meta.activeTag(b),
+        .u1, .i8, .i16, .i32, .i64, .u8, .u16, .u32, .u64, .f32, .f64, .null, .error_, .unknown, .never => std.meta.activeTag(a) == std.meta.activeTag(b),
     };
 }
 
@@ -417,7 +418,7 @@ pub fn typeTag(t: Type) ?TypeTag {
         .u64 => .u64,
         .f32 => .f32,
         .f64 => .f64,
-        .bool => .bool,
+        .u1 => .u1,
         .null => .null,
         .error_ => .error_,
         .array => |a| if (a.elem.* == .u8) .string else .array,

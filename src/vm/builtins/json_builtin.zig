@@ -13,7 +13,7 @@ var json_stringify_n: NativeFunction = undefined;
 fn parseJsonNode(vm: *VMState, val: std.json.Value) anyerror!Value {
     switch (val) {
         .null => return .null,
-        .bool => |b| return .{ .bool = b },
+        .bool => |b| return Value.fromBool(b),
         .integer => |i| return .{ .i64 = @intCast(i) },
         .float => |f| return .{ .f64 = f },
         .string => |s| return try util.writeSlice(vm, s),
@@ -56,7 +56,7 @@ fn jsonParseFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
 fn stringifyNode(vm: *VMState, val: Value, out: *std.io.Writer.Allocating) !void {
     switch (val) {
         .null => try out.writer.writeAll("null"),
-        .bool => |b| try out.writer.print("{}", .{b}),
+        .u1 => |b| try out.writer.print("{}", .{b != 0}),
         .i64 => |i| try out.writer.print("{d}", .{i}),
         .u8 => |i| try out.writer.print("{d}", .{i}),
         .f32 => |f| try out.writer.print("{d}", .{f}),

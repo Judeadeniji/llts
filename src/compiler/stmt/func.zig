@@ -90,7 +90,14 @@ pub fn compileFunction(state: *CompilerState, node: *ast.FunctionDecl, ast_node:
 
 fn pushParam(state: *CompilerState, p: ast.Param, method_struct: ?[]const u8) !void {
     var p_type: ?[]const u8 = null;
-    if (std.mem.eql(u8, p.name, "self")) p_type = method_struct;
+    if (std.mem.eql(u8, p.name, "self")) {
+        if (method_struct) |sname| {
+            // Unannotated method self defaults to *T (honest mutable receiver).
+            const s = try std.fmt.allocPrint(state.allocator, "*{s}", .{sname});
+            try state.owned.append(state.allocator, s);
+            p_type = s;
+        }
+    }
     if (p.type_annotation) |ta| {
         p_type = (try from_ast.typeAstToDisplay(ta, state));
     }

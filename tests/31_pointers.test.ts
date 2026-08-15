@@ -59,3 +59,70 @@ print(@sizeOf(?*Point));
 		["8", "8"],
 	);
 });
+
+test("&struct_value yields *T and shares the handle", () => {
+	expectOutput(
+		runSource(`
+@struct Point { x: i64; y: i64; }
+$p = Point { x: 1, y: 2 };
+$q: *Point = &p;
+print(@typeOf(q));
+print(q.x);
+q.x = 9;
+print(p.x);
+`),
+		["*Point", "1", "9"],
+	);
+});
+
+test("& rejects scalars", () => {
+	expectError(
+		runSource(`
+$n: i64 = 1;
+$p = &n;
+print(p);
+`),
+		"address-of requires a struct value",
+	);
+});
+
+test("& rejects already-pointers", () => {
+	expectError(
+		runSource(`
+@const $mem = @import("std/mem");
+@struct Point { x: i64; }
+$a = mem.create(0);
+$p = @new(a, Point);
+$q = &p;
+print(q);
+`),
+		"cannot take address of a pointer",
+	);
+});
+
+test("returning &frame_struct is still an escape error", () => {
+	expectError(
+		runSource(`
+@struct Point { x: i64; }
+@func bad(): *Point {
+    $p = Point { x: 1 };
+    return &p;
+}
+print(bad());
+`),
+		"escapes its frame region",
+	);
+});
+
+test("bitwise AND still parses beside unary &", () => {
+	expectOutput(
+		runSource(`
+print(6 & 3);
+@struct Point { x: i64; }
+$p = Point { x: 1 };
+$q = &p;
+print(q.x);
+`),
+		["2", "1"],
+	);
+});

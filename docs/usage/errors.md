@@ -81,11 +81,11 @@ print(@typeOf(grid));  # [2][2]i64
 
 | Argument | Size |
 |---|---|
+| `u1` / `bool` / `boolean` | `1` |
 | `i8` / `u8` / `byte` | `1` |
 | `i16` / `u16` | `2` |
 | `i32` / `u32` / `f32` | `4` |
 | `i64` / `u64` / `f64` / `int` / `float` | `8` |
-| `bool` | `1` |
 | `null` | `0` |
 | `string` / `[]byte` (type name) | `8` (slice header) |
 | struct type / typed struct value | packed field sizes + alignment |

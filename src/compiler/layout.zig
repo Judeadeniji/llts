@@ -8,7 +8,7 @@ const widths = @import("widths.zig");
 pub const FieldKind = enum(u8) {
     i64 = 0,
     f64 = 1,
-    bool = 2,
+    u1 = 2, // was bool; bool/boolean → u1
     handle = 3,
     ptr = 4,
     u8 = 5,
@@ -32,8 +32,6 @@ pub fn sizeOfTypeName(type_name: []const u8) i32 {
     const bare = unwrapTypeName(type_name);
     if (bare.len > 0 and bare[0] == '*') return 8; // pointer / heap handle
     if (widths.fromName(bare)) |w| return w.size();
-    if (std.mem.eql(u8, bare, "bool") or std.mem.eql(u8, bare, "boolean"))
-        return 1;
     if (std.mem.eql(u8, bare, "null"))
         return 0;
     if (std.mem.eql(u8, bare, "string") or std.mem.eql(u8, bare, "[]byte"))
@@ -45,8 +43,7 @@ pub fn alignOfTypeName(type_name: []const u8) i32 {
     const bare = unwrapTypeName(type_name);
     if (bare.len > 0 and bare[0] == '*') return 8;
     if (widths.fromName(bare)) |w| return w.alignment();
-    if (std.mem.eql(u8, bare, "bool") or std.mem.eql(u8, bare, "boolean") or
-        std.mem.eql(u8, bare, "null"))
+    if (std.mem.eql(u8, bare, "null"))
         return 1;
     return 8;
 }
@@ -55,8 +52,6 @@ pub fn fieldKind(type_name: []const u8) FieldKind {
     const bare = unwrapTypeName(type_name);
     if (bare.len > 0 and bare[0] == '*') return .handle;
     if (widths.fromName(bare)) |w| return fieldKindFromWidth(w);
-    if (std.mem.eql(u8, bare, "bool") or std.mem.eql(u8, bare, "boolean"))
-        return .bool;
     if (std.mem.eql(u8, bare, "ptr"))
         return .ptr;
     return .handle;
@@ -64,6 +59,7 @@ pub fn fieldKind(type_name: []const u8) FieldKind {
 
 pub fn fieldKindFromWidth(w: widths.Width) FieldKind {
     return switch (w) {
+        .u1 => .u1,
         .i8 => .i8,
         .i16 => .i16,
         .i32 => .i32,
@@ -79,6 +75,7 @@ pub fn fieldKindFromWidth(w: widths.Width) FieldKind {
 
 pub fn widthFromFieldKind(kind: FieldKind) ?widths.Width {
     return switch (kind) {
+        .u1 => .u1,
         .i8 => .i8,
         .i16 => .i16,
         .i32 => .i32,
