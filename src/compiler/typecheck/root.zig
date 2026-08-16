@@ -631,8 +631,16 @@ pub fn inferExpr(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, n
             }
             const obj = try inferExpr(state, env, ta, m.object);
             if (m.property.* == .primary) {
-                var field_obj = obj;
-                if (field_obj == .defined) field_obj = field_obj.defined.underlying.*;
+                // Layout key first — `@type Name = {…}` registers under Name.
+                if (ir.structNameOf(obj)) |sname| {
+                    if (state.structs.get(sname)) |def| {
+                        if (def.types.get(m.property.primary.name) == null) {
+                            return compiler_errors.compileFailFmt(state, "Field '{s}' does not exist on '{s}'", .{ m.property.primary.name, sname });
+                        }
+                    }
+                    break :blk try fieldTypeFromStruct(state, ta, sname, m.property.primary.name);
+                }
+                const field_obj = ir.peelDefined(obj);
                 // Tuple field access: `.0`, `.1`, …
                 if (field_obj == .tuple) {
                     if (std.fmt.parseInt(i64, m.property.primary.name, 10)) |ci| {
@@ -644,13 +652,12 @@ pub fn inferExpr(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, n
                         return compiler_errors.compileFailFmt(state, "Tuple fields are numeric (.0, .1, …), got '.{s}'", .{m.property.primary.name});
                     }
                 }
-                if (ir.structNameOf(field_obj)) |sname| {
-                    if (state.structs.get(sname)) |def| {
-                        if (def.types.get(m.property.primary.name) == null) {
-                            return compiler_errors.compileFailFmt(state, "Field '{s}' does not exist on '{s}'", .{ m.property.primary.name, sname });
-                        }
+                if (field_obj == .shape) {
+                    for (field_obj.shape) |sf| {
+                        if (std.mem.eql(u8, sf.name, m.property.primary.name)) break :blk sf.ty;
                     }
-                    break :blk try fieldTypeFromStruct(state, ta, sname, m.property.primary.name);
+                    const d = try ownDisplay(state, field_obj);
+                    return compiler_errors.compileFailFmt(state, "Field '{s}' does not exist on '{s}'", .{ m.property.primary.name, d });
                 }
                 if (field_obj == .union_) {
                     const ft = try fieldTypeFromUnion(state, ta, field_obj, m.property.primary.name);
@@ -1120,15 +1127,31 @@ fn inferStructInit(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc,
         struct_name = path.resolveModuleType(state, struct_name) catch struct_name;
     }
     try from_ast.checkStructInitExport(state, init.type_expr, struct_name);
-    if (!state.structs.contains(struct_name)) {
+
+    const is_typedef = state.typedefs.contains(struct_name);
+    if (!state.structs.contains(struct_name) and !is_typedef) {
         return compiler_errors.compileFailFmt(state, "Unknown struct '{s}'", .{sn});
     }
+    if (is_typedef and !state.structs.contains(struct_name)) {
+        return compiler_errors.compileFailFmt(state, "Type '{s}' is not an object shape (cannot initialize with '{{…}}')", .{sn});
+    }
+
     for (init.fields) |field| {
         const expected = try fieldTypeFromStruct(state, ta, struct_name, field.name);
+        if (expected == .unknown) {
+            if (state.structs.get(struct_name)) |def| {
+                if (def.types.get(field.name) == null) {
+                    return compiler_errors.compileFailFmt(state, "Unknown field '{s}' on '{s}'", .{ field.name, struct_name });
+                }
+            }
+        }
         const got = try inferExpr(state, env, ta, field.value);
         var ctx_buf: [128]u8 = undefined;
         const ctx = std.fmt.bufPrint(&ctx_buf, "field '{s}' of '{s}'", .{ field.name, struct_name }) catch "field";
         try requireAssignFrom(state, got, expected, ctx, field.value);
+    }
+    if (is_typedef) {
+        return try from_ast.resolveNamedType(struct_name, state, ta);
     }
     return .{ .struct_ = struct_name };
 }
@@ -1176,7 +1199,7 @@ fn checkStmt(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node:
                 try state.global_types.put(d.name, value_type.struct_);
             } else if (value_type == .enum_ or value_type == .enum_lit or
                 value_type == .str_lit or value_type == .int_lit or value_type == .bool_lit or
-                value_type == .tuple)
+                value_type == .tuple or value_type == .defined or value_type == .shape)
             {
                 try env.define(d.name, value_type);
                 const disp = try ownDisplay(state, value_type);

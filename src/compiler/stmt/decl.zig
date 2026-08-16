@@ -332,6 +332,44 @@ pub fn compileTypeDecl(state: *CompilerState, td: *const ast.TypeDecl) !void {
         .underlying = disp,
         .distinct = td.distinct,
     });
+    // Shape / merged-intersection RHS: layout under typedef name and display key.
+    if (disp.len > 0 and disp[0] == '{') {
+        if (td.type_expr.* == .shape_type) {
+            try registerShapeLayout(state, td.name, &td.type_expr.shape_type);
+            if (!std.mem.eql(u8, td.name, disp)) {
+                try registerShapeLayout(state, disp, &td.type_expr.shape_type);
+            }
+        } else {
+            try from_ast.ensureShapeLayoutFromDisplay(state, disp);
+            if (!std.mem.eql(u8, td.name, disp)) {
+                try from_ast.ensureShapeLayoutFromDisplayAs(state, disp, td.name);
+            }
+        }
+    }
+}
+
+fn registerShapeLayout(state: *CompilerState, key: []const u8, shape: *const ast.ShapeType) !void {
+    if (state.structs.contains(key)) return;
+    const layout = @import("../layout.zig");
+    var type_map = std.StringHashMap([]const u8).init(state.allocator);
+    var field_list: std.ArrayList(layout.FieldSpec) = .empty;
+    defer field_list.deinit(state.allocator);
+
+    for (shape.fields) |field| {
+        var field_disp: []const u8 = "int";
+        if (field.type_annotation) |ta| {
+            field_disp = (try from_ast.typeAstToDisplay(ta, state)) orelse "unknown";
+        }
+        try type_map.put(field.name, field_disp);
+        try field_list.append(state.allocator, .{ .name = field.name, .type_name = field_disp });
+    }
+    const laid = try layout.layoutFields(state.allocator, field_list.items);
+    try state.structs.put(key, .{
+        .name = key,
+        .size = laid.size,
+        .offsets = laid.offsets,
+        .types = type_map,
+    });
 }
 
 fn widthCastKind(node: *ast.Node) ?u8 {

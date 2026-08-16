@@ -144,8 +144,15 @@ fn treeContainsImport(node: *ast.Node) bool {
             for (t.elems) |e| if (treeContainsImport(e)) return true;
             return false;
         },
+        .shape_type => |s| {
+            for (s.fields) |f| {
+                if (f.type_annotation) |ta| if (treeContainsImport(ta)) return true;
+            }
+            return false;
+        },
         .pointer_type => |p| return treeContainsImport(p.elem),
         .union_type => |u| return treeContainsImport(u.left) or treeContainsImport(u.right),
+        .intersection_type => |ix| return treeContainsImport(ix.left) or treeContainsImport(ix.right),
         .func_type => |f| {
             for (f.params) |p| if (treeContainsImport(p)) return true;
             if (f.return_type) |rt| return treeContainsImport(rt);
@@ -255,12 +262,21 @@ fn loadImportsInTree(
         .tuple_type => |t| {
             for (t.elems) |e| try loadImportsInTree(state, doc, e, current_module, out, visited);
         },
+        .shape_type => |s| {
+            for (s.fields) |f| {
+                if (f.type_annotation) |ta| try loadImportsInTree(state, doc, ta, current_module, out, visited);
+            }
+        },
         .pointer_type => |p| {
             try loadImportsInTree(state, doc, p.elem, current_module, out, visited);
         },
         .union_type => |u| {
             try loadImportsInTree(state, doc, u.left, current_module, out, visited);
             try loadImportsInTree(state, doc, u.right, current_module, out, visited);
+        },
+        .intersection_type => |ix| {
+            try loadImportsInTree(state, doc, ix.left, current_module, out, visited);
+            try loadImportsInTree(state, doc, ix.right, current_module, out, visited);
         },
         .func_type => |f| {
             for (f.params) |p| try loadImportsInTree(state, doc, p, current_module, out, visited);
@@ -677,10 +693,19 @@ fn rewriteModuleRefs(
         .tuple_type => |*t| {
             for (t.elems) |e| try rewriteModuleRefs(state, e, local_map, bound);
         },
+        .shape_type => |*s| {
+            for (s.fields) |f| {
+                if (f.type_annotation) |ta| try rewriteModuleRefs(state, ta, local_map, bound);
+            }
+        },
         .pointer_type => |*p| try rewriteModuleRefs(state, p.elem, local_map, bound),
         .union_type => |*u| {
             try rewriteModuleRefs(state, u.left, local_map, bound);
             try rewriteModuleRefs(state, u.right, local_map, bound);
+        },
+        .intersection_type => |*ix| {
+            try rewriteModuleRefs(state, ix.left, local_map, bound);
+            try rewriteModuleRefs(state, ix.right, local_map, bound);
         },
         .func_type => |*f| {
             for (f.params) |p| try rewriteModuleRefs(state, p, local_map, bound);

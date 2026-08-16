@@ -59,7 +59,7 @@ LLTS features a strict, static type system that performs checks at evaluation ti
   - Field access on a `?Struct` uses `Struct`'s layout; touching `null` is a runtime error.
 
 ### Struct and Array Type Constraints
-For details on type enforcement, initialization constraints, and compile errors specific to structs and arrays, see [Structs and Methods](structs_and_methods.md) and [Arrays](arrays.md).
+For details on type enforcement, initialization constraints, and compile errors specific to structs and arrays, see [Structs and Methods](structs_and_methods.md) and [Arrays](arrays.md). For shapes / `@type` vs `@struct`, see [Shapes vs Structs](shapes_and_types.md).
 
 
 ## Type Introspection

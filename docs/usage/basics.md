@@ -44,7 +44,7 @@ $c = a + b;   # Usage of a and b drops the $
 - Strings: Supported as literals (e.g., `"Hello, LLTS!"`)
 
 ### 3.2 Structs
-For detailed information on declaring and instantiating structs, see [Structs and Methods](structs_and_methods.md).
+For detailed information on declaring and instantiating structs, see [Structs and Methods](structs_and_methods.md). For shapes (`{ … }`) vs `@struct` / `@type`, see [Shapes vs Structs](shapes_and_types.md).
 
 ### 3.3 Heap Allocation
 - Values that need to escape functions are allocated to an explicit heap/arena.

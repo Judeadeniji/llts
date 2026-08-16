@@ -50,8 +50,11 @@ pub const TypeDecl = stmt.TypeDecl;
 pub const ArrayType = types.ArrayType;
 pub const TupleType = types.TupleType;
 pub const UnionType = types.UnionType;
+pub const IntersectType = types.IntersectType;
 pub const PointerType = types.PointerType;
 pub const FuncType = types.FuncType;
+pub const ShapeType = types.ShapeType;
+pub const ShapeField = types.ShapeField;
 
 pub const Node = union(enum) {
     declaration: Declaration,
@@ -85,8 +88,10 @@ pub const Node = union(enum) {
     array_type: ArrayType,
     tuple_type: TupleType,
     union_type: UnionType,
+    intersection_type: IntersectType,
     pointer_type: PointerType,
     func_type: FuncType,
+    shape_type: ShapeType,
 
     pub fn loc(self: *const Node) Location {
         return switch (self.*) {

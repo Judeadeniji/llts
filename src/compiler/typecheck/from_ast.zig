@@ -44,14 +44,83 @@ pub fn typeFromAst(node: ?*ast.Node, state: ?*state_mod.CompilerState, ta: ir.Ty
             const ret = if (f.return_type) |rt| try typeFromAst(rt, state, ta) else ir.TUnknown;
             break :blk try ta.funcType(params.items, ret, f.is_variadic);
         },
+        .shape_type => |s| blk: {
+            var fields: std.ArrayList(ir.ShapeField) = .empty;
+            defer fields.deinit(ta.allocator);
+            for (s.fields) |f| {
+                const ty = try typeFromAst(f.type_annotation, state, ta);
+                try fields.append(ta.allocator, .{ .name = f.name, .ty = ty });
+            }
+            break :blk try ta.shapeType(fields.items);
+        },
         .union_type => |u| blk: {
             const left = try typeFromAst(u.left, state, ta);
             const right = try typeFromAst(u.right, state, ta);
             break :blk try ta.unionType(&.{ left, right });
         },
+        .intersection_type => |ix| blk: {
+            const left = try typeFromAst(ix.left, state, ta);
+            const right = try typeFromAst(ix.right, state, ta);
+            break :blk try intersectShapes(state, ta, left, right);
+        },
         .member => try resolveImportedType(n, state, ta),
         else => ir.TUnknown,
     };
+}
+
+/// Merge two shape types (peeling `@type` wrappers). Duplicate field names must `typeEquals`.
+fn intersectShapes(
+    state: ?*state_mod.CompilerState,
+    ta: ir.TypeAlloc,
+    left: ir.Type,
+    right: ir.Type,
+) FromAstError!ir.Type {
+    const lf = ir.shapeFieldsOf(left) orelse {
+        if (state) |st| {
+            const d = try ir.displayTypeAlloc(st.allocator, left);
+            defer st.allocator.free(d);
+            return @import("../../errors/compile.zig").compileFailFmt(st, "'&' only on shape types, got '{s}'", .{d});
+        }
+        return error.CompileError;
+    };
+    const rf = ir.shapeFieldsOf(right) orelse {
+        if (state) |st| {
+            const d = try ir.displayTypeAlloc(st.allocator, right);
+            defer st.allocator.free(d);
+            return @import("../../errors/compile.zig").compileFailFmt(st, "'&' only on shape types, got '{s}'", .{d});
+        }
+        return error.CompileError;
+    };
+
+    var fields: std.ArrayList(ir.ShapeField) = .empty;
+    defer fields.deinit(ta.allocator);
+    try fields.appendSlice(ta.allocator, lf);
+
+    for (rf) |rfield| {
+        var found = false;
+        for (fields.items) |*existing| {
+            if (std.mem.eql(u8, existing.name, rfield.name)) {
+                if (!ir.typeEquals(existing.ty, rfield.ty)) {
+                    if (state) |st| {
+                        const lt = try ir.displayTypeAlloc(st.allocator, existing.ty);
+                        defer st.allocator.free(lt);
+                        const rt = try ir.displayTypeAlloc(st.allocator, rfield.ty);
+                        defer st.allocator.free(rt);
+                        return @import("../../errors/compile.zig").compileFailFmt(
+                            st,
+                            "conflicting types for field '{s}' in shape intersection ('{s}' vs '{s}')",
+                            .{ rfield.name, lt, rt },
+                        );
+                    }
+                    return error.CompileError;
+                }
+                found = true;
+                break;
+            }
+        }
+        if (!found) try fields.append(ta.allocator, rfield);
+    }
+    return try ta.shapeType(fields.items);
 }
 
 fn literalTypeFromAst(state: ?*state_mod.CompilerState, lit: ast.Literal) FromAstError!ir.Type {
@@ -180,6 +249,38 @@ pub fn parseDisplayType(
             try elems.append(ta.allocator, try parseDisplayType(state, ta, p, cycle));
         }
         return try ta.tupleType(elems.items);
+    }
+    if (s.len > 0 and s[0] == '{') {
+        if (s[s.len - 1] != '}') return error.CompileError;
+        const interior = s[1 .. s.len - 1];
+        const parts = try ir.splitTopLevel(ta.allocator, interior, ";");
+        defer ta.allocator.free(parts);
+        var fields: std.ArrayList(ir.ShapeField) = .empty;
+        defer fields.deinit(ta.allocator);
+        for (parts) |part| {
+            const p = std.mem.trim(u8, part, " \t");
+            if (p.len == 0) continue;
+            const colon = blk: {
+                var depth: i32 = 0;
+                var i: usize = 0;
+                while (i < p.len) : (i += 1) {
+                    const c = p[i];
+                    if (c == '[' or c == '(' or c == '{') depth += 1;
+                    if (c == ']' or c == ')' or c == '}') depth -= 1;
+                    if (depth == 0 and c == ':') break :blk i;
+                }
+                return error.CompileError;
+            };
+            const fname = std.mem.trim(u8, p[0..colon], " \t");
+            const fty = std.mem.trim(u8, p[colon + 1 ..], " \t");
+            if (fname.len == 0 or fty.len == 0) return error.CompileError;
+            const name_owned = try ta.allocator.dupe(u8, fname);
+            try fields.append(ta.allocator, .{
+                .name = name_owned,
+                .ty = try parseDisplayType(state, ta, fty, cycle),
+            });
+        }
+        return try ta.shapeType(fields.items);
     }
     if (try parseFuncDisplayType(state, ta, s, cycle)) |ft| return ft;
     // Literal types stored as displays: `"a"`, `42`, `true`
@@ -315,7 +416,61 @@ pub fn peelTypedefDisplay(state: *state_mod.CompilerState, display: []const u8) 
 }
 
 pub fn lookupStruct(state: *state_mod.CompilerState, display: []const u8) ?state_mod.StructDef {
-    return state.structs.get(peelTypedefDisplay(state, display));
+    if (state.structs.get(display)) |sd| return sd;
+    const peeled = peelTypedefDisplay(state, display);
+    if (!std.mem.eql(u8, peeled, display)) {
+        if (state.structs.get(peeled)) |sd| return sd;
+    }
+    // Lazy-layout anonymous shape displays `{ field: T; … }`.
+    if (peeled.len > 0 and peeled[0] == '{') {
+        ensureShapeLayoutFromDisplay(state, peeled) catch return null;
+        return state.structs.get(peeled);
+    }
+    return null;
+}
+
+/// Parse a shape display and register packed layout under that key (idempotent).
+pub fn ensureShapeLayoutFromDisplay(state: *state_mod.CompilerState, display: []const u8) FromAstError!void {
+    try ensureShapeLayoutFromDisplayAs(state, display, display);
+}
+
+/// Parse shape `display` and register layout under `key` (idempotent).
+pub fn ensureShapeLayoutFromDisplayAs(
+    state: *state_mod.CompilerState,
+    display: []const u8,
+    key: []const u8,
+) FromAstError!void {
+    if (state.structs.contains(key)) return;
+    if (display.len < 2 or display[0] != '{' or display[display.len - 1] != '}') return;
+
+    const layout = @import("../layout.zig");
+    var arena = std.heap.ArenaAllocator.init(state.allocator);
+    defer arena.deinit();
+    const ta = ir.TypeAlloc{ .allocator = arena.allocator() };
+    const t = try parseDisplayType(state, ta, display, null);
+    if (t != .shape) return;
+
+    var type_map = std.StringHashMap([]const u8).init(state.allocator);
+    var field_list: std.ArrayList(layout.FieldSpec) = .empty;
+    defer field_list.deinit(state.allocator);
+
+    for (t.shape) |f| {
+        const field_disp = try ir.displayTypeAlloc(state.allocator, f.ty);
+        try state.owned.append(state.allocator, field_disp);
+        const name_owned = try state.allocator.dupe(u8, f.name);
+        try state.owned.append(state.allocator, name_owned);
+        try type_map.put(name_owned, field_disp);
+        try field_list.append(state.allocator, .{ .name = name_owned, .type_name = field_disp });
+    }
+    const laid = try layout.layoutFields(state.allocator, field_list.items);
+    const key_owned = try state.allocator.dupe(u8, key);
+    try state.owned.append(state.allocator, key_owned);
+    try state.structs.put(key_owned, .{
+        .name = key_owned,
+        .size = laid.size,
+        .offsets = laid.offsets,
+        .types = type_map,
+    });
 }
 
 /// Split a top-level `A | B | C` display (no nested parens needed for simple struct unions).

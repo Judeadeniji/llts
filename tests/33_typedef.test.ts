@@ -1,7 +1,7 @@
 /**
  * @type (Go-style distinct) and @alias (transparent).
  */
-import { describe, expect, test } from "bun:test";
+import { test } from "bun:test";
 import { expectError, expectOutput, runSource } from "./helpers";
 
 test("@type UUID and ID are not interchangeable", () => {

@@ -48,7 +48,7 @@ hero |> printStatus;
 ```
 
 ## Structs and Object-Oriented Idioms
-*See [Structs and Methods](structs_and_methods.md) for full details on this topic.*
+*See [Structs and Methods](structs_and_methods.md) for full details on this topic. For shapes vs `@struct` / `@type`, see [Shapes vs Structs](shapes_and_types.md).*
 
 ## Control Flow
 *See [Control Flow](control_flow.md) and [Loops](loops.md) for full details on conditionals and iteration.*

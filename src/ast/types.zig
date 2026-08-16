@@ -22,6 +22,13 @@ pub const UnionType = struct {
     loc: Location,
 };
 
+/// `T & U` in a type position (shape intersection; lowered to a merged shape).
+pub const IntersectType = struct {
+    left: *Node,
+    right: *Node,
+    loc: Location,
+};
+
 /// `*T` in a type position (pointer to pointee).
 pub const PointerType = struct {
     elem: *Node,
@@ -33,5 +40,16 @@ pub const FuncType = struct {
     params: []*Node,
     return_type: ?*Node = null,
     is_variadic: bool = false,
+    loc: Location,
+};
+
+/// `{ field: T; … }` anonymous object / shape type.
+pub const ShapeField = struct {
+    name: []const u8,
+    type_annotation: ?*Node,
+};
+
+pub const ShapeType = struct {
+    fields: []ShapeField,
     loc: Location,
 };

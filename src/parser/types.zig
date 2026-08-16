@@ -6,16 +6,31 @@ const Parser = ctx.Parser;
 const ParseError = ctx.ParseError;
 const Node = ast.Node;
 
-/// Parse a type: `?T`, `*T`, `[]T`, `[N]T`, `[T, U, …]`, `@func(…): R`, nested `[2][3]int`, `Name`, or `T | U`.
-/// `?T` is sugar for `T | null`. `?` and `*` bind tighter than `|`.
+/// Parse a type: `?T`, `*T`, `[]T`, `[N]T`, `[T, U, …]`, `{ f: T; … }`, `@func(…): R`, nested `[2][3]int`, `Name`, `T & U`, or `T | U`.
+/// `?T` is sugar for `T | null`. `?` and `*` bind tighter than `&` / `|`; `&` binds tighter than `|`.
 /// `?*T` parses as optional-of-pointer.
 pub fn parseType(self: *Parser) ParseError!*Node {
-    var left = try parseTypeOperand(self);
+    var left = try parseIntersection(self);
     while (self.checkDelim("|")) {
+        _ = self.advance();
+        const right = try parseIntersection(self);
+        const peek = self.peek(0) orelse self.previous().?;
+        left = try self.create(.{ .union_type = .{
+            .left = left,
+            .right = right,
+            .loc = self.locOf(peek),
+        } });
+    }
+    return left;
+}
+
+fn parseIntersection(self: *Parser) ParseError!*Node {
+    var left = try parseTypeOperand(self);
+    while (self.checkDelim("&")) {
         _ = self.advance();
         const right = try parseTypeOperand(self);
         const peek = self.peek(0) orelse self.previous().?;
-        left = try self.create(.{ .union_type = .{
+        left = try self.create(.{ .intersection_type = .{
             .left = left,
             .right = right,
             .loc = self.locOf(peek),
@@ -106,6 +121,11 @@ fn parseTypeOperand(self: *Parser) ParseError!*Node {
 fn parseTypeAtom(self: *Parser) ParseError!*Node {
     const peek = self.peek(0) orelse return self.failMsg("Expected type name");
 
+    // `{ field: T; … }` object / shape type (type position only — not an expression block).
+    if (peek.type == .delimiter and std.mem.eql(u8, peek.value, "{")) {
+        return parseShapeType(self);
+    }
+
     // `@func(T, U): R` — types only (no param names). Named `@func foo` is a declaration.
     if (peek.type == .compiler_keyword and std.mem.eql(u8, peek.value, "func")) {
         if (self.peek(1)) |next| {
@@ -177,6 +197,29 @@ fn parseTypeAtom(self: *Parser) ParseError!*Node {
         } });
     }
     return node;
+}
+
+/// `{ name: Type; … }` — same field syntax as `@struct`, no methods.
+fn parseShapeType(self: *Parser) ParseError!*Node {
+    const start = self.advance().?; // `{`
+    var fields: std.ArrayList(ast.ShapeField) = .empty;
+
+    while (!self.isAtEnd() and !self.checkDelim("}")) {
+        const field_name = try self.consume(.identifier, "Expected field name in shape type", null);
+        _ = try self.consume(.delimiter, "Expected ':' after field name", ":");
+        const field_type = try parseType(self);
+        _ = try self.consume(.delimiter, "Expected ';' after field in shape type", ";");
+        try fields.append(self.arena, .{
+            .name = try self.dupe(field_name.value),
+            .type_annotation = field_type,
+        });
+    }
+
+    _ = try self.consume(.delimiter, "Expected '}' after shape type", "}");
+    return self.create(.{ .shape_type = .{
+        .fields = try fields.toOwnedSlice(self.arena),
+        .loc = self.locOf(start),
+    } });
 }
 
 /// `@func(T, U, ...V): R` — parameter types only; `...` marks the last param as rest.

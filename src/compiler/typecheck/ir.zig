@@ -54,6 +54,13 @@ pub const Type = union(enum) {
     defined: struct { name: []const u8, underlying: *Type },
     /// `@func(T, U): R` — first-class function type (structural).
     func: struct { params: []Type, ret: *Type, variadic: bool },
+    /// `{ field: T; … }` anonymous object shape (structural).
+    shape: []ShapeField,
+};
+
+pub const ShapeField = struct {
+    name: []const u8,
+    ty: Type,
 };
 
 pub const TUnknown: Type = .{ .unknown = {} };
@@ -149,6 +156,12 @@ pub const TypeAlloc = struct {
         @memcpy(ps, params);
         const rp = try self.allocType(ret);
         return .{ .func = .{ .params = ps, .ret = rp, .variadic = variadic } };
+    }
+
+    pub fn shapeType(self: TypeAlloc, fields: []const ShapeField) !Type {
+        const fs = try self.allocator.alloc(ShapeField, fields.len);
+        @memcpy(fs, fields);
+        return .{ .shape = fs };
     }
 };
 
@@ -313,6 +326,36 @@ pub fn displayTypeAlloc(allocator: std.mem.Allocator, t: Type) ![]const u8 {
             defer allocator.free(ret);
             break :blk try std.fmt.allocPrint(allocator, "@func({s}): {s}", .{ params_s, ret });
         },
+        .shape => |fields| blk: {
+            var parts: std.ArrayList([]const u8) = .empty;
+            defer {
+                for (parts.items) |p| allocator.free(p);
+                parts.deinit(allocator);
+            }
+            for (fields) |f| {
+                const ty = try displayTypeAlloc(allocator, f.ty);
+                defer allocator.free(ty);
+                try parts.append(allocator, try std.fmt.allocPrint(allocator, "{s}: {s}", .{ f.name, ty }));
+            }
+            var total: usize = 2; // {}
+            for (parts.items, 0..) |p, i| {
+                total += p.len;
+                if (i > 0) total += 2; // "; "
+            }
+            const out = try allocator.alloc(u8, total);
+            out[0] = '{';
+            var offset: usize = 1;
+            for (parts.items, 0..) |p, i| {
+                if (i > 0) {
+                    @memcpy(out[offset .. offset + 2], "; ");
+                    offset += 2;
+                }
+                @memcpy(out[offset .. offset + p.len], p);
+                offset += p.len;
+            }
+            out[offset] = '}';
+            break :blk out;
+        },
         .defined => |d| try allocator.dupe(u8, d.name),
         .union_ => |arms| blk: {
             if (optionalPayload(t)) |payload| {
@@ -358,7 +401,7 @@ pub fn displayTypeSimple(t: Type) ?[]const u8 {
         .enum_lit => null,
         .str_lit, .int_lit, .bool_lit => null,
         .array => |a| if (a.elem.* == .u8 and a.length == null) "[]byte" else null,
-        .ptr, .union_, .func, .tuple => null,
+        .ptr, .union_, .func, .tuple, .shape => null,
         .defined => |d| d.name,
     };
 }
@@ -404,6 +447,16 @@ pub fn typeEquals(a: Type, b: Type) bool {
             }
             break :blk true;
         },
+        .shape => |fa| blk: {
+            if (b != .shape) break :blk false;
+            const fb = b.shape;
+            if (fa.len != fb.len) break :blk false;
+            for (fa, fb) |a_f, b_f| {
+                if (!std.mem.eql(u8, a_f.name, b_f.name)) break :blk false;
+                if (!typeEquals(a_f.ty, b_f.ty)) break :blk false;
+            }
+            break :blk true;
+        },
         .defined => |d| b == .defined and std.mem.eql(u8, d.name, b.defined.name),
         .union_ => |arms| blk: {
             if (b != .union_) break :blk false;
@@ -444,8 +497,17 @@ pub fn structNameOf(t: Type) ?[]const u8 {
     return switch (t) {
         .struct_ => |n| n,
         .ptr => |p| structNameOf(p.*),
-        .defined => |d| structNameOf(d.underlying.*),
+        // `@type Name = {…}` layouts are registered under Name.
+        .defined => |d| if (d.underlying.* == .shape) d.name else structNameOf(d.underlying.*),
         else => if (optionalPayload(t)) |p| structNameOf(p) else null,
+    };
+}
+
+/// Shape field list, peeling `@type` wrappers.
+pub fn shapeFieldsOf(t: Type) ?[]ShapeField {
+    return switch (peelDefined(t)) {
+        .shape => |f| f,
+        else => if (optionalPayload(t)) |p| shapeFieldsOf(p) else null,
     };
 }
 
@@ -503,6 +565,13 @@ pub fn isSubtype(a: Type, b: Type) bool {
             .func => |af| funcSubtype(af, bf),
             .union_ => |arms| subtypeAll(arms, b),
             .defined => false,
+            else => false,
+        },
+        .shape => |bf| switch (a) {
+            .shape => |af| shapeSubtype(af, bf),
+            // Distinct `@type` values may satisfy a structural expected shape.
+            .defined => |d| isSubtype(d.underlying.*, b),
+            .union_ => |arms| subtypeAll(arms, b),
             else => false,
         },
         .enum_ => |ename| switch (a) {
@@ -571,6 +640,22 @@ fn funcSubtype(a: anytype, b: anytype) bool {
     return true;
 }
 
+/// Structural: got has every expected field with a subtype (extra fields OK).
+fn shapeSubtype(got: []const ShapeField, expected: []const ShapeField) bool {
+    for (expected) |ef| {
+        var found = false;
+        for (got) |gf| {
+            if (std.mem.eql(u8, gf.name, ef.name)) {
+                if (!isSubtype(gf.ty, ef.ty)) return false;
+                found = true;
+                break;
+            }
+        }
+        if (!found) return false;
+    }
+    return true;
+}
+
 pub fn involvesUnknown(t: Type) bool {
     return switch (t) {
         .unknown => true,
@@ -586,6 +671,12 @@ pub fn involvesUnknown(t: Type) bool {
             if (involvesUnknown(f.ret.*)) break :blk true;
             for (f.params) |p| {
                 if (involvesUnknown(p)) break :blk true;
+            }
+            break :blk false;
+        },
+        .shape => |fields| blk: {
+            for (fields) |f| {
+                if (involvesUnknown(f.ty)) break :blk true;
             }
             break :blk false;
         },
@@ -665,7 +756,7 @@ pub fn typeTag(t: Type) ?TypeTag {
         .null => .null,
         .error_ => .error_,
         .array => |a| if (a.elem.* == .u8) .string else .array,
-        .struct_ => .struct_,
+        .struct_, .shape => .struct_,
         .enum_, .enum_lit => .i64,
         .int_lit => .i64,
         .bool_lit => .u1,
@@ -759,6 +850,38 @@ pub fn parseDisplayType(ta: TypeAlloc, s_in: []const u8) !Type {
             try elems.append(ta.allocator, try parseDisplayType(ta, p));
         }
         return try ta.tupleType(elems.items);
+    }
+    if (s.len > 0 and s[0] == '{') {
+        if (s[s.len - 1] != '}') return error.CompileError;
+        const interior = s[1 .. s.len - 1];
+        const parts = try splitTopLevel(ta.allocator, interior, ";");
+        defer ta.allocator.free(parts);
+        var fields: std.ArrayList(ShapeField) = .empty;
+        defer fields.deinit(ta.allocator);
+        for (parts) |part| {
+            const p = std.mem.trim(u8, part, " \t");
+            if (p.len == 0) continue;
+            const colon = blk: {
+                var depth: i32 = 0;
+                var i: usize = 0;
+                while (i < p.len) : (i += 1) {
+                    const c = p[i];
+                    if (c == '[' or c == '(' or c == '{') depth += 1;
+                    if (c == ']' or c == ')' or c == '}') depth -= 1;
+                    if (depth == 0 and c == ':') break :blk i;
+                }
+                return error.CompileError;
+            };
+            const fname = std.mem.trim(u8, p[0..colon], " \t");
+            const fty = std.mem.trim(u8, p[colon + 1 ..], " \t");
+            if (fname.len == 0 or fty.len == 0) return error.CompileError;
+            const name_owned = try ta.allocator.dupe(u8, fname);
+            try fields.append(ta.allocator, .{
+                .name = name_owned,
+                .ty = try parseDisplayType(ta, fty),
+            });
+        }
+        return try ta.shapeType(fields.items);
     }
     if (try splitFuncDisplay(s)) |parts| {
         var params: std.ArrayList(Type) = .empty;

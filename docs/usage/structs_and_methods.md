@@ -3,6 +3,8 @@
 ## 1. Overview
 This document outlines the syntax, types, and constraints for defining and interacting with structs and methods in the `llts` language. This reference is designed for automated agents to correctly generate or parse `llts` source code.
 
+For **object shapes** (`{ field: T; … }`), `@type Name = { … }`, and how those differ from `@struct` despite sharing packed runtime layout, see [Shapes vs Structs](shapes_and_types.md).
+
 ## 2. Struct Definitions
 Structs in `llts` are user-defined data structures encapsulating strongly typed fields.
 

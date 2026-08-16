@@ -207,9 +207,9 @@ $i = ID(u);           # same — T(x) sugar
 - [x] **Nominal assignability + `@as`** — UUID ≠ ID
 - [x] **Literal types** — `"a"` / `0` / `true` / `Enum.Variant` as RHS; unions of literals
 - [x] **Function types** — `@func(params): ret` as a type form
-- [ ] **Object / shape types** — `{ fields; callables }` filled at init
+- [x] **Object / shape types** — `{ fields; callables }` filled at init
 - [x] **Tuple types** — `[T, U, …]` values + field/index access
-- [ ] **Shape intersection `&`** — merge object types; `Readable & Writable`
+- [x] **Shape intersection `&`** — merge object types; `Readable & Writable`
 - [ ] **Optional sugar (later)** — `@enum Expr { Literal { … }, … }` → Kind + structs + `@type Expr = …`
 - [ ] **Typed error sets (follow-on)**
 
