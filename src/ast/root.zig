@@ -46,6 +46,7 @@ pub const StructField = stmt.StructField;
 pub const StructDecl = stmt.StructDecl;
 pub const EnumDecl = stmt.EnumDecl;
 pub const TypeDecl = stmt.TypeDecl;
+pub const ErrorDecl = stmt.ErrorDecl;
 
 pub const ArrayType = types.ArrayType;
 pub const TupleType = types.TupleType;
@@ -80,6 +81,7 @@ pub const Node = union(enum) {
 
     struct_decl: StructDecl,
     enum_decl: EnumDecl,
+    error_decl: ErrorDecl,
     type_decl: TypeDecl,
     struct_init: StructInit,
     try_expr: TryExpr,

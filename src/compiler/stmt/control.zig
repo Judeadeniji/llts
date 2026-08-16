@@ -71,13 +71,14 @@ fn compileIfValueBody(state: *CompilerState, if_expr: *const ast.If) !void {
 
 pub fn compileSwitch(state: *CompilerState, sw: *const ast.Switch) !void {
     _ = try checkEnumExhaustiveness(state, sw);
+    _ = try checkErrorExhaustiveness(state, sw);
     try compileSwitchInner(state, sw, false);
 }
 
 pub fn compileSwitchValue(state: *CompilerState, sw: *const ast.Switch) !void {
-    const exhaustive = try checkEnumExhaustiveness(state, sw);
+    const exhaustive = (try checkEnumExhaustiveness(state, sw)) or (try checkErrorExhaustiveness(state, sw));
     if (!hasElseProng(sw) and !exhaustive) {
-        return fail(state, "value-producing @switch requires @else (or cover every enum variant)");
+        return fail(state, "value-producing @switch requires @else (or cover every enum/error variant)");
     }
     try beginExprFrame(state, sw.label);
     try compileSwitchInner(state, sw, true);
@@ -208,6 +209,107 @@ fn resolveEnumVariantPattern(state: *CompilerState, pat: *ast.Node, expected_enu
     const ed = state.enums.get(ename) orelse return null;
     if (!ed.variants.contains(mem.property.primary.name)) return null;
     return mem.property.primary.name;
+}
+
+/// Collect required error patterns as `"Origin.Member"` strings from a type display
+/// (single set, `|` of sets, `&` merge name, or singleton lit).
+fn collectErrorMembers(state: *CompilerState, display: []const u8, out: *std.StringHashMap(void)) !bool {
+    const types = @import("../typecheck/from_ast.zig");
+    const bare = types.peelTypedefDisplay(state, display);
+    if (state.error_sets.get(bare)) |es| {
+        var it = es.variants.iterator();
+        while (it.next()) |e| {
+            const origin = e.value_ptr.*;
+            const member = e.key_ptr.*;
+            const key = try std.fmt.allocPrint(state.allocator, "{s}.{s}", .{ origin, member });
+            try state.owned.append(state.allocator, key);
+            try out.put(key, {});
+        }
+        return true;
+    }
+    // Singleton `IoError.NotFound`
+    if (std.mem.lastIndexOfScalar(u8, bare, '.')) |dot| {
+        const esname = bare[0..dot];
+        const vname = bare[dot + 1 ..];
+        if (state.error_sets.get(esname)) |es| {
+            if (es.variants.contains(vname)) {
+                const key = try std.fmt.allocPrint(state.allocator, "{s}.{s}", .{ esname, vname });
+                try state.owned.append(state.allocator, key);
+                try out.put(key, {});
+                return true;
+            }
+        }
+    }
+    if (std.mem.indexOf(u8, bare, " | ") == null) return false;
+    const parts = types.splitUnionDisplay(state.allocator, bare) catch return false;
+    defer state.allocator.free(parts);
+    var any = false;
+    for (parts) |part| {
+        const p = std.mem.trim(u8, part, " \t");
+        if (try collectErrorMembers(state, p, out)) any = true;
+    }
+    return any;
+}
+
+/// Strict exhaustiveness for closed error sets / unions / merges (or `@else`).
+fn checkErrorExhaustiveness(state: *CompilerState, sw: *const ast.Switch) !bool {
+    if (hasElseProng(sw)) return true;
+    const types = @import("../typecheck/from_ast.zig");
+    const raw = types.resolveType(state, sw.condition) orelse return false;
+
+    var required = std.StringHashMap(void).init(state.allocator);
+    defer required.deinit();
+    if (!try collectErrorMembers(state, raw, &required)) return false;
+    if (required.count() == 0) return false;
+
+    var covered = std.StringHashMap(void).init(state.allocator);
+    defer covered.deinit();
+    for (sw.prongs) |prong| {
+        if (prong.is_else) continue;
+        for (prong.patterns) |pat| {
+            if (resolveErrorMemberPattern(state, pat)) |key| {
+                try covered.put(key, {});
+            }
+        }
+    }
+
+    var missing: std.ArrayList([]const u8) = .empty;
+    defer missing.deinit(state.allocator);
+    var rit = required.keyIterator();
+    while (rit.next()) |k| {
+        if (!covered.contains(k.*)) try missing.append(state.allocator, k.*);
+    }
+    if (missing.items.len == 0) return true;
+    return failMissingErrorMembers(state, missing.items);
+}
+
+fn failMissingErrorMembers(state: *CompilerState, missing: []const []const u8) error{CompileError} {
+    var buf: [256]u8 = undefined;
+    var fbs = std.io.fixedBufferStream(&buf);
+    const w = fbs.writer();
+    w.writeAll("@switch is missing error member") catch {};
+    if (missing.len > 1) w.writeAll("s") catch {};
+    w.writeAll(": ") catch {};
+    for (missing, 0..) |m, i| {
+        if (i > 0) w.writeAll(", ") catch {};
+        w.writeAll(m) catch {};
+    }
+    return fail(state, fbs.getWritten());
+}
+
+fn resolveErrorMemberPattern(state: *CompilerState, pat: *ast.Node) ?[]const u8 {
+    const types = @import("../typecheck/from_ast.zig");
+    if (pat.* != .member) return null;
+    const mem = &pat.member;
+    if (mem.property.* != .primary) return null;
+    const esname = types.resolveErrorSetName(state, mem.object) orelse return null;
+    const ed = state.error_sets.get(esname) orelse return null;
+    if (!ed.variants.contains(mem.property.primary.name)) return null;
+    // Prefer origin from the set def (merged sets map member → component origin).
+    const origin = ed.variants.get(mem.property.primary.name) orelse esname;
+    const key = std.fmt.allocPrint(state.allocator, "{s}.{s}", .{ origin, mem.property.primary.name }) catch return null;
+    state.owned.append(state.allocator, key) catch {};
+    return key;
 }
 
 fn compileSwitchInner(state: *CompilerState, sw: *const ast.Switch, value_mode: bool) !void {

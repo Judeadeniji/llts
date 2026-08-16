@@ -314,9 +314,31 @@ pub fn compileEnum(state: *CompilerState, e: *const ast.EnumDecl) !void {
     });
 }
 
+pub fn compileErrorDecl(state: *CompilerState, e: *const ast.ErrorDecl) !void {
+    if (state.structs.contains(e.name) or state.enums.contains(e.name) or state.typedefs.contains(e.name)) {
+        return @import("../../errors/compile.zig").compileFailFmt(state, "Type name '{s}' already used", .{e.name});
+    }
+    var variants = std.StringHashMap([]const u8).init(state.allocator);
+    for (e.variants) |name| {
+        if (variants.contains(name)) {
+            variants.deinit();
+            return @import("../../errors/compile.zig").compileFailFmt(state, "Duplicate error member '{s}' in '{s}'", .{ name, e.name });
+        }
+        try variants.put(name, e.name);
+    }
+    if (state.error_sets.fetchRemove(e.name)) |kv| {
+        var old = kv.value;
+        old.variants.deinit();
+    }
+    try state.error_sets.put(e.name, .{
+        .name = e.name,
+        .variants = variants,
+    });
+}
+
 pub fn compileTypeDecl(state: *CompilerState, td: *const ast.TypeDecl) !void {
-    if (state.structs.contains(td.name) or state.enums.contains(td.name)) {
-        return @import("../../errors/compile.zig").compileFailFmt(state, "Type name '{s}' already used by a struct or enum", .{td.name});
+    if (state.structs.contains(td.name) or state.enums.contains(td.name) or state.error_sets.contains(td.name)) {
+        return @import("../../errors/compile.zig").compileFailFmt(state, "Type name '{s}' already used by a struct, enum, or error set", .{td.name});
     }
     if (state.typedefs.contains(td.name)) {
         return @import("../../errors/compile.zig").compileFailFmt(state, "Duplicate type '{s}'", .{td.name});

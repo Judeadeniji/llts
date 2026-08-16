@@ -50,7 +50,7 @@ pub fn compute(state: *CompilerState, doc: *ast.Document) !Result {
     }
 
     for (doc.statements) |s| {
-        if (s.* == .function_decl or s.* == .struct_decl or s.* == .enum_decl) continue;
+        if (s.* == .function_decl or s.* == .struct_decl or s.* == .enum_decl or s.* == .error_decl) continue;
         const loc = s.loc();
         if (!std.mem.eql(u8, loc.path, doc.path)) continue;
         try collectRefs(state, null, s, &result, &work);

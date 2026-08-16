@@ -58,6 +58,7 @@ pub fn parseCompilerKeyword(self: *Parser) ParseError!*Node {
     if (std.mem.eql(u8, keyword.value, "switch")) return control.parseSwitchExpression(self);
     if (std.mem.eql(u8, keyword.value, "struct")) return structs.parseCompilerStruct(self);
     if (std.mem.eql(u8, keyword.value, "enum")) return enums.parseCompilerEnum(self);
+    if (std.mem.eql(u8, keyword.value, "error")) return @import("errors.zig").parseCompilerError(self);
     if (std.mem.eql(u8, keyword.value, "type")) return parseTypeDecl(self, true);
     if (std.mem.eql(u8, keyword.value, "alias")) return parseTypeDecl(self, false);
     if (std.mem.eql(u8, keyword.value, "extern")) return parseCompilerExtern(self);

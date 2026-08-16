@@ -70,6 +70,7 @@ fn treeContainsImport(node: *ast.Node) bool {
             return false;
         },
         .enum_decl => {},
+        .error_decl => {},
         .block => |b| {
             for (b.statements) |s| if (treeContainsImport(s)) return true;
             return false;
@@ -183,6 +184,7 @@ fn loadImportsInTree(
             for (st.methods) |m| try loadImportsInTree(state, doc, m, current_module, out, visited);
         },
         .enum_decl => {},
+        .error_decl => {},
         .block => |b| {
             for (b.statements) |s| try loadImportsInTree(state, doc, s, current_module, out, visited);
         },
@@ -454,6 +456,7 @@ fn collectLocalBindings(
         const name: ?[]const u8 = switch (s.*) {
             .struct_decl => |st| st.name,
             .enum_decl => |e| e.name,
+            .error_decl => |e| e.name,
             .type_decl => |t| t.name,
             .function_decl => |f| f.name,
             .declaration => |d| d.name,
@@ -474,6 +477,7 @@ fn isOwnDecl(node: *ast.Node, mod_key: []const u8) bool {
     const name: ?[]const u8 = switch (node.*) {
         .struct_decl => |st| st.name,
         .enum_decl => |e| e.name,
+        .error_decl => |e| e.name,
         .type_decl => |t| t.name,
         .function_decl => |f| f.name,
         .declaration => |d| d.name,
@@ -559,6 +563,16 @@ fn qualifyNode(
             };
             if (en.is_public) try state.chunk.exports.put(en.name, {});
         },
+        .error_decl => |*ed| {
+            if (std.mem.indexOf(u8, ed.name, "::") != null) return;
+            const short = ed.name;
+            ed.name = local_map.get(short) orelse blk: {
+                const q = try std.fmt.allocPrint(state.allocator, "{s}::{s}", .{ mod_key, short });
+                try state.owned.append(state.allocator, q);
+                break :blk q;
+            };
+            if (ed.is_public) try state.chunk.exports.put(ed.name, {});
+        },
         .type_decl => |*td| {
             if (std.mem.indexOf(u8, td.name, "::") != null) return;
             const short = td.name;
@@ -606,6 +620,7 @@ fn rewriteModuleRefs(
             for (st.methods) |m| try rewriteModuleRefs(state, m, local_map, bound);
         },
         .enum_decl => {},
+        .error_decl => {},
         .block => |*b| {
             const mark = bound.items.len;
             for (b.statements) |s| try rewriteModuleRefs(state, s, local_map, bound);
@@ -750,6 +765,13 @@ fn collectLocal(state: *CompilerState, node: *ast.Node, mod_key: []const u8, map
                 try map.put(en.name, q);
             }
         },
+        .error_decl => |ed| {
+            if (std.mem.indexOf(u8, ed.name, "::") == null) {
+                const q = try std.fmt.allocPrint(state.allocator, "{s}::{s}", .{ mod_key, ed.name });
+                try state.owned.append(state.allocator, q);
+                try map.put(ed.name, q);
+            }
+        },
         .type_decl => |td| {
             if (std.mem.indexOf(u8, td.name, "::") == null) {
                 const q = try std.fmt.allocPrint(state.allocator, "{s}::{s}", .{ mod_key, td.name });
@@ -830,6 +852,7 @@ fn rewriteRefs(node: *ast.Node, local_map: *std.StringHashMap([]const u8)) void 
             for (st.methods) |m| rewriteRefs(m, local_map);
         },
         .enum_decl => {},
+        .error_decl => {},
         .try_expr => |t| rewriteRefs(t.expression, local_map),
         .error_expr => |e| rewriteRefs(e.args[0], local_map),
         else => {},

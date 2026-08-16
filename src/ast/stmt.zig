@@ -131,3 +131,11 @@ pub const TypeDecl = struct {
     is_public: bool = false,
     loc: Location,
 };
+
+/// `@error Name { A, B, … }` — closed typed error set.
+pub const ErrorDecl = struct {
+    name: []const u8,
+    variants: []const []const u8,
+    is_public: bool = false,
+    loc: Location,
+};

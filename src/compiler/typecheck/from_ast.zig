@@ -61,11 +61,71 @@ pub fn typeFromAst(node: ?*ast.Node, state: ?*state_mod.CompilerState, ta: ir.Ty
         .intersection_type => |ix| blk: {
             const left = try typeFromAst(ix.left, state, ta);
             const right = try typeFromAst(ix.right, state, ta);
-            break :blk try intersectShapes(state, ta, left, right);
+            break :blk try intersectTypes(state, ta, left, right);
         },
         .member => try resolveImportedType(n, state, ta),
         else => ir.TUnknown,
     };
+}
+
+/// Merge two shape types **or** two error sets. Mixed shape/error → error.
+fn intersectTypes(
+    state: ?*state_mod.CompilerState,
+    ta: ir.TypeAlloc,
+    left: ir.Type,
+    right: ir.Type,
+) FromAstError!ir.Type {
+    const lp = ir.peelDefined(left);
+    const rp = ir.peelDefined(right);
+    if (lp == .error_set and rp == .error_set) {
+        // Member-merge: same assignability as `A | B`, plus duplicate-name conflict check.
+        if (state) |st| try mergeErrorSets(st, lp.error_set, rp.error_set);
+        return try ta.unionType(&.{ left, right });
+    }
+    if (lp == .error_set or rp == .error_set or lp == .error_lit or rp == .error_lit) {
+        if (state) |st| {
+            return @import("../../errors/compile.zig").compileFailFmt(st, "'&' cannot mix error sets with other types", .{});
+        }
+        return error.CompileError;
+    }
+    return intersectShapes(state, ta, left, right);
+}
+
+/// `&` on error sets: duplicate member names across sets are a compile error.
+/// On success, registers a synthetic merged set (for exhaustiveness) under `A&B`.
+fn mergeErrorSets(state: *state_mod.CompilerState, left: []const u8, right: []const u8) FromAstError!void {
+    const ld = state.error_sets.get(left) orelse {
+        return @import("../../errors/compile.zig").compileFailFmt(state, "Unknown error set '{s}'", .{left});
+    };
+    const rd = state.error_sets.get(right) orelse {
+        return @import("../../errors/compile.zig").compileFailFmt(state, "Unknown error set '{s}'", .{right});
+    };
+    var lit = ld.variants.iterator();
+    while (lit.next()) |e| {
+        const name = e.key_ptr.*;
+        if (rd.variants.get(name)) |r_origin| {
+            const l_origin = e.value_ptr.*;
+            if (!std.mem.eql(u8, l_origin, r_origin)) {
+                return @import("../../errors/compile.zig").compileFailFmt(
+                    state,
+                    "conflicting error member '{s}' in '{s}' & '{s}' (from '{s}' and '{s}')",
+                    .{ name, left, right, l_origin, r_origin },
+                );
+            }
+        }
+    }
+    const syn = try std.fmt.allocPrint(state.allocator, "{s}&{s}", .{ left, right });
+    try state.owned.append(state.allocator, syn);
+    if (state.error_sets.contains(syn)) return;
+    var variants = std.StringHashMap([]const u8).init(state.allocator);
+    errdefer variants.deinit();
+    var lit2 = ld.variants.iterator();
+    while (lit2.next()) |e| try variants.put(e.key_ptr.*, e.value_ptr.*);
+    var rit = rd.variants.iterator();
+    while (rit.next()) |e| {
+        if (!variants.contains(e.key_ptr.*)) try variants.put(e.key_ptr.*, e.value_ptr.*);
+    }
+    try state.error_sets.put(syn, .{ .name = syn, .variants = variants });
 }
 
 /// Merge two shape types (peeling `@type` wrappers). Duplicate field names must `typeEquals`.
@@ -156,6 +216,7 @@ pub fn resolveNamedType(name: []const u8, state: ?*state_mod.CompilerState, ta: 
         if (st.typedefs.contains(name)) {
             return try resolveTypedef(st, ta, name, null);
         }
+        if (st.error_sets.contains(name)) return .{ .error_set = name };
         if (st.enums.contains(name)) return .{ .enum_ = name };
         if (st.structs.contains(name)) return .{ .struct_ = name };
         return @import("../../errors/compile.zig").compileFailFmt(st, "Unknown type '{s}'", .{name});
@@ -312,7 +373,13 @@ pub fn parseDisplayType(
                     return .{ .enum_lit = .{ .enum_name = ename, .variant = vname } };
                 }
             }
+            if (st.error_sets.get(ename)) |es| {
+                if (es.variants.contains(vname)) {
+                    return .{ .error_lit = .{ .set_name = ename, .variant = vname } };
+                }
+            }
         }
+        if (st.error_sets.contains(s)) return .{ .error_set = s };
         if (st.enums.contains(s)) return .{ .enum_ = s };
         if (st.structs.contains(s)) return .{ .struct_ = s };
         return @import("../../errors/compile.zig").compileFailFmt(st, "Unknown type '{s}'", .{s});
@@ -351,6 +418,7 @@ fn resolveImportedType(node: *ast.Node, state: ?*state_mod.CompilerState, ta: ir
     const st = state orelse return ir.TUnknown;
 
     // `ExprKind.Literal` — enum variant as a singleton type.
+    // `IoError.NotFound` — error set member as a singleton type.
     if (node.* == .member and node.member.property.* == .primary) {
         if (resolveEnumName(st, node.member.object)) |ename| {
             const vname = node.member.property.primary.name;
@@ -359,6 +427,15 @@ fn resolveImportedType(node: *ast.Node, state: ?*state_mod.CompilerState, ta: ir
                     return .{ .enum_lit = .{ .enum_name = ename, .variant = vname } };
                 }
                 return @import("../../errors/compile.zig").compileFailFmt(st, "Unknown enum variant '{s}' on '{s}'", .{ vname, ename });
+            }
+        }
+        if (resolveErrorSetName(st, node.member.object)) |esname| {
+            const vname = node.member.property.primary.name;
+            if (st.error_sets.get(esname)) |es| {
+                if (es.variants.contains(vname)) {
+                    return .{ .error_lit = .{ .set_name = esname, .variant = vname } };
+                }
+                return @import("../../errors/compile.zig").compileFailFmt(st, "Unknown error member '{s}' on '{s}'", .{ vname, esname });
             }
         }
     }
@@ -373,6 +450,10 @@ fn resolveImportedType(node: *ast.Node, state: ?*state_mod.CompilerState, ta: ir
     if (st.enums.contains(q)) {
         try checkStructInitExport(st, node, q);
         return .{ .enum_ = q };
+    }
+    if (st.error_sets.contains(q)) {
+        try checkStructInitExport(st, node, q);
+        return .{ .error_set = q };
     }
     if (st.structs.contains(q)) {
         try checkStructInitExport(st, node, q);
@@ -618,6 +699,17 @@ pub fn typeAllowsError(display: []const u8) bool {
         if (std.mem.eql(u8, trimmed, "error")) return true;
     }
     return false;
+}
+
+/// Like `typeAllowsError`, but also recognizes `@error` sets / members via compiler state.
+pub fn typeAllowsErrorState(state: *state_mod.CompilerState, display: []const u8) bool {
+    if (typeAllowsError(display)) return true;
+    if (state.error_sets.contains(display)) return true;
+    var arena = std.heap.ArenaAllocator.init(state.allocator);
+    defer arena.deinit();
+    const ta = ir.TypeAlloc{ .allocator = arena.allocator() };
+    const t = parseDisplayType(state, ta, display, null) catch return false;
+    return ir.allowsError(t);
 }
 
 /// Strip ` | error` arms from a display string.
@@ -943,6 +1035,28 @@ pub fn resolveEnumName(state: *state_mod.CompilerState, node: *ast.Node) ?[]cons
             const dotted = std.fmt.bufPrint(&buf, "{s}.{s}", .{ alias, short }) catch return null;
             const q = @import("../expr/path.zig").resolveModuleType(state, dotted) catch return null;
             if (state.enums.contains(q)) return q;
+            return null;
+        },
+        else => return null,
+    }
+}
+
+/// If `node` names an `@error` set (`IoError` or `lib.IoError`), return its name.
+pub fn resolveErrorSetName(state: *state_mod.CompilerState, node: *ast.Node) ?[]const u8 {
+    switch (node.*) {
+        .primary => |p| {
+            if (p.kind != .identifier and p.kind != .register) return null;
+            if (state.error_sets.contains(p.name)) return p.name;
+            return null;
+        },
+        .member => |m| {
+            if (m.object.* != .primary or m.property.* != .primary) return null;
+            const alias = m.object.primary.name;
+            const short = m.property.primary.name;
+            var buf: [256]u8 = undefined;
+            const dotted = std.fmt.bufPrint(&buf, "{s}.{s}", .{ alias, short }) catch return null;
+            const q = @import("../expr/path.zig").resolveModuleType(state, dotted) catch return null;
+            if (state.error_sets.contains(q)) return q;
             return null;
         },
         else => return null,

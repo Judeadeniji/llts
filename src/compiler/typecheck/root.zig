@@ -98,6 +98,10 @@ fn requireAssignAt(state: *state_mod.CompilerState, got: ir.Type, expected: ir.T
             }
         }
     }
+    // Error set value → member lit / union arm when RHS is that static member.
+    if (from) |node| {
+        if (matchesErrorMemberToType(state, node, got, expected)) return;
+    }
     // Value literal types / `@type` wrapping them (incl. unions of literals): matching literal RHS.
     if (from) |node| {
         if (matchesValueLiteralToType(node, expected)) return;
@@ -196,6 +200,30 @@ fn isEnumVariantValue(state: *state_mod.CompilerState, node: *ast.Node, enum_nam
     if (!std.mem.eql(u8, mem.property.primary.name, variant)) return false;
     const ename = from_ast.resolveEnumName(state, mem.object) orelse return false;
     return std.mem.eql(u8, ename, enum_name);
+}
+
+fn isErrorMemberValue(state: *state_mod.CompilerState, node: *ast.Node, set_name: []const u8, variant: []const u8) bool {
+    if (node.* != .member) return false;
+    const mem = node.member;
+    if (mem.property.* != .primary) return false;
+    if (!std.mem.eql(u8, mem.property.primary.name, variant)) return false;
+    const esname = from_ast.resolveErrorSetName(state, mem.object) orelse return false;
+    return std.mem.eql(u8, esname, set_name);
+}
+
+fn matchesErrorMemberToType(state: *state_mod.CompilerState, node: *ast.Node, got: ir.Type, expected: ir.Type) bool {
+    if (got != .error_set) return false;
+    const exp = ir.peelDefined(expected);
+    if (exp == .error_lit) {
+        if (!std.mem.eql(u8, got.error_set, exp.error_lit.set_name)) return false;
+        return isErrorMemberValue(state, node, exp.error_lit.set_name, exp.error_lit.variant);
+    }
+    if (exp == .union_) {
+        for (exp.union_) |arm| {
+            if (matchesErrorMemberToType(state, node, got, arm)) return true;
+        }
+    }
+    return false;
 }
 
 fn isNumericType(t: ir.Type) bool {
@@ -619,6 +647,15 @@ pub fn inferExpr(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, n
         .call => |*c| try inferCall(state, env, ta, node, c),
         .member => |m| blk: {
             if (m.property.* == .primary) {
+                if (from_ast.resolveErrorSetName(state, m.object)) |esname| {
+                    if (state.error_sets.get(esname)) |ed| {
+                        if (!ed.variants.contains(m.property.primary.name)) {
+                            return compiler_errors.compileFailFmt(state, "Unknown error member '{s}' on '{s}'", .{ m.property.primary.name, esname });
+                        }
+                        // Value `Set.Member` has parent set type (like enums).
+                        break :blk .{ .error_set = esname };
+                    }
+                }
                 if (from_ast.resolveEnumName(state, m.object)) |ename| {
                     if (state.enums.get(ename)) |ed| {
                         if (!ed.variants.contains(m.property.primary.name)) {
@@ -1198,6 +1235,7 @@ fn checkStmt(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node:
                 try env.define(d.name, value_type);
                 try state.global_types.put(d.name, value_type.struct_);
             } else if (value_type == .enum_ or value_type == .enum_lit or
+                value_type == .error_set or value_type == .error_lit or
                 value_type == .str_lit or value_type == .int_lit or value_type == .bool_lit or
                 value_type == .tuple or value_type == .defined or value_type == .shape)
             {
@@ -1221,7 +1259,11 @@ fn checkStmt(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node:
         .return_expr => |r| {
             const t = if (r.return_value) |v| try inferExpr(state, env, ta, v) else ir.TNull;
             if (env.expected_return) |er| {
-                try requireAssign(state, t, er, "return value");
+                if (r.return_value) |v| {
+                    try requireAssignFrom(state, t, er, "return value", v);
+                } else {
+                    try requireAssign(state, t, er, "return value");
+                }
             }
             return t;
         },
@@ -1229,7 +1271,7 @@ fn checkStmt(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node:
             _ = try checkStmt(state, env, ta, d.body);
             return null;
         },
-        .function_decl, .struct_decl, .enum_decl, .type_decl, .extern_decl => return null,
+        .function_decl, .struct_decl, .enum_decl, .error_decl, .type_decl, .extern_decl => return null,
         .block => return try inferExpr(state, env, ta, node),
         else => {
             _ = try inferExpr(state, env, ta, node);
@@ -1386,7 +1428,7 @@ pub fn typecheck(state: *state_mod.CompilerState, doc: *ast.Document) TypecheckE
 
     for (doc.statements) |s| {
         switch (s.*) {
-            .function_decl, .struct_decl, .enum_decl, .type_decl, .extern_decl => continue,
+            .function_decl, .struct_decl, .enum_decl, .error_decl, .type_decl, .extern_decl => continue,
             else => _ = try checkStmt(state, &env, ta, s),
         }
     }

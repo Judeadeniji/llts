@@ -44,12 +44,12 @@ print(err);
 `), ["Error: "]);
 });
 
-test("two errors with the same message are distinct instances", () => {
+test("two errors with the same message compare equal by code", () => {
   expectOutput(runSource(`
 $a = error("same");
 $b = error("same");
 print(a == b);
-`), ["false"]);
+`), ["true"]);
 });
 
 // ---------------------------------------------------------------------------

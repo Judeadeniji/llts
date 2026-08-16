@@ -15,6 +15,40 @@ print(err);
 - **Behavior**: Instantiates an error object with a message string and an optional payload string.
 - **Usage**: Error objects can be assigned to variables, printed, returned to the host environment, or passed to the logging subsystem.
 
+## Typed error sets (`@error`)
+
+Closed sets of named members (parallel to `@enum`). Prefer these over open `error("…")` when the set of failures is known.
+
+```llts
+@error IoError { NotFound, Denied }
+@error HttpError { Timeout, Forbidden }
+
+@func open(path: []byte): i64 | IoError {
+  if (bad) return IoError.NotFound;
+  return 7;
+}
+
+$x = open("/x")?;   # unwraps; propagates IoError
+
+# Branding / composition (same @type / @alias rules as elsewhere)
+@type NotFoundErr = IoError.NotFound;
+@type MaybeBytes = IoError.NotFound | []byte;
+$b = load()?;       # error-carrying through the union
+
+# Value union of sets — @switch must cover every member of both (or @else)
+@type AppError = IoError | HttpError;
+
+# Member merge — one closed set; duplicate names across sets conflict
+@type Merged = IoError & HttpError;
+```
+
+- Construct / pattern as **`IoError.NotFound`** (runtime: `OP_MAKE_ERROR`, code = member name).
+- Set/member ⊑ open `error`; open `error` ≰ a specific set.
+- `@switch` on a closed error-ish type is **exhaustive** (single set, `|` of sets, `&` merge, or `@else`).
+- Do not mix shape `&` with error-set `&` in one intersection.
+
+Covered by `tests/37_error_sets.test.ts`.
+
 ## Logging
 
 LLTS provides a robust leveled logging subsystem via the standard library (`std/debug`), which outputs to `stderr`.

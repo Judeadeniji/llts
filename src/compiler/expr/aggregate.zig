@@ -47,7 +47,7 @@ pub fn compileError(state: *CompilerState, err: *const ast.ErrorExpr) !void {
 pub fn compileTry(state: *CompilerState, try_expr: *const ast.TryExpr) !void {
     // Compile-time: '?' requires an error-union (or unknown) operand.
     if (types.resolveType(state, try_expr.expression)) |disp| {
-        if (!types.typeAllowsError(disp)) {
+        if (!types.typeAllowsErrorState(state, disp)) {
             return compiler_errors.compileFailFmt(state, "'?' operator used on non-error-union type '{s}'", .{disp});
         }
     }
@@ -314,6 +314,7 @@ fn fillStruct(state: *CompilerState, init: *const ast.StructInit, struct_def: st
 }
 
 pub fn compileMember(state: *CompilerState, mem: *const ast.Member, node: *ast.Node) !void {
+    if (try compileErrorVariant(state, mem)) return;
     if (try compileEnumVariant(state, mem)) return;
 
     // Tuple field `.0` / `.1` — same runtime as array index.
@@ -374,6 +375,32 @@ pub fn compileMember(state: *CompilerState, mem: *const ast.Member, node: *ast.N
     if (mem.property.* == .primary) {
         try emit.emitNameGet(state, .OP_GET_PROPERTY, mem.property.primary.name);
     }
+}
+
+fn compileErrorVariant(state: *CompilerState, mem: *const ast.Member) !bool {
+    if (mem.property.* != .primary) return false;
+    const variant = mem.property.primary.name;
+    const esname = types.resolveErrorSetName(state, mem.object) orelse return false;
+    const ed = state.error_sets.get(esname) orelse return false;
+
+    if (std.mem.indexOf(u8, esname, "::") != null and mem.object.* == .member) {
+        if (!state.chunk.exports.contains(esname)) {
+            const mod_name = if (mem.object.member.object.* == .primary)
+                mem.object.member.object.primary.name
+            else
+                "Module";
+            const short = if (std.mem.lastIndexOf(u8, esname, "::")) |idx| esname[idx + 2 ..] else esname;
+            return compiler_errors.compileFailFmt(state, "'{s}' has no export '{s}'", .{ mod_name, short });
+        }
+    }
+
+    if (!ed.variants.contains(variant)) {
+        return compiler_errors.compileFailFmt(state, "Unknown error member '{s}' on '{s}'", .{ variant, esname });
+    }
+    // Code = member name (open `error("…")` uses the string message the same way).
+    try emit.emitString(state, variant);
+    try emit.emitOp(state, .OP_MAKE_ERROR);
+    return true;
 }
 
 fn compileEnumVariant(state: *CompilerState, mem: *const ast.Member) !bool {

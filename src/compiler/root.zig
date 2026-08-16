@@ -45,7 +45,7 @@ pub fn compile(
     try registerModuleDecls(&state, doc);
 
     for (doc.statements) |s| {
-        if (s.* == .struct_decl or s.* == .enum_decl or s.* == .type_decl) try stmt.compileStatement(&state, s);
+        if (s.* == .struct_decl or s.* == .enum_decl or s.* == .error_decl or s.* == .type_decl) try stmt.compileStatement(&state, s);
     }
 
     try typecheck.typecheck(&state, doc);
@@ -88,7 +88,7 @@ pub fn compile(
     emit.patchJump(&state, main_jump);
 
     for (doc.statements) |s| {
-        if (s.* != .function_decl and s.* != .struct_decl and s.* != .enum_decl and s.* != .type_decl) {
+        if (s.* != .function_decl and s.* != .struct_decl and s.* != .enum_decl and s.* != .error_decl and s.* != .type_decl) {
             if (reach.shouldEmitTopLevel(doc, s)) {
                 try stmt.compileStatement(&state, s);
             }
@@ -220,6 +220,11 @@ fn registerStructNames(state: *state_mod.CompilerState, doc: *ast.Document) !voi
             try state.enums.put(s.enum_decl.name, .{
                 .name = s.enum_decl.name,
                 .variants = std.StringHashMap(i32).init(state.allocator),
+            });
+        } else if (s.* == .error_decl) {
+            try state.error_sets.put(s.error_decl.name, .{
+                .name = s.error_decl.name,
+                .variants = std.StringHashMap([]const u8).init(state.allocator),
             });
         }
     }

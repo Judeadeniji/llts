@@ -56,6 +56,10 @@ pub const Type = union(enum) {
     func: struct { params: []Type, ret: *Type, variadic: bool },
     /// `{ field: T; … }` anonymous object shape (structural).
     shape: []ShapeField,
+    /// `@error Name` closed error set.
+    error_set: []const u8,
+    /// Singleton error member used as a type (`IoError.NotFound`).
+    error_lit: struct { set_name: []const u8, variant: []const u8 },
 };
 
 pub const ShapeField = struct {
@@ -356,6 +360,8 @@ pub fn displayTypeAlloc(allocator: std.mem.Allocator, t: Type) ![]const u8 {
             out[offset] = '}';
             break :blk out;
         },
+        .error_set => |n| try allocator.dupe(u8, n),
+        .error_lit => |e| try std.fmt.allocPrint(allocator, "{s}.{s}", .{ e.set_name, e.variant }),
         .defined => |d| try allocator.dupe(u8, d.name),
         .union_ => |arms| blk: {
             if (optionalPayload(t)) |payload| {
@@ -402,6 +408,8 @@ pub fn displayTypeSimple(t: Type) ?[]const u8 {
         .str_lit, .int_lit, .bool_lit => null,
         .array => |a| if (a.elem.* == .u8 and a.length == null) "[]byte" else null,
         .ptr, .union_, .func, .tuple, .shape => null,
+        .error_set => |n| n,
+        .error_lit => null,
         .defined => |d| d.name,
     };
 }
@@ -457,6 +465,8 @@ pub fn typeEquals(a: Type, b: Type) bool {
             }
             break :blk true;
         },
+        .error_set => |n| b == .error_set and std.mem.eql(u8, n, b.error_set),
+        .error_lit => |e| b == .error_lit and std.mem.eql(u8, e.set_name, b.error_lit.set_name) and std.mem.eql(u8, e.variant, b.error_lit.variant),
         .defined => |d| b == .defined and std.mem.eql(u8, d.name, b.defined.name),
         .union_ => |arms| blk: {
             if (b != .union_) break :blk false;
@@ -572,6 +582,25 @@ pub fn isSubtype(a: Type, b: Type) bool {
             // Distinct `@type` values may satisfy a structural expected shape.
             .defined => |d| isSubtype(d.underlying.*, b),
             .union_ => |arms| subtypeAll(arms, b),
+            else => false,
+        },
+        .error_set => |ename| switch (a) {
+            .error_set => |an| std.mem.eql(u8, an, ename),
+            .error_lit => |e| std.mem.eql(u8, e.set_name, ename),
+            .union_ => |arms| subtypeAll(arms, b),
+            .defined => false,
+            else => false,
+        },
+        .error_lit => |el| switch (a) {
+            .error_lit => |al| std.mem.eql(u8, al.set_name, el.set_name) and std.mem.eql(u8, al.variant, el.variant),
+            .union_ => |arms| subtypeAll(arms, b),
+            .defined => false,
+            else => false,
+        },
+        .error_ => switch (a) {
+            .error_, .error_set, .error_lit => true,
+            .union_ => |arms| subtypeAll(arms, b),
+            .defined => false,
             else => false,
         },
         .enum_ => |ename| switch (a) {
@@ -691,13 +720,26 @@ pub fn involvesUnknown(t: Type) bool {
     };
 }
 
+pub fn isErrorArm(t: Type) bool {
+    return switch (peelDefined(t)) {
+        .error_, .error_set, .error_lit => true,
+        .union_ => |arms| blk: {
+            for (arms) |arm| {
+                if (isErrorArm(arm)) break :blk true;
+            }
+            break :blk false;
+        },
+        else => if (optionalPayload(t)) |p| isErrorArm(p) else false,
+    };
+}
+
 pub fn isErrorUnion(t: Type) bool {
     return switch (t) {
-        .error_ => true,
+        .error_, .error_set, .error_lit => true,
         .defined => |d| isErrorUnion(d.underlying.*),
         .union_ => |arms| blk: {
             for (arms) |arm| {
-                if (arm == .error_) break :blk true;
+                if (isErrorArm(arm)) break :blk true;
             }
             break :blk false;
         },
@@ -707,11 +749,11 @@ pub fn isErrorUnion(t: Type) bool {
 
 pub fn allowsError(t: Type) bool {
     return switch (t) {
-        .error_, .unknown => true,
+        .error_, .error_set, .error_lit, .unknown => true,
         .defined => |d| allowsError(d.underlying.*),
         .union_ => |arms| blk: {
             for (arms) |arm| {
-                if (arm == .error_) break :blk true;
+                if (isErrorArm(arm)) break :blk true;
             }
             break :blk false;
         },
@@ -721,13 +763,13 @@ pub fn allowsError(t: Type) bool {
 
 pub fn unwrapError(ta: TypeAlloc, t: Type) !Type {
     return switch (t) {
-        .error_ => TNever,
+        .error_, .error_set, .error_lit => TNever,
         .defined => |d| try unwrapError(ta, d.underlying.*),
         .union_ => |arms| blk: {
             var kept: std.ArrayList(Type) = .empty;
             defer kept.deinit(ta.allocator);
             for (arms) |arm| {
-                if (arm != .error_) try kept.append(ta.allocator, arm);
+                if (!isErrorArm(arm)) try kept.append(ta.allocator, arm);
             }
             break :blk try ta.unionType(kept.items);
         },
@@ -755,6 +797,7 @@ pub fn typeTag(t: Type) ?TypeTag {
         .u1 => .u1,
         .null => .null,
         .error_ => .error_,
+        .error_set, .error_lit => .error_,
         .array => |a| if (a.elem.* == .u8) .string else .array,
         .struct_, .shape => .struct_,
         .enum_, .enum_lit => .i64,

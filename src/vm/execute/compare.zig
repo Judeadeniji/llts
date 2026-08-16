@@ -56,7 +56,13 @@ fn valuesEqual(vm: *VMState, a: Value, b: Value) bool {
         },
         .ptr, .name, .slice, .bytes => switch (b) {
             .ptr, .name, .slice, .bytes => blk: {
-                if (a == .ptr and isErrorPtr(vm, a.ptr)) break :blk if (b == .ptr) a.ptr == b.ptr else false;
+                if (a == .ptr and isErrorPtr(vm, a.ptr)) {
+                    if (b == .ptr and isErrorPtr(vm, b.ptr)) {
+                        // Typed / open errors: equal when codes (messages) match.
+                        break :blk @import("../builtins/util.zig").stringEquals(vm, vm.slot(a.ptr).*, vm.slot(b.ptr).*);
+                    }
+                    break :blk false;
+                }
                 if (b == .ptr and isErrorPtr(vm, b.ptr)) break :blk false;
                 break :blk @import("../builtins/util.zig").stringEquals(vm, a, b);
             },

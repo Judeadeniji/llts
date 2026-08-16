@@ -44,6 +44,14 @@ pub const EnumDef = struct {
     variants: std.StringHashMap(i32),
 };
 
+/// `@error Name { A, B }` — closed error set. `origins` maps member → declaring set name
+/// (same as `name` for a plain decl; component set for merges).
+pub const ErrorSetDef = struct {
+    name: []const u8,
+    /// member → originating set name (for patterns `Origin.Member`).
+    variants: std.StringHashMap([]const u8),
+};
+
 /// `@type` (distinct) or `@alias` (transparent) binding.
 pub const TypeDef = struct {
     name: []const u8,
@@ -91,6 +99,7 @@ pub const CompilerState = struct {
     functions: std.StringHashMap(FunctionDef),
     structs: std.StringHashMap(StructDef),
     enums: std.StringHashMap(EnumDef),
+    error_sets: std.StringHashMap(ErrorSetDef),
     typedefs: std.StringHashMap(TypeDef),
     loops: std.ArrayList(LoopTracker) = .empty,
     exprs: std.ArrayList(ExprTracker) = .empty,
@@ -128,6 +137,7 @@ pub fn create(allocator: std.mem.Allocator) !CompilerState {
         .functions = std.StringHashMap(FunctionDef).init(allocator),
         .structs = std.StringHashMap(StructDef).init(allocator),
         .enums = std.StringHashMap(EnumDef).init(allocator),
+        .error_sets = std.StringHashMap(ErrorSetDef).init(allocator),
         .typedefs = std.StringHashMap(TypeDef).init(allocator),
         .defer_stacks = std.AutoHashMap(i32, std.ArrayListUnmanaged(DeferEntry)).init(allocator),
         .global_vars = std.StringHashMap(void).init(allocator),
@@ -198,6 +208,11 @@ pub fn deinit(self: *CompilerState) void {
         e.value_ptr.variants.deinit();
     }
     self.enums.deinit();
+    var esit = self.error_sets.iterator();
+    while (esit.next()) |e| {
+        e.value_ptr.variants.deinit();
+    }
+    self.error_sets.deinit();
     self.typedefs.deinit();
     var dit = self.defer_stacks.iterator();
     while (dit.next()) |e| e.value_ptr.deinit(self.allocator);

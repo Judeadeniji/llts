@@ -2,7 +2,7 @@ const std = @import("std");
 
 const compiler_map = std.StaticStringMap(void).initComptime(.{
     .{ "import", {} }, .{ "const", {} }, .{ "func", {} }, .{ "for", {} }, .{ "if", {} }, .{ "else", {} },
-    .{ "switch", {} }, .{ "struct", {} }, .{ "enum", {} }, .{ "type", {} }, .{ "alias", {} },
+    .{ "switch", {} }, .{ "struct", {} }, .{ "enum", {} }, .{ "error", {} }, .{ "type", {} }, .{ "alias", {} },
     .{ "isError", {} }, .{ "typeOf", {} }, .{ "sizeOf", {} }, .{ "as", {} }, .{ "extern", {} }, .{ "new", {} },
 });
 

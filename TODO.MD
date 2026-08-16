@@ -211,7 +211,7 @@ $i = ID(u);           # same — T(x) sugar
 - [x] **Tuple types** — `[T, U, …]` values + field/index access
 - [x] **Shape intersection `&`** — merge object types; `Readable & Writable`
 - [ ] **Optional sugar (later)** — `@enum Expr { Literal { … }, … }` → Kind + structs + `@type Expr = …`
-- [ ] **Typed error sets (follow-on)**
+- [x] **Typed error sets** — `@error Name { A, B }`, `|` / `&`, exhaustive `@switch`, `?` through composition
 
 Preferred tagged-data spelling with `@type`:
 
