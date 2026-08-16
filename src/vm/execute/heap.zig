@@ -285,6 +285,8 @@ fn readF32(vm: *const VMState, at: u32) f32 {
 }
 
 const HANDLE_NULL_OFFSET: u32 = 0xFFFF_FFFF;
+/// Handle `len` sentinel: `offset` is a Value-slot index holding `.function` / `.native`.
+const HANDLE_BOXED_VALUE: u32 = 0xFFFF_FFFE;
 
 fn writeI8(vm: *VMState, at: u32, n: i8) void {
     vm.bytes.items[at] = @bitCast(n);
@@ -330,6 +332,9 @@ pub fn loadField(vm: *VMState, byte_offset: u16, kind: u8) HeapError!void {
             const off = readU32(vm, at);
             const len = readU32(vm, at + 4);
             if (off == HANDLE_NULL_OFFSET) break :blk .null;
+            if (len == HANDLE_BOXED_VALUE) {
+                break :blk vm.slot(@intCast(off)).*;
+            }
             break :blk .{ .bytes = .{ .offset = off, .len = len } };
         },
         4 => .{ .ptr = @intCast(readI64(vm, at)) },
@@ -403,6 +408,12 @@ pub fn storeField(vm: *VMState, byte_offset: u16, kind: u8) HeapError!void {
                     const data = vm.chunk.stringAt(idx);
                     off = try vm.appendImmortal(data);
                     len = @intCast(data.len);
+                },
+                .function, .native => {
+                    const slot = try vm.allocImmortal(1);
+                    vm.slot(slot).* = val;
+                    off = @intCast(slot);
+                    len = HANDLE_BOXED_VALUE;
                 },
                 else => return fail(vm, "Field store expects object handle"),
             }

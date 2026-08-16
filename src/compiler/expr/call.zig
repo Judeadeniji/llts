@@ -76,7 +76,16 @@ pub fn compileCall(state: *CompilerState, c: *const ast.Call, node: *ast.Node) !
 }
 
 fn emitMethodCall(state: *CompilerState, name: []const u8, self_obj: *ast.Node, args: []*ast.Node) !void {
-    try expr.compileExpression(state, self_obj);
+    // `self: T` (by value) must receive a shallow copy so field stores do not alias the caller.
+    // Unannotated / `self: *T` keep the shared handle.
+    if (try methodSelfIsByValue(state, name)) {
+        try emit.emitNameGet(state, .OP_GET_GLOBAL, "__cloneBytes");
+        try expr.compileExpression(state, self_obj);
+        try emit.emitOp(state, .OP_CALL);
+        try emit.emitByte(state, 1);
+    } else {
+        try expr.compileExpression(state, self_obj);
+    }
     for (args) |arg| try expr.compileExpression(state, arg);
     const argc: u8 = @intCast(args.len + 1);
     if (state.functions.getPtr(name)) |def| {
@@ -96,7 +105,24 @@ fn emitMethodCall(state: *CompilerState, name: []const u8, self_obj: *ast.Node, 
         try emit.emitCallStatic(state, @intCast(fn_info.address), argc);
         return;
     }
-        return @import("../../errors/compile.zig").compileFailFmt(state, "Unknown method {s}", .{name});
+    return @import("../../errors/compile.zig").compileFailFmt(state, "Unknown method {s}", .{name});
+}
+
+fn methodSelfIsByValue(state: *CompilerState, name: []const u8) !bool {
+    const def = state.functions.get(name) orelse return false;
+    if (def.node.* != .function_decl) return false;
+    const f = &def.node.function_decl;
+    const plist = switch (f.params.*) {
+        .params => |p| p.params,
+        else => return false,
+    };
+    if (plist.len == 0) return false;
+    const self_param = plist[0];
+    if (!std.mem.eql(u8, self_param.name, "self")) return false;
+    // Unannotated self defaults to *T.
+    const ann = self_param.type_annotation orelse return false;
+    const disp = (try types.typeAstToDisplay(ann, state)) orelse return false;
+    return disp.len == 0 or disp[0] != '*';
 }
 
 fn emitNamedCall(state: *CompilerState, name: []const u8, args: []*ast.Node, _: bool, _: ?*ast.Node) !bool {

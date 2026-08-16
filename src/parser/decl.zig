@@ -28,7 +28,11 @@ pub fn parseDeclaration(self: *Parser, is_const: bool) ParseError!*Node {
     const eq_msg = std.fmt.bufPrint(&msg_buf, "Expected \"=\" after \"{s}\"", .{register.value}) catch "Expected \"=\" after register";
     _ = try self.consume(.assign_op, eq_msg, "=");
     const expr = @import("expr.zig");
-    const value = try expr.parseExpression(self);
+    // `$p: Point = { x: 1, y: 2 }` — annotated bare object init (not a block).
+    const value = if (type_node != null and expr.looksLikeFieldInitObject(self))
+        try expr.parseStructInitWithType(self, type_node.?)
+    else
+        try expr.parseExpression(self);
 
     if (self.checkDelim(";")) _ = self.advance();
 

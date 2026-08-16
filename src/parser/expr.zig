@@ -199,6 +199,25 @@ fn finishStructInit(self: *Parser, type_expr: *Node, tok: ctx.Token) ParseError!
     } });
 }
 
+/// `{ ident: …` — object/struct field init, not a block.
+pub fn looksLikeFieldInitObject(self: *const Parser) bool {
+    const brace = self.peek(0) orelse return false;
+    if (brace.type != .delimiter or !std.mem.eql(u8, brace.value, "{")) return false;
+    const name = self.peek(1) orelse return false;
+    if (name.type != .identifier) return false;
+    const colon = self.peek(2) orelse return false;
+    return colon.type == .delimiter and std.mem.eql(u8, colon.value, ":");
+}
+
+/// `Type { f: v, … }` with an already-parsed type node (e.g. `$p: Point = { … }`).
+pub fn parseStructInitWithType(self: *Parser, type_expr: *Node) ParseError!*Node {
+    const tok = self.peek(0) orelse return self.failMsg("Expected '{' for object initialization");
+    if (tok.type != .delimiter or !std.mem.eql(u8, tok.value, "{")) {
+        return self.failTok(tok, "Expected '{{' for object initialization", .{});
+    }
+    return finishStructInit(self, type_expr, tok);
+}
+
 fn finishCall(self: *Parser, callee: *Node) ParseError!*Node {
     _ = try self.consume(.delimiter, "Expected '('", "(");
     var args: std.ArrayList(*Node) = .empty;
