@@ -235,7 +235,7 @@ Preferred tagged-data spelling with `@type`:
 
 - [ ] **Broader test coverage** — more Zig unit/integration cases for parser, compiler, and VM edge paths.
 - [x] **Runtime stack traces** — LLTS call stacks on stderr with source context.
-- [ ] **CLI improvements** — `--help`, `--version`, richer diagnostics.
+- [x] **CLI improvements** — `--help`, `--version`, richer diagnostics.
 - [ ] **LSP** — syntax highlighting and basic diagnostics for editors.
 - [x] **Perf gate documented** — `bun benchmarks/run.ts` (1M loop median).
 

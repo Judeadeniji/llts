@@ -3,9 +3,9 @@
 ## Overview
 This document outlines the entry points, CLI arguments, initialization sequence, and compilation pipeline for the LLTS compiler/VM. It is structured to help agents quickly understand the execution flow from the CLI through to VM execution.
 
-## CLI (`src/main.zig`)
+## CLI (`src/cli/root.zig`)
 
-The CLI is built with [zli](https://github.com/xcaeser/zli) and uses subcommands:
+The CLI is built with [zli](https://github.com/xcaeser/zli) and uses a modular architecture under `src/cli/`. The `src/main.zig` file is thin, handling initialization and delegating to `cli.build()`.
 
 | Command | Description |
 |---------|-------------|
@@ -13,11 +13,18 @@ The CLI is built with [zli](https://github.com/xcaeser/zli) and uses subcommands
 | `llts build <file> [-o out.llb]` | Compile a `.lls` source file to binary bytecode (default output: `out.llb`). |
 | `llts dump <file> [-o FILE]` | Compile a `.lls` source and write a human-readable bytecode dump to stdout or `FILE`. |
 | `llts smoke` | Run a hardcoded VM smoke test (`print(42)`) without reading any file. |
+| `llts version` (or `-V`, `--version`) | Show version information and exit. |
 
-Global flags (available on all subcommands):
+**Global & Shared Flags:**
 
-- `-r, --release`: Disables debug mode in the compiler/VM. When provided, `RunOptions.debug` evaluates to `false`. Default is `true`.
-- `--log-level <LEVEL>`: Sets the minimum log level for the IO subsystem (e.g., `trace`, `debug`, `info`, `warn`, `err`).
+| Flag | Root | run | build | dump | smoke | Notes |
+|------|------|-----|-------|------|-------|-------|
+| `-h, --help` | yes | yes | yes | yes | yes | Built-in via zli |
+| `-V, --version` | yes | — | — | — | — | Print version and exit |
+| `-r, --release` | — | yes | yes | yes | — | Disables debug mode in compiler/VM |
+| `--log-level` | yes | yes | yes | yes | — | Minimum log level (`trace`, `debug`, `info`, `warn`, `err`) |
+| `-m, --max-memory` | — | yes | — | — | — | Max memory slots (default 1048576, env `LLTS_MAX_MEMORY`) |
+| `-o, --output` | — | — | yes | yes | — | Output file path |
 
 Program arguments: trailing positionals after the source path are forwarded as `os.args()[1..]`. `os.args()[0]` is always the source path.
 
@@ -30,6 +37,8 @@ llts run program.lls -- -r   # "-r" is a program arg, not a host flag
 llts build app.lls -o app.llb
 llts dump app.lls -o dump.txt
 llts smoke
+llts version                 # Show version
+llts --version               # Show version
 llts --help
 ```
 
