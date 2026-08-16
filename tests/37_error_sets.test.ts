@@ -198,7 +198,30 @@ pub @func main() {
 	);
 });
 
-test("set member assignable to open error", () => {
+test("@isError on error set members and unions", () => {
+	expectOutput(
+		runSource(`
+@error IoError { NotFound, Denied }
+
+@func open(fail: u1): i64 | IoError {
+  @if (fail == 1) {
+    return IoError.NotFound;
+  }
+  return 7;
+}
+
+pub @func main() {
+  print(@isError(IoError.NotFound));
+  print(@isError(7));
+  print(@isError(open(1)));
+  print(@isError(open(0)));
+}
+`),
+		["true", "false", "true", "false"],
+	);
+});
+
+test("set member assignable to open error (anyerror-style umbrella)", () => {
 	expectOutput(
 		runSource(`
 @error IoError { NotFound }
@@ -208,10 +231,12 @@ test("set member assignable to open error", () => {
 }
 
 pub @func main() {
-  print(f());
+  $e: error = f();
+  print(e);
+  print(@isError(e));
 }
 `),
-		["Error: NotFound"],
+		["Error: NotFound", "true"],
 	);
 });
 
