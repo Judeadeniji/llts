@@ -254,3 +254,143 @@ pub @func main() {}
 		"not assignable",
 	);
 });
+
+// ---------------------------------------------------------------------------
+// Error handling policy: typed; discarded fallible stmts warn (non-fatal)
+// ---------------------------------------------------------------------------
+
+test("discarding fallible call in pure function warns but runs", () => {
+	const res = runSource(`
+@error IoError { NotFound }
+
+@func fail(): i64 | IoError {
+  return IoError.NotFound;
+}
+
+@func pure(): i64 {
+  fail();
+  return 1;
+}
+
+pub @func main() {
+  print(pure());
+}
+`);
+	expectOutput(res, ["1"]);
+	if (!res.stderr.includes("Warning") || !res.stderr.includes("discarded")) {
+		throw new Error(`expected discard Warning on stderr, got:\n${res.stderr}`);
+	}
+});
+
+test("discarding fallible call in main warns but runs", () => {
+	const res = runSource(`
+@error IoError { NotFound }
+
+@func fail(): i64 | IoError {
+  return IoError.NotFound;
+}
+
+pub @func main() {
+  fail();
+  print("ok");
+}
+`);
+	expectOutput(res, ["ok"]);
+	if (!res.stderr.includes("Warning") || !res.stderr.includes("discarded")) {
+		throw new Error(`expected discard Warning on stderr, got:\n${res.stderr}`);
+	}
+});
+
+test("discarding fallible call in fallible function also warns", () => {
+	const res = runSource(`
+@error IoError { NotFound }
+
+@func fail(): i64 | IoError {
+  return IoError.NotFound;
+}
+
+@func wrap(): i64 | IoError {
+  fail();
+  return 1;
+}
+
+pub @func main() {
+  print(wrap());
+}
+`);
+	expectOutput(res, ["1"]);
+	if (!res.stderr.includes("Warning") || !res.stderr.includes("discarded")) {
+		throw new Error(`expected discard Warning on stderr, got:\n${res.stderr}`);
+	}
+});
+
+test("storing error union without unwrap is allowed (no discard warning)", () => {
+	const res = runSource(`
+@error IoError { NotFound }
+
+@func fail(): i64 | IoError {
+  return IoError.NotFound;
+}
+
+pub @func main() {
+  $x = fail();
+  print(@isError(x));
+  print(x);
+}
+`);
+	expectOutput(res, ["true", "Error: NotFound"]);
+	if (res.stderr.includes("discarded")) {
+		throw new Error(`unexpected discard Warning on bind:\n${res.stderr}`);
+	}
+});
+
+test("cannot return set member from pure i64 function", () => {
+	expectError(
+		runSource(`
+@error IoError { NotFound }
+
+@func bad(): i64 {
+  return IoError.NotFound;
+}
+
+pub @func main() {}
+`),
+		"not assignable",
+	);
+});
+
+test("? inside pure function is rejected", () => {
+	expectError(
+		runSource(`
+@error IoError { NotFound }
+
+@func fail(): i64 | IoError {
+  return IoError.NotFound;
+}
+
+@func pure(): i64 {
+  return fail()?;
+}
+
+pub @func main() {}
+`),
+		"does not allow error",
+	);
+});
+
+test("? on non-error value is rejected", () => {
+	expectError(
+		runSource(`
+@func get(): i64 {
+  return 7;
+}
+
+@func wrap(): i64 | error {
+  return get()?;
+}
+
+pub @func main() {}
+`),
+		"non-error-union",
+	);
+});

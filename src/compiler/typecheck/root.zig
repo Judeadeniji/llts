@@ -1274,7 +1274,24 @@ fn checkStmt(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node:
         .function_decl, .struct_decl, .enum_decl, .error_decl, .type_decl, .extern_decl => return null,
         .block => return try inferExpr(state, env, ta, node),
         else => {
-            _ = try inferExpr(state, env, ta, node);
+            const t = try inferExpr(state, env, ta, node);
+            // Bare expression statement discards the value (emit POP). Warn if error-carrying.
+            // Assignments bind the value — not a discard.
+            if (node.* != .assignment and !ir.involvesUnknown(t) and ir.isErrorUnion(t)) {
+                const loc = node.loc();
+                const file_path = if (loc.path.len > 0) loc.path else state.chunk.file;
+                const line = if (loc.line > 0) loc.line else 1;
+                const col = if (loc.column > 0) loc.column else 1;
+                compiler_errors.compileWarnAt(
+                    state,
+                    file_path,
+                    sourceFor(state, file_path),
+                    line,
+                    col,
+                    "error-carrying value discarded; handle with '?', '@isError', '@switch', or bind to a variable",
+                    .{},
+                );
+            }
             return null;
         },
     }

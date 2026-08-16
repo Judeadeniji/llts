@@ -46,6 +46,7 @@ $b = load()?;       # error-carrying through the union
 - Set/member ⊑ open `error`; open `error` ≰ a specific set.
 - `@switch` on a closed error-ish type is **exhaustive** (single set, `|` of sets, `&` merge, or `@else`).
 - Do not mix shape `&` with error-set `&` in one intersection.
+- **Discard warning**: a bare statement that evaluates an error-carrying value (`fail();`) prints a non-fatal `Warning` (still runs). Binding (`$x = fail()`), `?`, `@isError`, and `@switch` do not warn.
 
 Covered by `tests/37_error_sets.test.ts`.
 
