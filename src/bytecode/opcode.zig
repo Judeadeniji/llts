@@ -64,10 +64,10 @@ pub const OpCode = enum(u8) {
     // Hot-path fused / specialized (appended — keep prior opcode numbers stable)
     OP_FOR_PREP,
     OP_FOR_LOOP,
-    OP_ADD_I64,
-    OP_SUB_I64,
-    OP_MUL_I64,
-    OP_LT_I64,
+    OP_ADD_TYPED,
+    OP_SUB_TYPED,
+    OP_MUL_TYPED,
+    OP_LT_TYPED,
     /// Packed struct field: operands u16 byte_offset, u8 FieldKind.
     OP_LOAD_FIELD,
     OP_STORE_FIELD,

@@ -6,6 +6,7 @@ const ir = @import("ir.zig");
 const path = @import("../expr/path.zig");
 const intrinsics = @import("../intrinsics.zig");
 const compiler_errors = @import("../../errors/compile.zig");
+const widths = @import("../widths.zig");
 
 pub const typeAstToDisplay = from_ast.typeAstToDisplay;
 
@@ -89,7 +90,25 @@ pub fn requireAssignFrom(state: *state_mod.CompilerState, got: ir.Type, expected
 
 fn requireAssignAt(state: *state_mod.CompilerState, got: ir.Type, expected: ir.Type, ctx: []const u8, loc: ast.Location, from: ?*ast.Node) TypecheckError!void {
     if (ir.involvesUnknown(got) or ir.involvesUnknown(expected)) return;
-    if (ir.isSubtype(got, expected)) return;
+    if (ir.isSubtype(got, expected)) {
+        // When an untyped integer (int_lit) passes into a concrete integer context,
+        // record the target type on the expression node so codegen emits the right
+        // width rather than defaulting to i64.
+        if (from) |node| {
+            if (ir.peelDefined(got) == .int_lit and ir.widthOf(ir.peelDefined(expected)) != null) {
+                try recordExprType(state, node, expected);
+            }
+        }
+        return;
+    }
+    // int_lit as the expected type means a mutable variable whose type was inferred
+    // from an integer literal without annotation (e.g. `$b = 20`).  Unlike its role
+    // as a singleton in `@const` / switch patterns, here it acts as a "flexible
+    // integer" and accepts reassignment from any concrete integer width silently.
+    if (ir.peelDefined(expected) == .int_lit and ir.isInteger(ir.peelDefined(got))) {
+        if (from) |node| try recordExprType(state, node, ir.TInt);
+        return;
+    }
     // Whole enum value → literal field only when RHS is that static variant.
     if (got == .enum_ and expected == .enum_lit) {
         if (std.mem.eql(u8, got.enum_, expected.enum_lit.enum_name)) {
@@ -109,13 +128,61 @@ fn requireAssignAt(state: *state_mod.CompilerState, got: ir.Type, expected: ir.T
     // Zig-style: integer literals may coerce into any integer width that fits.
     if (ir.isInteger(ir.peelDefined(expected)) and got == .i64) {
         if (from) |node| {
-            if (intLiteralFits(node, ir.widthOf(expected).?)) return;
+            if (intLiteralFits(node, ir.widthOf(expected).?)) {
+                try recordExprType(state, node, expected);
+                return;
+            }
         }
     }
     // Float literals are f64; may coerce into f32.
     if (ir.peelDefined(expected) == .f32 and got == .f64) {
         if (from) |node| {
-            if (isFloatLiteral(node)) return;
+            if (isFloatLiteral(node)) {
+                try recordExprType(state, node, expected);
+                return;
+            }
+        }
+    }
+    // Implicit numeric coercion: accept widening and narrowing within the
+    // same signedness family, emitting a warning in both cases.
+    // • Widening (i32→i64, u8→u32, f32→f64, int→float): lossless; soft warn.
+    // • Narrowing (i64→i32, f64→f32, etc.): potentially lossy; stronger warn.
+    // Cross-signedness (i32↔u32) and unrelated types remain hard errors.
+    {
+        const got_w = ir.widthOf(ir.peelDefined(got));
+        const exp_w = ir.widthOf(ir.peelDefined(expected));
+        if (got_w != null and exp_w != null) {
+            const file_path = if (loc.path.len > 0) loc.path else state.chunk.file;
+            const line = if (loc.line > 0) loc.line else 1;
+            const col = if (loc.column > 0) loc.column else 1;
+            const g = try ownDisplay(state, got);
+            const e = try ownDisplay(state, expected);
+            if (widths.isWidening(got_w.?, exp_w.?)) {
+                compiler_errors.compileWarnAt(
+                    state,
+                    file_path,
+                    sourceFor(state, file_path),
+                    line,
+                    col,
+                    "{s}: implicit widening from '{s}' to '{s}' (use @as to silence)",
+                    .{ ctx, g, e },
+                );
+                if (from) |node| try recordExprType(state, node, expected);
+                return;
+            }
+            if (widths.isNarrowing(got_w.?, exp_w.?)) {
+                compiler_errors.compileWarnAt(
+                    state,
+                    file_path,
+                    sourceFor(state, file_path),
+                    line,
+                    col,
+                    "{s}: implicit narrowing from '{s}' to '{s}' — possible data loss (use @as to silence)",
+                    .{ ctx, g, e },
+                );
+                if (from) |node| try recordExprType(state, node, expected);
+                return;
+            }
         }
     }
     const g = try ownDisplay(state, got);
@@ -168,7 +235,7 @@ fn matchesValueLiteral(node: *ast.Node, expected: ir.Type) bool {
     };
 }
 
-fn intLiteralFits(node: *ast.Node, width: @import("../widths.zig").Width) bool {
+fn intLiteralFits(node: *ast.Node, width: widths.Width) bool {
     if (node.* != .literal) return false;
     const lit = node.literal;
     const n: i64 = switch (lit.literal_type) {
@@ -181,7 +248,7 @@ fn intLiteralFits(node: *ast.Node, width: @import("../widths.zig").Width) bool {
         .binary => std.fmt.parseInt(i64, lit.value[2..], 2) catch return false,
         else => return false,
     };
-    return @import("../widths.zig").i64Fits(width, n);
+    return widths.i64Fits(width, n);
 }
 
 fn isFloatLiteral(node: *ast.Node) bool {
@@ -241,6 +308,27 @@ fn requireNumericPair(state: *state_mod.CompilerState, l: ir.Type, r: ir.Type, c
         return compiler_errors.compileFailFmt(state, "{s}: expected matching numeric types, got '{s}' and '{s}'", .{ ctx, dl, dr });
     }
     if (!ir.typeEquals(lw, rw)) {
+        const lw_w = ir.widthOf(lw);
+        const rw_w = ir.widthOf(rw);
+        if (lw_w != null and rw_w != null) {
+            const wider: ?ir.Type = if (widths.isWidening(lw_w.?, rw_w.?))
+                rw
+            else if (widths.isWidening(rw_w.?, lw_w.?))
+                lw
+            else
+                null;
+            if (wider) |result_type| {
+                const dl = try ownDisplay(state, l);
+                const dr = try ownDisplay(state, r);
+                const dres = try ownDisplay(state, result_type);
+                compiler_errors.compileWarnFmt(
+                    state,
+                    "{s}: mixed '{s}' and '{s}' — widening to '{s}' (use @as to silence)",
+                    .{ ctx, dl, dr, dres },
+                );
+                return result_type;
+            }
+        }
         const dl = try ownDisplay(state, l);
         const dr = try ownDisplay(state, r);
         return compiler_errors.compileFailFmt(state, "{s}: mixed '{s}' and '{s}' (use @as)", .{ ctx, dl, dr });
@@ -294,23 +382,20 @@ fn inferLiteral(ta: ir.TypeAlloc, lit: ast.Literal, prefer_literals: bool) !ir.T
             {
                 break :blk ir.TF64;
             }
-            if (prefer_literals) {
-                const n = std.fmt.parseInt(i64, lit.value, 10) catch break :blk ir.TInt;
-                break :blk .{ .int_lit = n };
-            }
-            break :blk ir.TInt;
+            // Integer literals are always untyped (int_lit) so they silently
+            // coerce to whatever integer width their context demands, just like
+            // Zig's comptime_int.  The concrete width is resolved at point of use.
+            const n = std.fmt.parseInt(i64, lit.value, 10) catch break :blk ir.TInt;
+            break :blk .{ .int_lit = n };
         },
         .hex, .octal, .binary => blk: {
-            if (prefer_literals) {
-                const n: i64 = switch (lit.literal_type) {
-                    .hex => std.fmt.parseInt(i64, lit.value[2..], 16) catch break :blk ir.TInt,
-                    .octal => std.fmt.parseInt(i64, lit.value[2..], 8) catch break :blk ir.TInt,
-                    .binary => std.fmt.parseInt(i64, lit.value[2..], 2) catch break :blk ir.TInt,
-                    else => unreachable,
-                };
-                break :blk .{ .int_lit = n };
-            }
-            break :blk ir.TInt;
+            const n: i64 = switch (lit.literal_type) {
+                .hex => std.fmt.parseInt(i64, lit.value[2..], 16) catch break :blk ir.TInt,
+                .octal => std.fmt.parseInt(i64, lit.value[2..], 8) catch break :blk ir.TInt,
+                .binary => std.fmt.parseInt(i64, lit.value[2..], 2) catch break :blk ir.TInt,
+                else => unreachable,
+            };
+            break :blk .{ .int_lit = n };
         },
     };
 }
@@ -575,8 +660,107 @@ fn noteDiag(state: *state_mod.CompilerState, node: *ast.Node) void {
     if (loc.path.len > 0) state.diag_path = loc.path;
 }
 
+pub fn recordExprType(state: *state_mod.CompilerState, node: *ast.Node, t: ir.Type) !void {
+    const peeled = ir.peelDefined(t);
+    const codegen_t: ir.Type = switch (peeled) {
+        .int_lit => ir.TInt,
+        .bool_lit => ir.TBool,
+        .str_lit => ir.TString,
+        else => peeled,
+    };
+    const disp = try ownDisplay(state, codegen_t);
+    try state.type_of_results.put(node, disp);
+}
+
+fn isBareIntLiteral(node: *ast.Node) bool {
+    if (node.* != .literal) return false;
+    return switch (node.literal.literal_type) {
+        .number, .hex, .octal, .binary => true,
+        else => false,
+    };
+}
+
+/// Zig-style: a bare integer literal may take on the other operand's integer width.
+fn coerceNumericPair(
+    state: *state_mod.CompilerState,
+    l: ir.Type,
+    r: ir.Type,
+    left_node: *ast.Node,
+    right_node: *ast.Node,
+    ctx: []const u8,
+) TypecheckError!ir.Type {
+    const lw = numericOpType(l);
+    const rw = numericOpType(r);
+    if (!isNumericType(lw) or !isNumericType(rw)) {
+        const dl = try ownDisplay(state, l);
+        const dr = try ownDisplay(state, r);
+        return compiler_errors.compileFailFmt(state, "{s}: expected matching numeric types, got '{s}' and '{s}'", .{ ctx, dl, dr });
+    }
+    if (ir.typeEquals(lw, rw)) return lw;
+    // Untyped integer variables (`int_lit` type from unannotated literal declarations
+    // like `$a = 10`) adapt silently to the concrete type of the other operand —
+    // just like a bare literal node does, but via the stored type rather than AST.
+    if (ir.isInteger(lw) and ir.isInteger(rw)) {
+        const left_is_untyped = ir.peelDefined(l) == .int_lit;
+        const right_is_untyped = ir.peelDefined(r) == .int_lit;
+        if (left_is_untyped and !right_is_untyped) {
+            try recordExprType(state, left_node, rw);
+            return rw;
+        }
+        if (right_is_untyped and !left_is_untyped) {
+            try recordExprType(state, right_node, lw);
+            return lw;
+        }
+        // Both untyped OR both typed with same i64 width: fall through.
+        // Existing bare-literal coercion (lw == .i64 and isBareIntLiteral) below.
+        if (lw == .i64 and isBareIntLiteral(left_node) and rw != .i64) {
+            try recordExprType(state, left_node, rw);
+            return rw;
+        }
+        if (rw == .i64 and isBareIntLiteral(right_node) and lw != .i64) {
+            try recordExprType(state, right_node, lw);
+            return lw;
+        }
+    }
+    // Implicit numeric coercion for binary operators: if both operands are in
+    // the same integer/float signedness family, widen the narrower one and
+    // warn.  The result type is the wider of the two.
+    {
+        const lw_w = ir.widthOf(lw);
+        const rw_w = ir.widthOf(rw);
+        if (lw_w != null and rw_w != null) {
+            const wider: ?ir.Type = if (widths.isWidening(lw_w.?, rw_w.?))
+                rw // rw is wider
+            else if (widths.isWidening(rw_w.?, lw_w.?))
+                lw // lw is wider
+            else
+                null;
+            if (wider) |result_type| {
+                const dl = try ownDisplay(state, l);
+                const dr = try ownDisplay(state, r);
+                const dres = try ownDisplay(state, result_type);
+                compiler_errors.compileWarnFmt(
+                    state,
+                    "{s}: mixed '{s}' and '{s}' — widening to '{s}' (use @as to silence)",
+                    .{ ctx, dl, dr, dres },
+                );
+                return result_type;
+            }
+        }
+    }
+    const dl = try ownDisplay(state, l);
+    const dr = try ownDisplay(state, r);
+    return compiler_errors.compileFailFmt(state, "{s}: mixed '{s}' and '{s}' (use @as)", .{ ctx, dl, dr });
+}
+
 pub fn inferExpr(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node: *ast.Node) TypecheckError!ir.Type {
     noteDiag(state, node);
+    const result = try inferExprInner(state, env, ta, node);
+    try recordExprType(state, node, result);
+    return result;
+}
+
+fn inferExprInner(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node: *ast.Node) TypecheckError!ir.Type {
     return switch (node.*) {
         .literal => |lit| try inferLiteral(ta, lit, env.prefer_literals),
         .primary => |p| blk: {
@@ -624,7 +808,7 @@ pub fn inferExpr(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, n
             if (isCmpOrLogic(op)) {
                 if (std.mem.eql(u8, op, "<") or std.mem.eql(u8, op, "<=") or std.mem.eql(u8, op, ">") or std.mem.eql(u8, op, ">=")) {
                     if (!ir.involvesUnknown(l) and !ir.involvesUnknown(r)) {
-                        _ = try requireNumericPair(state, l, r, "comparison");
+                        _ = try coerceNumericPair(state, l, r, b.left, b.right, "comparison");
                     }
                 }
                 break :blk ir.TBool;
@@ -632,13 +816,13 @@ pub fn inferExpr(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, n
             if (std.mem.eql(u8, op, "+")) {
                 if (ir.isByteSlice(l) or ir.isByteSlice(r)) break :blk ir.TString;
                 if (!ir.involvesUnknown(l) and !ir.involvesUnknown(r)) {
-                    break :blk try requireNumericPair(state, l, r, "numeric +");
+                    break :blk try coerceNumericPair(state, l, r, b.left, b.right, "numeric +");
                 }
                 break :blk ir.TInt;
             }
             if (isArith(op)) {
                 if (!ir.involvesUnknown(l) and !ir.involvesUnknown(r)) {
-                    break :blk try requireNumericPair(state, l, r, "operator");
+                    break :blk try coerceNumericPair(state, l, r, b.left, b.right, "operator");
                 }
                 break :blk ir.TInt;
             }
@@ -1226,6 +1410,8 @@ fn checkStmt(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node:
                 var ctx_buf: [160]u8 = undefined;
                 const ctx = std.fmt.bufPrint(&ctx_buf, "declaration of '{s}'", .{d.name}) catch "declaration";
                 try requireAssignAt(state, value_type, annot, ctx, d.loc, d.value);
+                // Contextual typing: initializer / uses see the annotation width for codegen.
+                try recordExprType(state, d.value, annot);
                 try env.define(d.name, annot);
                 if (std.mem.indexOf(u8, d.name, "::") == null) {
                     const disp = try ownDisplay(state, annot);
@@ -1240,7 +1426,14 @@ fn checkStmt(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node:
                 value_type == .tuple or value_type == .defined or value_type == .shape)
             {
                 try env.define(d.name, value_type);
-                const disp = try ownDisplay(state, value_type);
+                // Non-const integer literals store "i64" in global_types so that
+                // cross-module lookups resolve to a parseable type name rather than
+                // the raw literal value ("10", etc.).  @const preserves the literal
+                // display for singleton type matching.
+                const disp = if (value_type == .int_lit and !d.is_const)
+                    "i64"
+                else
+                    try ownDisplay(state, value_type);
                 try state.global_types.put(d.name, disp);
             } else {
                 try env.define(d.name, value_type);
@@ -1414,20 +1607,27 @@ pub fn typecheck(state: *state_mod.CompilerState, doc: *ast.Document) TypecheckE
 
     var env = Env.init(ta.allocator);
     defer env.deinit();
+
     try env.pushScope();
     var cit = top_consts.keyIterator();
+
     while (cit.next()) |n| {
         if (state.global_types.get(n.*)) |v| {
             if (std.mem.startsWith(u8, v, "module:")) try env.globals.put(n.*, .{ .struct_ = v });
         }
+
         var key_buf: [256]u8 = undefined;
         const key = std.fmt.bufPrint(&key_buf, "${s}", .{n.*}) catch continue;
+
         if (state.global_types.get(key)) |v| {
             if (std.mem.startsWith(u8, v, "module:")) try env.globals.put(n.*, .{ .struct_ = v });
         }
+
         try env.const_names.put(n.*, {});
     }
+
     var git = state.global_types.iterator();
+
     while (git.next()) |e| {
         const k = e.key_ptr.*;
         const v = e.value_ptr.*;

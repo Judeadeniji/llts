@@ -87,7 +87,7 @@ pub fn fieldKind(state: ?*state_mod.CompilerState, type_name: []const u8) FieldK
 }
 
 pub fn fieldKindFromWidth(w: widths.Width) FieldKind {
-    return switch (w) {
+    return switch (w.concrete()) {
         .u1 => .u1,
         .i8 => .i8,
         .i16 => .i16,
@@ -99,6 +99,7 @@ pub fn fieldKindFromWidth(w: widths.Width) FieldKind {
         .u64 => .u64,
         .f32 => .f32,
         .f64 => .f64,
+        else => unreachable,
     };
 }
 
