@@ -614,7 +614,8 @@ fn fnParamTypes(state: *state_mod.CompilerState, ta: ir.TypeAlloc, func_name: []
     out_variadic.* = is_variadic;
     out_rest.* = null;
     const method_struct: ?[]const u8 = blk: {
-        if (std.mem.indexOf(u8, f.name, "::")) |idx| {
+        // Split at the LAST `::` — module-qualified struct names contain `::`.
+        if (std.mem.lastIndexOf(u8, f.name, "::")) |idx| {
             const sname = f.name[0..idx];
             if (state.structs.contains(sname)) break :blk sname;
         }
@@ -1523,6 +1524,18 @@ fn checkStmt(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node:
     }
 }
 
+/// Typecheck a single function body. The LLVM backend's `analyze` pass only
+/// typechecks the main document; imported module function bodies are parsed
+/// but untyped until lowered, so the backend calls this for each reachable one.
+pub fn typecheckFunction(state: *state_mod.CompilerState, f: *ast.FunctionDecl) TypecheckError!void {
+    var arena = std.heap.ArenaAllocator.init(state.allocator);
+    defer arena.deinit();
+    const ta = ir.TypeAlloc{ .allocator = arena.allocator() };
+    var top_consts = std.StringHashMap(void).init(ta.allocator);
+    defer top_consts.deinit();
+    try checkFunction(state, ta, f, &top_consts);
+}
+
 fn checkFunction(state: *state_mod.CompilerState, ta: ir.TypeAlloc, f: *ast.FunctionDecl, top_consts: *const std.StringHashMap(void)) TypecheckError!void {
     var env = Env.init(ta.allocator);
     defer env.deinit();
@@ -1562,7 +1575,9 @@ fn checkFunction(state: *state_mod.CompilerState, ta: ir.TypeAlloc, f: *ast.Func
     for (plist, 0..) |pnode, i| {
         var t: ir.Type = ir.TUnknown;
         if (pnode.type_annotation) |ann| t = try from_ast.typeFromAst(ann, state, ta);
-        if (std.mem.indexOf(u8, f.name, "::")) |idx| {
+        // Split at the LAST `::` — module-qualified struct names contain `::`
+        // (e.g. `std/mem.lls::Arena::deinit`).
+        if (std.mem.lastIndexOf(u8, f.name, "::")) |idx| {
             const sname = f.name[0..idx];
             // Module-qualified free funcs use `path.lls::name`; only bare struct names are methods.
             if (state.structs.contains(sname) and i == 0) {

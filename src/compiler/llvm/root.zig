@@ -11,13 +11,33 @@ const context = @import("context.zig");
 const stmt_mod = @import("stmt.zig");
 const types_mod = @import("types.zig");
 const from_ast = @import("../typecheck/from_ast.zig");
+const typecheck = @import("../typecheck/root.zig");
 const state_mod = @import("../state.zig");
+const reachability = @import("../reachability.zig");
 
 pub const LlvmContext = context.LlvmContext;
 pub const CodegenError = stmt_mod.StmtError || error{UnsupportedTopLevel};
 
 /// Lower an entire parsed `Document` into LLVM IR stored in `lc`.
 pub fn codegen(lc: *LlvmContext, doc: *ast.Document) CodegenError!void {
+    var reach = reachability.compute(lc.state, doc) catch return error.UnsupportedTopLevel;
+    defer reach.deinit();
+
+    // `analyze` typechecks only the main document; imported module function
+    // bodies are parsed but untyped. Typecheck every reachable function so the
+    // backend sees per-node types (`self` receivers, field types, ...).
+    {
+        var fit = lc.state.functions.iterator();
+        while (fit.next()) |e| {
+            const name = e.key_ptr.*;
+            if (!reach.isFunctionReachable(name)) continue;
+            const def = e.value_ptr.*;
+            if (def.node.* != .function_decl) continue;
+            if (std.mem.eql(u8, def.node.loc().path, doc.path)) continue; // already done by analyze
+            typecheck.typecheckFunction(lc.state, &def.node.function_decl) catch return error.UnsupportedTopLevel;
+        }
+    }
+
     // Data layout needed for @sizeOf / @new.
     _ = C.LLVMSetTarget(lc.mod, "x86_64-unknown-linux-gnu");
 
@@ -25,18 +45,23 @@ pub fn codegen(lc: *LlvmContext, doc: *ast.Document) CodegenError!void {
     var fit = lc.state.functions.iterator();
     while (fit.next()) |e| {
         const name = e.key_ptr.*;
+        if (!reach.isFunctionReachable(name)) continue;
         const def = e.value_ptr.*;
         try declareFunctionFromDef(lc, name, def);
     }
 
     // Also declare any top-level function_decl not yet in the map (defensive).
     for (doc.statements) |node| {
-        if (node.* == .function_decl) try declareFunction(lc, node.function_decl.name, &node.function_decl);
+        if (node.* == .function_decl) {
+            if (!reach.isFunctionReachable(node.function_decl.name)) continue;
+            try declareFunction(lc, node.function_decl.name, &node.function_decl);
+        }
         if (node.* == .struct_decl) {
             for (node.struct_decl.methods) |m| {
                 if (m.* == .function_decl) {
                     var buf: [256]u8 = undefined;
                     const mangled = std.fmt.bufPrint(&buf, "{s}::{s}", .{ node.struct_decl.name, m.function_decl.name }) catch continue;
+                    if (!reach.isFunctionReachable(mangled)) continue;
                     try declareFunction(lc, mangled, &m.function_decl);
                 }
             }
@@ -44,7 +69,7 @@ pub fn codegen(lc: *LlvmContext, doc: *ast.Document) CodegenError!void {
     }
 
     // Declare typed globals (null init; stores happen in __llts_main).
-    try declareGlobals(lc);
+    try declareGlobals(lc, &reach);
 
     // Emit function bodies from CompilerState (covers methods + free funcs).
     var emitted = std.StringHashMap(void).init(lc.allocator);
@@ -53,16 +78,16 @@ pub fn codegen(lc: *LlvmContext, doc: *ast.Document) CodegenError!void {
     var fit2 = lc.state.functions.iterator();
     while (fit2.next()) |e| {
         const name = e.key_ptr.*;
+        if (!reach.isFunctionReachable(name)) continue;
         const def = e.value_ptr.*;
         if (emitted.contains(name)) continue;
         try emitted.put(name, {});
-        std.debug.print("Lowering function {s}\n", .{name});
         try lowerFunctionFromDef(lc, name, def);
-        std.debug.print("Done lowering function {s}\n", .{name});
     }
 
     for (doc.statements) |node| {
         if (node.* == .function_decl) {
+            if (!reach.isFunctionReachable(node.function_decl.name)) continue;
             if (!emitted.contains(node.function_decl.name)) {
                 try lowerFunction(lc, node.function_decl.name, &node.function_decl);
             }
@@ -72,6 +97,7 @@ pub fn codegen(lc: *LlvmContext, doc: *ast.Document) CodegenError!void {
                 if (m.* != .function_decl) continue;
                 var buf: [256]u8 = undefined;
                 const mangled = std.fmt.bufPrint(&buf, "{s}::{s}", .{ node.struct_decl.name, m.function_decl.name }) catch continue;
+                if (!reach.isFunctionReachable(mangled)) continue;
                 if (!emitted.contains(mangled)) {
                     try lowerFunction(lc, mangled, &m.function_decl);
                 }
@@ -83,6 +109,7 @@ pub fn codegen(lc: *LlvmContext, doc: *ast.Document) CodegenError!void {
     for (lc.state.module_docs.items) |mdoc| {
         for (mdoc.statements) |node| {
             if (node.* == .function_decl) {
+                if (!reach.isFunctionReachable(node.function_decl.name)) continue;
                 if (lc.functions.contains(node.function_decl.name) and !emitted.contains(node.function_decl.name)) {
                     try emitted.put(node.function_decl.name, {});
                     try lowerFunction(lc, node.function_decl.name, &node.function_decl);
@@ -105,20 +132,20 @@ pub fn codegen(lc: *LlvmContext, doc: *ast.Document) CodegenError!void {
             .function_decl, .struct_decl, .enum_decl, .type_decl, .error_decl, .extern_decl => continue,
             else => {},
         }
-        // Skip pure @import bindings (no runtime value we can lower yet).
-        if (node.* == .declaration) {
-            if (node.declaration.value.* == .call and
-                node.declaration.value.call.callee.* == .primary and
-                std.mem.eql(u8, node.declaration.value.call.callee.primary.name, "@import"))
-            {
-                continue;
-            }
+        if (reach.shouldEmitTopLevel(doc, node)) {
+            try stmt_mod.lowerStmt(&ss, node);
         }
-        try stmt_mod.lowerStmt(&ss, node);
     }
     _ = C.LLVMBuildRetVoid(lc.builder);
 
-    // Synthesize C main
+    // Synthesize C main. The user's `main` would otherwise shadow the real
+    // entry point (the C runtime calls `main` by name), so rename it first
+    // and have the synthesized C `main` call it.
+    if (lc.functions.get("main")) |user_main| {
+        const user_main_name_z = lc.allocator.dupeZ(u8, "llts_user_main") catch return error.OutOfMemory;
+        defer lc.allocator.free(user_main_name_z);
+        C.LLVMSetValueName2(user_main, user_main_name_z, "llts_user_main".len);
+    }
     const c_main_ty = C.LLVMFunctionType(lc.i32Ty(), null, 0, 0);
     const c_main_val = C.LLVMAddFunction(lc.mod, "main", c_main_ty);
     const c_main_entry = C.LLVMAppendBasicBlockInContext(lc.ctx, c_main_val, "entry");
@@ -134,15 +161,17 @@ pub fn codegen(lc: *LlvmContext, doc: *ast.Document) CodegenError!void {
     _ = C.LLVMBuildRet(lc.builder, C.LLVMConstInt(lc.i32Ty(), 0, 0));
 }
 
-fn declareGlobals(lc: *LlvmContext) CodegenError!void {
+fn declareGlobals(lc: *LlvmContext, reach: *const reachability.Result) CodegenError!void {
     var g_it = lc.state.global_vars.iterator();
     while (g_it.next()) |entry| {
         const name = entry.key_ptr.*;
+        if (!reach.globals.contains(name)) continue;
         try addGlobal(lc, name);
     }
     var c_it = lc.state.global_consts.iterator();
     while (c_it.next()) |entry| {
         const name = entry.key_ptr.*;
+        if (!reach.globals.contains(name)) continue;
         if (!lc.globals.contains(name)) try addGlobal(lc, name);
     }
 }
@@ -152,6 +181,7 @@ fn addGlobal(lc: *LlvmContext, name: []const u8) CodegenError!void {
     const ty_name = lc.state.global_types.get(name) orelse "i64";
     // Skip module handles
     if (std.mem.startsWith(u8, ty_name, "module:")) return;
+
     const ty = types_mod.resolveOrSlot(lc, ty_name);
     const name_z = lc.allocator.dupeZ(u8, name) catch return error.OutOfMemory;
     defer lc.allocator.free(name_z);
@@ -167,6 +197,23 @@ fn resolveParamType(lc: *LlvmContext, param: ast.Param) T.LLVMTypeRef {
         } else |_| {}
     }
     return lc.i64Ty();
+}
+
+/// Resolve the type of param `i` of a function named `name`. For a
+/// `Struct::method` whose receiver param is named `self`, an unannotated
+/// `self` is `*Struct` (pointer — the receiver is passed by reference, matching
+/// the typechecker's `resolveMethodSelfType`); other params (and annotated
+/// receivers) fall back to `resolveParamType`.
+fn resolveSelfParamType(lc: *LlvmContext, name: []const u8, params: []ast.Param, i: usize) T.LLVMTypeRef {
+    if (i == 0 and params.len > 0 and std.mem.eql(u8, params[0].name, "self") and params[0].type_annotation == null) {
+        // Split at the LAST `::` — module-qualified struct names themselves
+        // contain `::` (e.g. `std/mem.lls::Arena::deinit`).
+        if (std.mem.lastIndexOf(u8, name, "::")) |idx| {
+            const prefix = name[0..idx];
+            if (lc.state.structs.contains(prefix)) return lc.ptrTy();
+        }
+    }
+    return resolveParamType(lc, params[i]);
 }
 
 fn resolveReturnType(lc: *LlvmContext, fn_decl: *const ast.FunctionDecl) T.LLVMTypeRef {
@@ -198,7 +245,8 @@ fn declareFunction(lc: *LlvmContext, name: []const u8, fn_decl: *const ast.Funct
     const param_types = try lc.allocator.alloc(T.LLVMTypeRef, params.len);
     defer lc.allocator.free(param_types);
     for (params, 0..) |param, i| {
-        param_types[i] = resolveParamType(lc, param);
+        _ = param;
+        param_types[i] = resolveSelfParamType(lc, name, params, i);
     }
 
     const ret_ty = resolveReturnType(lc, fn_decl);
@@ -237,7 +285,7 @@ fn lowerFunction(lc: *LlvmContext, name: []const u8, fn_decl: *const ast.Functio
         const name_z = try lc.allocator.dupeZ(u8, param.name);
         defer lc.allocator.free(name_z);
         C.LLVMSetValueName2(arg, name_z, param.name.len);
-        const pty = resolveParamType(lc, param);
+        const pty = resolveSelfParamType(lc, name, params, i);
         const slot = C.LLVMBuildAlloca(lc.builder, pty, name_z);
         _ = C.LLVMBuildStore(lc.builder, arg, slot);
         try ss.locals.put(param.name, slot);

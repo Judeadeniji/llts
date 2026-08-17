@@ -43,6 +43,9 @@ pub fn resolve(lc: *LlvmContext, type_name_raw: []const u8) ?T.LLVMTypeRef {
                 const len_str = type_name[1..rb];
                 if (std.fmt.parseInt(u32, len_str, 10)) |len| {
                     const elem_name = type_name[rb + 1 ..];
+                    // `[N]byte` strings are pointers natively (C string
+                    // globals), matching how string literals are lowered.
+                    if (eql(elem_name, "byte") or eql(elem_name, "u8")) return lc.ptrTy();
                     const elem_ty = resolve(lc, elem_name) orelse lc.i64Ty();
                     return C.LLVMArrayType(elem_ty, len);
                 } else |_| {}
@@ -95,9 +98,16 @@ pub fn resolve(lc: *LlvmContext, type_name_raw: []const u8) ?T.LLVMTypeRef {
     return null;
 }
 
+/// Strip `?`/`*` wrapper prefixes (and union text) to reach the base struct name.
+pub fn unwrapStructName(type_name: []const u8) []const u8 {
+    var s = layout.unwrapTypeName(type_name);
+    while (s.len > 0 and (s[0] == '*' or s[0] == '?')) s = s[1..];
+    return s;
+}
+
 /// Returns the LLVM struct element index for a given field name in a struct.
 pub fn getStructFieldIndex(lc: *LlvmContext, type_name: []const u8, field_name: []const u8) ?u32 {
-    const sd = lc.state.structs.get(type_name) orelse return null;
+    const sd = lc.state.structs.get(unwrapStructName(type_name)) orelse return null;
 
     var fields_array: std.ArrayList(StructOffsetInfo) = .empty;
     defer fields_array.deinit(lc.allocator);

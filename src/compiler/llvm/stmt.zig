@@ -62,7 +62,6 @@ pub const StmtState = struct {
 };
 
 pub fn lowerStmt(s: *StmtState, node: *ast.Node) StmtError!void {
-    std.debug.print("    Lowering Stmt: {s}\n", .{@tagName(node.*)});
     switch (node.*) {
         .declaration => |decl| try lowerDecl(s, decl, node),
         .return_expr => |ret| try lowerReturn(s, ret),
@@ -138,18 +137,10 @@ fn lowerDecl(s: *StmtState, decl: ast.Declaration, node: *ast.Node) StmtError!vo
     if (decl.value.* == .literal and decl.value.literal.literal_type == .@"null") return;
 
     var es = s.exprState();
-    std.debug.print("        lowerDecl: evaluating value expr\n", .{});
     const val = try expr_mod.lowerExpr(&es, decl.value);
-    std.debug.print("        lowerDecl: evaluating typeOf\n", .{});
     const val_ty_name = expr_mod.typeOf(&es, decl.value);
-    std.debug.print("        lowerDecl: val_ty_name='{s}', ty_name='{s}'\n", .{val_ty_name, ty_name});
-    std.debug.print("        lowerDecl: evaluating castTo\n", .{});
     const casted = types_mod.castTo(s.lc, val, val_ty_name, ty);
-    std.debug.print("        lowerDecl: building store\n", .{});
-    C.LLVMDumpValue(casted);
-    C.LLVMDumpValue(slot);
     _ = C.LLVMBuildStore(s.lc.builder, casted, slot);
-    std.debug.print("        lowerDecl: done\n", .{});
 }
 
 fn runDefers(s: *StmtState, is_error_path: bool) StmtError!void {

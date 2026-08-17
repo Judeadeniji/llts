@@ -1,0 +1,24 @@
+# Native arena smoke: @new must allocate through the passed-in arena
+# (via __arena_alloc_bytes in the native runtime), so heap.deinit()
+# actually reclaims the memory instead of leaking a raw malloc.
+@const $mem = @import("std/mem");
+
+@struct Point {
+    x: i64;
+    y: i64;
+}
+
+$heap = mem.create(0);
+
+$p = @new(heap, Point { x: 3, y: 4 });
+print(p.x, p.y);
+
+$q = @new(heap, Point { x: 10, y: 20 });
+print(q.x, q.y);
+
+# 3 + 20 — heap still alive; deinit below must not crash the program.
+$before = p.x + q.y;
+heap.deinit();
+print(before);
+
+pub @func main() {}

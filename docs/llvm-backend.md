@@ -10,9 +10,13 @@ Experimental AOT path: `llts emit` → bitcode (optional `--emit-llvm` for textu
 - `print` → C `printf`
 - Struct values, `Struct::method` mangling, basic field load/store
 - Fixed arrays / index, range `for`, cond `for`, switch (OR patterns)
-- Intrinsics: `@as`, `@sizeOf`, `@new` (malloc), `@isError` (stub)
+- Intrinsics: `@as`, `@sizeOf`, `@new` (arena via `__arena_alloc_bytes`), `@isError` (stub)
+- Method receivers passed by reference (`self: *T`), module calls via static-path resolution
 - `defer` (errdefer only on explicit error path — limited)
 - Module verify on emit; drop unused clang link (LLVM 21 only)
+- Native arena runtime (`src/runtime/arena.zig` → `zig-out/lib/llts-runtime.o`):
+  `__arena_create` / `__arena_alloc` / `__arena_alloc_bytes` / `__arena_reset` /
+  `__arena_deinit`, linked by `scripts/emit-run.sh`
 
 ## VM-only / partial (not full parity)
 
@@ -22,9 +26,9 @@ Experimental AOT path: `llts emit` → bitcode (optional `--emit-llvm` for textu
 | First-class functions / closures | Function pointers partially; no captures |
 | String concat / rich formatting | `print` only; no `OP_STRING_ADD` equivalent |
 | Error unions / try | Soft stubs (`error` → tagged i64) |
-| Escape analysis / arenas | `@new` uses `malloc` |
+| Escape analysis / arenas | `@new` allocates in the passed-in arena (native runtime); type-arg forms (`@new(a, T)` / `@new(a, []T, n)`) still unlowered |
 | Pipes, shapes, pow `**` | Unsupported or undef |
 | `--release` LLVM opts | Flag accepted for analyze debug; no PassBuilder pipeline yet |
-| Object/exe emit | Use `scripts/emit-run.sh` (clang links `.bc`) |
+| Object/exe emit | Use `scripts/emit-run.sh` (clang links `.bc` + `llts-runtime.o`) |
 
-Smoke: `examples/llvm_arith.lls`, `examples/llvm_methods.lls` via `scripts/emit-run.sh`.
+Smoke: `examples/llvm_arith.lls`, `examples/llvm_methods.lls`, `examples/llvm_arena.lls` via `scripts/emit-run.sh`.

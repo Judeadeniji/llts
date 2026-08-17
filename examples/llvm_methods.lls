@@ -1,0 +1,15 @@
+@struct Point {
+    x: i64;
+    y: i64;
+
+    @func translate(self, dx: i64, dy: i64) {
+        self.x = self.x + dx;
+        self.y = self.y + dy;
+    }
+}
+
+$p = Point { x: 10, y: 20 };
+p.translate(5, 5);
+print(p.x, p.y);
+
+pub @func main() {}

@@ -1,0 +1,21 @@
+# Arena growth stress: many @new allocations through one arena, then deinit.
+# All memory lives in arena chunks (not raw mallocs), so deinit frees it.
+@const $mem = @import("std/mem");
+
+@struct Point {
+    x: i64;
+    y: i64;
+}
+
+$heap = mem.create(0);
+
+pub @func main() {
+    @for (0..100000) |i| {
+        $p = @new(heap, Point { x: i, y: i });
+        @if (i == 99999) {
+            print(p.x, p.y);
+        }
+    }
+    heap.deinit();
+    print(1);
+}

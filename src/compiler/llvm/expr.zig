@@ -9,6 +9,7 @@ const context = @import("context.zig");
 const types_mod = @import("types.zig");
 const layout = @import("../layout.zig");
 const from_ast = @import("../typecheck/from_ast.zig");
+const path = @import("../expr/path.zig");
 const target = llvm.target;
 const LlvmContext = context.LlvmContext;
 
@@ -18,6 +19,7 @@ pub const CodegenError = error{
     UndefinedVariable,
     InvalidLiteral,
     OutOfMemory,
+    NoSpaceLeft,
 };
 
 pub const ExprState = struct {
@@ -31,6 +33,14 @@ pub fn typeOf(s: *ExprState, node: *ast.Node) []const u8 {
     if (s.lc.state.type_of_results.get(node)) |t| {
         if (!std.mem.eql(u8, layout.unwrapTypeName(t), "unknown")) return t;
     }
+    // Function bodies are typechecked before top-level declarations register
+    // their globals, so a global referenced inside a function can be recorded
+    // as unknown. Use the registered global type instead of falling to i64.
+    if (node.* == .primary and node.primary.kind == .identifier) {
+        if (s.lc.state.global_types.get(node.primary.name)) |gt| {
+            if (!std.mem.startsWith(u8, gt, "module:")) return gt;
+        }
+    }
     return "i64";
 }
 
@@ -40,7 +50,6 @@ fn llvmTypeOf(s: *ExprState, node: *ast.Node) T.LLVMTypeRef {
 
 /// Lower an AST expression node to an LLVM value (SSA).
 pub fn lowerExpr(s: *ExprState, node: *ast.Node) CodegenError!T.LLVMValueRef {
-    std.debug.print("        Lowering Expr: {s}\n", .{@tagName(node.*)});
     return switch (node.*) {
         .literal => |lit| lowerLiteral(s, lit, typeOf(s, node)),
         .primary => |prim| lowerPrimary(s, prim, node),
@@ -140,13 +149,34 @@ fn ensurePrintf(s: *ExprState) CodegenError!T.LLVMValueRef {
     return f;
 }
 
-fn ensureMalloc(s: *ExprState) CodegenError!T.LLVMValueRef {
-    if (s.lc.functions.get("malloc")) |f| return f;
-    var params = [_]T.LLVMTypeRef{s.lc.i64Ty()};
-    const fn_ty = C.LLVMFunctionType(s.lc.ptrTy(), &params, 1, 0);
-    const f = C.LLVMAddFunction(s.lc.mod, "malloc", fn_ty);
-    try s.lc.functions.put("malloc", f);
+/// Native `__arena_alloc_bytes(handle, n) -> i8*` — the arena backing
+/// `@new(allocator, …)`, so `arena.deinit()` reclaims the memory.
+fn ensureArenaAllocBytes(s: *ExprState) CodegenError!T.LLVMValueRef {
+    if (s.lc.functions.get("__arena_alloc_bytes")) |f| return f;
+    var params = [_]T.LLVMTypeRef{ s.lc.i64Ty(), s.lc.i64Ty() };
+    const fn_ty = C.LLVMFunctionType(s.lc.ptrTy(), &params, 2, 0);
+    const f = C.LLVMAddFunction(s.lc.mod, "__arena_alloc_bytes", fn_ty);
+    try s.lc.functions.put("__arena_alloc_bytes", f);
     return f;
+}
+
+/// Extract the opaque `i64` arena handle from an `Arena { handle: int }`
+/// value. If the allocator already lowers to an integer, pass it through.
+fn extractArenaHandle(s: *ExprState, allocator_val: T.LLVMValueRef) T.LLVMValueRef {
+    if (C.LLVMGetTypeKind(C.LLVMTypeOf(allocator_val)) == .LLVMStructTypeKind) {
+        return C.LLVMBuildExtractValue(s.lc.builder, allocator_val, 0, "arena_handle");
+    }
+    return allocator_val;
+}
+
+/// String-ish type displays: `string`, `[]byte`, `[]u8`, fixed `[N]byte`, and
+/// `"…"` string-literal singletons (how the typechecker displays `.str_lit`).
+fn isStringTypeName(t: []const u8) bool {
+    return std.mem.eql(u8, t, "string") or
+        std.mem.eql(u8, t, "[]byte") or
+        std.mem.eql(u8, t, "[]u8") or
+        (std.mem.startsWith(u8, t, "[") and std.mem.endsWith(u8, t, "byte")) or
+        (t.len >= 2 and t[0] == '"' and t[t.len - 1] == '"');
 }
 
 fn lowerPrint(s: *ExprState, call: ast.Call) CodegenError!T.LLVMValueRef {
@@ -159,12 +189,16 @@ fn lowerPrint(s: *ExprState, call: ast.Call) CodegenError!T.LLVMValueRef {
             const fmt = C.LLVMBuildGlobalStringPtr(s.lc.builder, "%g ", "fmt");
             var args = [_]T.LLVMValueRef{ fmt, types_mod.castTo(s.lc, val, tname, s.lc.f64Ty()) };
             _ = C.LLVMBuildCall2(s.lc.builder, printf_ty, printf, &args, 2, "");
-        } else if (std.mem.eql(u8, layout.unwrapTypeName(tname), "string") or
-            std.mem.eql(u8, layout.unwrapTypeName(tname), "[]byte") or
-            std.mem.eql(u8, layout.unwrapTypeName(tname), "[]u8"))
-        {
+        } else if (isStringTypeName(layout.unwrapTypeName(tname))) {
+            // String values live in the bytecode VM as packed bytes; natively they
+            // are pointers. String variables are stored as i64 (ptrtoint), so
+            // restore the pointer before printf's `%s`.
             const fmt = C.LLVMBuildGlobalStringPtr(s.lc.builder, "%s ", "fmt");
-            var args = [_]T.LLVMValueRef{ fmt, val };
+            const sval = if (C.LLVMGetTypeKind(C.LLVMTypeOf(val)) == .LLVMIntegerTypeKind)
+                C.LLVMBuildIntToPtr(s.lc.builder, val, s.lc.ptrTy(), "str_ptr")
+            else
+                val;
+            var args = [_]T.LLVMValueRef{ fmt, sval };
             _ = C.LLVMBuildCall2(s.lc.builder, printf_ty, printf, &args, 2, "");
         } else {
             const fmt = C.LLVMBuildGlobalStringPtr(s.lc.builder, "%lld ", "fmt");
@@ -208,16 +242,20 @@ fn lowerIntrinsic(s: *ExprState, name: []const u8, call: ast.Call, node: *ast.No
         return C.LLVMBuildICmp(s.lc.builder, .LLVMIntNE, val, zero, "iserr");
     }
     if (std.mem.eql(u8, name, "@new")) {
-        // @new(allocator, value) — ignore allocator; malloc + store value.
+        // @new(allocator, value) — allocate in the caller's arena via the
+        // native `__arena_alloc_bytes` runtime (not raw malloc), so that
+        // `arena.deinit()` actually reclaims the memory (matches the VM).
         if (call.args.len < 2) return poison(s, node);
+        const allocator_val = try lowerExpr(s, call.args[0]);
+        const arena_handle = extractArenaHandle(s, allocator_val);
         const val = try lowerExpr(s, call.args[1]);
         const val_ty = C.LLVMTypeOf(val);
         const dl = target.LLVMGetModuleDataLayout(s.lc.mod);
         const sz = target.LLVMABISizeOfType(dl, val_ty);
-        const malloc = try ensureMalloc(s);
-        const malloc_ty = C.LLVMGlobalGetValueType(malloc);
-        var args = [_]T.LLVMValueRef{C.LLVMConstInt(s.lc.i64Ty(), sz, 0)};
-        const ptr = C.LLVMBuildCall2(s.lc.builder, malloc_ty, malloc, &args, 1, "new");
+        const alloc_bytes = try ensureArenaAllocBytes(s);
+        const ab_ty = C.LLVMGlobalGetValueType(alloc_bytes);
+        var args = [_]T.LLVMValueRef{ arena_handle, C.LLVMConstInt(s.lc.i64Ty(), sz, 0) };
+        const ptr = C.LLVMBuildCall2(s.lc.builder, ab_ty, alloc_bytes, &args, 2, "new");
         _ = C.LLVMBuildStore(s.lc.builder, val, ptr);
         return ptr;
     }
@@ -229,6 +267,15 @@ fn lowerIntrinsic(s: *ExprState, name: []const u8, call: ast.Call, node: *ast.No
 }
 
 fn lowerCall(s: *ExprState, call: ast.Call, node: *ast.Node) CodegenError!T.LLVMValueRef {
+    // Module/static path: `mem.create(...)` → `"std/mem.lls::create"`.
+    if (try path.tryResolveStaticPath(s.lc.state, call.callee)) |resolved| {
+        if (s.lc.functions.get(resolved)) |fn_val| {
+            // std.debug.printLn → printf-style (kept before the generic call).
+            if (std.mem.endsWith(u8, resolved, "printLn")) return try lowerPrint(s, call);
+            return try buildCall(s, fn_val, call);
+        }
+    }
+
     // Method call: obj.method(args) → Struct::method(obj, args…)
     if (call.callee.* == .member) {
         if (try lowerMethodCall(s, call, node)) |v| return v;
@@ -254,7 +301,6 @@ fn lowerCall(s: *ExprState, call: ast.Call, node: *ast.Node) CodegenError!T.LLVM
     }
 
     const fn_val = s.lc.functions.get(fn_name) orelse blk: {
-        std.debug.print("        lowerCall: creating stub for {s}\n", .{fn_name});
         // External or not-yet-declared: declare variadic i64 stub returning node type.
         const fn_name_z = s.lc.allocator.dupeZ(u8, fn_name) catch return error.OutOfMemory;
         defer s.lc.allocator.free(fn_name_z);
@@ -263,10 +309,14 @@ fn lowerCall(s: *ExprState, call: ast.Call, node: *ast.Node) CodegenError!T.LLVM
         const decl = C.LLVMAddFunction(s.lc.mod, fn_name_z, fn_ty);
         const duped_name = try s.lc.allocator.dupe(u8, fn_name);
         try s.lc.functions.put(duped_name, decl);
-        std.debug.print("        lowerCall: created stub for {s}\n", .{fn_name});
         break :blk decl;
     };
 
+    return try buildCall(s, fn_val, call);
+}
+
+/// Lower `call.args` against `fn_val`'s declared signature and emit the call.
+fn buildCall(s: *ExprState, fn_val: T.LLVMValueRef, call: ast.Call) CodegenError!T.LLVMValueRef {
     const argv = s.lc.allocator.alloc(T.LLVMValueRef, call.args.len) catch return error.OutOfMemory;
     defer s.lc.allocator.free(argv);
     const fn_ty = C.LLVMGlobalGetValueType(fn_val);
@@ -285,9 +335,7 @@ fn lowerCall(s: *ExprState, call: ast.Call, node: *ast.Node) CodegenError!T.LLVM
 
     const ret_ty = C.LLVMGetReturnType(fn_ty);
     const name_z: [*:0]const u8 = if (C.LLVMGetTypeKind(ret_ty) == .LLVMVoidTypeKind) "" else "call";
-    const res = C.LLVMBuildCall2(s.lc.builder, fn_ty, fn_val, argv.ptr, @intCast(argv.len), name_z);
-    std.debug.print("        lowerCall: returned from LLVMBuildCall2\n", .{});
-    return res;
+    return C.LLVMBuildCall2(s.lc.builder, fn_ty, fn_val, argv.ptr, @intCast(argv.len), name_z);
 }
 
 fn lowerMethodCall(s: *ExprState, call: ast.Call, node: *ast.Node) CodegenError!?T.LLVMValueRef {
@@ -313,10 +361,12 @@ fn lowerMethodCall(s: *ExprState, call: ast.Call, node: *ast.Node) CodegenError!
         const param_tys = s.lc.allocator.alloc(T.LLVMTypeRef, param_count) catch return error.OutOfMemory;
         defer s.lc.allocator.free(param_tys);
         C.LLVMGetParamTypes(fn_ty, param_tys.ptr);
-        for (argv, 0..) |*a, i| {
-            if (i < param_count) {
-                const arg_type_name = if (i == 0) typeOf(s, mem.object) else typeOf(s, call.args[i - 1]);
-                a.* = types_mod.castTo(s.lc, a.*, arg_type_name, param_tys[i]);
+        // Receiver (arg 0): coerce to the declared `self` type.
+        argv[0] = coerceReceiver(s, mem.object, obj_val, param_tys[0]);
+        for (argv[1..], 0..) |*a, i| {
+            if (i + 1 < param_count) {
+                const arg_type_name = typeOf(s, call.args[i]);
+                a.* = types_mod.castTo(s.lc, a.*, arg_type_name, param_tys[i + 1]);
             }
         }
     }
@@ -325,6 +375,43 @@ fn lowerMethodCall(s: *ExprState, call: ast.Call, node: *ast.Node) CodegenError!
     const res = C.LLVMBuildCall2(s.lc.builder, fn_ty, fn_val, argv.ptr, @intCast(argv.len), name_z);
     _ = node;
     return res;
+}
+
+/// Coerce a method receiver to the declared `self` parameter type.
+/// An unannotated `self` is `*Struct` (by-reference): the caller passes the
+/// object's address (its global slot / local alloca when named, else a
+/// materialized copy). Annotated `self: T` passes the struct value. This also
+/// bridges the legacy pointer-as-int receiver.
+fn coerceReceiver(s: *ExprState, object: *ast.Node, obj_val: T.LLVMValueRef, self_ty: T.LLVMTypeRef) T.LLVMValueRef {
+    const obj_ty = C.LLVMTypeOf(obj_val);
+    if (obj_ty == self_ty) return obj_val;
+    const pk = C.LLVMGetTypeKind(self_ty);
+    const ok = C.LLVMGetTypeKind(obj_ty);
+    if (pk == .LLVMPointerTypeKind) {
+        // By-reference receiver: pass the object's address.
+        if (ok == .LLVMStructTypeKind) {
+            if (object.* == .primary) {
+                if (s.locals.get(object.primary.name)) |slot| return slot;
+                if (s.lc.globals.get(object.primary.name)) |gslot| return gslot;
+            }
+            const temp = C.LLVMBuildAlloca(s.lc.builder, obj_ty, "self_copy");
+            _ = C.LLVMBuildStore(s.lc.builder, obj_val, temp);
+            return temp;
+        }
+        if (ok == .LLVMIntegerTypeKind) {
+            // Pointer-as-int receiver (e.g. `factory()` returning ptrtoint).
+            return C.LLVMBuildIntToPtr(s.lc.builder, obj_val, s.lc.ptrTy(), "self_ptr");
+        }
+        return obj_val; // already a pointer
+    }
+    if (ok == .LLVMStructTypeKind and pk == .LLVMIntegerTypeKind) {
+        // `Arena { handle: i64 }`-style receiver → pass the handle.
+        return C.LLVMBuildExtractValue(s.lc.builder, obj_val, 0, "self_handle");
+    }
+    if (ok == .LLVMPointerTypeKind and pk == .LLVMStructTypeKind) {
+        return C.LLVMBuildLoad2(s.lc.builder, self_ty, obj_val, "self_val");
+    }
+    return obj_val;
 }
 
 fn resolveCalleeName(node: *ast.Node) ?[]const u8 {
@@ -351,8 +438,9 @@ fn lowerMember(s: *ExprState, mem_node: ast.Member, node: *ast.Node) CodegenErro
 
     if (mem_node.property.* == .primary and mem_node.property.primary.kind == .identifier) {
         const field_name = mem_node.property.primary.name;
-        if (types_mod.getStructFieldIndex(s.lc, obj_type_name, field_name)) |idx| {
-            const obj_ty = types_mod.resolveOrSlot(s.lc, obj_type_name);
+        const obj_struct_name = types_mod.unwrapStructName(obj_type_name);
+        if (types_mod.getStructFieldIndex(s.lc, obj_struct_name, field_name)) |idx| {
+            const obj_ty = types_mod.resolveOrSlot(s.lc, obj_struct_name);
             // Pointer receiver: GEP directly
             if (C.LLVMGetTypeKind(C.LLVMTypeOf(obj_val)) == .LLVMPointerTypeKind) {
                 const field_ptr = C.LLVMBuildStructGEP2(s.lc.builder, obj_ty, obj_val, idx, "field_ptr");
@@ -423,21 +511,44 @@ fn lowerAssignment(s: *ExprState, asg: ast.Assignment) CodegenError!T.LLVMValueR
         const mem = asg.left.member;
         const obj_type_name = layout.unwrapTypeName(typeOf(s, mem.object));
         if (mem.property.* == .primary) {
-            if (types_mod.getStructFieldIndex(s.lc, obj_type_name, mem.property.primary.name)) |idx| {
-                const obj_ty = types_mod.resolveOrSlot(s.lc, obj_type_name);
-                if (mem.object.* == .primary) {
-                    if (s.locals.get(mem.object.primary.name)) |slot| {
-                        const field_ptr = C.LLVMBuildStructGEP2(s.lc.builder, obj_ty, slot, idx, "fset");
-                        const fty = C.LLVMGetElementType(C.LLVMTypeOf(field_ptr));
-                        _ = fty;
-                        const sd = s.lc.state.structs.get(obj_type_name).?;
-                        const ft_name = sd.types.get(mem.property.primary.name) orelse "i64";
-                        const ft = types_mod.resolveOrSlot(s.lc, ft_name);
-                        const v = val orelse C.LLVMConstNull(ft);
-                        const r_ty_name = if (is_null) "null" else typeOf(s, asg.right);
-                        _ = C.LLVMBuildStore(s.lc.builder, types_mod.castTo(s.lc, v, r_ty_name, ft), field_ptr);
+            const obj_struct_name = types_mod.unwrapStructName(obj_type_name);
+            if (types_mod.getStructFieldIndex(s.lc, obj_struct_name, mem.property.primary.name)) |idx| {
+                const obj_ty = types_mod.resolveOrSlot(s.lc, obj_struct_name);
+                const sd = s.lc.state.structs.get(obj_struct_name).?;
+                const ft_name = sd.types.get(mem.property.primary.name) orelse "i64";
+                const ft = types_mod.resolveOrSlot(s.lc, ft_name);
+                const v = val orelse C.LLVMConstNull(ft);
+                const r_ty_name = if (is_null) "null" else typeOf(s, asg.right);
+                const field_ptr = blk: {
+                    if (mem.object.* == .primary) {
+                        if (s.locals.get(mem.object.primary.name)) |slot| {
+                            const slot_ty = C.LLVMGetAllocatedType(slot);
+                            const base = if (C.LLVMGetTypeKind(slot_ty) == .LLVMPointerTypeKind)
+                                C.LLVMBuildLoad2(s.lc.builder, slot_ty, slot, "self_p")
+                            else
+                                slot;
+                            break :blk C.LLVMBuildStructGEP2(s.lc.builder, obj_ty, base, idx, "fset");
+                        }
+                        if (s.lc.globals.get(mem.object.primary.name)) |slot| {
+                            const gty = C.LLVMGlobalGetValueType(slot);
+                            const base = if (C.LLVMGetTypeKind(gty) == .LLVMPointerTypeKind)
+                                C.LLVMBuildLoad2(s.lc.builder, gty, slot, "self_p")
+                            else
+                                slot;
+                            break :blk C.LLVMBuildStructGEP2(s.lc.builder, obj_ty, base, idx, "fset");
+                        }
                     }
-                }
+                    const obj = try lowerExpr(s, mem.object);
+                    const base = if (C.LLVMGetTypeKind(C.LLVMTypeOf(obj)) == .LLVMPointerTypeKind)
+                        obj
+                    else blk2: {
+                        const tmp = C.LLVMBuildAlloca(s.lc.builder, obj_ty, "fset_tmp");
+                        _ = C.LLVMBuildStore(s.lc.builder, obj, tmp);
+                        break :blk2 tmp;
+                    };
+                    break :blk C.LLVMBuildStructGEP2(s.lc.builder, obj_ty, base, idx, "fset");
+                };
+                _ = C.LLVMBuildStore(s.lc.builder, types_mod.castTo(s.lc, v, r_ty_name, ft), field_ptr);
             }
         }
     } else if (asg.left.* == .index and !asg.left.index.is_slice) {

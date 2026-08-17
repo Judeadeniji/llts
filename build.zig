@@ -45,6 +45,21 @@ pub fn build(b: *std.Build) void {
 
     b.installArtifact(exe);
 
+    // Native arena runtime for the LLVM backend (`__arena_*` externs that
+    // `std/mem.lls` calls). Compiled to a relocatable object that
+    // `scripts/emit-run.sh` links against the emitted bitcode.
+    const runtime_obj = b.addObject(.{
+        .name = "llts-runtime",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/runtime/arena.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        }),
+    });
+    const install_runtime = b.addInstallFileWithDir(runtime_obj.getEmittedBin(), .lib, "llts-runtime.o");
+    b.getInstallStep().dependOn(&install_runtime.step);
+
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
     if (b.args) |args| {

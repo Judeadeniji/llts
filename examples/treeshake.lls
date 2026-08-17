@@ -1,0 +1,9 @@
+@const $std = @import("std/index");
+
+@func unused() {
+    std.debug.printLn("This should be tree shaken!");
+}
+
+pub @func main() {
+    std.debug.printLn("Hello world!");
+}

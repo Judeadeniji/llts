@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# Emit LLVM bitcode and link a native executable with clang.
+# Usage: scripts/emit-run.sh examples/llvm_arith.lls
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+SRC="${1:?source .lls file}"
+OUT_DIR="${ROOT}/.zig-cache/llvm-emit"
+mkdir -p "$OUT_DIR"
+BASE="$(basename "$SRC" .lls)"
+BC="$OUT_DIR/$BASE.bc"
+LL="$OUT_DIR/$BASE.ll"
+EXE="$OUT_DIR/$BASE"
+
+cd "$ROOT"
+zig build
+./zig-out/bin/llts emit "$SRC" -o "$BC" --emit-llvm "$LL"
+
+# Prefer clang-21 when present (matches llvm-zig LLVM 21 bitcode).
+CLANG=""
+for c in clang-21 clang; do
+  if command -v "$c" >/dev/null 2>&1; then CLANG="$c"; break; fi
+done
+if [[ -z "$CLANG" ]]; then
+  echo "error: need clang or clang-21 to link bitcode" >&2
+  exit 1
+fi
+
+# Native arena runtime (`__arena_create` / `__arena_alloc_bytes` …).
+RT="${ROOT}/zig-out/lib/llts-runtime.o"
+if [[ ! -f "$RT" ]]; then
+  echo "error: missing runtime object $RT — run 'zig build' first" >&2
+  exit 1
+fi
+
+"$CLANG" "$BC" "$RT" -o "$EXE" -lm
+echo "running $EXE"
+"$EXE"

@@ -1,0 +1,13 @@
+# Annotated-width arithmetic + print — LLVM emit smoke target.
+$a: i32 = 16;
+$b: i32 = a + 2;
+print(b);
+
+@func add(x: i32, y: i32): i32 {
+    return x + y;
+}
+
+$c: i32 = add(a, b);
+print(c);
+
+pub @func main() {}
