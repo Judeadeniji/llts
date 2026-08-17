@@ -95,10 +95,10 @@ pub fn execute(vm: *VMState, start_ip: usize) RuntimeError!void {
                 const back = readShort(vm, &ip);
                 control.forLoop(vm, &ip, i_slot, end_slot, back) catch return error.TypeError;
             },
-            .OP_ADD_I64 => try arith.binArithI64(vm, .add),
-            .OP_SUB_I64 => try arith.binArithI64(vm, .sub),
-            .OP_MUL_I64 => try arith.binArithI64(vm, .mul),
-            .OP_LT_I64 => try arith.ltI64(vm),
+            .OP_ADD_TYPED => try arith.binArithTyped(vm, .add, readByte(vm, &ip)),
+            .OP_SUB_TYPED => try arith.binArithTyped(vm, .sub, readByte(vm, &ip)),
+            .OP_MUL_TYPED => try arith.binArithTyped(vm, .mul, readByte(vm, &ip)),
+            .OP_LT_TYPED => try arith.ltTyped(vm, readByte(vm, &ip)),
             .OP_RETURN => {
                 if (try call.doReturn(vm, &ip)) return;
             },

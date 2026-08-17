@@ -2,7 +2,7 @@ const std = @import("std");
 const state_mod = @import("../state.zig");
 const stack = @import("../stack.zig");
 const runtime = @import("../../errors/runtime.zig");
-
+const widths = @import("../../compiler/widths.zig");
 const VMState = state_mod.VMState;
 const Value = state_mod.Value;
 const OpCode = @import("../../bytecode/opcode.zig").OpCode;
@@ -16,11 +16,11 @@ fn fail(vm: *VMState, msg: []const u8) ArithError {
 const ArithOp = enum { add, sub, mul, div, mod, pow };
 
 fn asInt(v: Value) ?i64 {
-    return @import("../../compiler/widths.zig").valueAsI64(v);
+    return widths.valueAsI64(v);
 }
 
 fn asFloat(v: Value) ?f64 {
-    return @import("../../compiler/widths.zig").valueAsF64(v);
+    return widths.valueAsF64(v);
 }
 
 pub fn binArith(vm: *VMState, op: OpCode) ArithError!void {
@@ -84,39 +84,29 @@ pub fn binArith(vm: *VMState, op: OpCode) ArithError!void {
     }
 }
 
-pub const I64Op = enum { add, sub, mul };
+pub const TypedOp = enum { add, sub, mul };
 
-pub fn binArithI64(vm: *VMState, kind: I64Op) ArithError!void {
+pub fn binArithTyped(vm: *VMState, kind: TypedOp, width_byte: u8) ArithError!void {
+    const width: widths.Width = @enumFromInt(width_byte);
     const b = stack.pop(vm);
     const a = stack.pop(vm);
-    const ai = switch (a) {
-        .i64 => |n| n,
-        else => return fail(vm, "Operands must be ints"),
-    };
-    const bi = switch (b) {
-        .i64 => |n| n,
-        else => return fail(vm, "Operands must be ints"),
-    };
+    const bi = widths.valueAsI64(b) orelse return fail(vm, "Operands must be ints");
+    const ai = widths.valueAsI64(a) orelse return fail(vm, "Operands must be ints");
     const result: i64 = switch (kind) {
         .add => ai +% bi,
         .sub => ai -% bi,
         .mul => ai *% bi,
     };
-    try stack.push(vm, .{ .i64 = result });
+    try stack.push(vm, widths.wrapToWidth(result, width));
 }
 
-pub fn ltI64(vm: *VMState) ArithError!void {
+pub fn ltTyped(vm: *VMState, width_byte: u8) ArithError!void {
+    _ = width_byte; // The width helps with semantic intent but not the raw comparison since values are extended
     const b = stack.pop(vm);
     const a = stack.pop(vm);
-    const ai = switch (a) {
-        .i64 => |n| n,
-        else => return fail(vm, "Operands must be ints"),
-    };
-    const bi = switch (b) {
-        .i64 => |n| n,
-        else => return fail(vm, "Operands must be ints"),
-    };
-    try stack.push(vm, Value.fromBool(ai < bi ));
+    const bi = widths.valueAsI64(b) orelse return fail(vm, "Operands must be ints");
+    const ai = widths.valueAsI64(a) orelse return fail(vm, "Operands must be ints");
+    try stack.push(vm, .{ .u1 = if (ai < bi) 1 else 0 });
 }
 
 fn powi(base: i64, exp: i64) i64 {
@@ -144,7 +134,7 @@ pub fn negate(vm: *VMState) ArithError!void {
 
 pub fn not_(vm: *VMState) ArithError!void {
     const a = stack.pop(vm);
-    try stack.push(vm, Value.fromBool(!a.isTruthy() ));
+    try stack.push(vm, Value.fromBool(!a.isTruthy()));
 }
 
 const BitOp = enum { band, bor, bxor, shl, shr };

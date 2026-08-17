@@ -19,6 +19,9 @@ pub const TypeTag = enum(u8) {
     u16 = 15,
     u32 = 16,
     u64 = 17,
+    isize = 18,
+    usize = 19,
+    fsize = 20,
 };
 
 pub const Type = union(enum) {
@@ -33,6 +36,9 @@ pub const Type = union(enum) {
     u64,
     f32,
     f64,
+    isize,
+    usize,
+    fsize,
     null,
     error_,
     unknown,
@@ -85,6 +91,9 @@ pub const TU64: Type = .{ .u64 = {} };
 pub const TByte: Type = TU8;
 pub const TF32: Type = .{ .f32 = {} };
 pub const TF64: Type = .{ .f64 = {} };
+pub const TISize: Type = .{ .isize = {} };
+pub const TUSize: Type = .{ .usize = {} };
+pub const TFSize: Type = .{ .fsize = {} };
 pub const TNull: Type = .{ .null = {} };
 pub const TError: Type = .{ .error_ = {} };
 pub const TNever: Type = .{ .never = {} };
@@ -189,6 +198,9 @@ pub fn typeFromWidth(w: widths.Width) Type {
         .u64 => TU64,
         .f32 => TF32,
         .f64 => TF64,
+        .isize => TISize,
+        .usize => TUSize,
+        .fsize => TFSize,
     };
 }
 
@@ -208,6 +220,9 @@ pub fn widthOf(t: Type) ?widths.Width {
         .u64 => .u64,
         .f32 => .f32,
         .f64 => .f64,
+        .isize => .isize,
+        .usize => .usize,
+        .fsize => .fsize,
         else => null,
     };
 }
@@ -242,7 +257,7 @@ fn displayWidth(t: Type) []const u8 {
 
 pub fn displayTypeAlloc(allocator: std.mem.Allocator, t: Type) ![]const u8 {
     return switch (t) {
-        .u1, .i8, .i16, .i32, .i64, .u8, .u16, .u32, .u64, .f32, .f64 => try allocator.dupe(u8, displayWidth(t)),
+        .u1, .i8, .i16, .i32, .i64, .u8, .u16, .u32, .u64, .f32, .f64, .isize, .usize, .fsize => try allocator.dupe(u8, displayWidth(t)),
         .null => try allocator.dupe(u8, "null"),
         .error_ => try allocator.dupe(u8, "error"),
         .unknown => try allocator.dupe(u8, "unknown"),
@@ -397,7 +412,7 @@ pub fn displayTypeAlloc(allocator: std.mem.Allocator, t: Type) ![]const u8 {
 
 pub fn displayTypeSimple(t: Type) ?[]const u8 {
     return switch (t) {
-        .u1, .i8, .i16, .i32, .i64, .u8, .u16, .u32, .u64, .f32, .f64 => displayWidth(t),
+        .u1, .i8, .i16, .i32, .i64, .u8, .u16, .u32, .u64, .f32, .f64, .isize, .usize, .fsize => displayWidth(t),
         .null => "null",
         .error_ => "error",
         .unknown => "unknown",
@@ -467,7 +482,8 @@ pub fn typeEquals(a: Type, b: Type) bool {
         },
         .error_set => |n| b == .error_set and std.mem.eql(u8, n, b.error_set),
         .error_lit => |e| b == .error_lit and std.mem.eql(u8, e.set_name, b.error_lit.set_name) and std.mem.eql(u8, e.variant, b.error_lit.variant),
-        .defined => |d| b == .defined and std.mem.eql(u8, d.name, b.defined.name),
+        .defined => |d| (b == .defined and std.mem.eql(u8, d.name, b.defined.name)) or typeEquals(d.underlying.*, b),
+        .u1, .i8, .i16, .i32, .i64, .u8, .u16, .u32, .u64, .f32, .f64, .isize, .usize, .fsize, .null, .error_, .unknown, .never => true,
         .union_ => |arms| blk: {
             if (b != .union_) break :blk false;
             if (arms.len != b.union_.len) break :blk false;
@@ -483,7 +499,6 @@ pub fn typeEquals(a: Type, b: Type) bool {
             }
             break :blk true;
         },
-        .u1, .i8, .i16, .i32, .i64, .u8, .u16, .u32, .u64, .f32, .f64, .null, .error_, .unknown, .never => std.meta.activeTag(a) == std.meta.activeTag(b),
     };
 }
 
@@ -795,6 +810,9 @@ pub fn typeTag(t: Type) ?TypeTag {
         .f32 => .f32,
         .f64 => .f64,
         .u1 => .u1,
+        .isize => .isize,
+        .usize => .usize,
+        .fsize => .fsize,
         .null => .null,
         .error_ => .error_,
         .error_set, .error_lit => .error_,

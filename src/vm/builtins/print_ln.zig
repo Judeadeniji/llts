@@ -2,6 +2,8 @@ const std = @import("std");
 const state_mod = @import("../state.zig");
 const value = @import("../../bytecode/value.zig");
 const util = @import("util.zig");
+const widths = @import("../../compiler/widths.zig");
+const out_mod = @import("../../io/out.zig");
 
 const VMState = state_mod.VMState;
 const Value = value.Value;
@@ -10,9 +12,10 @@ const NativeFunction = value.NativeFunction;
 var print_ln_native: NativeFunction = undefined;
 
 fn formatInt(buf: *[32]u8, v: Value) []const u8 {
+    if (widths.valueAsI64(v)) |n| {
+        return std.fmt.bufPrint(buf, "{d}", .{n}) catch "?";
+    }
     return switch (v) {
-        .i64 => |n| std.fmt.bufPrint(buf, "{d}", .{n}) catch "?",
-        .u8 => |n| std.fmt.bufPrint(buf, "{d}", .{n}) catch "?",
         .u1 => |b| if (b != 0) "true" else "false",
         .null => "null",
         .ptr => |p| std.fmt.bufPrint(buf, "{d}", .{p}) catch "?",
@@ -42,7 +45,7 @@ fn printLnFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     while (i < args.len) : (i += 1) {
         const idx_s = std.mem.indexOf(u8, msg, "{s}");
         const idx_i = std.mem.indexOf(u8, msg, "{i}");
-        
+
         var replace_s = false;
         if (idx_s) |s_pos| {
             if (idx_i) |i_pos| {
@@ -51,11 +54,11 @@ fn printLnFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
                 replace_s = true;
             }
         }
-        
+
         if (replace_s) {
             const s = try util.valueToOwnedString(vm, args[i]);
             defer vm.allocator.free(s);
-            
+
             const replaced = try replaceFirst(vm.allocator, msg, "{s}", s);
             vm.allocator.free(msg);
             msg = replaced;
@@ -72,7 +75,7 @@ fn printLnFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     defer out.deinit(vm.allocator);
     try out.appendSlice(vm.allocator, msg);
     try out.append(vm.allocator, '\n');
-    @import("../../io/out.zig").writeStdout(out.items);
+    out_mod.writeStdout(out.items);
     return .null;
 }
 
