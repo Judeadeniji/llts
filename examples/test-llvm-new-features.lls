@@ -1,0 +1,31 @@
+# Smoke-test all new LLVM features.
+
+# 1. isize / usize types
+$sz: isize = 42;
+$usz: usize = 10;
+
+# 2. @if with payload capture
+$maybe: i64 = 7;
+@if (maybe) |val| {
+    print(val);
+}
+
+# 3. @for over a string (null-terminated)
+$msg = "hi";
+@for (msg) |ch| {
+    print(ch);
+}
+
+# 4. @for over fixed array with index capture
+$arr: [3]i64 = [1, 2, 3];
+@for (arr) |elem, i| {
+    print(elem);
+}
+
+# 5. ** operator (float)
+$base: f64 = 2.0;
+$exp: f64 = 8.0;
+$result: f64 = base ** exp;
+print(result);
+
+pub @func main() {}
