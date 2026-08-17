@@ -12,8 +12,15 @@ const CompilerState = state_mod.CompilerState;
 pub fn compileIf(state: *CompilerState, if_expr: *const ast.If) !void {
     try expr.compileExpression(state, if_expr.condition);
     const then_jump = try emit.emitJump(state, .OP_JUMP_IF_FALSE);
-    try emit.emitOp(state, .OP_POP);
+    
     try scope.beginScope(state);
+    if (if_expr.pipe_value) |pv| {
+        if (pv.* != .primary) return fail(state, "if capture must be an identifier");
+        _ = try scope.addLocal(state, pv.primary.name, true);
+    } else {
+        try emit.emitOp(state, .OP_POP);
+    }
+    
     const body = switch (if_expr.body.*) {
         .block => |*b| b,
         else => return fail(state, "if body must be block"),
@@ -52,9 +59,9 @@ pub fn compileIfValue(state: *CompilerState, if_expr: *const ast.If) !void {
 fn compileIfValueBody(state: *CompilerState, if_expr: *const ast.If) !void {
     try expr.compileExpression(state, if_expr.condition);
     const then_jump = try emit.emitJump(state, .OP_JUMP_IF_FALSE);
-    try emit.emitOp(state, .OP_POP);
 
-    try compileValueArm(state, if_expr.body, "then");
+    // Provide the pipe value to the value arm so it can register the local before checking the body
+    try compileValueArmCapture(state, if_expr.body, "then", if_expr.pipe_value, true);
 
     const end_jump = try emit.emitJump(state, .OP_JUMP);
     emit.patchJump(state, then_jump);
@@ -64,7 +71,7 @@ fn compileIfValueBody(state: *CompilerState, if_expr: *const ast.If) !void {
     if (else_body.* == .if_expr) {
         try compileIfValueBody(state, &else_body.if_expr);
     } else {
-        try compileValueArm(state, else_body, "else");
+        try compileValueArmCapture(state, else_body, "else", null, false);
     }
     emit.patchJump(state, end_jump);
 }
@@ -503,19 +510,33 @@ fn compileStmtArm(state: *CompilerState, body: *ast.Node) !void {
     try scope.endScope(state);
 }
 
-fn compileValueArm(state: *CompilerState, body: *ast.Node, arm_name: []const u8) !void {
+fn compileValueArmCapture(state: *CompilerState, body: *ast.Node, arm_name: []const u8, pipe_value: ?*ast.Node, pop_if_no_capture: bool) !void {
     if (state.exprs.items.len == 0) return fail(state, "internal: value arm without expr frame");
     const jumps_before = state.exprs.items[state.exprs.items.len - 1].break_jumps.items.len;
     try scope.beginScope(state);
+
+    if (pipe_value) |pv| {
+        if (pv.* != .primary) return fail(state, "if capture must be an identifier");
+        _ = try scope.addLocal(state, pv.primary.name, true);
+    } else if (pop_if_no_capture) {
+        // We pop the condition if there is no capture.
+        try emit.emitOp(state, .OP_POP);
+    }
+
     switch (body.*) {
         .block => |b| for (b.statements) |s| try stmt.compileStatement(state, s),
         else => try stmt.compileStatement(state, body),
     }
     try scope.endScope(state);
     if (state.exprs.items[state.exprs.items.len - 1].break_jumps.items.len == jumps_before) {
-                return @import("../../errors/compile.zig").compileFailFmt(state, "{s} arm of value expression must `break` a value", .{arm_name});
+        return @import("../../errors/compile.zig").compileFailFmt(state, "{s} arm of value expression must `break` a value", .{arm_name});
     }
 }
+
+fn compileValueArm(state: *CompilerState, body: *ast.Node, arm_name: []const u8) !void {
+    return compileValueArmCapture(state, body, arm_name, null, false);
+}
+
 
 pub fn compileFor(state: *CompilerState, for_expr: *const ast.For) !void {
     try for_loop.compileFor(state, for_expr);
