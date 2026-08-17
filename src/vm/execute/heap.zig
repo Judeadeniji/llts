@@ -39,6 +39,25 @@ pub fn getIndex(vm: *VMState) HeapError!void {
             try stack.push(vm, vm.arrayElemConst(a, @intCast(i)));
             return;
         },
+        .slice => |s| {
+            if (i < 0 or i >= s.len) {
+                var buf: [96]u8 = undefined;
+                const msg = std.fmt.bufPrint(&buf, "Slice index out of bounds: {d} (len {d}); use len(slice)", .{ i, s.len }) catch "Slice index out of bounds";
+                return fail(vm, msg);
+            }
+            try stack.push(vm, vm.slot(@as(i32, @intCast(s.offset)) + @as(i32, @intCast(i))).*);
+            return;
+        },
+        .name => |name_idx| {
+            const str = vm.chunk.stringAt(name_idx);
+            if (i < 0 or i >= str.len) {
+                var buf: [96]u8 = undefined;
+                const msg = std.fmt.bufPrint(&buf, "String index out of bounds: {d} (len {d}); use len(str)", .{ i, str.len }) catch "String index out of bounds";
+                return fail(vm, msg);
+            }
+            try stack.push(vm, .{ .u8 = str[@intCast(i)] });
+            return;
+        },
         .ptr => |p| {
             try stack.push(vm, vm.slot(p + @as(i32, @intCast(i))).*);
             return;
