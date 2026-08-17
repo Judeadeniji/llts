@@ -1097,13 +1097,21 @@ fn inferExprInner(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, 
             defer env.popScope();
             if (f.captures.len > 0) {
                 if (f.expr.* == .binary and std.mem.eql(u8, f.expr.binary.operator, "..")) {
+                    if (f.captures.len > 1) return compiler_errors.compileFailFmt(state, "Range loop only supports 1 capture", .{});
                     for (f.captures) |cap| try env.define(cap.name, ir.TInt);
                 } else if (ir.isByteSlice(expr_type) or expr_type == .array or ir.isString(expr_type)) {
+                    if (f.captures.len > 2) return compiler_errors.compileFailFmt(state, "Loop supports at most 2 captures", .{});
                     const elem_type = if (expr_type == .array) expr_type.array.elem.* else ir.TU8;
                     try env.define(f.captures[0].name, elem_type);
                     if (f.captures.len > 1) {
                         try env.define(f.captures[1].name, ir.TInt);
                     }
+                } else if (ir.involvesUnknown(expr_type)) {
+                    // It might be a loop over an unknown optional payload or unknown array.
+                    // We assume it's valid and bind `unknown`.
+                    if (f.captures.len > 2) return compiler_errors.compileFailFmt(state, "Loop supports at most 2 captures", .{});
+                    if (f.captures.len > 0) try env.define(f.captures[0].name, ir.TUnknown);
+                    if (f.captures.len > 1) try env.define(f.captures[1].name, ir.TUnknown);
                 } else if (ir.optionalPayload(expr_type)) |payload| {
                     if (f.captures.len > 1) return compiler_errors.compileFailFmt(state, "Optional while-loop only supports 1 capture", .{});
                     try state.for_is_cond.put(&node.for_expr, {});
@@ -1138,6 +1146,15 @@ fn walkBreakValues(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc,
                     if (!ir.isSubtype(t, cur) and !ir.isSubtype(cur, t)) {
                         // Gradual: widen to unknown on conflict unless either side is unknown.
                         if (!ir.involvesUnknown(t) and !ir.involvesUnknown(cur) and !ir.typeEquals(t, cur)) {
+                            if ((t == .null or cur == .null) and t != .union_ and cur != .union_) {
+                                const u_arms = try ta.allocator.alloc(ir.Type, 2);
+                                u_arms[0] = cur;
+                                u_arms[1] = t;
+                                acc.* = .{ .union_ = u_arms };
+                            } else {
+                                acc.* = ir.TUnknown;
+                            }
+                        } else {
                             acc.* = ir.TUnknown;
                         }
                     } else if (ir.isSubtype(cur, t)) {
