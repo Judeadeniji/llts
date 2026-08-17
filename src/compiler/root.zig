@@ -4,7 +4,7 @@ const chunk_mod = @import("../bytecode/chunk.zig");
 const emit = @import("emit.zig");
 const modules = @import("modules.zig");
 const scope = @import("scope.zig");
-const state_mod = @import("state.zig");
+pub const state_mod = @import("state.zig");
 const stmt = @import("stmt/root.zig");
 const typecheck = @import("typecheck/root.zig");
 const path_mod = @import("expr/path.zig");
@@ -22,11 +22,11 @@ pub const CompileError = error{
     TooManyConstants,
 };
 
-pub fn compile(
+pub fn analyze(
     allocator: std.mem.Allocator,
     doc: *ast.Document,
     opts: CompileOptions,
-) !chunk_mod.Chunk {
+) !state_mod.CompilerState {
     var state = try state_mod.create(allocator);
     errdefer {
         state.chunk.deinit();
@@ -50,11 +50,15 @@ pub fn compile(
 
     try typecheck.typecheck(&state, doc);
     try requireEntryMain(&state, doc);
+    
+    return state;
+}
 
-    var reach = try reachability.compute(&state, doc);
+pub fn emitBytecode(state: *state_mod.CompilerState, doc: *ast.Document) !chunk_mod.Chunk {
+    var reach = try reachability.compute(state, doc);
     defer reach.deinit();
 
-    const main_jump = try emit.emitJump(&state, .OP_JUMP);
+    const main_jump = try emit.emitJump(state, .OP_JUMP);
 
     var fit = state.functions.iterator();
     while (fit.next()) |e| {
@@ -81,32 +85,32 @@ pub fn compile(
             state.chunk.code.items[patch + 1] = @intCast(addr & 0xff);
         }
 
-        try emit.emitSource(&state, def.source_index);
-        try stmt.compileFunction(&state, &def.node.function_decl, def.node);
+        try emit.emitSource(state, def.source_index);
+        try stmt.compileFunction(state, &def.node.function_decl, def.node);
     }
 
-    emit.patchJump(&state, main_jump);
+    emit.patchJump(state, main_jump);
 
     for (doc.statements) |s| {
         if (s.* != .function_decl and s.* != .struct_decl and s.* != .enum_decl and s.* != .error_decl and s.* != .type_decl) {
             if (reach.shouldEmitTopLevel(doc, s)) {
-                try stmt.compileStatement(&state, s);
+                try stmt.compileStatement(state, s);
             }
         }
     }
 
     // Language entry: pub zero-arg `main` runs after top-level statements.
     const main_fn = state.chunk.functions.get("main").?;
-    try emit.emitCallStatic(&state, @intCast(main_fn.address), 0);
-    try emit.emitOp(&state, .OP_POP); // discard main's return value
+    try emit.emitCallStatic(state, @intCast(main_fn.address), 0);
+    try emit.emitOp(state, .OP_POP); // discard main's return value
 
-    try emit.emitOp(&state, .OP_NULL);
-    try emit.emitOp(&state, .OP_RETURN);
+    try emit.emitOp(state, .OP_NULL);
+    try emit.emitOp(state, .OP_RETURN);
 
     // Export keys borrow compiler-owned strings; intern them into the chunk before teardown.
     {
         var old_exports = state.chunk.exports;
-        state.chunk.exports = std.StringHashMap(void).init(allocator);
+        state.chunk.exports = std.StringHashMap(void).init(state.allocator);
         var exp_it = old_exports.keyIterator();
         while (exp_it.next()) |name| {
             const owned = try state.chunk.internString(name.*);
@@ -117,10 +121,21 @@ pub fn compile(
 
     const result = state.chunk;
     // Prevent errdefer from freeing the returned chunk; deinit tables only.
-    state.chunk = chunk_mod.Chunk.init(allocator);
-    state.chunk.deinit();
-    state_mod.deinit(&state);
+    state.chunk = chunk_mod.Chunk.init(state.allocator);
     return result;
+}
+
+pub fn compile(
+    allocator: std.mem.Allocator,
+    doc: *ast.Document,
+    opts: CompileOptions,
+) !chunk_mod.Chunk {
+    var state = try analyze(allocator, doc, opts);
+    defer {
+        state.chunk.deinit();
+        state_mod.deinit(&state);
+    }
+    return try emitBytecode(&state, doc);
 }
 
 fn requireEntryMain(state: *state_mod.CompilerState, doc: *ast.Document) !void {

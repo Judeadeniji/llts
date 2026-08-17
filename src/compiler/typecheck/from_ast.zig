@@ -3,6 +3,9 @@ const ast = @import("../../ast/root.zig");
 const ir = @import("ir.zig");
 const state_mod = @import("../state.zig");
 const scope = @import("../scope.zig");
+const compile_error = @import("../../errors/compile.zig");
+const layout = @import("../layout.zig");
+const expr_path = @import("../expr/path.zig");
 
 pub const FromAstError = error{ OutOfMemory, CompileError, Overflow, InvalidCharacter };
 
@@ -18,7 +21,7 @@ pub fn typeFromAst(node: ?*ast.Node, state: ?*state_mod.CompilerState, ta: ir.Ty
             if (a.length_text) |text| {
                 const parsed_len = parseArrayLengthString(text) catch |err| {
                     if (state) |st| {
-                        return @import("../../errors/compile.zig").compileFailFmt(st, "Invalid array length '{s}'", .{text});
+                        return compile_error.compileFailFmt(st, "Invalid array length '{s}'", .{text});
                     }
                     return err;
                 };
@@ -84,7 +87,7 @@ fn intersectTypes(
     }
     if (lp == .error_set or rp == .error_set or lp == .error_lit or rp == .error_lit) {
         if (state) |st| {
-            return @import("../../errors/compile.zig").compileFailFmt(st, "'&' cannot mix error sets with other types", .{});
+            return compile_error.compileFailFmt(st, "'&' cannot mix error sets with other types", .{});
         }
         return error.CompileError;
     }
@@ -95,10 +98,10 @@ fn intersectTypes(
 /// On success, registers a synthetic merged set (for exhaustiveness) under `A&B`.
 fn mergeErrorSets(state: *state_mod.CompilerState, left: []const u8, right: []const u8) FromAstError!void {
     const ld = state.error_sets.get(left) orelse {
-        return @import("../../errors/compile.zig").compileFailFmt(state, "Unknown error set '{s}'", .{left});
+        return compile_error.compileFailFmt(state, "Unknown error set '{s}'", .{left});
     };
     const rd = state.error_sets.get(right) orelse {
-        return @import("../../errors/compile.zig").compileFailFmt(state, "Unknown error set '{s}'", .{right});
+        return compile_error.compileFailFmt(state, "Unknown error set '{s}'", .{right});
     };
     var lit = ld.variants.iterator();
     while (lit.next()) |e| {
@@ -106,7 +109,7 @@ fn mergeErrorSets(state: *state_mod.CompilerState, left: []const u8, right: []co
         if (rd.variants.get(name)) |r_origin| {
             const l_origin = e.value_ptr.*;
             if (!std.mem.eql(u8, l_origin, r_origin)) {
-                return @import("../../errors/compile.zig").compileFailFmt(
+                return compile_error.compileFailFmt(
                     state,
                     "conflicting error member '{s}' in '{s}' & '{s}' (from '{s}' and '{s}')",
                     .{ name, left, right, l_origin, r_origin },
@@ -139,7 +142,7 @@ fn intersectShapes(
         if (state) |st| {
             const d = try ir.displayTypeAlloc(st.allocator, left);
             defer st.allocator.free(d);
-            return @import("../../errors/compile.zig").compileFailFmt(st, "'&' only on shape types, got '{s}'", .{d});
+            return compile_error.compileFailFmt(st, "'&' only on shape types, got '{s}'", .{d});
         }
         return error.CompileError;
     };
@@ -147,7 +150,7 @@ fn intersectShapes(
         if (state) |st| {
             const d = try ir.displayTypeAlloc(st.allocator, right);
             defer st.allocator.free(d);
-            return @import("../../errors/compile.zig").compileFailFmt(st, "'&' only on shape types, got '{s}'", .{d});
+            return compile_error.compileFailFmt(st, "'&' only on shape types, got '{s}'", .{d});
         }
         return error.CompileError;
     };
@@ -166,7 +169,7 @@ fn intersectShapes(
                         defer st.allocator.free(lt);
                         const rt = try ir.displayTypeAlloc(st.allocator, rfield.ty);
                         defer st.allocator.free(rt);
-                        return @import("../../errors/compile.zig").compileFailFmt(
+                        return compile_error.compileFailFmt(
                             st,
                             "conflicting types for field '{s}' in shape intersection ('{s}' vs '{s}')",
                             .{ rfield.name, lt, rt },
@@ -193,7 +196,7 @@ fn literalTypeFromAst(state: ?*state_mod.CompilerState, lit: ast.Literal) FromAs
                 std.mem.indexOfScalar(u8, lit.value, 'E') != null)
             {
                 if (state) |st| {
-                    return @import("../../errors/compile.zig").compileFailFmt(st, "Float literals are not valid types (use f32/f64)", .{});
+                    return compile_error.compileFailFmt(st, "Float literals are not valid types (use f32/f64)", .{});
                 }
                 return error.CompileError;
             }
@@ -219,7 +222,7 @@ pub fn resolveNamedType(name: []const u8, state: ?*state_mod.CompilerState, ta: 
         if (st.error_sets.contains(name)) return .{ .error_set = name };
         if (st.enums.contains(name)) return .{ .enum_ = name };
         if (st.structs.contains(name)) return .{ .struct_ = name };
-        return @import("../../errors/compile.zig").compileFailFmt(st, "Unknown type '{s}'", .{name});
+        return compile_error.compileFailFmt(st, "Unknown type '{s}'", .{name});
     }
     return t;
 }
@@ -231,7 +234,7 @@ fn resolveTypedef(
     stack: ?*std.StringHashMap(void),
 ) FromAstError!ir.Type {
     const td = state.typedefs.get(name) orelse {
-        return @import("../../errors/compile.zig").compileFailFmt(state, "Unknown type '{s}'", .{name});
+        return compile_error.compileFailFmt(state, "Unknown type '{s}'", .{name});
     };
 
     var owned_stack: ?std.StringHashMap(void) = null;
@@ -241,7 +244,7 @@ fn resolveTypedef(
         break :blk &owned_stack.?;
     };
     if (seen.contains(name)) {
-        return @import("../../errors/compile.zig").compileFailFmt(state, "Cyclic type definition involving '{s}'", .{name});
+        return compile_error.compileFailFmt(state, "Cyclic type definition involving '{s}'", .{name});
     }
     try seen.put(name, {});
 
@@ -382,7 +385,7 @@ pub fn parseDisplayType(
         if (st.error_sets.contains(s)) return .{ .error_set = s };
         if (st.enums.contains(s)) return .{ .enum_ = s };
         if (st.structs.contains(s)) return .{ .struct_ = s };
-        return @import("../../errors/compile.zig").compileFailFmt(st, "Unknown type '{s}'", .{s});
+        return compile_error.compileFailFmt(st, "Unknown type '{s}'", .{s});
     }
     return try ir.parseDisplayType(ta, s);
 }
@@ -426,7 +429,7 @@ fn resolveImportedType(node: *ast.Node, state: ?*state_mod.CompilerState, ta: ir
                 if (ed.variants.contains(vname)) {
                     return .{ .enum_lit = .{ .enum_name = ename, .variant = vname } };
                 }
-                return @import("../../errors/compile.zig").compileFailFmt(st, "Unknown enum variant '{s}' on '{s}'", .{ vname, ename });
+                return compile_error.compileFailFmt(st, "Unknown enum variant '{s}' on '{s}'", .{ vname, ename });
             }
         }
         if (resolveErrorSetName(st, node.member.object)) |esname| {
@@ -435,13 +438,13 @@ fn resolveImportedType(node: *ast.Node, state: ?*state_mod.CompilerState, ta: ir
                 if (es.variants.contains(vname)) {
                     return .{ .error_lit = .{ .set_name = esname, .variant = vname } };
                 }
-                return @import("../../errors/compile.zig").compileFailFmt(st, "Unknown error member '{s}' on '{s}'", .{ vname, esname });
+                return compile_error.compileFailFmt(st, "Unknown error member '{s}' on '{s}'", .{ vname, esname });
             }
         }
     }
 
     const q = resolveStructName(st, node) orelse {
-        return @import("../../errors/compile.zig").compileFailFmt(st, "Unknown type", .{});
+        return compile_error.compileFailFmt(st, "Unknown type", .{});
     };
     if (st.typedefs.contains(q)) {
         try checkStructInitExport(st, node, q);
@@ -463,7 +466,7 @@ fn resolveImportedType(node: *ast.Node, state: ?*state_mod.CompilerState, ta: ir
         node.member.property.primary.name
     else
         q;
-    return @import("../../errors/compile.zig").compileFailFmt(st, "Unknown type '{s}'", .{short});
+    return compile_error.compileFailFmt(st, "Unknown type '{s}'", .{short});
 }
 
 /// Strip optional / pointer wrappers from a type display for struct name lookup:
@@ -524,7 +527,6 @@ pub fn ensureShapeLayoutFromDisplayAs(
     if (state.structs.contains(key)) return;
     if (display.len < 2 or display[0] != '{' or display[display.len - 1] != '}') return;
 
-    const layout = @import("../layout.zig");
     var arena = std.heap.ArenaAllocator.init(state.allocator);
     defer arena.deinit();
     const ta = ir.TypeAlloc{ .allocator = arena.allocator() };
@@ -675,7 +677,6 @@ pub fn parseArrayLengthString(raw: []const u8) FromAstError!usize {
     return @intCast(n);
 }
 
-
 /// Display string for a type AST node. Validates unknown types when state is provided.
 pub fn typeAstToDisplay(node: ?*ast.Node, state: ?*state_mod.CompilerState) FromAstError!?[]const u8 {
     const n = node orelse return null;
@@ -765,7 +766,7 @@ pub fn resolveType(state: *state_mod.CompilerState, node: *ast.Node) ?[]const u8
                 break :blk s;
             },
             .boolean => "u1",
-            .@"null" => "null",
+            .null => "null",
             .number => blk: {
                 // Float if the source spelling contains '.' or exponent.
                 if (std.mem.indexOfScalar(u8, lit.value, '.') != null or
@@ -795,7 +796,7 @@ pub fn resolveType(state: *state_mod.CompilerState, node: *ast.Node) ?[]const u8
                     break :lit false;
                 };
                 if (!looks_enum_lit and std.mem.indexOfScalar(u8, tn, '.') != null) {
-                    type_name = @import("../expr/path.zig").resolveModuleType(state, tn) catch tn;
+                    type_name = expr_path.resolveModuleType(state, tn) catch tn;
                 }
             }
             break :blk type_name;
@@ -809,14 +810,14 @@ pub fn resolveType(state: *state_mod.CompilerState, node: *ast.Node) ?[]const u8
                 break :blk null;
             }
             // Imported value: `io.stdout` → type of global `mod::stdout`.
-            if (@import("../expr/path.zig").tryResolveStaticPath(state, node) catch null) |static_path| {
+            if (expr_path.tryResolveStaticPath(state, node) catch null) |static_path| {
                 if (state.global_types.get(static_path)) |gt| {
                     if (!std.mem.startsWith(u8, gt, "module:")) break :blk gt;
                 }
             }
             var object_type = resolveType(state, m.object) orelse break :blk null;
             if (std.mem.indexOfScalar(u8, object_type, '.') != null) {
-                object_type = @import("../expr/path.zig").resolveModuleType(state, object_type) catch object_type;
+                object_type = expr_path.resolveModuleType(state, object_type) catch object_type;
             }
             // Module namespace (`module:path`) — field types come from exported globals.
             if (std.mem.startsWith(u8, object_type, "module:")) {
@@ -851,7 +852,7 @@ pub fn resolveType(state: *state_mod.CompilerState, node: *ast.Node) ?[]const u8
             if (c.callee.* == .primary) {
                 if (state.functions.get(c.callee.primary.name)) |def| break :blk def.return_type;
             }
-            if (@import("../expr/path.zig").tryResolveStaticPath(state, c.callee) catch null) |p| {
+            if (expr_path.tryResolveStaticPath(state, c.callee) catch null) |p| {
                 if (state.functions.get(p)) |def| break :blk def.return_type;
             }
             // Method call: obj.method() — resolve via Struct::method
@@ -965,7 +966,7 @@ fn resolveTypeLiteral(state: *state_mod.CompilerState, node: *ast.Node) ?[]const
                 break :blk s;
             },
             .boolean => if (std.mem.eql(u8, lit.value, "true")) "true" else "false",
-            .@"null" => "null",
+            .null => "null",
             .number => blk: {
                 if (std.mem.indexOfScalar(u8, lit.value, '.') != null or
                     std.mem.indexOfScalar(u8, lit.value, 'e') != null or
@@ -1033,7 +1034,7 @@ pub fn resolveEnumName(state: *state_mod.CompilerState, node: *ast.Node) ?[]cons
             const short = m.property.primary.name;
             var buf: [256]u8 = undefined;
             const dotted = std.fmt.bufPrint(&buf, "{s}.{s}", .{ alias, short }) catch return null;
-            const q = @import("../expr/path.zig").resolveModuleType(state, dotted) catch return null;
+            const q = expr_path.resolveModuleType(state, dotted) catch return null;
             if (state.enums.contains(q)) return q;
             return null;
         },
@@ -1055,7 +1056,7 @@ pub fn resolveErrorSetName(state: *state_mod.CompilerState, node: *ast.Node) ?[]
             const short = m.property.primary.name;
             var buf: [256]u8 = undefined;
             const dotted = std.fmt.bufPrint(&buf, "{s}.{s}", .{ alias, short }) catch return null;
-            const q = @import("../expr/path.zig").resolveModuleType(state, dotted) catch return null;
+            const q = expr_path.resolveModuleType(state, dotted) catch return null;
             if (state.error_sets.contains(q)) return q;
             return null;
         },
@@ -1077,7 +1078,7 @@ pub fn resolveStructName(state: *state_mod.CompilerState, node: *ast.Node) ?[]co
         },
         .member => |m| {
             if (m.property.* != .primary) return null;
-            const obj_path = @import("../expr/path.zig").tryResolveStaticPath(state, m.object) catch null orelse return null;
+            const obj_path = expr_path.tryResolveStaticPath(state, m.object) catch null orelse return null;
             const q = std.fmt.allocPrint(state.allocator, "{s}::{s}", .{ obj_path, m.property.primary.name }) catch return null;
             state.owned.append(state.allocator, q) catch {};
             return q;
@@ -1093,7 +1094,7 @@ pub fn checkStructInitExport(state: *state_mod.CompilerState, type_expr: *ast.No
     if (mem.object.* != .primary or mem.property.* != .primary) return;
     if (std.mem.indexOf(u8, qualified, "::") == null) return;
     if (state.chunk.exports.contains(qualified)) return;
-    return @import("../../errors/compile.zig").compileFailFmt(state, "'{s}' has no export '{s}'", .{
+    return compile_error.compileFailFmt(state, "'{s}' has no export '{s}'", .{
         mem.object.primary.name,
         mem.property.primary.name,
     });

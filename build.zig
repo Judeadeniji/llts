@@ -10,10 +10,21 @@ pub fn build(b: *std.Build) void {
     });
     const zli_mod = zli.module("zli");
 
+    // llvm-zig also exposes a `clang` module; we only need LLVM IR/bitcode APIs.
+    // Linking clang pulls `clang-21` and breaks Manjaro hosts that only have libLLVM-21.
+    const llvm_dep = b.dependency("llvm", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    const llvm_mod = llvm_dep.module("llvm");
+
     const llts_mod = b.addModule("llts", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
         .optimize = optimize,
+        .imports = &.{
+            .{ .name = "llvm", .module = llvm_mod },
+        },
     });
     llts_mod.link_libc = true;
 
@@ -29,7 +40,8 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
-    exe.linkLibC();
+    exe.root_module.addImport("llvm", llvm_mod);
+    exe.root_module.link_libc = true;
 
     b.installArtifact(exe);
 

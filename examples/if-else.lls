@@ -15,4 +15,12 @@ $b = 20;
     std.debug.printLn("Second check passed!");
 }
 
+$c: ?usize = null;
+
+c = 112;
+
+@if(c) |d| {
+ std.debug.printLn("third check passed! {i}", d);   
+}
+
 pub @func main() {}

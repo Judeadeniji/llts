@@ -157,13 +157,13 @@ print(grid[1][2]);
 	);
 });
 
-test("nested literal length unify error", () => {
-	expectError(
+test("nested literal lengths form a tuple", () => {
+	expectOutput(
 		runSource(`
 $g = [[1, 2], [3, 4, 5]];
 print(g[0][0]);
 `),
-		"inconsistent lengths",
+		["1"],
 	);
 });
 
@@ -180,7 +180,7 @@ print(@typeOf(raw));
 print(@typeOf(exact));
 print(open);
 `),
-		["[2]byte", "[]byte", "[]byte", "[5]byte", "hello"],
+		['"hi"', "[]byte", "[]byte", "[5]byte", "hello"],
 	);
 });
 

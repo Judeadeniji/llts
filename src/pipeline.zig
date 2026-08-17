@@ -7,12 +7,21 @@ const serialize = @import("bytecode/serialize.zig");
 const vm_state = @import("vm/state.zig");
 const execute = @import("vm/execute/root.zig");
 const builtins = @import("vm/builtins/root.zig");
+const llvm_backend = @import("compiler/llvm/root.zig");
 
 pub const RunOptions = struct {
     debug: bool = true,
     /// Extra argv forwarded to `os.args()` as argv[1..] (argv[0] is the script path).
     script_args: []const []const u8 = &.{},
     max_memory_slots: usize = 1048576,
+};
+
+pub const EmitLlvmOptions = struct {
+    debug: bool = true,
+    /// When set, also write textual LLVM IR to this path.
+    ir_path: ?[*:0]const u8 = null,
+    /// Run LLVM module verification (default true).
+    verify: bool = true,
 };
 
 pub fn compileSource(
@@ -73,4 +82,36 @@ pub fn runBytecodeFile(
     var chunk = try readBytecodeFile(allocator, path);
     defer chunk.deinit();
     try runChunk(allocator, &chunk, path, script_args, max_memory_slots);
+}
+
+/// Lower a source file to LLVM IR and write bitcode (and optional textual IR).
+pub fn emitLlvmBitcode(
+    allocator: std.mem.Allocator,
+    path: []const u8,
+    source: []const u8,
+    out_path: ?[*:0]const u8,
+    options: EmitLlvmOptions,
+) !void {
+    var scan_result = try scanner.scan(allocator, source, path);
+    defer scanner.deinitScanResult(&scan_result);
+
+    var doc = try parser.parse(allocator, scan_result.tokens.items, path, source);
+    defer doc.deinit();
+
+    var state = try compiler.analyze(allocator, &doc, .{ .debug = options.debug });
+    defer {
+        state.chunk.deinit();
+        compiler.state_mod.deinit(&state);
+    }
+
+    var lc = llvm_backend.LlvmContext.init(allocator, path, &state);
+    defer lc.deinit();
+
+    try llvm_backend.codegen(&lc, &doc);
+
+    if (options.verify) try lc.verify();
+
+    if (options.ir_path) |irp| try lc.writeIr(irp);
+
+    if (out_path) |p| try lc.writeBitcode(p);
 }

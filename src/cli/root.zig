@@ -8,6 +8,7 @@ const run = @import("run.zig");
 const build_cmd = @import("build_cmd.zig");
 const dump = @import("dump.zig");
 const smoke = @import("smoke.zig");
+const emit = @import("emit.zig");
 
 fn showHelp(ctx: zli.CommandContext) !void {
     if (ctx.flag("version", bool)) {
@@ -90,6 +91,31 @@ pub fn build(stdout: anytype, stdin: anytype, gpa: std.mem.Allocator) !*zli.Comm
         .required = true,
     });
     try root.addCommand(dump_sub);
+
+    const emit_sub = try zli.Command.init(stdout, stdin, gpa, .{
+        .name = "emit",
+        .description = "Emit LLVM bitcode from an LLTS source file",
+    }, emit.execute);
+    try flags.addCompileFlags(emit_sub);
+    try emit_sub.addFlag(.{
+        .name = "output",
+        .shortcut = "o",
+        .description = "Output bitcode file path",
+        .type = .String,
+        .default_value = .{ .String = "out.bc" },
+    });
+    try emit_sub.addFlag(.{
+        .name = "emit-llvm",
+        .description = "Also write textual LLVM IR (.ll) to this path",
+        .type = .String,
+        .default_value = .{ .String = "" },
+    });
+    try emit_sub.addPositionalArg(.{
+        .name = "file",
+        .description = "Source file to compile to LLVM bitcode",
+        .required = true,
+    });
+    try root.addCommand(emit_sub);
 
     const smoke_sub = try zli.Command.init(stdout, stdin, gpa, .{
         .name = "smoke",

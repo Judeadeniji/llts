@@ -6,6 +6,8 @@ const scope = @import("../scope.zig");
 const state_mod = @import("../state.zig");
 const expr = @import("root.zig");
 const types = @import("../typecheck/from_ast.zig");
+const widths = @import("../widths.zig");
+const compile_errors = @import("../../errors/compile.zig");
 
 const OpCode = opcode.OpCode;
 const CompilerState = state_mod.CompilerState;
@@ -37,10 +39,10 @@ fn compoundOp(op: []const u8) ?OpCode {
 
 fn assignIndex(state: *CompilerState, idx: *const ast.Index, right: *ast.Node, arith: ?OpCode) !void {
     if (idx.is_slice) {
-        return @import("../../errors/compile.zig").compileFailFmt(state, "Cannot assign to a slice view", .{});
+        return compile_errors.compileFailFmt(state, "Cannot assign to a slice view", .{});
     }
     const start = idx.index orelse {
-        return @import("../../errors/compile.zig").compileFailFmt(state, "Expected index expression", .{});
+        return compile_errors.compileFailFmt(state, "Expected index expression", .{});
     };
     if (arith) |op| {
         try expr.compileExpression(state, idx.object);
@@ -58,7 +60,7 @@ fn assignIndex(state: *CompilerState, idx: *const ast.Index, right: *ast.Node, a
     if (types.resolveType(state, idx.object)) |tn| {
         if (types.isStringyType(tn) or std.mem.endsWith(u8, tn, "byte")) {
             try emit.emitOp(state, .OP_AS);
-            try emit.emitByte(state, @intFromEnum(@import("../widths.zig").Width.u8));
+            try emit.emitByte(state, @intFromEnum(widths.Width.u8));
         }
     }
     try emit.emitOp(state, .OP_SET_ARRAY);
@@ -165,11 +167,10 @@ fn assignPrimary(state: *CompilerState, prim: *const ast.Primary, right: *ast.No
 }
 
 fn failConst(state: *CompilerState, name: []const u8) error{CompileError} {
-    return @import("../../errors/compile.zig").compileFailFmt(state, "Cannot reassign to constant variable '{s}'", .{name});
+    return compile_errors.compileFailFmt(state, "Cannot reassign to constant variable '{s}'", .{name});
 }
 
 fn widthCastKindName(tn: []const u8) ?u8 {
-    const widths = @import("../widths.zig");
     if (widths.fromName(tn)) |w| return @intFromEnum(w);
     return null;
 }

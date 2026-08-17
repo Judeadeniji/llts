@@ -88,3 +88,32 @@ pub fn dumpFile(
         io.writeStdout(out.items);
     }
 }
+
+pub fn emitLlvm(
+    allocator: std.mem.Allocator,
+    path: []const u8,
+    out_path: []const u8,
+    ir_path: []const u8,
+    release: bool,
+) !void {
+    llts.diag.reset();
+    const source = common.readSourceOrExit(allocator, path);
+    defer allocator.free(source);
+
+    const out_z = try std.mem.Allocator.dupeZ(allocator, u8, out_path);
+    defer allocator.free(out_z);
+
+    const ir_owned: ?[:0]u8 = if (ir_path.len > 0) try allocator.dupeZ(u8, ir_path) else null;
+    defer if (ir_owned) |p| allocator.free(p);
+
+    llts.pipeline.emitLlvmBitcode(allocator, path, source, out_z, .{
+        .debug = !release,
+        .ir_path = if (ir_owned) |p| p.ptr else null,
+        .verify = true,
+    }) catch |err| {
+        if (!llts.diag.wasEmitted()) {
+            io.printStderr("Error: {}\n", .{err});
+        }
+        std.process.exit(1);
+    };
+}

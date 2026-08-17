@@ -8,6 +8,10 @@
             .url = "git+https://github.com/xcaeser/zli.git?ref=v4.2.0#7c97a9c04f7e745f5f9b047068353c0b045c3395",
             .hash = "zli-4.2.0-LeUjpkbkAACgsvIg905xMTcMHBlraRzlyRPYg-Gcgr6Z",
         },
+        .llvm = .{
+            .url = "git+https://github.com/kassane/llvm-zig#f56b9f09c4a100de61eeb7afe39d633b7adb183a",
+            .hash = "llvm_zig-1.0.0-IXgkxN_5BADX7hYPlnstvgVKeqR_QhT6msse6U-p0PfJ",
+        },
     },
     .paths = .{
         "build.zig",
