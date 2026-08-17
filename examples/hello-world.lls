@@ -5,12 +5,12 @@
 # `@new` is the compiler intrinsic that allocates into it.
 $heap = mem.create(0);
 
-@func add(x: i32, y: i32): i32 {
+@func add(x, y) {
     return x + y;
 }
 
 # Returns `add` as a first-class function value
-@func getAdder(n: i32) {
+@func getAdder(n) {
     return add;
 }
 
