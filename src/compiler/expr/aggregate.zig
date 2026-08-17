@@ -7,6 +7,7 @@ const expr = @import("root.zig");
 const path = @import("path.zig");
 const types = @import("../typecheck/from_ast.zig");
 const compiler_errors = @import("../../errors/compile.zig");
+const layout = @import("../layout.zig");
 
 const CompilerState = state_mod.CompilerState;
 
@@ -232,7 +233,6 @@ fn zeroFillArray(state: *CompilerState, length: i32, elem_type: *ast.Node) !void
 }
 
 fn zeroFillStruct(state: *CompilerState, struct_def: state_mod.StructDef) !void {
-    const layout = @import("../layout.zig");
     var it = struct_def.offsets.iterator();
     while (it.next()) |e| {
         const offset = e.value_ptr.*;
@@ -255,7 +255,6 @@ fn emitZeroForElemType(state: *CompilerState, elem_type: *ast.Node) !void {
 }
 
 fn emitZeroForTypeName(state: *CompilerState, name: []const u8) !void {
-    const layout = @import("../layout.zig");
     if (std.mem.eql(u8, name, "float") or std.mem.eql(u8, name, "f64") or std.mem.eql(u8, name, "f32")) {
         try emit.emitConstant(state, .{ .f64 = 0 });
         return;
@@ -299,7 +298,6 @@ fn fillArray(state: *CompilerState, arr: *const ast.ArrayLiteral) !void {
 }
 
 fn fillStruct(state: *CompilerState, init: *const ast.StructInit, struct_def: state_mod.StructDef) !void {
-    const layout = @import("../layout.zig");
     for (init.fields) |field| {
         const offset = struct_def.offsets.get(field.name) orelse {
             return compiler_errors.compileFailFmt(state, "Unknown field {s}", .{field.name});
@@ -351,7 +349,6 @@ pub fn compileMember(state: *CompilerState, mem: *const ast.Member, node: *ast.N
     if (types.resolveType(state, mem.object)) |type_name| {
         if (mem.property.* == .primary) {
             if (types.lookupStructField(state, type_name, mem.property.primary.name)) |info| {
-                const layout = @import("../layout.zig");
                 const kind: u8 = @intFromEnum(layout.fieldKind(state, info.field_ty));
                 try expr.compileExpression(state, mem.object);
                 try emit.emitLoadField(state, info.offset, kind);
@@ -361,7 +358,6 @@ pub fn compileMember(state: *CompilerState, mem: *const ast.Member, node: *ast.N
         if (types.lookupStruct(state, type_name)) |sd| {
             if (mem.property.* == .primary) {
                 if (sd.offsets.get(mem.property.primary.name)) |offset| {
-                    const layout = @import("../layout.zig");
                     const field_ty = sd.types.get(mem.property.primary.name) orelse "int";
                     const kind: u8 = @intFromEnum(layout.fieldKind(state, field_ty));
                     try expr.compileExpression(state, mem.object);

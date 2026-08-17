@@ -72,7 +72,7 @@ test("@const enum variant cannot be reassigned", () => {
 		runSource(`
 @enum Color { Red, Green }
 @const $c = Color.Green;
-c = 0;
+c = Color.Red;
 `),
 		"constant",
 	);

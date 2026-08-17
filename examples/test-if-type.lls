@@ -1,0 +1,5 @@
+pub @func main() {
+    $arr: []int = [10, 20, 30];
+    $i = 0;
+    $x = @if (i < 3) { break arr[i]; } @else { break null; };
+}

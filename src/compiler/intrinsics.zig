@@ -66,6 +66,7 @@ pub fn checkArity(state: *CompilerState, intr: Intrinsic, name: []const u8, got:
 }
 
 pub fn typecheck(state: *CompilerState, env: *typecheck_root.Env, ta: ir.TypeAlloc, intr: Intrinsic, call_node: *ast.Node, c: *const ast.Call) !ir.Type {
+
     const name = c.callee.primary.name;
     try checkArity(state, intr, name, c.args.len);
 
@@ -128,6 +129,7 @@ pub fn typecheck(state: *CompilerState, env: *typecheck_root.Env, ta: ir.TypeAll
 }
 
 pub fn compile(state: *CompilerState, intr: Intrinsic, node: *ast.Node, c: *const ast.Call) !void {
+
     const name = c.callee.primary.name;
     // We assume arity was checked in typecheck, but we can assert or just check again.
     // In debug builds we could assert. For now let's just do it.

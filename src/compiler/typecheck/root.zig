@@ -385,8 +385,10 @@ fn inferLiteral(ta: ir.TypeAlloc, lit: ast.Literal, prefer_literals: bool) !ir.T
             // Integer literals are always untyped (int_lit) so they silently
             // coerce to whatever integer width their context demands, just like
             // Zig's comptime_int.  The concrete width is resolved at point of use.
-            const n = std.fmt.parseInt(i64, lit.value, 10) catch break :blk ir.TInt;
-            break :blk .{ .int_lit = n };
+            if (prefer_literals) {
+                if (std.fmt.parseInt(i64, lit.value, 10)) |n| break :blk .{ .int_lit = n } else |_| {}
+            }
+            break :blk ir.TInt;
         },
         .hex, .octal, .binary => blk: {
             const n: i64 = switch (lit.literal_type) {
@@ -395,7 +397,8 @@ fn inferLiteral(ta: ir.TypeAlloc, lit: ast.Literal, prefer_literals: bool) !ir.T
                 .binary => std.fmt.parseInt(i64, lit.value[2..], 2) catch break :blk ir.TInt,
                 else => unreachable,
             };
-            break :blk .{ .int_lit = n };
+            if (prefer_literals) break :blk .{ .int_lit = n };
+            break :blk ir.TInt;
         },
     };
 }
@@ -661,15 +664,16 @@ fn noteDiag(state: *state_mod.CompilerState, node: *ast.Node) void {
 }
 
 pub fn recordExprType(state: *state_mod.CompilerState, node: *ast.Node, t: ir.Type) !void {
-    const peeled = ir.peelDefined(t);
-    const codegen_t: ir.Type = switch (peeled) {
+    const codegen_t: ir.Type = switch (t) {
         .int_lit => ir.TInt,
         .bool_lit => ir.TBool,
         .str_lit => ir.TString,
-        else => peeled,
+        else => t,
     };
     const disp = try ownDisplay(state, codegen_t);
-    try state.type_of_results.put(node, disp);
+    if (!state.type_of_results.contains(node)) {
+        try state.type_of_results.put(node, disp);
+    }
 }
 
 fn isBareIntLiteral(node: *ast.Node) bool {
@@ -739,12 +743,11 @@ fn coerceNumericPair(
                 const dl = try ownDisplay(state, l);
                 const dr = try ownDisplay(state, r);
                 const dres = try ownDisplay(state, result_type);
-                compiler_errors.compileWarnFmt(
+                return compiler_errors.compileFailFmt(
                     state,
-                    "{s}: mixed '{s}' and '{s}' — widening to '{s}' (use @as to silence)",
+                    "{s}: mixed '{s}' and '{s}' — widening to '{s}' (use @as)",
                     .{ ctx, dl, dr, dres },
                 );
-                return result_type;
             }
         }
     }

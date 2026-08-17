@@ -1,0 +1,8 @@
+@const $std = @import("std/index");
+
+pub @func main() {
+    $s: string = "hello";
+    @for(s) |c| {
+        std.debug.printLn("{c}", c);
+    }
+}

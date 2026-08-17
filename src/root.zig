@@ -14,6 +14,7 @@ pub const parser = @import("parser/root.zig");
 pub const pipeline = @import("pipeline.zig");
 pub const io = @import("io/root.zig");
 pub const diag = @import("errors/diag.zig");
+pub const llvm_backend = @import("compiler/llvm/root.zig");
 
 pub const OpCode = opcode.OpCode;
 pub const Value = value.Value;

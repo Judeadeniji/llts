@@ -1,0 +1,14 @@
+@const $std = @import("std/index");
+
+pub @func main() {
+    $count: ?int = 3;
+    @for(count) |c| {
+        std.debug.printLn("{i}", c);
+        @if (c > 0) {
+            count = c - 1;
+        } @else {
+            count = null;
+        }
+    }
+    std.debug.printLn("Done!");
+}

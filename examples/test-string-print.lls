@@ -1,0 +1,6 @@
+@const $std = @import("std/index");
+
+pub @func main() {
+    $s: string = "hello";
+    std.debug.printLn("{s}", s);
+}
