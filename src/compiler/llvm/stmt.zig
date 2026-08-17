@@ -62,6 +62,7 @@ pub const StmtState = struct {
 };
 
 pub fn lowerStmt(s: *StmtState, node: *ast.Node) StmtError!void {
+    std.debug.print("    Lowering Stmt: {s}\n", .{@tagName(node.*)});
     switch (node.*) {
         .declaration => |decl| try lowerDecl(s, decl, node),
         .return_expr => |ret| try lowerReturn(s, ret),
@@ -115,7 +116,8 @@ fn lowerDecl(s: *StmtState, decl: ast.Declaration, node: *ast.Node) StmtError!vo
         var es = s.exprState();
         const val = try expr_mod.lowerExpr(&es, decl.value);
         const gty = C.LLVMGlobalGetValueType(gslot);
-        _ = C.LLVMBuildStore(s.lc.builder, types_mod.castTo(s.lc, val, gty), gslot);
+        const val_ty_name = expr_mod.typeOf(&es, decl.value);
+        _ = C.LLVMBuildStore(s.lc.builder, types_mod.castTo(s.lc, val, val_ty_name, gty), gslot);
         return;
     }
 
@@ -136,8 +138,18 @@ fn lowerDecl(s: *StmtState, decl: ast.Declaration, node: *ast.Node) StmtError!vo
     if (decl.value.* == .literal and decl.value.literal.literal_type == .@"null") return;
 
     var es = s.exprState();
+    std.debug.print("        lowerDecl: evaluating value expr\n", .{});
     const val = try expr_mod.lowerExpr(&es, decl.value);
-    _ = C.LLVMBuildStore(s.lc.builder, types_mod.castTo(s.lc, val, ty), slot);
+    std.debug.print("        lowerDecl: evaluating typeOf\n", .{});
+    const val_ty_name = expr_mod.typeOf(&es, decl.value);
+    std.debug.print("        lowerDecl: val_ty_name='{s}', ty_name='{s}'\n", .{val_ty_name, ty_name});
+    std.debug.print("        lowerDecl: evaluating castTo\n", .{});
+    const casted = types_mod.castTo(s.lc, val, val_ty_name, ty);
+    std.debug.print("        lowerDecl: building store\n", .{});
+    C.LLVMDumpValue(casted);
+    C.LLVMDumpValue(slot);
+    _ = C.LLVMBuildStore(s.lc.builder, casted, slot);
+    std.debug.print("        lowerDecl: done\n", .{});
 }
 
 fn runDefers(s: *StmtState, is_error_path: bool) StmtError!void {
@@ -162,10 +174,17 @@ fn lowerReturn(s: *StmtState, ret: ast.Return) StmtError!void {
         if (C.LLVMGetTypeKind(ret_ty) == .LLVMVoidTypeKind) {
             _ = C.LLVMBuildRetVoid(s.lc.builder);
         } else {
-            _ = C.LLVMBuildRet(s.lc.builder, types_mod.castTo(s.lc, val, ret_ty));
+            const val_ty_name = expr_mod.typeOf(&es, rv);
+            _ = C.LLVMBuildRet(s.lc.builder, types_mod.castTo(s.lc, val, val_ty_name, ret_ty));
         }
     } else {
-        _ = C.LLVMBuildRetVoid(s.lc.builder);
+        const fn_ty = C.LLVMGlobalGetValueType(s.current_fn);
+        const ret_ty = C.LLVMGetReturnType(fn_ty);
+        if (C.LLVMGetTypeKind(ret_ty) == .LLVMVoidTypeKind) {
+            _ = C.LLVMBuildRetVoid(s.lc.builder);
+        } else {
+            _ = C.LLVMBuildRet(s.lc.builder, C.LLVMConstNull(ret_ty));
+        }
     }
 }
 
@@ -297,7 +316,8 @@ fn lowerRangeFor(s: *StmtState, f: ast.For) StmtError!void {
     C.LLVMPositionBuilderAtEnd(s.lc.builder, cond_bb);
 
     const curr_i = C.LLVMBuildLoad2(s.lc.builder, iv_ty, i_slot, i_name);
-    const end_c = types_mod.castTo(s.lc, end_val, iv_ty);
+    const end_ty_name = expr_mod.typeOf(&es, f.expr.binary.right);
+    const end_c = types_mod.castTo(s.lc, end_val, end_ty_name, iv_ty);
     const cmp = C.LLVMBuildICmp(s.lc.builder, llvm.types.LLVMIntPredicate.LLVMIntSLT, curr_i, end_c, "cmp");
     _ = C.LLVMBuildCondBr(s.lc.builder, cmp, body_bb, end_bb);
 
@@ -330,7 +350,7 @@ fn lowerIterFor(s: *StmtState, f: ast.For) StmtError!void {
     const fn_val = s.current_fn;
 
     const is_array = C.LLVMGetTypeKind(arr_ty) == .LLVMArrayTypeKind;
-    const is_ptr = C.LLVMGetTypeKind(arr_ty) == .LLVMPointerTypeKind;
+    const is_ptr = C.LLVMGetTypeKind(arr_ty) == .LLVMPointerTypeKind or C.LLVMGetTypeKind(arr_ty) == .LLVMIntegerTypeKind;
 
     if (is_array) {
         // ── Fixed-length array: @for (arr) |elem| or @for (arr) |elem, idx| ──
@@ -414,7 +434,11 @@ fn lowerIterFor(s: *StmtState, f: ast.For) StmtError!void {
 
         // Store the base pointer so we can GEP from it each iteration.
         const ptr_slot = C.LLVMBuildAlloca(s.lc.builder, s.lc.ptrTy(), "iter.ptr");
-        _ = C.LLVMBuildStore(s.lc.builder, arr_val, ptr_slot);
+        const ptr_val = if (C.LLVMGetTypeKind(C.LLVMTypeOf(arr_val)) == .LLVMIntegerTypeKind)
+            C.LLVMBuildIntToPtr(s.lc.builder, arr_val, s.lc.ptrTy(), "arr_ptr")
+        else
+            arr_val;
+        _ = C.LLVMBuildStore(s.lc.builder, ptr_val, ptr_slot);
 
         const cond_bb = C.LLVMAppendBasicBlockInContext(s.lc.ctx, fn_val, "iter.cond");
         const body_bb = C.LLVMAppendBasicBlockInContext(s.lc.ctx, fn_val, "iter.body");
@@ -529,7 +553,8 @@ fn lowerSwitch(s: *StmtState, sw: ast.Switch) StmtError!void {
             var matched: ?T.LLVMValueRef = null;
             for (prong.patterns) |pat| {
                 const pat_val = try expr_mod.lowerExpr(&es, pat);
-                const pv = types_mod.castTo(s.lc, pat_val, C.LLVMTypeOf(cond_val));
+                const pat_ty_name = expr_mod.typeOf(&es, pat);
+                const pv = types_mod.castTo(s.lc, pat_val, pat_ty_name, C.LLVMTypeOf(cond_val));
                 const cmp = C.LLVMBuildICmp(s.lc.builder, .LLVMIntEQ, cond_val, pv, "eq");
                 matched = if (matched) |m| C.LLVMBuildOr(s.lc.builder, m, cmp, "or") else cmp;
             }

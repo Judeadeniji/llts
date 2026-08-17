@@ -133,19 +133,26 @@ pub fn isFloatName(type_name: []const u8) bool {
 
 pub fn isUnsignedName(type_name: []const u8) bool {
     const t = layout.unwrapTypeName(type_name);
-    return eql(t, "u8") or eql(t, "u16") or eql(t, "u32") or eql(t, "u64") or eql(t, "u128") or eql(t, "usize") or eql(t, "byte");
+    return eql(t, "u8") or eql(t, "u16") or eql(t, "u32") or eql(t, "u64") or eql(t, "u128") or eql(t, "usize") or eql(t, "byte") or eql(t, "u1") or eql(t, "bool") or eql(t, "boolean");
 }
 
 /// Cast `val` to `dst_ty` when both are integer or float widths.
-pub fn castTo(lc: *LlvmContext, val: T.LLVMValueRef, dst_ty: T.LLVMTypeRef) T.LLVMValueRef {
+/// `src_type_name` is required because LLVM integer types do not encode signedness.
+pub fn castTo(lc: *LlvmContext, val: T.LLVMValueRef, src_type_name: []const u8, dst_ty: T.LLVMTypeRef) T.LLVMValueRef {
     const src_ty = C.LLVMTypeOf(val);
     if (src_ty == dst_ty) return val;
+    const is_unsigned = isUnsignedName(src_type_name);
+    
     const sk = C.LLVMGetTypeKind(src_ty);
     const dk = C.LLVMGetTypeKind(dst_ty);
+    
     if (sk == .LLVMIntegerTypeKind and dk == .LLVMIntegerTypeKind) {
         const sw = C.LLVMGetIntTypeWidth(src_ty);
         const dw = C.LLVMGetIntTypeWidth(dst_ty);
-        if (sw < dw) return C.LLVMBuildSExt(lc.builder, val, dst_ty, "sext");
+        if (sw < dw) {
+            return if (is_unsigned) C.LLVMBuildZExt(lc.builder, val, dst_ty, "zext") 
+                   else C.LLVMBuildSExt(lc.builder, val, dst_ty, "sext");
+        }
         if (sw > dw) return C.LLVMBuildTrunc(lc.builder, val, dst_ty, "trunc");
         return val;
     }
@@ -156,10 +163,16 @@ pub fn castTo(lc: *LlvmContext, val: T.LLVMValueRef, dst_ty: T.LLVMTypeRef) T.LL
             if (sw < dw) return C.LLVMBuildFPExt(lc.builder, val, dst_ty, "fpext");
             if (sw > dw) return C.LLVMBuildFPTrunc(lc.builder, val, dst_ty, "fptrunc");
         }
-        if (dk == .LLVMIntegerTypeKind) return C.LLVMBuildFPToSI(lc.builder, val, dst_ty, "fptosi");
+        if (dk == .LLVMIntegerTypeKind) {
+            // Note: we don't have dst signedness, but LLVM has FPToUI and FPToSI.
+            // Since we don't pass dst_type_name, we use FPToSI as default.
+            // A more complete implementation would check dst_type_name.
+            return C.LLVMBuildFPToSI(lc.builder, val, dst_ty, "fptosi");
+        }
     }
     if (sk == .LLVMIntegerTypeKind and (dk == .LLVMFloatTypeKind or dk == .LLVMDoubleTypeKind)) {
-        return C.LLVMBuildSIToFP(lc.builder, val, dst_ty, "sitofp");
+        return if (is_unsigned) C.LLVMBuildUIToFP(lc.builder, val, dst_ty, "uitofp")
+               else C.LLVMBuildSIToFP(lc.builder, val, dst_ty, "sitofp");
     }
     if (sk == .LLVMPointerTypeKind and dk == .LLVMPointerTypeKind) return val;
     if (dk == .LLVMPointerTypeKind and sk == .LLVMIntegerTypeKind) {
@@ -167,6 +180,16 @@ pub fn castTo(lc: *LlvmContext, val: T.LLVMValueRef, dst_ty: T.LLVMTypeRef) T.LL
     }
     if (sk == .LLVMPointerTypeKind and dk == .LLVMIntegerTypeKind) {
         return C.LLVMBuildPtrToInt(lc.builder, val, dst_ty, "ptrtoint");
+    }
+    if (dk == .LLVMStructTypeKind and sk != .LLVMStructTypeKind) {
+        const count = C.LLVMCountStructElementTypes(dst_ty);
+        if (count > 0) {
+            // Assume the first field gets the value (for single-field wrappers like Arena).
+            const elem_ty = C.LLVMStructGetTypeAtIndex(dst_ty, 0);
+            const casted_val = castTo(lc, val, src_type_name, elem_ty);
+            const undef_struct = C.LLVMGetUndef(dst_ty);
+            return C.LLVMBuildInsertValue(lc.builder, undef_struct, casted_val, 0, "struct_wrap");
+        }
     }
     return val;
 }

@@ -56,7 +56,9 @@ pub fn codegen(lc: *LlvmContext, doc: *ast.Document) CodegenError!void {
         const def = e.value_ptr.*;
         if (emitted.contains(name)) continue;
         try emitted.put(name, {});
+        std.debug.print("Lowering function {s}\n", .{name});
         try lowerFunctionFromDef(lc, name, def);
+        std.debug.print("Done lowering function {s}\n", .{name});
     }
 
     for (doc.statements) |node| {
@@ -177,7 +179,7 @@ fn resolveReturnType(lc: *LlvmContext, fn_decl: *const ast.FunctionDecl) T.LLVMT
         } else |_| {}
         return lc.i64Ty();
     }
-    return lc.voidTy();
+    return lc.i64Ty();
 }
 
 fn declareFunctionFromDef(lc: *LlvmContext, name: []const u8, def: state_mod.FunctionDef) CodegenError!void {
@@ -205,7 +207,8 @@ fn declareFunction(lc: *LlvmContext, name: []const u8, fn_decl: *const ast.Funct
     const name_z = try lc.allocator.dupeZ(u8, name);
     defer lc.allocator.free(name_z);
     const fn_val = C.LLVMAddFunction(lc.mod, name_z, fn_ty);
-    try lc.functions.put(name, fn_val);
+    const duped_name = try lc.allocator.dupe(u8, name);
+    try lc.functions.put(duped_name, fn_val);
 }
 
 fn lowerFunctionFromDef(lc: *LlvmContext, name: []const u8, def: state_mod.FunctionDef) CodegenError!void {
@@ -242,10 +245,10 @@ fn lowerFunction(lc: *LlvmContext, name: []const u8, fn_decl: *const ast.Functio
 
     try stmt_mod.lowerStmt(&ss, fn_decl.body);
 
-    const last_bb = C.LLVMGetLastBasicBlock(fn_val);
-    if (last_bb != null) {
-        const terminator = C.LLVMGetBasicBlockTerminator(last_bb);
-        if (terminator == null) {
+    var current_bb = C.LLVMGetFirstBasicBlock(fn_val);
+    while (current_bb != null) {
+        if (C.LLVMGetBasicBlockTerminator(current_bb) == null) {
+            C.LLVMPositionBuilderAtEnd(lc.builder, current_bb);
             const fn_ty = C.LLVMGlobalGetValueType(fn_val);
             const ret_ty = C.LLVMGetReturnType(fn_ty);
             if (C.LLVMGetTypeKind(ret_ty) == .LLVMVoidTypeKind) {
@@ -254,5 +257,6 @@ fn lowerFunction(lc: *LlvmContext, name: []const u8, fn_decl: *const ast.Functio
                 _ = C.LLVMBuildRet(lc.builder, C.LLVMConstNull(ret_ty));
             }
         }
+        current_bb = C.LLVMGetNextBasicBlock(current_bb);
     }
 }

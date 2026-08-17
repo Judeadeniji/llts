@@ -40,6 +40,7 @@ fn llvmTypeOf(s: *ExprState, node: *ast.Node) T.LLVMTypeRef {
 
 /// Lower an AST expression node to an LLVM value (SSA).
 pub fn lowerExpr(s: *ExprState, node: *ast.Node) CodegenError!T.LLVMValueRef {
+    std.debug.print("        Lowering Expr: {s}\n", .{@tagName(node.*)});
     return switch (node.*) {
         .literal => |lit| lowerLiteral(s, lit, typeOf(s, node)),
         .primary => |prim| lowerPrimary(s, prim, node),
@@ -156,7 +157,7 @@ fn lowerPrint(s: *ExprState, call: ast.Call) CodegenError!T.LLVMValueRef {
         const tname = typeOf(s, arg);
         if (types_mod.isFloatName(tname)) {
             const fmt = C.LLVMBuildGlobalStringPtr(s.lc.builder, "%g ", "fmt");
-            var args = [_]T.LLVMValueRef{ fmt, types_mod.castTo(s.lc, val, s.lc.f64Ty()) };
+            var args = [_]T.LLVMValueRef{ fmt, types_mod.castTo(s.lc, val, tname, s.lc.f64Ty()) };
             _ = C.LLVMBuildCall2(s.lc.builder, printf_ty, printf, &args, 2, "");
         } else if (std.mem.eql(u8, layout.unwrapTypeName(tname), "string") or
             std.mem.eql(u8, layout.unwrapTypeName(tname), "[]byte") or
@@ -167,7 +168,7 @@ fn lowerPrint(s: *ExprState, call: ast.Call) CodegenError!T.LLVMValueRef {
             _ = C.LLVMBuildCall2(s.lc.builder, printf_ty, printf, &args, 2, "");
         } else {
             const fmt = C.LLVMBuildGlobalStringPtr(s.lc.builder, "%lld ", "fmt");
-            const as_i64 = types_mod.castTo(s.lc, val, s.lc.i64Ty());
+            const as_i64 = types_mod.castTo(s.lc, val, tname, s.lc.i64Ty());
             var args = [_]T.LLVMValueRef{ fmt, as_i64 };
             _ = C.LLVMBuildCall2(s.lc.builder, printf_ty, printf, &args, 2, "");
         }
@@ -182,7 +183,7 @@ fn lowerIntrinsic(s: *ExprState, name: []const u8, call: ast.Call, node: *ast.No
     if (std.mem.eql(u8, name, "@as")) {
         if (call.args.len < 2) return poison(s, node);
         const val = try lowerExpr(s, call.args[1]);
-        return types_mod.castTo(s.lc, val, llvmTypeOf(s, node));
+        return types_mod.castTo(s.lc, val, typeOf(s, call.args[1]), llvmTypeOf(s, node));
     }
     if (std.mem.eql(u8, name, "@sizeOf")) {
         if (call.args.len >= 1) {
@@ -253,13 +254,16 @@ fn lowerCall(s: *ExprState, call: ast.Call, node: *ast.Node) CodegenError!T.LLVM
     }
 
     const fn_val = s.lc.functions.get(fn_name) orelse blk: {
+        std.debug.print("        lowerCall: creating stub for {s}\n", .{fn_name});
         // External or not-yet-declared: declare variadic i64 stub returning node type.
         const fn_name_z = s.lc.allocator.dupeZ(u8, fn_name) catch return error.OutOfMemory;
         defer s.lc.allocator.free(fn_name_z);
         const ret = llvmTypeOf(s, node);
         const fn_ty = C.LLVMFunctionType(ret, null, 0, 1);
         const decl = C.LLVMAddFunction(s.lc.mod, fn_name_z, fn_ty);
-        try s.lc.functions.put(fn_name, decl);
+        const duped_name = try s.lc.allocator.dupe(u8, fn_name);
+        try s.lc.functions.put(duped_name, decl);
+        std.debug.print("        lowerCall: created stub for {s}\n", .{fn_name});
         break :blk decl;
     };
 
@@ -275,13 +279,15 @@ fn lowerCall(s: *ExprState, call: ast.Call, node: *ast.Node) CodegenError!T.LLVM
     defer if (param_count > 0) s.lc.allocator.free(param_tys);
     for (call.args, 0..) |arg, i| {
         var v = try lowerExpr(s, arg);
-        if (i < param_count) v = types_mod.castTo(s.lc, v, param_tys[i]);
+        if (i < param_count) v = types_mod.castTo(s.lc, v, typeOf(s, arg), param_tys[i]);
         argv[i] = v;
     }
 
     const ret_ty = C.LLVMGetReturnType(fn_ty);
     const name_z: [*:0]const u8 = if (C.LLVMGetTypeKind(ret_ty) == .LLVMVoidTypeKind) "" else "call";
-    return C.LLVMBuildCall2(s.lc.builder, fn_ty, fn_val, argv.ptr, @intCast(argv.len), name_z);
+    const res = C.LLVMBuildCall2(s.lc.builder, fn_ty, fn_val, argv.ptr, @intCast(argv.len), name_z);
+    std.debug.print("        lowerCall: returned from LLVMBuildCall2\n", .{});
+    return res;
 }
 
 fn lowerMethodCall(s: *ExprState, call: ast.Call, node: *ast.Node) CodegenError!?T.LLVMValueRef {
@@ -308,7 +314,10 @@ fn lowerMethodCall(s: *ExprState, call: ast.Call, node: *ast.Node) CodegenError!
         defer s.lc.allocator.free(param_tys);
         C.LLVMGetParamTypes(fn_ty, param_tys.ptr);
         for (argv, 0..) |*a, i| {
-            if (i < param_count) a.* = types_mod.castTo(s.lc, a.*, param_tys[i]);
+            if (i < param_count) {
+                const arg_type_name = if (i == 0) typeOf(s, mem.object) else typeOf(s, call.args[i - 1]);
+                a.* = types_mod.castTo(s.lc, a.*, arg_type_name, param_tys[i]);
+            }
         }
     }
     const ret_ty = C.LLVMGetReturnType(fn_ty);
@@ -365,7 +374,7 @@ fn lowerIndex(s: *ExprState, idx: ast.Index, node: *ast.Node) CodegenError!T.LLV
         const start = if (idx.index) |i| try lowerExpr(s, i) else C.LLVMConstInt(s.lc.i64Ty(), 0, 0);
         _ = start;
         if (idx.end) |e| _ = try lowerExpr(s, e);
-        return types_mod.castTo(s.lc, obj, llvmTypeOf(s, node));
+        return types_mod.castTo(s.lc, obj, typeOf(s, idx.object), llvmTypeOf(s, node));
     }
     const index_val = if (idx.index) |i| try lowerExpr(s, i) else return poison(s, node);
     const obj_ty_name = typeOf(s, idx.object);
@@ -376,6 +385,15 @@ fn lowerIndex(s: *ExprState, idx: ast.Index, node: *ast.Node) CodegenError!T.LLV
         const elem_ptr = C.LLVMBuildGEP2(s.lc.builder, elem_ty, obj, &indices, 1, "idx");
         return C.LLVMBuildLoad2(s.lc.builder, elem_ty, elem_ptr, "load");
     }
+    
+    // If it's an integer, assume it's a dynamic pointer (like from buffer.lls or unknown).
+    if (C.LLVMGetTypeKind(C.LLVMTypeOf(obj)) == .LLVMIntegerTypeKind) {
+        const ptr_val = C.LLVMBuildIntToPtr(s.lc.builder, obj, s.lc.ptrTy(), "dyn_ptr");
+        var indices = [_]T.LLVMValueRef{index_val};
+        const elem_ptr = C.LLVMBuildGEP2(s.lc.builder, elem_ty, ptr_val, &indices, 1, "idx");
+        return C.LLVMBuildLoad2(s.lc.builder, elem_ty, elem_ptr, "load");
+    }
+
     // Value array: extractvalue if constant index, else alloca+GEP
     const arr_ty = types_mod.resolveOrSlot(s.lc, obj_ty_name);
     const tmp = C.LLVMBuildAlloca(s.lc.builder, arr_ty, "arr_tmp");
@@ -386,14 +404,20 @@ fn lowerIndex(s: *ExprState, idx: ast.Index, node: *ast.Node) CodegenError!T.LLV
 }
 
 fn lowerAssignment(s: *ExprState, asg: ast.Assignment) CodegenError!T.LLVMValueRef {
-    const val = try lowerExpr(s, asg.right);
+    const is_null = asg.right.* == .literal and asg.right.literal.literal_type == .@"null";
+    const val = if (is_null) null else try lowerExpr(s, asg.right);
+
     if (asg.left.* == .primary and (asg.left.primary.kind == .identifier or asg.left.primary.kind == .register)) {
         if (s.locals.get(asg.left.primary.name)) |slot| {
             const slot_ty = C.LLVMGetAllocatedType(slot);
-            _ = C.LLVMBuildStore(s.lc.builder, types_mod.castTo(s.lc, val, slot_ty), slot);
+            const v = val orelse C.LLVMConstNull(slot_ty);
+            const r_ty_name = if (is_null) "null" else typeOf(s, asg.right);
+            _ = C.LLVMBuildStore(s.lc.builder, types_mod.castTo(s.lc, v, r_ty_name, slot_ty), slot);
         } else if (s.lc.globals.get(asg.left.primary.name)) |slot| {
             const gty = C.LLVMGlobalGetValueType(slot);
-            _ = C.LLVMBuildStore(s.lc.builder, types_mod.castTo(s.lc, val, gty), slot);
+            const v = val orelse C.LLVMConstNull(gty);
+            const r_ty_name = if (is_null) "null" else typeOf(s, asg.right);
+            _ = C.LLVMBuildStore(s.lc.builder, types_mod.castTo(s.lc, v, r_ty_name, gty), slot);
         }
     } else if (asg.left.* == .member) {
         const mem = asg.left.member;
@@ -409,22 +433,46 @@ fn lowerAssignment(s: *ExprState, asg: ast.Assignment) CodegenError!T.LLVMValueR
                         const sd = s.lc.state.structs.get(obj_type_name).?;
                         const ft_name = sd.types.get(mem.property.primary.name) orelse "i64";
                         const ft = types_mod.resolveOrSlot(s.lc, ft_name);
-                        _ = C.LLVMBuildStore(s.lc.builder, types_mod.castTo(s.lc, val, ft), field_ptr);
+                        const v = val orelse C.LLVMConstNull(ft);
+                        const r_ty_name = if (is_null) "null" else typeOf(s, asg.right);
+                        _ = C.LLVMBuildStore(s.lc.builder, types_mod.castTo(s.lc, v, r_ty_name, ft), field_ptr);
                     }
                 }
             }
         }
     } else if (asg.left.* == .index and !asg.left.index.is_slice) {
         const obj = try lowerExpr(s, asg.left.index.object);
-        const index_val = if (asg.left.index.index) |i| try lowerExpr(s, i) else return val;
-        const elem_ty = C.LLVMTypeOf(val);
+        const index_val = if (asg.left.index.index) |i| try lowerExpr(s, i) else return val orelse C.LLVMConstNull(s.lc.i64Ty());
+        
+        // Find element type from the object type name if val is null, else use val's type
+        const elem_ty = if (is_null) blk: {
+            const arr_ty = types_mod.resolveOrSlot(s.lc, typeOf(s, asg.left.index.object));
+            break :blk C.LLVMGetElementType(arr_ty) orelse s.lc.i64Ty();
+        } else C.LLVMTypeOf(val.?);
+
         if (C.LLVMGetTypeKind(C.LLVMTypeOf(obj)) == .LLVMPointerTypeKind) {
             var indices = [_]T.LLVMValueRef{index_val};
             const elem_ptr = C.LLVMBuildGEP2(s.lc.builder, elem_ty, obj, &indices, 1, "idxset");
-            _ = C.LLVMBuildStore(s.lc.builder, val, elem_ptr);
+            const v = val orelse C.LLVMConstNull(elem_ty);
+            _ = C.LLVMBuildStore(s.lc.builder, v, elem_ptr);
+        } else if (C.LLVMGetTypeKind(C.LLVMTypeOf(obj)) == .LLVMIntegerTypeKind) {
+            const ptr_val = C.LLVMBuildIntToPtr(s.lc.builder, obj, s.lc.ptrTy(), "dyn_ptr");
+            var indices = [_]T.LLVMValueRef{index_val};
+            const elem_ptr = C.LLVMBuildGEP2(s.lc.builder, elem_ty, ptr_val, &indices, 1, "idxset");
+            const v = val orelse C.LLVMConstNull(elem_ty);
+            _ = C.LLVMBuildStore(s.lc.builder, v, elem_ptr);
+        } else {
+            // Handle array type if needed
+            const arr_ty = types_mod.resolveOrSlot(s.lc, typeOf(s, asg.left.index.object));
+            const tmp = C.LLVMBuildAlloca(s.lc.builder, arr_ty, "arr_tmp");
+            _ = C.LLVMBuildStore(s.lc.builder, obj, tmp);
+            var idxs = [_]T.LLVMValueRef{ C.LLVMConstInt(s.lc.i64Ty(), 0, 0), index_val };
+            const elem_ptr = C.LLVMBuildGEP2(s.lc.builder, arr_ty, tmp, &idxs, 2, "elem_ptr");
+            const v = val orelse C.LLVMConstNull(elem_ty);
+            _ = C.LLVMBuildStore(s.lc.builder, v, elem_ptr);
         }
     }
-    return val;
+    return val orelse C.LLVMConstNull(s.lc.i64Ty());
 }
 
 fn lowerBinary(s: *ExprState, bin: ast.Binary, node: *ast.Node) CodegenError!T.LLVMValueRef {
@@ -450,11 +498,11 @@ fn lowerBinary(s: *ExprState, bin: ast.Binary, node: *ast.Node) CodegenError!T.L
     // For comparisons, cast both to left's type.
     if (isCmp(op)) {
         const lty = types_mod.resolveOrSlot(s.lc, typeOf(s, bin.left));
-        lhs = types_mod.castTo(s.lc, lhs, lty);
-        rhs = types_mod.castTo(s.lc, rhs, lty);
+        lhs = types_mod.castTo(s.lc, lhs, typeOf(s, bin.left), lty);
+        rhs = types_mod.castTo(s.lc, rhs, typeOf(s, bin.right), lty);
     } else {
-        lhs = types_mod.castTo(s.lc, lhs, operand_ty);
-        rhs = types_mod.castTo(s.lc, rhs, operand_ty);
+        lhs = types_mod.castTo(s.lc, lhs, typeOf(s, bin.left), operand_ty);
+        rhs = types_mod.castTo(s.lc, rhs, typeOf(s, bin.right), operand_ty);
     }
 
     const b = s.lc.builder;
@@ -484,25 +532,25 @@ fn lowerBinary(s: *ExprState, bin: ast.Binary, node: *ast.Node) CodegenError!T.L
     if (std.mem.eql(u8, op, "**")) {
         if (is_float) {
             const f64_ty = s.lc.f64Ty();
-            const lhs_f = types_mod.castTo(s.lc, lhs, f64_ty);
-            const rhs_f = types_mod.castTo(s.lc, rhs, f64_ty);
+            const lhs_f = types_mod.castTo(s.lc, lhs, typeOf(s, bin.left), f64_ty);
+            const rhs_f = types_mod.castTo(s.lc, rhs, typeOf(s, bin.right), f64_ty);
             const pow_fn = ensurePowF64(s) catch return poison(s, node);
             var args = [_]T.LLVMValueRef{ lhs_f, rhs_f };
             var ptypes = [_]T.LLVMTypeRef{ f64_ty, f64_ty };
             const ft = C.LLVMFunctionType(f64_ty, &ptypes, 2, 0);
             const result = C.LLVMBuildCall2(b, ft, pow_fn, &args, 2, "pow");
-            return types_mod.castTo(s.lc, result, result_ty);
+            return types_mod.castTo(s.lc, result, "f64", result_ty);
         } else {
             const i64_ty = s.lc.i64Ty();
             const i32_ty = s.lc.i32Ty();
-            const lhs_i = types_mod.castTo(s.lc, lhs, i64_ty);
-            const rhs_i32 = types_mod.castTo(s.lc, rhs, i32_ty);
+            const lhs_i = types_mod.castTo(s.lc, lhs, typeOf(s, bin.left), i64_ty);
+            const rhs_i32 = types_mod.castTo(s.lc, rhs, typeOf(s, bin.right), i32_ty);
             const powi_fn = ensurePowiI64(s) catch return poison(s, node);
             var args = [_]T.LLVMValueRef{ lhs_i, rhs_i32 };
             var ptypes = [_]T.LLVMTypeRef{ i64_ty, i32_ty };
             const ft = C.LLVMFunctionType(i64_ty, &ptypes, 2, 0);
             const result = C.LLVMBuildCall2(b, ft, powi_fn, &args, 2, "powi");
-            return types_mod.castTo(s.lc, result, result_ty);
+            return types_mod.castTo(s.lc, result, "i64", result_ty);
         }
     }
 
@@ -579,7 +627,7 @@ fn lowerUnary(s: *ExprState, un: ast.Unary, node: *ast.Node) CodegenError!T.LLVM
             if (s.locals.get(un.arg.primary.name)) |slot| return slot;
             if (s.lc.globals.get(un.arg.primary.name)) |slot| return slot;
         }
-        return types_mod.castTo(s.lc, val, s.lc.ptrTy());
+        return types_mod.castTo(s.lc, val, typeOf(s, un.arg), s.lc.ptrTy());
     }
     if (std.mem.eql(u8, un.operator, "*")) {
         return C.LLVMBuildLoad2(b, llvmTypeOf(s, node), val, "deref");

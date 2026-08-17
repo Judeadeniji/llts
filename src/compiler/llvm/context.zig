@@ -18,9 +18,9 @@ pub const LlvmContext = struct {
     functions: std.StringHashMap(T.LLVMValueRef),
     /// Global variables.
     globals: std.StringHashMap(T.LLVMValueRef),
-    /// Named LLVM types (structs), keyed by source name.
     types: std.StringHashMap(T.LLVMTypeRef),
     allocator: std.mem.Allocator,
+    arena: *std.heap.ArenaAllocator,
     state: *state_mod.CompilerState,
 
     pub fn init(allocator: std.mem.Allocator, module_name: []const u8, state: *state_mod.CompilerState) LlvmContext {
@@ -29,25 +29,30 @@ pub const LlvmContext = struct {
         defer allocator.free(name_z);
         const mod = C.LLVMModuleCreateWithNameInContext(name_z, ctx);
         const builder = C.LLVMCreateBuilderInContext(ctx);
+        const arena = allocator.create(std.heap.ArenaAllocator) catch @panic("OOM");
+        arena.* = std.heap.ArenaAllocator.init(allocator);
+        const arena_allocator = arena.allocator();
         return .{
             .ctx = ctx,
             .mod = mod,
             .builder = builder,
-            .functions = std.StringHashMap(T.LLVMValueRef).init(allocator),
-            .globals = std.StringHashMap(T.LLVMValueRef).init(allocator),
-            .types = std.StringHashMap(T.LLVMTypeRef).init(allocator),
-            .allocator = allocator,
+            .functions = std.StringHashMap(T.LLVMValueRef).init(arena_allocator),
+            .globals = std.StringHashMap(T.LLVMValueRef).init(arena_allocator),
+            .types = std.StringHashMap(T.LLVMTypeRef).init(arena_allocator),
+            .allocator = arena_allocator,
+            .arena = arena,
             .state = state,
         };
     }
 
     pub fn deinit(self: *LlvmContext) void {
-        self.functions.deinit();
-        self.globals.deinit();
-        self.types.deinit();
         C.LLVMDisposeBuilder(self.builder);
         C.LLVMDisposeModule(self.mod);
         C.LLVMContextDispose(self.ctx);
+        // The arena will free the memory backing the hashmaps and all duped keys.
+        const parent_allocator = self.arena.child_allocator;
+        self.arena.deinit();
+        parent_allocator.destroy(self.arena);
     }
 
     /// Dump LLVM IR to stderr (debug helper).
@@ -66,10 +71,10 @@ pub const LlvmContext = struct {
         }
     }
 
-    /// Verify the module; return an owned error string on failure.
     pub fn verify(self: *const LlvmContext) !void {
         var err_msg: [*c]u8 = null;
         if (analysis.LLVMVerifyModule(self.mod, .LLVMReturnStatusAction, &err_msg) != 0) {
+            C.LLVMDumpModule(self.mod);
             defer if (err_msg) |m| C.LLVMDisposeMessage(m);
             if (err_msg) |m| {
                 std.log.err("LLVM verify failed:\n{s}", .{m});
