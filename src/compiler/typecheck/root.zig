@@ -1032,10 +1032,17 @@ fn inferExprInner(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, 
             break :blk last;
         },
         .if_expr => |i| blk: {
-            _ = try inferExpr(state, env, ta, i.condition);
+            const cond_t = try inferExpr(state, env, ta, i.condition);
+            try env.pushScope();
+            defer env.popScope();
+            if (i.pipe_value) |pv| {
+                if (pv.* != .primary) return compiler_errors.compileFailFmt(state, "if capture must be identifier", .{});
+                const unwrapped = ir.optionalPayload(cond_t) orelse cond_t;
+                try env.define(pv.primary.name, unwrapped);
+            }
             _ = try inferExpr(state, env, ta, i.body);
             if (i.else_body) |e| _ = try inferExpr(state, env, ta, e);
-            // Value-producing if (has else) joins break payload types.
+            // Value-producing if (has else) joins break payloads.
             if (i.else_body != null) {
                 break :blk try joinBreakTypes(state, env, ta, node);
             }
