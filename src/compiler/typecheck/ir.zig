@@ -797,6 +797,13 @@ pub fn isByteSlice(t: Type) bool {
     return p == .array and p.array.elem.* == .u8;
 }
 
+pub fn isString(t: Type) bool {
+    const p = peelDefined(t);
+    if (p == .str_lit) return true;
+    if (p == .struct_) return std.mem.eql(u8, p.struct_, "string");
+    return false;
+}
+
 pub fn typeTag(t: Type) ?TypeTag {
     return switch (peelDefined(t)) {
         .i8 => .i8,

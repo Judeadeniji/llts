@@ -1098,12 +1098,18 @@ fn inferExprInner(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, 
             if (f.captures.len > 0) {
                 if (f.expr.* == .binary and std.mem.eql(u8, f.expr.binary.operator, "..")) {
                     for (f.captures) |cap| try env.define(cap.name, ir.TInt);
-                } else {
-                    const elem_type = if (expr_type == .array) expr_type.array.elem.* else ir.TUnknown;
+                } else if (ir.isByteSlice(expr_type) or expr_type == .array or ir.isString(expr_type)) {
+                    const elem_type = if (expr_type == .array) expr_type.array.elem.* else ir.TU8;
                     try env.define(f.captures[0].name, elem_type);
                     if (f.captures.len > 1) {
                         try env.define(f.captures[1].name, ir.TInt);
                     }
+                } else if (ir.optionalPayload(expr_type)) |payload| {
+                    if (f.captures.len > 1) return compiler_errors.compileFailFmt(state, "Optional while-loop only supports 1 capture", .{});
+                    try state.for_is_cond.put(&node.for_expr, {});
+                    try env.define(f.captures[0].name, payload);
+                } else {
+                    return compiler_errors.compileFailFmt(state, "Cannot iterate over type '{any}'", .{ir.typeTag(expr_type).?});
                 }
             }
             _ = try inferExpr(state, env, ta, f.body);

@@ -15,14 +15,12 @@ pub fn compileFor(state: *CompilerState, for_expr: *const ast.For) !void {
         .scope_depth = state.scope_depth,
     });
 
-    if (for_expr.captures.len > 0) {
-        if (for_expr.expr.* == .binary and std.mem.eql(u8, for_expr.expr.binary.operator, "..")) {
-            try compileRangeFor(state, for_expr);
-        } else {
-            try compileIterFor(state, for_expr);
-        }
-    } else {
+    if (state.for_is_cond.contains(for_expr) or for_expr.captures.len == 0) {
         try compileCondFor(state, for_expr);
+    } else if (for_expr.expr.* == .binary and std.mem.eql(u8, for_expr.expr.binary.operator, "..")) {
+        try compileRangeFor(state, for_expr);
+    } else {
+        try compileIterFor(state, for_expr);
     }
 
     try scope.endScope(state);
@@ -47,10 +45,15 @@ fn compileCondFor(state: *CompilerState, for_expr: *const ast.For) !void {
     if (!is_infinite) {
         try expr.compileExpression(state, for_expr.expr);
         exit_jump = try emit.emitJump(state, .OP_JUMP_IF_FALSE);
-        try emit.emitOp(state, .OP_POP);
+        if (for_expr.captures.len == 0) {
+            try emit.emitOp(state, .OP_POP);
+        }
     }
 
     try scope.beginScope(state);
+    if (for_expr.captures.len > 0) {
+        _ = try scope.addLocal(state, for_expr.captures[0].name, true);
+    }
     const body = try bodyBlock(state, for_expr);
     for (body.statements) |s| try stmt.compileStatement(state, s);
     try scope.endScope(state);
