@@ -45,29 +45,49 @@ fn printLnFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     while (i < args.len) : (i += 1) {
         const idx_s = std.mem.indexOf(u8, msg, "{s}");
         const idx_i = std.mem.indexOf(u8, msg, "{i}");
+        const idx_c = std.mem.indexOf(u8, msg, "{c}");
 
-        var replace_s = false;
-        if (idx_s) |s_pos| {
-            if (idx_i) |i_pos| {
-                if (s_pos < i_pos) replace_s = true;
-            } else {
-                replace_s = true;
-            }
+        var min_idx: ?usize = null;
+        var placeholder: enum { s, i, c } = .s;
+
+        if (idx_s) |pos| { min_idx = pos; placeholder = .s; }
+        if (idx_i) |pos| {
+            if (min_idx == null or pos < min_idx.?) { min_idx = pos; placeholder = .i; }
+        }
+        if (idx_c) |pos| {
+            if (min_idx == null or pos < min_idx.?) { min_idx = pos; placeholder = .c; }
         }
 
-        if (replace_s) {
-            const s = try util.valueToOwnedString(vm, args[i]);
-            defer vm.allocator.free(s);
+        if (min_idx == null) break;
 
-            const replaced = try replaceFirst(vm.allocator, msg, "{s}", s);
-            vm.allocator.free(msg);
-            msg = replaced;
-        } else if (idx_i != null) {
-            var ibuf: [32]u8 = undefined;
-            const s = formatInt(&ibuf, args[i]);
-            const replaced = try replaceFirst(vm.allocator, msg, "{i}", s);
-            vm.allocator.free(msg);
-            msg = replaced;
+        switch (placeholder) {
+            .s => {
+                const s = try util.valueToOwnedString(vm, args[i]);
+                defer vm.allocator.free(s);
+                const replaced = try replaceFirst(vm.allocator, msg, "{s}", s);
+                vm.allocator.free(msg);
+                msg = replaced;
+            },
+            .i => {
+                var ibuf: [32]u8 = undefined;
+                const s = formatInt(&ibuf, args[i]);
+                const replaced = try replaceFirst(vm.allocator, msg, "{i}", s);
+                vm.allocator.free(msg);
+                msg = replaced;
+            },
+            .c => {
+                var cbuf: [1]u8 = undefined;
+                if (args[i] == .u8) {
+                    cbuf[0] = args[i].u8;
+                } else if (widths.valueAsI64(args[i])) |n| {
+                    cbuf[0] = @intCast(n);
+                } else {
+                    cbuf[0] = '?';
+                }
+                const replaced = try replaceFirst(vm.allocator, msg, "{c}", &cbuf);
+                vm.allocator.free(msg);
+                msg = replaced;
+            },
         }
     }
 
