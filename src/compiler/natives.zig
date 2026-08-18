@@ -153,26 +153,12 @@ pub const signatures = [_]NativeSig{
     .{ .name = "__isunordered", .params = &.{ "float", "float" }, .ret = "bool" },
     .{ .name = "__signbit", .params = &.{"float"}, .ret = "bool" },
 
-    // ── fs module (std/fs.lls + std/io.lls; mirrors src/vm/builtins/io.zig) ──
-    // i64-returning natives return 0 on success and minInt on error; the
-    // pointer-returning ones return null on error. The full error-code/payload
-    // ABI flows through the pure-LLS wrapper path in std/fs.lls (mapIo).
-    .{ .name = "__readFile", .params = &.{"string"}, .ret = "string" },
+    // ── fs operations (now in syscall.zig, called by std/fs.lls / std/io.lls) ──
     .{ .name = "__readLine", .params = &.{"int"}, .ret = "string" },
-    .{ .name = "__writeFile", .params = &.{ "string", "string" }, .ret = "int" },
-    .{ .name = "__appendFile", .params = &.{ "string", "string" }, .ret = "int" },
-    .{ .name = "__deleteFile", .params = &.{"string"}, .ret = "int" },
-    .{ .name = "__exists", .params = &.{"string"}, .ret = "bool" },
-    .{ .name = "__mkdir", .params = &.{"string"}, .ret = "int" },
     .{ .name = "__mkdirAll", .params = &.{"string"}, .ret = "int" },
     .{ .name = "__readDir", .params = &.{"string"}, .ret = "[]string" },
     .{ .name = "__stat", .params = &.{"string"}, .ret = "[]float" },
-    .{ .name = "__rename", .params = &.{ "string", "string" }, .ret = "int" },
-    .{ .name = "__copyFile", .params = &.{ "string", "string" }, .ret = "int" },
-    .{ .name = "__symlink", .params = &.{ "string", "string" }, .ret = "int" },
-    .{ .name = "__readlink", .params = &.{"string"}, .ret = "string" },
     .{ .name = "__realpath", .params = &.{"string"}, .ret = "string" },
-    .{ .name = "__chmod", .params = &.{ "string", "int" }, .ret = "int" },
 
     // ── runtime support ──
     // `len` of an open slice / native array (`arr[-1]` holds the count).

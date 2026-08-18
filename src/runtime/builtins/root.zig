@@ -9,7 +9,6 @@ const util = @import("util.zig");
 const len = @import("len.zig");
 const string = @import("string.zig");
 const math = @import("math.zig");
-const fs = @import("fs.zig");
 const syscall = @import("syscall.zig");
 const buffer = @import("buffer.zig");
 const os = @import("os.zig");
@@ -25,7 +24,6 @@ comptime {
     _ = len;
     _ = string;
     _ = math;
-    _ = fs;
     _ = syscall;
     _ = buffer;
     _ = os;

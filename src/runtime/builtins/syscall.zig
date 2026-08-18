@@ -577,3 +577,62 @@ export fn __F_SETFL() i64 {
 export fn __FD_CLOEXEC() i64 {
     return 1;
 }
+
+// ─────────────────────── fs operations (via posix) ────────────────────────
+// These were previously in fs.zig but belong here since LLTS builds
+// its fs layer on top of syscall.
+
+export fn __mkdirAll(path: [*:0]const u8) i64 {
+    std.fs.cwd().makePath(util.cstr(path)) catch return -1;
+    return 0;
+}
+
+export fn __readDir(path: [*:0]const u8) i64 {
+    var dir = std.fs.cwd().openDir(util.cstr(path), .{ .iterate = true }) catch return 0;
+    defer dir.close();
+    var it = dir.iterate();
+    var names: std.ArrayList([*:0]const u8) = .empty;
+    defer names.deinit(util.strAlloc());
+    while (it.next() catch return 0) |entry| {
+        names.append(util.strAlloc(), util.dupBytes(entry.name)) catch return 0;
+    }
+    return @intCast(@intFromPtr(util.countPrefixedStrings(names.items)));
+}
+
+/// `[size, mtime_ms, atime_ms, ctime_ms, kind]` count-prefixed f64 array.
+export fn __stat(path: [*:0]const u8) i64 {
+    const stat = std.fs.cwd().statFile(util.cstr(path)) catch return 0;
+    const alloc = util.strAlloc();
+    const slots = alloc.alloc(f64, 6) catch return 0;
+    slots[0] = @bitCast(@as(i64, 5)); // count
+    slots[1] = @floatFromInt(stat.size);
+    slots[2] = @floatFromInt(@divTrunc(stat.mtime, 1000000));
+    slots[3] = @floatFromInt(@divTrunc(stat.atime, 1000000));
+    slots[4] = @floatFromInt(@divTrunc(stat.ctime, 1000000));
+    const kind: f64 = switch (stat.kind) {
+        .file => 1.0,
+        .directory => 2.0,
+        .sym_link => 3.0,
+        else => 0.0,
+    };
+    slots[5] = kind;
+    const raw: [*]const u8 = @ptrCast(slots.ptr);
+    return @intCast(@intFromPtr(raw + @sizeOf(f64)));
+}
+
+export fn __readLine(fd_in: i64) ?[*:0]u8 {
+    const fd: std.posix.fd_t = @intCast(fd_in);
+    var buf: [8192]u8 = undefined;
+    const n = std.posix.read(fd, &buf) catch return null;
+    if (n == 0) return null;
+    var str = buf[0..n];
+    if (std.mem.indexOfScalar(u8, str, '\n')) |nl| str = str[0..nl];
+    if (std.mem.endsWith(u8, str, "\r")) str = str[0 .. str.len - 1];
+    return util.dupBytes(str);
+}
+
+export fn __realpath(path: [*:0]const u8) i64 {
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const real = std.fs.cwd().realpath(util.cstr(path), &buf) catch return 0;
+    return @intCast(@intFromPtr(util.dupBytes(real)));
+}

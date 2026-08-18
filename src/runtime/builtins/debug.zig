@@ -5,8 +5,8 @@
 //! `__printLn(msg, ...args)` does printf-style interpolation and writes
 //! to stdout.
 //!
-//! All I/O is self-contained (no imports from src/io/) because the natives
-//! module is compiled as an independent object file.
+//! All I/O goes through `__sys_writeAll` syscall native — no reimplemented
+//! write primitives.
 
 const std = @import("std");
 const util = @import("util.zig");
@@ -14,15 +14,10 @@ const util = @import("util.zig");
 const dupBytes = util.dupBytes;
 const cstr = util.cstr;
 
-// ─────────────────────────── stdio helpers (self-contained) ────────────────
+extern fn __sys_writeAll(fd_in: i64, data: i64) i64;
 
-fn writeAll(fd: std.posix.fd_t, bytes: []const u8) void {
-    var remaining = bytes;
-    while (remaining.len > 0) {
-        const n = std.posix.write(fd, remaining) catch return;
-        if (n == 0) return;
-        remaining = remaining[n..];
-    }
+fn writeAll(fd: i64, bytes: []const u8) void {
+    _ = __sys_writeAll(fd, @intCast(@intFromPtr(util.dupBytes(bytes))));
 }
 
 fn writeStderr(bytes: []const u8) void {
@@ -49,7 +44,6 @@ var color_enabled = false;
 fn colorEnabled() bool {
     if (!color_initialized) {
         color_initialized = true;
-        // FORCE_COLOR wins
         if (std.posix.getenv("FORCE_COLOR")) |v| {
             if (v.len > 0 and !std.mem.eql(u8, v, "0")) {
                 color_enabled = true;
@@ -98,7 +92,7 @@ const Level = enum(u8) {
     fn ansi(self: Level) []const u8 {
         return switch (self) {
             .trace => ansi_dim,
-            .debug => "\x1b[36m", // cyan
+            .debug => "\x1b[36m",
             .info => ansi_green,
             .warn => ansi_bold ++ ansi_bright_yellow,
             .err => ansi_bold ++ ansi_bright_red,
@@ -143,7 +137,7 @@ fn formatErrorArg(v: i64, buf: *std.ArrayList(u8), alloc: std.mem.Allocator) voi
     const code = cstr(code_ptr);
     const payload = cstr(payload_ptr);
     if (payload.len > 0) {
-        buf.writer(alloc).print("{s} — {s}", .{ code, payload }) catch {};
+        buf.writer(alloc).print("{s} \u{2014} {s}", .{ code, payload }) catch {};
     } else {
         buf.writer(alloc).print("{s}", .{code}) catch {};
     }
@@ -174,7 +168,6 @@ export fn __hostLog(level_ptr: [*:0]const u8, msg_val: i64) i64 {
         }
     }
 
-    // Write: "LEVEL: msg\n" with ANSI color
     const c_lvl = paint(level.ansi());
     const r = resetColor();
     var out_buf: [4096]u8 = undefined;
@@ -219,7 +212,6 @@ fn replaceFirst(haystack: []const u8, needle: []const u8, replacement: []const u
 export fn __printLn(msg_val: i64, a: i64, b: i64, c_arg: i64, d: i64) i64 {
     const alloc = std.heap.page_allocator;
 
-    // Get the format string
     var msg_buf: std.ArrayList(u8) = .empty;
     defer msg_buf.deinit(alloc);
     writeArg(msg_val, &msg_buf, alloc);
@@ -229,7 +221,6 @@ export fn __printLn(msg_val: i64, a: i64, b: i64, c_arg: i64, d: i64) i64 {
 
     const args = [_]i64{ a, b, c_arg, d };
     for (args) |arg| {
-        // Stop if no more placeholders
         if (std.mem.indexOf(u8, msg, "{s}") == null and
             std.mem.indexOf(u8, msg, "{i}") == null and
             std.mem.indexOf(u8, msg, "{c}") == null)
@@ -290,7 +281,6 @@ export fn __printLn(msg_val: i64, a: i64, b: i64, c_arg: i64, d: i64) i64 {
         }
     }
 
-    // Write to stdout with newline
     var final_buf: std.ArrayList(u8) = .empty;
     defer final_buf.deinit(alloc);
     final_buf.appendSlice(alloc, msg) catch return 0;
