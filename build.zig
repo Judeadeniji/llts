@@ -10,8 +10,6 @@ pub fn build(b: *std.Build) void {
     });
     const zli_mod = zli.module("zli");
 
-    // llvm-zig also exposes a `clang` module; we only need LLVM IR/bitcode APIs.
-    // Linking clang pulls `clang-21` and breaks Manjaro hosts that only have libLLVM-21.
     const llvm_dep = b.dependency("llvm", .{
         .target = target,
         .optimize = optimize,
@@ -45,9 +43,7 @@ pub fn build(b: *std.Build) void {
 
     b.installArtifact(exe);
 
-    // Native arena runtime for the LLVM backend (`__arena_*` externs that
-    // `std/mem.lls` calls). Compiled to a relocatable object that
-    // `scripts/emit-run.sh` links against the emitted bitcode.
+    // Native arena runtime for the LLVM backend.
     const runtime_obj = b.addObject(.{
         .name = "llts-runtime",
         .root_module = b.createModule(.{
@@ -60,8 +56,8 @@ pub fn build(b: *std.Build) void {
     const install_runtime = b.addInstallFileWithDir(runtime_obj.getEmittedBin(), .lib, "llts-runtime.o");
     b.getInstallStep().dependOn(&install_runtime.step);
 
-    // Std native functions (`__strlen`, `__floor`, ...) — split per module
-    // under `src/runtime/builtins/`, mirroring the VM's `src/vm/builtins/`.
+    // Monolithic native object — built with function/data sections so the
+    // linker's --gc-sections can strip unreferenced code.
     const natives_obj = b.addObject(.{
         .name = "llts-runtime-natives",
         .root_module = b.createModule(.{
@@ -71,6 +67,7 @@ pub fn build(b: *std.Build) void {
             .link_libc = true,
         }),
     });
+
     const install_natives = b.addInstallFileWithDir(natives_obj.getEmittedBin(), .lib, "llts-runtime-natives.o");
     b.getInstallStep().dependOn(&install_natives.step);
 

@@ -1,9 +1,6 @@
-//! Compilation entry for the native runtime builtins (mirrors
-//! `src/vm/builtins/root.zig`). `build.zig` compiles this to a relocatable
-//! object that `scripts/emit-run.sh` links against the emitted bitcode.
-//!
-//! The `comptime` block forces analysis of every builtin module so their
-//! `export fn`s are all emitted into the object.
+//! Compilation entry for the native runtime builtins. The comptime block
+//! forces analysis of every builtin module so their `export fn`s are all
+//! emitted into the object.
 
 const util = @import("util.zig");
 const len = @import("len.zig");

@@ -25,8 +25,7 @@ if [[ -z "$CLANG" ]]; then
   exit 1
 fi
 
-# Native arena runtime (`__arena_create` / `__arena_alloc_bytes` …) and the
-# std native functions (`__strlen`, `__floor`, …).
+# Native arena runtime and std native functions.
 RT="${ROOT}/zig-out/lib/llts-runtime.o"
 RT_NATIVES="${ROOT}/zig-out/lib/llts-runtime-natives.o"
 if [[ ! -f "$RT" || ! -f "$RT_NATIVES" ]]; then
@@ -34,6 +33,6 @@ if [[ ! -f "$RT" || ! -f "$RT_NATIVES" ]]; then
   exit 1
 fi
 
-"$CLANG" "$BC" "$RT" "$RT_NATIVES" -o "$EXE" -lm -lcurl
+"$CLANG" "$BC" "$RT" "$RT_NATIVES" -o "$EXE" -lm -lcurl -s -Wl,--gc-sections
 echo "running $EXE"
 "$EXE"

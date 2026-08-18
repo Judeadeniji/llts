@@ -60,7 +60,7 @@ for src in "$OUT_DIR"/src_*.lls; do
     for c in clang-21 clang; do
       if command -v "$c" >/dev/null 2>&1; then CLANG="$c"; break; fi
     done
-    if "$CLANG" "$OUT_DIR/t_$i.bc" "$ROOT/zig-out/lib/llts-runtime.o" "$ROOT/zig-out/lib/llts-runtime-natives.o" -o "$OUT_DIR/t_$i" -lm -lcurl 2>/dev/null; then
+    if "$CLANG" "$OUT_DIR/t_$i.bc" "$ROOT/zig-out/lib/llts-runtime.o" "$ROOT/zig-out/lib/llts-runtime-natives.o" -o "$OUT_DIR/t_$i" -lm -lcurl -s -Wl,--gc-sections 2>/dev/null; then
       "$OUT_DIR/t_$i" > "$LL_OUT" 2>&1 || true
     else
       echo "LINK-FAIL" > "$LL_OUT"
