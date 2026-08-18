@@ -6,6 +6,7 @@ import { spawnSync } from "bun";
 import * as path from "node:path";
 import * as fs from "node:fs";
 import * as os from "node:os";
+import { execSync } from "node:child_process";
 
 const ROOT = path.resolve(import.meta.dir, "..");
 const ENTRY = path.join(ROOT, "zig-out/bin/llts");
@@ -97,6 +98,79 @@ export function runSourceWithArgs(source: string, scriptArgs: string[]): RunResu
 		return runFile(tmp, scriptArgs);
 	} finally {
 		fs.unlinkSync(tmp);
+	}
+}
+
+/** Find clang-21 or clang on PATH. */
+function findClang(): string {
+	for (const c of ["clang-21", "clang"]) {
+		try {
+			execSync(`which ${c}`, { stdio: "pipe" });
+			return c;
+		} catch {}
+	}
+	throw new Error("need clang or clang-21 to link LLVM bitcode");
+}
+
+/** Compile and run inline source through the LLVM backend. */
+export function runSourceLlvm(source: string): RunResult {
+	requireBinary();
+	const tmp = path.join(
+		os.tmpdir(),
+		`llts_test_${Date.now()}_${Math.random().toString(36).slice(2)}.lls`,
+	);
+	const exe = tmp.replace(/\.lls$/, "")
+	const bc = tmp.replace(/\.lls$/, ".bc")
+	fs.writeFileSync(tmp, ensureMain(source), "utf-8");
+	try {
+		// Emit bitcode
+		const emitResult = spawnSync([ENTRY, "emit", tmp, "-o", bc], {
+			cwd: ROOT,
+		});
+		if (emitResult.exitCode !== 0) {
+			return {
+				stdout: "",
+				stderr: emitResult.stderr.toString() + emitResult.stdout.toString(),
+				exitCode: emitResult.exitCode ?? 1,
+				lines: [],
+			};
+		}
+		// Link with clang
+		const clang = findClang();
+		const rt = path.join(ROOT, "zig-out/lib/llts-runtime.o");
+		const rtNatives = path.join(ROOT, "zig-out/lib/llts-runtime-natives.o");
+		try {
+			execSync(
+				`"${clang}" "${bc}" "${rt}" "${rtNatives}" -o "${exe}" -lm -lcurl -s -Wl,--gc-sections`,
+				{ cwd: ROOT, stdio: "pipe" },
+			);
+		} catch (e: any) {
+			return {
+				stdout: "",
+				stderr: e.stderr?.toString() ?? "",
+				exitCode: e.status ?? 1,
+				lines: [],
+			};
+		}
+		// Run
+		try {
+			const output = execSync(`"${exe}"`, { cwd: ROOT, stdio: "pipe" })
+				.toString();
+			const lines = output.split(/\r?\n/);
+			while (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
+			return { stdout: output, stderr: "", exitCode: 0, lines };
+		} catch (e: any) {
+			const stdout = e.stdout?.toString() ?? "";
+			const stderr = e.stderr?.toString() ?? "";
+			const lines = stdout.split(/\r?\n/);
+			while (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
+			return { stdout, stderr, exitCode: e.status ?? 1, lines };
+		} finally {
+			try { fs.unlinkSync(bc); } catch {}
+			try { fs.unlinkSync(exe); } catch {}
+		}
+	} finally {
+		try { fs.unlinkSync(tmp); } catch {}
 	}
 }
 
