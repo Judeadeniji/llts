@@ -7,6 +7,7 @@ const path = @import("../expr/path.zig");
 const intrinsics = @import("../intrinsics.zig");
 const compiler_errors = @import("../../errors/compile.zig");
 const widths = @import("../widths.zig");
+const natives = @import("../natives.zig");
 
 pub const typeAstToDisplay = from_ast.typeAstToDisplay;
 
@@ -141,6 +142,19 @@ fn requireAssignAt(state: *state_mod.CompilerState, got: ir.Type, expected: ir.T
                 try recordExprType(state, node, expected);
                 return;
             }
+        }
+    }
+    // Bare integer literals coerce silently into float contexts
+    // (`__pow(a, 2)` in std/math.lls::sqr) — matches the VM's dynamic typing.
+    // The literal may already be widened to i64 by `inferLiteral`, so check the
+    // AST node shape as well as the type.
+    const got_is_flexible_int = ir.peelDefined(got) == .int_lit or
+        (got == .i64 and from != null and isBareIntLiteral(from.?));
+    if (got_is_flexible_int) {
+        const exp_w = ir.widthOf(ir.peelDefined(expected));
+        if (exp_w != null and exp_w.?.isFloat()) {
+            if (from) |node| try recordExprType(state, node, expected);
+            return;
         }
     }
     // Implicit numeric coercion: accept widening and narrowing within the
@@ -702,6 +716,27 @@ fn coerceNumericPair(
         return compiler_errors.compileFailFmt(state, "{s}: expected matching numeric types, got '{s}' and '{s}'", .{ ctx, dl, dr });
     }
     if (ir.typeEquals(lw, rw)) return lw;
+    // Bare integer literals adopt the other operand's type — including floats:
+    // `math.PI * 100` widens `100` to f64 (matches the VM's dynamic behavior).
+    if (lw == .i64 and rw != .i64 and isBareIntLiteral(left_node)) {
+        try recordExprType(state, left_node, rw);
+        return rw;
+    }
+    if (rw == .i64 and lw != .i64 and isBareIntLiteral(right_node)) {
+        try recordExprType(state, right_node, lw);
+        return lw;
+    }
+    // Flexible untyped integers — bare literals, `$a = 10`-style variables, and
+    // `@const` integer module members (`time.Second`) — adapt silently into
+    // float contexts too: `3.0 * time.Second` widens `Second` to f64.
+    if (lw == .i64 and rw != .i64 and ir.peelDefined(l) == .int_lit) {
+        try recordExprType(state, left_node, rw);
+        return rw;
+    }
+    if (rw == .i64 and lw != .i64 and ir.peelDefined(r) == .int_lit) {
+        try recordExprType(state, right_node, lw);
+        return lw;
+    }
     // Untyped integer variables (`int_lit` type from unannotated literal declarations
     // like `$a = 10`) adapt silently to the concrete type of the other operand —
     // just like a bare literal node does, but via the stored type rather than AST.
@@ -713,16 +748,6 @@ fn coerceNumericPair(
             return rw;
         }
         if (right_is_untyped and !left_is_untyped) {
-            try recordExprType(state, right_node, lw);
-            return lw;
-        }
-        // Both untyped OR both typed with same i64 width: fall through.
-        // Existing bare-literal coercion (lw == .i64 and isBareIntLiteral) below.
-        if (lw == .i64 and isBareIntLiteral(left_node) and rw != .i64) {
-            try recordExprType(state, left_node, rw);
-            return rw;
-        }
-        if (rw == .i64 and isBareIntLiteral(right_node) and lw != .i64) {
             try recordExprType(state, right_node, lw);
             return lw;
         }
@@ -834,6 +859,14 @@ fn inferExprInner(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, 
         },
         .call => |*c| try inferCall(state, env, ta, node, c),
         .member => |m| blk: {
+            // Module const: `math.PI` → the qualified global `std/math.lls::PI`.
+            if (path.tryResolveStaticPath(state, node) catch null) |static_path| {
+                if (state.global_types.get(static_path)) |gt| {
+                    if (!std.mem.startsWith(u8, gt, "module:")) {
+                        break :blk try from_ast.parseDisplayType(state, ta, gt, null);
+                    }
+                }
+            }
             if (m.property.* == .primary) {
                 if (from_ast.resolveErrorSetName(state, m.object)) |esname| {
                     if (state.error_sets.get(esname)) |ed| {
@@ -897,6 +930,16 @@ fn inferExprInner(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, 
                         }
                     }
                     break :blk ft;
+                }
+            }
+            // Error values expose `.code` (message) and `.payload` — the LLVM
+            // backend lowers these to `__err_code` / `__err_payload`, and the
+            // type is `string` so locals/slots/switch conditions carry the
+            // payload as a C string pointer (like the VM's gradual errors).
+            if (m.property.* == .primary) {
+                const pn = m.property.primary.name;
+                if (std.mem.eql(u8, pn, "code") or std.mem.eql(u8, pn, "payload")) {
+                    break :blk ir.TString;
                 }
             }
             break :blk ir.TUnknown;
@@ -1310,6 +1353,16 @@ fn checkFuncValueCall(
         var ctx_buf: [96]u8 = undefined;
         const ctx = std.fmt.bufPrint(&ctx_buf, "argument {d}", .{i + 1}) catch "argument";
         try requireAssignFrom(state, at, f.params[i], ctx, c.args[i]);
+        // Gradual inference for unannotated function params used as native
+        // args: `floor(a)` calls `__floor(float)` → the `a` reference inherits
+        // the native's param type so the LLVM backend declares real ABI types
+        // for std wrappers instead of i64.
+        if (!ir.involvesUnknown(f.params[i]) and ir.involvesUnknown(at)) {
+            if (c.args[i].* == .primary and c.args[i].primary.kind == .identifier) {
+                _ = state.type_of_results.remove(c.args[i]);
+                try recordExprType(state, c.args[i], f.params[i]);
+            }
+        }
     }
     while (i < c.args.len) : (i += 1) {
         _ = try inferExpr(state, env, ta, c.args[i]);
@@ -1471,10 +1524,14 @@ fn checkStmt(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node:
                 try state.global_types.put(d.name, disp);
             } else {
                 try env.define(d.name, value_type);
-                // Persist pointer / array / function displays so emit can resolve layout / types.
-                // Skip `error` — builtin `error` struct would steal LOAD_FIELD from runtime errors.
-                if (std.mem.indexOf(u8, d.name, "::") == null and
-                    (value_type == .ptr or value_type == .array or value_type == .func))
+                // Persist concrete display types so emit can resolve layout/types for
+                // globals — including floats (`$PI = 3.14…`) and module-qualified
+                // consts (`std/math.lls::PI`), which previously fell back to i64.
+                // Skip `error` — builtin `error` struct would steal LOAD_FIELD from
+                // runtime errors.
+                if (!ir.involvesUnknown(value_type) and
+                    value_type != .null and value_type != .never and
+                    value_type != .func and value_type != .error_)
                 {
                     const disp = try ownDisplay(state, value_type);
                     try state.global_types.put(d.name, disp);
@@ -1527,6 +1584,20 @@ fn checkStmt(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node:
 /// Typecheck a single function body. The LLVM backend's `analyze` pass only
 /// typechecks the main document; imported module function bodies are parsed
 /// but untyped until lowered, so the backend calls this for each reachable one.
+/// Is `t` a confident inferred return type for `node` (as opposed to a
+/// degenerate guess from arithmetic over unknown operands)?
+fn isConfidentReturn(node: ?*ast.Node, t: ir.Type) bool {
+    const n = node orelse return false;
+    if (ir.involvesUnknown(t)) return false;
+    if (t == .null or t == .never or t == .func or t == .error_) return false;
+    return switch (n.*) {
+        .call, .struct_init, .literal, .member, .index, .array_literal, .try_expr => true,
+        // `self` / a param with a concrete recorded type.
+        .primary => n.primary.kind == .identifier,
+        else => false,
+    };
+}
+
 pub fn typecheckFunction(state: *state_mod.CompilerState, f: *ast.FunctionDecl) TypecheckError!void {
     var arena = std.heap.ArenaAllocator.init(state.allocator);
     defer arena.deinit();
@@ -1554,8 +1625,21 @@ fn checkFunction(state: *state_mod.CompilerState, ta: ir.TypeAlloc, f: *ast.Func
             try env.globals.put(k, try from_ast.parseDisplayType(state, ta, v, null));
         }
     }
+    // Seed every known native (`__strlen`, `__floor`, `len`, …) with its real
+    // signature so native call sites type correctly and unannotated std wrappers
+    // infer their param/return types. `__`-natives aren't in `native_globals`
+    // (std/.lls has no `@extern` decls), so iterate the table directly.
+    for (&natives.signatures) |*sig| {
+        var nparams: std.ArrayList(ir.Type) = .empty;
+        defer nparams.deinit(ta.allocator);
+        for (sig.params) |p| try nparams.append(ta.allocator, try from_ast.parseDisplayType(state, ta, p, null));
+        const nret = try from_ast.parseDisplayType(state, ta, sig.ret, null);
+        try env.globals.put(sig.name, try ta.funcType(nparams.items, nret, sig.variadic));
+    }
     var nit = state.native_globals.keyIterator();
-    while (nit.next()) |n| try env.globals.put(n.*, ir.TUnknown);
+    while (nit.next()) |n| {
+        if (natives.lookup(n.*) == null) try env.globals.put(n.*, ir.TUnknown);
+    }
 
     const annotated: ?ir.Type = if (f.return_type) |rt| try from_ast.typeFromAst(rt, state, ta) else null;
     env.annotated_return = annotated;
@@ -1600,15 +1684,29 @@ fn checkFunction(state: *state_mod.CompilerState, ta: ir.TypeAlloc, f: *ast.Func
         try env.define(pnode.name, t);
     }
 
+    // Track the last concrete `return` type so unannotated functions (e.g. the
+    // std/`.lls` wrappers around `__` natives) get a real inferred return type
+    // for the LLVM backend's `resolveReturnType`. Only confident expressions
+    // (direct calls, literals, struct inits, …) are recorded — arithmetic over
+    // unknown operands (`d / Millisecond` → i64) is a degenerate guess that
+    // would otherwise surface phantom type errors at call sites.
+    var inferred_ret: ?ir.Type = null;
     if (f.body.* == .block) {
         for (f.body.block.statements) |s| {
-            _ = try checkStmt(state, &env, ta, s);
+            const st = try checkStmt(state, &env, ta, s);
+            if (s.* == .return_expr) {
+                if (st) |t| {
+                    if (isConfidentReturn(s.return_expr.return_value, t)) inferred_ret = t;
+                }
+            }
         }
     }
 
-    if (annotated) |a| {
-        if (state.functions.getPtr(f.name)) |def| {
+    if (state.functions.getPtr(f.name)) |def| {
+        if (annotated) |a| {
             def.return_type = try ownDisplay(state, a);
+        } else if (inferred_ret) |t| {
+            def.return_type = try ownDisplay(state, t);
         }
     }
 }

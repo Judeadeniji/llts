@@ -188,6 +188,33 @@ pub fn castTo(lc: *LlvmContext, val: T.LLVMValueRef, src_type_name: []const u8, 
     if (dk == .LLVMPointerTypeKind and sk == .LLVMIntegerTypeKind) {
         return C.LLVMBuildIntToPtr(lc.builder, val, dst_ty, "inttoptr");
     }
+    // Array value → slice pointer: materialize a count-prefixed copy
+    // (`arr[-1]` = element count, the native ABI for `[]T`), so passing an
+    // array literal to a `[]string` param (`join(["a","b"], "-")`) works.
+    if (sk == .LLVMArrayTypeKind and dk == .LLVMPointerTypeKind) {
+        const elem_ty = C.LLVMGetElementType(src_ty) orelse return val;
+        const n = C.LLVMGetArrayLength(src_ty);
+        const packed_ty = C.LLVMArrayType(elem_ty, n + 1);
+        const tmp = C.LLVMBuildAlloca(lc.builder, packed_ty, "arrpack");
+        const count_i = C.LLVMConstInt(lc.i64Ty(), n, 0);
+        const count_v = if (C.LLVMGetTypeKind(elem_ty) == .LLVMPointerTypeKind)
+            C.LLVMBuildIntToPtr(lc.builder, count_i, elem_ty, "arrcount")
+        else
+            count_i;
+        {
+            var idxs = [_]T.LLVMValueRef{ C.LLVMConstInt(lc.i64Ty(), 0, 0), C.LLVMConstInt(lc.i64Ty(), 0, 0) };
+            const ep = C.LLVMBuildGEP2(lc.builder, packed_ty, tmp, &idxs, 2, "ep0");
+            _ = C.LLVMBuildStore(lc.builder, count_v, ep);
+        }
+        for (0..n) |i| {
+            const e = C.LLVMBuildExtractValue(lc.builder, val, @intCast(i), "elem");
+            var idxs = [_]T.LLVMValueRef{ C.LLVMConstInt(lc.i64Ty(), 0, 0), C.LLVMConstInt(lc.i64Ty(), i + 1, 0) };
+            const ep = C.LLVMBuildGEP2(lc.builder, packed_ty, tmp, &idxs, 2, "ep");
+            _ = C.LLVMBuildStore(lc.builder, e, ep);
+        }
+        var zero = [_]T.LLVMValueRef{ C.LLVMConstInt(lc.i64Ty(), 0, 0), C.LLVMConstInt(lc.i64Ty(), 1, 0) };
+        return C.LLVMBuildGEP2(lc.builder, packed_ty, tmp, &zero, 2, "arrptr");
+    }
     if (sk == .LLVMPointerTypeKind and dk == .LLVMIntegerTypeKind) {
         return C.LLVMBuildPtrToInt(lc.builder, val, dst_ty, "ptrtoint");
     }

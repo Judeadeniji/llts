@@ -529,6 +529,16 @@ fn lowerSwitch(s: *StmtState, sw: ast.Switch) StmtError!void {
     var es = s.exprState();
     const cond_val = try expr_mod.lowerExpr(&es, sw.condition);
 
+    // String switches (`@switch (name) { "FileNotFound", ... => })` compare
+    // by content via `__eql` — pointer equality would never match runtime
+    // heap strings against literal globals.
+    const string_mode = C.LLVMGetTypeKind(C.LLVMTypeOf(cond_val)) == .LLVMPointerTypeKind or
+        expr_mod.isStringTypeName(expr_mod.typeOf(&es, sw.condition));
+    var cond_arg = cond_val;
+    if (string_mode and C.LLVMGetTypeKind(C.LLVMTypeOf(cond_val)) == .LLVMIntegerTypeKind) {
+        cond_arg = C.LLVMBuildIntToPtr(s.lc.builder, cond_val, s.lc.ptrTy(), "cond_str");
+    }
+
     var next_cond_bb = C.LLVMAppendBasicBlockInContext(s.lc.ctx, fn_val, "switch.case");
     _ = C.LLVMBuildBr(s.lc.builder, next_cond_bb);
     C.LLVMPositionBuilderAtEnd(s.lc.builder, next_cond_bb);
@@ -544,10 +554,19 @@ fn lowerSwitch(s: *StmtState, sw: ast.Switch) StmtError!void {
             var matched: ?T.LLVMValueRef = null;
             for (prong.patterns) |pat| {
                 const pat_val = try expr_mod.lowerExpr(&es, pat);
-                const pat_ty_name = expr_mod.typeOf(&es, pat);
-                const pv = types_mod.castTo(s.lc, pat_val, pat_ty_name, C.LLVMTypeOf(cond_val));
-                const cmp = C.LLVMBuildICmp(s.lc.builder, .LLVMIntEQ, cond_val, pv, "eq");
-                matched = if (matched) |m| C.LLVMBuildOr(s.lc.builder, m, cmp, "or") else cmp;
+                if (string_mode) {
+                    var pv = pat_val;
+                    if (C.LLVMGetTypeKind(C.LLVMTypeOf(pat_val)) == .LLVMIntegerTypeKind) {
+                        pv = C.LLVMBuildIntToPtr(s.lc.builder, pat_val, s.lc.ptrTy(), "pat_str");
+                    }
+                    const cmp = try expr_mod.strEql(&es, cond_arg, pv);
+                    matched = if (matched) |m| C.LLVMBuildOr(s.lc.builder, m, cmp, "or") else cmp;
+                } else {
+                    const pat_ty_name = expr_mod.typeOf(&es, pat);
+                    const pv = types_mod.castTo(s.lc, pat_val, pat_ty_name, C.LLVMTypeOf(cond_val));
+                    const cmp = C.LLVMBuildICmp(s.lc.builder, .LLVMIntEQ, cond_val, pv, "eq");
+                    matched = if (matched) |m| C.LLVMBuildOr(s.lc.builder, m, cmp, "or") else cmp;
+                }
             }
             _ = C.LLVMBuildCondBr(s.lc.builder, matched.?, body_bb, next_cond_bb);
         }

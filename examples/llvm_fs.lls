@@ -1,0 +1,45 @@
+# LLVM-backend smoke test for the fs natives (src/runtime/builtins/fs.zig).
+# Calls the `__*` natives directly — the std/fs.lls wrapper path routes
+# through the syscall natives (separate phase).
+
+pub @func main() {
+    # write / append / read round-trip
+    __writeFile("llvm_fs_tmp.txt", "abc");
+    print(__exists("llvm_fs_tmp.txt"));
+    print(__readFile("llvm_fs_tmp.txt"));
+    __appendFile("llvm_fs_tmp.txt", "d");
+    print(__readFile("llvm_fs_tmp.txt"));
+
+    # stat: [size, mtime, atime, ctime, kind] — kind 1 = file
+    $st = __stat("llvm_fs_tmp.txt");
+    print(st[0] >= 3.0);
+    print(st[4]);
+
+    # rename / copy
+    __rename("llvm_fs_tmp.txt", "llvm_fs_tmp2.txt");
+    print(__exists("llvm_fs_tmp.txt"));
+    print(__exists("llvm_fs_tmp2.txt"));
+    __copyFile("llvm_fs_tmp2.txt", "llvm_fs_tmp3.txt");
+    print(__readFile("llvm_fs_tmp3.txt"));
+
+    # mkdirAll + readDir
+    __mkdirAll("llvm_fs_dir/sub");
+    $entries = __readDir("llvm_fs_dir");
+    print(len(entries));
+    print(entries[0]);
+
+    # realpath + symlink + readlink
+    $rp = __realpath("llvm_fs_tmp2.txt");
+    print(len(rp) > 0);
+    __symlink("llvm_fs_tmp2.txt", "llvm_fs_link.txt");
+    print(__readlink("llvm_fs_link.txt"));
+
+    # chmod + cleanup
+    __chmod("llvm_fs_tmp2.txt", 0o644);
+    __deleteFile("llvm_fs_tmp2.txt");
+    __deleteFile("llvm_fs_tmp3.txt");
+    __deleteFile("llvm_fs_link.txt");
+    print(__exists("llvm_fs_tmp2.txt"));
+    __deleteFile("llvm_fs_dir/sub");
+    __deleteFile("llvm_fs_dir");
+}

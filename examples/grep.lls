@@ -9,7 +9,7 @@ $args_len = len(args);
 }
 
 $pattern = args[1];
-$content = "";
+$content = " " + "";
 
 @if (args_len >= 3) {
     $filepath = args[2];

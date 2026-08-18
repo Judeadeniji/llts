@@ -10,6 +10,8 @@ const types_mod = @import("types.zig");
 const layout = @import("../layout.zig");
 const from_ast = @import("../typecheck/from_ast.zig");
 const path = @import("../expr/path.zig");
+const natives = @import("../natives.zig");
+const state_mod = @import("../state.zig");
 const target = llvm.target;
 const LlvmContext = context.LlvmContext;
 
@@ -35,10 +37,14 @@ pub fn typeOf(s: *ExprState, node: *ast.Node) []const u8 {
     }
     // Function bodies are typechecked before top-level declarations register
     // their globals, so a global referenced inside a function can be recorded
-    // as unknown. Use the registered global type instead of falling to i64.
+    // as unknown. Use the registered global type instead of falling to i64 —
+    // but only when the name isn't shadowed by a local/param in the current
+    // function (`abs(a)` must not inherit the type of a top-level `$a`).
     if (node.* == .primary and node.primary.kind == .identifier) {
-        if (s.lc.state.global_types.get(node.primary.name)) |gt| {
-            if (!std.mem.startsWith(u8, gt, "module:")) return gt;
+        if (!s.locals.contains(node.primary.name)) {
+            if (s.lc.state.global_types.get(node.primary.name)) |gt| {
+                if (!std.mem.startsWith(u8, gt, "module:")) return gt;
+            }
         }
     }
     return "i64";
@@ -134,6 +140,13 @@ fn lowerPrimary(s: *ExprState, prim: ast.Primary, node: *ast.Node) CodegenError!
         if (s.lc.functions.get(prim.name)) |fn_val| {
             return fn_val;
         }
+        // `__O_RDONLY`-style constant natives (`pub $O_RDONLY = __O_RDONLY;`)
+        // are referenced as 0-arg primaries — call the native to get the value.
+        if (natives.isKnownNative(prim.name)) {
+            if (natives.lookup(prim.name).?.params.len == 0) {
+                return try callNativeArgs(s, prim.name, &.{}, node);
+            }
+        }
         return C.LLVMGetUndef(llvmTypeOf(s, node));
     }
     return C.LLVMGetUndef(llvmTypeOf(s, node));
@@ -171,12 +184,20 @@ fn extractArenaHandle(s: *ExprState, allocator_val: T.LLVMValueRef) T.LLVMValueR
 
 /// String-ish type displays: `string`, `[]byte`, `[]u8`, fixed `[N]byte`, and
 /// `"…"` string-literal singletons (how the typechecker displays `.str_lit`).
-fn isStringTypeName(t: []const u8) bool {
-    return std.mem.eql(u8, t, "string") or
+pub fn isStringTypeName(t: []const u8) bool {
+    if (std.mem.eql(u8, t, "string") or
         std.mem.eql(u8, t, "[]byte") or
         std.mem.eql(u8, t, "[]u8") or
-        (std.mem.startsWith(u8, t, "[") and std.mem.endsWith(u8, t, "byte")) or
-        (t.len >= 2 and t[0] == '"' and t[t.len - 1] == '"');
+        (t.len >= 2 and t[0] == '"' and t[t.len - 1] == '"')) return true;
+    // Fixed-size byte buffers like `[4]byte` are string-ish; nested arrays
+    // (`[][]byte` = the typechecker's display of `[]string`) are NOT.
+    return std.mem.startsWith(u8, t, "[") and
+        std.mem.endsWith(u8, t, "byte") and
+        std.mem.indexOfScalar(u8, t, ']') == std.mem.lastIndexOfScalar(u8, t, ']');
+}
+
+fn isBoolTypeName(t: []const u8) bool {
+    return std.mem.eql(u8, t, "bool") or std.mem.eql(u8, t, "boolean") or std.mem.eql(u8, t, "u1");
 }
 
 fn lowerPrint(s: *ExprState, call: ast.Call) CodegenError!T.LLVMValueRef {
@@ -188,6 +209,15 @@ fn lowerPrint(s: *ExprState, call: ast.Call) CodegenError!T.LLVMValueRef {
         if (types_mod.isFloatName(tname)) {
             const fmt = C.LLVMBuildGlobalStringPtr(s.lc.builder, "%g ", "fmt");
             var args = [_]T.LLVMValueRef{ fmt, types_mod.castTo(s.lc, val, tname, s.lc.f64Ty()) };
+            _ = C.LLVMBuildCall2(s.lc.builder, printf_ty, printf, &args, 2, "");
+        } else if (isBoolTypeName(layout.unwrapTypeName(tname))) {
+            // bool → "true"/"false" (matches the VM's print formatting).
+            const tstr = C.LLVMBuildGlobalStringPtr(s.lc.builder, "true", "tstr");
+            const fstr = C.LLVMBuildGlobalStringPtr(s.lc.builder, "false", "fstr");
+            const b = types_mod.castTo(s.lc, val, tname, s.lc.i1Ty());
+            const sel = C.LLVMBuildSelect(s.lc.builder, b, tstr, fstr, "bstr");
+            const fmt = C.LLVMBuildGlobalStringPtr(s.lc.builder, "%s ", "fmt");
+            var args = [_]T.LLVMValueRef{ fmt, sel };
             _ = C.LLVMBuildCall2(s.lc.builder, printf_ty, printf, &args, 2, "");
         } else if (isStringTypeName(layout.unwrapTypeName(tname))) {
             // String values live in the bytecode VM as packed bytes; natively they
@@ -236,10 +266,18 @@ fn lowerIntrinsic(s: *ExprState, name: []const u8, call: ast.Call, node: *ast.No
         return poison(s, node);
     }
     if (std.mem.eql(u8, name, "@isError")) {
+        // Runtime error ABI (src/runtime/builtins/util.zig): `__err_is` treats
+        // negative values (negated error pointers, raw -errno rcs, the math
+        // natives' minInt sentinel) and error-region pointers as errors.
         const val = try lowerExpr(s, call.args[0]);
-        // Error tag convention: high bit of i64 set, or null check — treat non-zero as error for now.
-        const zero = C.LLVMConstInt(C.LLVMTypeOf(val), 0, 0);
-        return C.LLVMBuildICmp(s.lc.builder, .LLVMIntNE, val, zero, "iserr");
+        const as_i64 = if (C.LLVMGetTypeKind(C.LLVMTypeOf(val)) == .LLVMPointerTypeKind)
+            C.LLVMBuildPtrToInt(s.lc.builder, val, s.lc.i64Ty(), "err_as_int")
+        else
+            val;
+        const fn_val = try ensureErrFn(s, "__err_is", &.{s.lc.i64Ty()}, s.lc.i1Ty());
+        const fn_ty = C.LLVMGlobalGetValueType(fn_val);
+        var args = [_]T.LLVMValueRef{as_i64};
+        return C.LLVMBuildCall2(s.lc.builder, fn_ty, fn_val, &args, 1, "iserr");
     }
     if (std.mem.eql(u8, name, "@new")) {
         // @new(allocator, value) — allocate in the caller's arena via the
@@ -272,7 +310,7 @@ fn lowerCall(s: *ExprState, call: ast.Call, node: *ast.Node) CodegenError!T.LLVM
         if (s.lc.functions.get(resolved)) |fn_val| {
             // std.debug.printLn → printf-style (kept before the generic call).
             if (std.mem.endsWith(u8, resolved, "printLn")) return try lowerPrint(s, call);
-            return try buildCall(s, fn_val, call);
+            return try buildCall(s, fn_val, call, resolved);
         }
     }
 
@@ -300,6 +338,17 @@ fn lowerCall(s: *ExprState, call: ast.Call, node: *ast.Node) CodegenError!T.LLVM
         return try lowerPrint(s, call);
     }
 
+    // `len(x)`: fixed arrays are compile-time constants; strings use `__strlen`;
+    // open slices / native arrays use the count-prefix runtime (`arr[-1]`).
+    if (std.mem.eql(u8, fn_name, "len")) {
+        return try lowerLen(s, call, node);
+    }
+
+    // Native `__`-functions with known signatures (std wrappers call these).
+    if (natives.isKnownNative(fn_name)) {
+        return try lowerNativeCall(s, fn_name, call, node);
+    }
+
     const fn_val = s.lc.functions.get(fn_name) orelse blk: {
         // External or not-yet-declared: declare variadic i64 stub returning node type.
         const fn_name_z = s.lc.allocator.dupeZ(u8, fn_name) catch return error.OutOfMemory;
@@ -312,15 +361,141 @@ fn lowerCall(s: *ExprState, call: ast.Call, node: *ast.Node) CodegenError!T.LLVM
         break :blk decl;
     };
 
-    return try buildCall(s, fn_val, call);
+    return try buildCall(s, fn_val, call, fn_name);
+}
+
+/// Does `name`'s declaration end in a `...rest` param? Call sites must pack
+/// their extra args into a native array before the call.
+fn fnHasRestParam(state: *state_mod.CompilerState, name: []const u8) bool {
+    const def = state.functions.get(name) orelse return false;
+    if (def.node.* != .function_decl) return false;
+    const params = switch (def.node.function_decl.params.*) {
+        .params => |p| p.params,
+        else => return false,
+    };
+    if (params.len == 0) return false;
+    return params[params.len - 1].is_rest;
+}
+
+/// `len(x)` lowering: `[N]T` → constant N; open slices `[]T` → `__arrayLen`
+/// (count-prefixed native arrays); strings / unknown pointers → `__strlen`.
+fn lowerLen(s: *ExprState, call: ast.Call, node: *ast.Node) CodegenError!T.LLVMValueRef {
+    if (call.args.len != 1) return poison(s, node);
+    const arg_type = typeOf(s, call.args[0]);
+    // Strings (the typechecker displays `string` as `[]byte`) are NUL-terminated
+    // C strings — byte length via `__strlen`, NOT the count-prefixed arrays.
+    if (isStringTypeName(arg_type)) return try lowerNativeCall(s, "__strlen", call, node);
+    if (std.mem.startsWith(u8, arg_type, "[")) {
+        if (std.mem.indexOfScalar(u8, arg_type, ']')) |rb| {
+            if (rb > 1) {
+                if (std.fmt.parseInt(u64, arg_type[1..rb], 10)) |n| {
+                    _ = try lowerExpr(s, call.args[0]);
+                    return C.LLVMConstInt(s.lc.i64Ty(), n, 0);
+                } else |_| {}
+            }
+        }
+        // Open slice `[]T` → count-prefixed native array.
+        return try lowerNativeCall(s, "__arrayLen", call, node);
+    }
+    // String literal / variable / unknown pointer → byte length.
+    return try lowerNativeCall(s, "__strlen", call, node);
+}
+
+/// Declare (once) a native function from the signature table and return its value.
+fn nativeFnVal(s: *ExprState, name: []const u8) CodegenError!T.LLVMValueRef {
+    if (s.lc.functions.get(name)) |fn_val| return fn_val;
+    const sig = natives.lookup(name) orelse return error.UnsupportedExpression;
+    const params = s.lc.allocator.alloc(T.LLVMTypeRef, sig.params.len) catch return error.OutOfMemory;
+    defer s.lc.allocator.free(params);
+    for (sig.params, 0..) |p, i| params[i] = types_mod.resolveOrSlot(s.lc, p);
+    const ret_ty = types_mod.resolveOrSlot(s.lc, sig.ret);
+    const fn_ty = C.LLVMFunctionType(ret_ty, if (sig.params.len > 0) params.ptr else null, @intCast(sig.params.len), 0);
+    const name_z = s.lc.allocator.dupeZ(u8, name) catch return error.OutOfMemory;
+    defer s.lc.allocator.free(name_z);
+    const fn_val = C.LLVMAddFunction(s.lc.mod, name_z, fn_ty);
+    const duped_name = try s.lc.allocator.dupe(u8, name);
+    try s.lc.functions.put(duped_name, fn_val);
+    return fn_val;
+}
+
+/// Lower a call to a `__`-native using its signature-table ABI (real param
+/// types + return type instead of the variadic i64 stub).
+fn lowerNativeCall(s: *ExprState, name: []const u8, call: ast.Call, node: *ast.Node) CodegenError!T.LLVMValueRef {
+    return callNativeArgs(s, name, call.args, node);
+}
+
+/// Lower a call to a native given a slice of argument nodes. Variadic natives
+/// (`__sys_open(path, flags[, mode])`) are declared with their FULL param
+/// list; missing trailing args are zero-padded.
+fn callNativeArgs(s: *ExprState, name: []const u8, args: []*ast.Node, node: *ast.Node) CodegenError!T.LLVMValueRef {
+    _ = node;
+    const fn_val = try nativeFnVal(s, name);
+    const fn_ty = C.LLVMGlobalGetValueType(fn_val);
+    const param_count: usize = @intCast(C.LLVMCountParamTypes(fn_ty));
+
+    const argc = @max(args.len, param_count);
+    const argv = s.lc.allocator.alloc(T.LLVMValueRef, argc) catch return error.OutOfMemory;
+    defer s.lc.allocator.free(argv);
+    var param_tys: []T.LLVMTypeRef = &.{};
+    if (param_count > 0) {
+        param_tys = s.lc.allocator.alloc(T.LLVMTypeRef, param_count) catch return error.OutOfMemory;
+        C.LLVMGetParamTypes(fn_ty, param_tys.ptr);
+    }
+    defer if (param_count > 0) s.lc.allocator.free(param_tys);
+    for (0..argc) |i| {
+        if (i < args.len) {
+            var v = try lowerExpr(s, args[i]);
+            if (i < param_count) v = types_mod.castTo(s.lc, v, typeOf(s, args[i]), param_tys[i]);
+            argv[i] = v;
+        } else {
+            argv[i] = C.LLVMConstNull(param_tys[i]);
+        }
+    }
+
+    const ret_ty = C.LLVMGetReturnType(fn_ty);
+    const name_z: [*:0]const u8 = if (C.LLVMGetTypeKind(ret_ty) == .LLVMVoidTypeKind) "" else "call";
+    return C.LLVMBuildCall2(s.lc.builder, fn_ty, fn_val, argv.ptr, @intCast(argv.len), name_z);
 }
 
 /// Lower `call.args` against `fn_val`'s declared signature and emit the call.
-fn buildCall(s: *ExprState, fn_val: T.LLVMValueRef, call: ast.Call) CodegenError!T.LLVMValueRef {
-    const argv = s.lc.allocator.alloc(T.LLVMValueRef, call.args.len) catch return error.OutOfMemory;
-    defer s.lc.allocator.free(argv);
+/// When the callee declares a `...rest` param (e.g. `open(path, flags, ...rest)`
+/// or `min(...args)`), the fixed args are passed as-is and the remaining args
+/// are packed into a count-prefixed array (`arr[-1]` = count) passed as the
+/// final argument. Packed elements are raw i64 — except for `min`/`max`,
+/// which compare as f64 like the VM's `minMax`.
+fn buildCall(s: *ExprState, fn_val: T.LLVMValueRef, call: ast.Call, fn_name: []const u8) CodegenError!T.LLVMValueRef {
     const fn_ty = C.LLVMGlobalGetValueType(fn_val);
     const param_count: usize = @intCast(C.LLVMCountParamTypes(fn_ty));
+
+    if (fnHasRestParam(s.lc.state, fn_name)) {
+        const fixed = if (param_count > 0) param_count - 1 else 0;
+        const rest_start = @min(fixed, call.args.len);
+        const elem_f64 = fnNameIsMinMax(fn_name);
+        const arr = try packRestArray(s, call.args[rest_start..], elem_f64);
+        const argv = s.lc.allocator.alloc(T.LLVMValueRef, param_count) catch return error.OutOfMemory;
+        defer s.lc.allocator.free(argv);
+        var param_tys: []T.LLVMTypeRef = &.{};
+        if (param_count > 0) {
+            param_tys = s.lc.allocator.alloc(T.LLVMTypeRef, param_count) catch return error.OutOfMemory;
+            C.LLVMGetParamTypes(fn_ty, param_tys.ptr);
+        }
+        defer if (param_count > 0) s.lc.allocator.free(param_tys);
+        var i: usize = 0;
+        while (i < rest_start) : (i += 1) {
+            var v = try lowerExpr(s, call.args[i]);
+            if (i < param_count) v = types_mod.castTo(s.lc, v, typeOf(s, call.args[i]), param_tys[i]);
+            argv[i] = v;
+        }
+        // Zero-pad missing fixed args (a wrapper called with too few args).
+        while (i + 1 < param_count) : (i += 1) argv[i] = C.LLVMConstNull(param_tys[i]);
+        argv[param_count - 1] = types_mod.castTo(s.lc, arr, "unknown", param_tys[param_count - 1]);
+        const ret_ty = C.LLVMGetReturnType(fn_ty);
+        const name_z: [*:0]const u8 = if (C.LLVMGetTypeKind(ret_ty) == .LLVMVoidTypeKind) "" else "call";
+        return C.LLVMBuildCall2(s.lc.builder, fn_ty, fn_val, argv.ptr, @intCast(argv.len), name_z);
+    }
+
+    const argv = s.lc.allocator.alloc(T.LLVMValueRef, call.args.len) catch return error.OutOfMemory;
+    defer s.lc.allocator.free(argv);
     var param_tys: []T.LLVMTypeRef = &.{};
     if (param_count > 0) {
         param_tys = s.lc.allocator.alloc(T.LLVMTypeRef, param_count) catch return error.OutOfMemory;
@@ -338,14 +513,54 @@ fn buildCall(s: *ExprState, fn_val: T.LLVMValueRef, call: ast.Call) CodegenError
     return C.LLVMBuildCall2(s.lc.builder, fn_ty, fn_val, argv.ptr, @intCast(argv.len), name_z);
 }
 
+fn fnNameIsMinMax(fn_name: []const u8) bool {
+    return std.mem.eql(u8, fn_name, "min") or std.mem.eql(u8, fn_name, "max") or
+        std.mem.endsWith(u8, fn_name, "::min") or std.mem.endsWith(u8, fn_name, "::max");
+}
+
+/// Pack `args` into a count-prefixed stack array. Slot 0 holds the element
+/// count (as i64 bits, bitcast to f64 in f64 mode); the returned pointer
+/// points at element 0 so `arr[-1]` reads the count back as an i64. In f64
+/// mode (min/max) int elements are widened to f64 like the VM's `minMax`.
+fn packRestArray(s: *ExprState, args: []*ast.Node, elem_f64: bool) CodegenError!T.LLVMValueRef {
+    const n = args.len;
+    const elem_ty = if (elem_f64) s.lc.f64Ty() else s.lc.i64Ty();
+    const arr_ty = C.LLVMArrayType(elem_ty, @intCast(n + 1));
+    const tmp = C.LLVMBuildAlloca(s.lc.builder, arr_ty, "restarr");
+
+    const count_i = C.LLVMConstInt(s.lc.i64Ty(), @intCast(n), 0);
+    const count_v = if (elem_f64) C.LLVMBuildBitCast(s.lc.builder, count_i, elem_ty, "restcount") else count_i;
+    {
+        var idxs = [_]T.LLVMValueRef{ C.LLVMConstInt(s.lc.i64Ty(), 0, 0), C.LLVMConstInt(s.lc.i64Ty(), 0, 0) };
+        const ep = C.LLVMBuildGEP2(s.lc.builder, arr_ty, tmp, &idxs, 2, "ep0");
+        _ = C.LLVMBuildStore(s.lc.builder, count_v, ep);
+    }
+    for (args, 0..) |arg, i| {
+        const v = try lowerExpr(s, arg);
+        const f = types_mod.castTo(s.lc, v, typeOf(s, arg), elem_ty);
+        var idxs = [_]T.LLVMValueRef{ C.LLVMConstInt(s.lc.i64Ty(), 0, 0), C.LLVMConstInt(s.lc.i64Ty(), i + 1, 0) };
+        const ep = C.LLVMBuildGEP2(s.lc.builder, arr_ty, tmp, &idxs, 2, "ep");
+        _ = C.LLVMBuildStore(s.lc.builder, f, ep);
+    }
+    var zero = [_]T.LLVMValueRef{ C.LLVMConstInt(s.lc.i64Ty(), 0, 0), C.LLVMConstInt(s.lc.i64Ty(), 1, 0) };
+    return C.LLVMBuildGEP2(s.lc.builder, arr_ty, tmp, &zero, 2, "restptr");
+}
+
 fn lowerMethodCall(s: *ExprState, call: ast.Call, node: *ast.Node) CodegenError!?T.LLVMValueRef {
     const mem = call.callee.member;
     if (mem.property.* != .primary) return null;
     const method_name = mem.property.primary.name;
     const obj_type_name = layout.unwrapTypeName(typeOf(s, mem.object));
+    // Strip `*` / `?` receiver prefixes: an unannotated `self` is `*Struct`
+    // (by-reference receiver), but the method is declared as `Struct::name`
+    // (module structs keep their `module/path.lls::` qualifier).
+    var stripped = obj_type_name;
+    // Also strip `module:` prefix for module imports: `module:std/list.lls` → `std/list.lls`.
+    if (std.mem.startsWith(u8, stripped, "module:")) stripped = stripped[7..];
+    while (stripped.len > 0 and (stripped[0] == '*' or stripped[0] == '?')) stripped = stripped[1..];
 
     var mangled_buf: [256]u8 = undefined;
-    const mangled = std.fmt.bufPrint(&mangled_buf, "{s}::{s}", .{ obj_type_name, method_name }) catch return null;
+    const mangled = std.fmt.bufPrint(&mangled_buf, "{s}::{s}", .{ stripped, method_name }) catch return null;
 
     const fn_val = s.lc.functions.get(mangled) orelse return null;
     const obj_val = try lowerExpr(s, mem.object);
@@ -433,6 +648,14 @@ fn lowerMember(s: *ExprState, mem_node: ast.Member, node: *ast.Node) CodegenErro
         }
     }
 
+    // Module const: `math.PI` → the qualified global `std/math.lls::PI`.
+    if (try path.tryResolveStaticPath(s.lc.state, node)) |static_path| {
+        if (s.lc.globals.get(static_path)) |gslot| {
+            const gty = C.LLVMGlobalGetValueType(gslot);
+            return C.LLVMBuildLoad2(s.lc.builder, gty, gslot, "mconst");
+        }
+    }
+
     const obj_val = try lowerExpr(s, mem_node.object);
     const obj_type_name = layout.unwrapTypeName(typeOf(s, mem_node.object));
 
@@ -450,6 +673,20 @@ fn lowerMember(s: *ExprState, mem_node: ast.Member, node: *ast.Node) CodegenErro
             _ = C.LLVMBuildStore(s.lc.builder, obj_val, temp_ptr);
             const field_ptr = C.LLVMBuildStructGEP2(s.lc.builder, obj_ty, temp_ptr, idx, "field_ptr");
             return C.LLVMBuildLoad2(s.lc.builder, llvmTypeOf(s, node), field_ptr, "field_val");
+        }
+        // Error `.code` / `.payload` → the runtime error ABI. (Real struct
+        // fields named `code`/`payload` win above; only non-struct receivers
+        // — error values, strings — land here.)
+        if (std.mem.eql(u8, field_name, "code") or std.mem.eql(u8, field_name, "payload")) {
+            const as_i64 = if (C.LLVMGetTypeKind(C.LLVMTypeOf(obj_val)) == .LLVMPointerTypeKind)
+                C.LLVMBuildPtrToInt(s.lc.builder, obj_val, s.lc.i64Ty(), "err_as_int")
+            else
+                obj_val;
+            const fn_name = if (std.mem.eql(u8, field_name, "code")) "__err_code" else "__err_payload";
+            const fn_val = try ensureErrFn(s, fn_name, &.{s.lc.i64Ty()}, s.lc.ptrTy());
+            const fn_ty = C.LLVMGlobalGetValueType(fn_val);
+            var args = [_]T.LLVMValueRef{as_i64};
+            return C.LLVMBuildCall2(s.lc.builder, fn_ty, fn_val, &args, 1, "errmember");
         }
     }
     return C.LLVMGetUndef(llvmTypeOf(s, node));
@@ -588,6 +825,27 @@ fn lowerAssignment(s: *ExprState, asg: ast.Assignment) CodegenError!T.LLVMValueR
 
 fn lowerBinary(s: *ExprState, bin: ast.Binary, node: *ast.Node) CodegenError!T.LLVMValueRef {
     const op = bin.operator;
+
+    // String equality: `==` / `!=` on string values compares contents via
+    // `__eql` (pointer equality would be wrong — each native result is a
+    // fresh heap copy).
+    if ((std.mem.eql(u8, op, "==") or std.mem.eql(u8, op, "!=")) and
+        isStringTypeName(typeOf(s, bin.left)) and isStringTypeName(typeOf(s, bin.right)))
+    {
+        const lhs = try lowerExpr(s, bin.left);
+        const rhs = try lowerExpr(s, bin.right);
+        const l = if (C.LLVMGetTypeKind(C.LLVMTypeOf(lhs)) == .LLVMIntegerTypeKind)
+            C.LLVMBuildIntToPtr(s.lc.builder, lhs, s.lc.ptrTy(), "lstr")
+        else
+            lhs;
+        const r = if (C.LLVMGetTypeKind(C.LLVMTypeOf(rhs)) == .LLVMIntegerTypeKind)
+            C.LLVMBuildIntToPtr(s.lc.builder, rhs, s.lc.ptrTy(), "rstr")
+        else
+            rhs;
+        const eq = try strEql(s, l, r);
+        if (std.mem.eql(u8, op, "!=")) return C.LLVMBuildNot(s.lc.builder, eq, "strneq");
+        return eq;
+    }
 
     // Short-circuit && / ||
     if (std.mem.eql(u8, op, "&&") or std.mem.eql(u8, op, "and")) {
@@ -798,8 +1056,52 @@ fn lowerTry(s: *ExprState, te: ast.TryExpr, node: *ast.Node) CodegenError!T.LLVM
     return try lowerExpr(s, te.expression);
 }
 
+/// Declare (once) a runtime helper with an exact LLVM signature.
+fn ensureErrFn(s: *ExprState, name: []const u8, params: []const T.LLVMTypeRef, ret: T.LLVMTypeRef) CodegenError!T.LLVMValueRef {
+    if (s.lc.functions.get(name)) |f| return f;
+    const fn_ty = C.LLVMFunctionType(ret, if (params.len > 0) @constCast(params.ptr) else null, @intCast(params.len), 0);
+    const name_z = s.lc.allocator.dupeZ(u8, name) catch return error.OutOfMemory;
+    defer s.lc.allocator.free(name_z);
+    const f = C.LLVMAddFunction(s.lc.mod, name_z, fn_ty);
+    const duped = s.lc.allocator.dupe(u8, name) catch return error.OutOfMemory;
+    try s.lc.functions.put(duped, f);
+    return f;
+}
+
+/// `__eql(a, b) -> bool` — C-string content equality (already a native in the
+/// signature table; this only ensures the declaration exists for synthetic calls).
+fn ensureEql(s: *ExprState) CodegenError!T.LLVMValueRef {
+    if (s.lc.functions.get("__eql")) |f| return f;
+    var params = [_]T.LLVMTypeRef{ s.lc.ptrTy(), s.lc.ptrTy() };
+    const fn_ty = C.LLVMFunctionType(s.lc.i1Ty(), &params, 2, 0);
+    const f = C.LLVMAddFunction(s.lc.mod, "__eql", fn_ty);
+    const duped = s.lc.allocator.dupe(u8, "__eql") catch return error.OutOfMemory;
+    try s.lc.functions.put(duped, f);
+    return f;
+}
+
+pub fn strEql(s: *ExprState, a: T.LLVMValueRef, b: T.LLVMValueRef) CodegenError!T.LLVMValueRef {
+    const fn_val = try ensureEql(s);
+    const fn_ty = C.LLVMGlobalGetValueType(fn_val);
+    var args = [_]T.LLVMValueRef{ a, b };
+    return C.LLVMBuildCall2(s.lc.builder, fn_ty, fn_val, &args, 2, "streq");
+}
+
+/// `error(name, payload)` → `__err_new(code, payload)` returning a negated
+/// error pointer (negative i64) that `@isError` / `.code` / `.payload` decode.
 fn lowerError(s: *ExprState, ee: ast.ErrorExpr) CodegenError!T.LLVMValueRef {
-    // Represent error as i64 with bit 63 set; message ignored for AOT stub.
-    _ = ee;
-    return C.LLVMConstInt(s.lc.i64Ty(), @bitCast(@as(i64, std.math.minInt(i64))), 0);
+    if (ee.args.len == 0) {
+        // Bare `error` — the legacy minInt sentinel (still detected by __err_is).
+        return C.LLVMConstInt(s.lc.i64Ty(), @bitCast(@as(i64, std.math.minInt(i64))), 0);
+    }
+    const code = try lowerExpr(s, ee.args[0]);
+    const payload_raw = if (ee.args.len > 1) try lowerExpr(s, ee.args[1]) else C.LLVMConstNull(s.lc.i64Ty());
+    const payload = if (C.LLVMGetTypeKind(C.LLVMTypeOf(payload_raw)) == .LLVMPointerTypeKind)
+        C.LLVMBuildPtrToInt(s.lc.builder, payload_raw, s.lc.i64Ty(), "err_payload")
+    else
+        payload_raw;
+    const fn_val = try ensureErrFn(s, "__err_new", &.{ s.lc.ptrTy(), s.lc.i64Ty() }, s.lc.i64Ty());
+    const fn_ty = C.LLVMGlobalGetValueType(fn_val);
+    var args = [_]T.LLVMValueRef{ code, payload };
+    return C.LLVMBuildCall2(s.lc.builder, fn_ty, fn_val, &args, 2, "errnew");
 }

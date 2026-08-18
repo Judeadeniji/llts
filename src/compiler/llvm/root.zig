@@ -14,6 +14,7 @@ const from_ast = @import("../typecheck/from_ast.zig");
 const typecheck = @import("../typecheck/root.zig");
 const state_mod = @import("../state.zig");
 const reachability = @import("../reachability.zig");
+const layout = @import("../layout.zig");
 
 pub const LlvmContext = context.LlvmContext;
 pub const CodegenError = stmt_mod.StmtError || error{UnsupportedTopLevel};
@@ -25,18 +26,40 @@ pub fn codegen(lc: *LlvmContext, doc: *ast.Document) CodegenError!void {
 
     // `analyze` typechecks only the main document; imported module function
     // bodies are parsed but untyped. Typecheck every reachable function so the
-    // backend sees per-node types (`self` receivers, field types, ...).
+    // backend sees per-node types (`self` receivers, field types, ...). Run to
+    // a fixpoint: wrappers that call other wrappers (`fs.stat` → `cwd.stat`)
+    // need their callees' inferred return types first, and the functions map
+    // iterates in an unspecified order.
     {
-        var fit = lc.state.functions.iterator();
-        while (fit.next()) |e| {
-            const name = e.key_ptr.*;
-            if (!reach.isFunctionReachable(name)) continue;
-            const def = e.value_ptr.*;
-            if (def.node.* != .function_decl) continue;
-            if (std.mem.eql(u8, def.node.loc().path, doc.path)) continue; // already done by analyze
-            typecheck.typecheckFunction(lc.state, &def.node.function_decl) catch return error.UnsupportedTopLevel;
+        var prev_untyped: usize = std.math.maxInt(usize);
+        while (true) {
+            var untyped: usize = 0;
+            var fit = lc.state.functions.iterator();
+            while (fit.next()) |e| {
+                const name = e.key_ptr.*;
+                if (!reach.isFunctionReachable(name)) continue;
+                const def = e.value_ptr.*;
+                if (def.node.* != .function_decl) continue;
+                if (std.mem.eql(u8, def.node.loc().path, doc.path)) continue; // already done by analyze
+                const has_ret = def.return_type != null or def.node.function_decl.return_type != null;
+                if (!has_ret) {
+                    untyped += 1;
+                    typecheck.typecheckFunction(lc.state, &def.node.function_decl) catch return error.UnsupportedTopLevel;
+                }
+            }
+            if (untyped == 0 or untyped >= prev_untyped) break;
+            prev_untyped = untyped;
         }
     }
+
+    // Re-typecheck the main document now that module functions carry their
+    // inferred return types. The first pass (in `compile`) ran before module
+    // bodies were typed, so top-level declarations that call std wrappers
+    // (`$arr = fs.stat(…)`) recorded `unknown` — leaving globals and index
+    // element types at i64 in the emitted IR. `recordExprType` keeps the
+    // first-recorded type, so the stale entries must be cleared first.
+    lc.state.type_of_results.clearRetainingCapacity();
+    typecheck.typecheck(lc.state, doc) catch return error.UnsupportedTopLevel;
 
     // Data layout needed for @sizeOf / @new.
     _ = C.LLVMSetTarget(lc.mod, "x86_64-unknown-linux-gnu");
@@ -138,18 +161,27 @@ pub fn codegen(lc: *LlvmContext, doc: *ast.Document) CodegenError!void {
     }
     _ = C.LLVMBuildRetVoid(lc.builder);
 
-    // Synthesize C main. The user's `main` would otherwise shadow the real
-    // entry point (the C runtime calls `main` by name), so rename it first
-    // and have the synthesized C `main` call it.
+    // Synthesize C main(i32 argc, [*.][*:0]u8 argv). Store argc/argv
+    // into globals so the native `__args()` can read them.
     if (lc.functions.get("main")) |user_main| {
         const user_main_name_z = lc.allocator.dupeZ(u8, "llts_user_main") catch return error.OutOfMemory;
         defer lc.allocator.free(user_main_name_z);
         C.LLVMSetValueName2(user_main, user_main_name_z, "llts_user_main".len);
     }
-    const c_main_ty = C.LLVMFunctionType(lc.i32Ty(), null, 0, 0);
+    const c_main_param_tys = [_]T.LLVMTypeRef{ lc.i32Ty(), C.LLVMPointerType(lc.ptrTy(), 0) };
+    const c_main_ty = C.LLVMFunctionType(lc.i32Ty(), @constCast(@ptrCast(&c_main_param_tys)), 2, 0);
     const c_main_val = C.LLVMAddFunction(lc.mod, "main", c_main_ty);
     const c_main_entry = C.LLVMAppendBasicBlockInContext(lc.ctx, c_main_val, "entry");
     C.LLVMPositionBuilderAtEnd(lc.builder, c_main_entry);
+    // Store argc/argv into globals for __args().
+    const argc_global = C.LLVMAddGlobal(lc.mod, lc.i32Ty(), "__argc_global");
+    C.LLVMSetInitializer(argc_global, C.LLVMConstInt(lc.i32Ty(), 0, 0));
+    const argv_global = C.LLVMAddGlobal(lc.mod, C.LLVMPointerType(lc.ptrTy(), 0), "__argv_global");
+    C.LLVMSetInitializer(argv_global, C.LLVMConstNull(C.LLVMPointerType(lc.ptrTy(), 0)));
+    const argc_val = C.LLVMGetParam(c_main_val, 0);
+    const argv_val = C.LLVMGetParam(c_main_val, 1);
+    _ = C.LLVMBuildStore(lc.builder, argc_val, argc_global);
+    _ = C.LLVMBuildStore(lc.builder, argv_val, argv_global);
 
     _ = C.LLVMBuildCall2(lc.builder, llts_main_ty, llts_main_val, null, 0, "");
 
@@ -190,21 +222,13 @@ fn addGlobal(lc: *LlvmContext, name: []const u8) CodegenError!void {
     try lc.globals.put(name, global);
 }
 
-fn resolveParamType(lc: *LlvmContext, param: ast.Param) T.LLVMTypeRef {
-    if (param.type_annotation) |ann| {
-        if (from_ast.typeAstToDisplay(ann, lc.state)) |opt| {
-            if (opt) |d| return types_mod.resolveOrSlot(lc, d);
-        } else |_| {}
-    }
-    return lc.i64Ty();
-}
 
 /// Resolve the type of param `i` of a function named `name`. For a
 /// `Struct::method` whose receiver param is named `self`, an unannotated
 /// `self` is `*Struct` (pointer — the receiver is passed by reference, matching
 /// the typechecker's `resolveMethodSelfType`); other params (and annotated
 /// receivers) fall back to `resolveParamType`.
-fn resolveSelfParamType(lc: *LlvmContext, name: []const u8, params: []ast.Param, i: usize) T.LLVMTypeRef {
+fn resolveSelfParamType(lc: *LlvmContext, name: []const u8, fn_decl: *const ast.FunctionDecl, params: []ast.Param, i: usize) T.LLVMTypeRef {
     if (i == 0 and params.len > 0 and std.mem.eql(u8, params[0].name, "self") and params[0].type_annotation == null) {
         // Split at the LAST `::` — module-qualified struct names themselves
         // contain `::` (e.g. `std/mem.lls::Arena::deinit`).
@@ -213,10 +237,86 @@ fn resolveSelfParamType(lc: *LlvmContext, name: []const u8, params: []ast.Param,
             if (lc.state.structs.contains(prefix)) return lc.ptrTy();
         }
     }
-    return resolveParamType(lc, params[i]);
+    return resolveParamType(lc, fn_decl, params[i]);
 }
 
-fn resolveReturnType(lc: *LlvmContext, fn_decl: *const ast.FunctionDecl) T.LLVMTypeRef {
+fn resolveParamType(lc: *LlvmContext, fn_decl: *const ast.FunctionDecl, param: ast.Param) T.LLVMTypeRef {
+    if (param.type_annotation) |ann| {
+        if (from_ast.typeAstToDisplay(ann, lc.state)) |opt| {
+            if (opt) |d| return types_mod.resolveOrSlot(lc, d);
+        } else |_| {}
+    }
+    // Unannotated: fall back to the typechecker's inferred type on the param
+    // reference inside the body (std wrappers: `floor(a)` → `__floor(float)`
+    // records `float` on `a`). i64 only as the last resort.
+    if (paramNameType(lc, fn_decl, param.name)) |ty| return ty;
+    return lc.i64Ty();
+}
+
+/// Scan `fn_decl.body` for the first primary referencing `name` whose recorded
+/// type is concrete (non-unknown).
+fn paramNameType(lc: *LlvmContext, fn_decl: *const ast.FunctionDecl, name: []const u8) ?T.LLVMTypeRef {
+    var found: ?T.LLVMTypeRef = null;
+    scanParamNode(lc, fn_decl.body, name, &found);
+    return found;
+}
+
+fn scanParamNode(lc: *LlvmContext, node: *ast.Node, name: []const u8, found: *?T.LLVMTypeRef) void {
+    if (found.* != null) return;
+    switch (node.*) {
+        .primary => |p| {
+            if (p.kind == .identifier and std.mem.eql(u8, p.name, name)) {
+                if (lc.state.type_of_results.get(node)) |t| {
+                    if (!std.mem.eql(u8, layout.unwrapTypeName(t), "unknown")) {
+                        found.* = types_mod.resolveOrSlot(lc, t);
+                    }
+                }
+            }
+        },
+        .block => |b| for (b.statements) |st| scanParamNode(lc, st, name, found),
+        .call => |c| {
+            scanParamNode(lc, c.callee, name, found);
+            for (c.args) |a| scanParamNode(lc, a, name, found);
+        },
+        .binary => |b| {
+            scanParamNode(lc, b.left, name, found);
+            scanParamNode(lc, b.right, name, found);
+        },
+        .unary => |u| scanParamNode(lc, u.arg, name, found),
+        .if_expr => |i| {
+            scanParamNode(lc, i.condition, name, found);
+            scanParamNode(lc, i.body, name, found);
+            if (i.else_body) |e| scanParamNode(lc, e, name, found);
+        },
+        .for_expr => |f| {
+            scanParamNode(lc, f.expr, name, found);
+            scanParamNode(lc, f.body, name, found);
+        },
+        .return_expr => |r| if (r.return_value) |v| scanParamNode(lc, v, name, found),
+        .member => |m| {
+            scanParamNode(lc, m.object, name, found);
+            scanParamNode(lc, m.property, name, found);
+        },
+        .index => |ix| {
+            scanParamNode(lc, ix.object, name, found);
+            if (ix.index) |i| scanParamNode(lc, i, name, found);
+            if (ix.end) |e| scanParamNode(lc, e, name, found);
+        },
+        .array_literal => |al| for (al.elements) |e| scanParamNode(lc, e, name, found),
+        .struct_init => |si| {
+            scanParamNode(lc, si.type_expr, name, found);
+            for (si.fields) |fl| scanParamNode(lc, fl.value, name, found);
+        },
+        .assignment => |asg| {
+            scanParamNode(lc, asg.left, name, found);
+            scanParamNode(lc, asg.right, name, found);
+        },
+        .declaration => |d| scanParamNode(lc, d.value, name, found),
+        else => {},
+    }
+}
+
+fn resolveReturnType(lc: *LlvmContext, name: []const u8, fn_decl: *const ast.FunctionDecl) T.LLVMTypeRef {
     if (fn_decl.return_type) |rt| {
         if (from_ast.typeAstToDisplay(rt, lc.state)) |opt| {
             if (opt) |d| {
@@ -225,6 +325,14 @@ fn resolveReturnType(lc: *LlvmContext, fn_decl: *const ast.FunctionDecl) T.LLVMT
             }
         } else |_| {}
         return lc.i64Ty();
+    }
+    // Unannotated: use the typechecker's inferred return type (e.g. std
+    // wrappers like `parseFloat(str) { return __parseFloat(str); }` → f64).
+    if (lc.state.functions.get(name)) |def| {
+        if (def.return_type) |rt| {
+            if (std.mem.eql(u8, rt, "void")) return lc.voidTy();
+            return types_mod.resolveOrSlot(lc, rt);
+        }
     }
     return lc.i64Ty();
 }
@@ -246,10 +354,10 @@ fn declareFunction(lc: *LlvmContext, name: []const u8, fn_decl: *const ast.Funct
     defer lc.allocator.free(param_types);
     for (params, 0..) |param, i| {
         _ = param;
-        param_types[i] = resolveSelfParamType(lc, name, params, i);
+        param_types[i] = resolveSelfParamType(lc, name, fn_decl, params, i);
     }
 
-    const ret_ty = resolveReturnType(lc, fn_decl);
+    const ret_ty = resolveReturnType(lc, name, fn_decl);
     const fn_ty = C.LLVMFunctionType(ret_ty, if (params.len > 0) param_types.ptr else null, @intCast(params.len), 0);
 
     const name_z = try lc.allocator.dupeZ(u8, name);
@@ -285,7 +393,7 @@ fn lowerFunction(lc: *LlvmContext, name: []const u8, fn_decl: *const ast.Functio
         const name_z = try lc.allocator.dupeZ(u8, param.name);
         defer lc.allocator.free(name_z);
         C.LLVMSetValueName2(arg, name_z, param.name.len);
-        const pty = resolveSelfParamType(lc, name, params, i);
+        const pty = resolveSelfParamType(lc, name, fn_decl, params, i);
         const slot = C.LLVMBuildAlloca(lc.builder, pty, name_z);
         _ = C.LLVMBuildStore(lc.builder, arg, slot);
         try ss.locals.put(param.name, slot);

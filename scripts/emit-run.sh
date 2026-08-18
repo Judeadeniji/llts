@@ -25,13 +25,15 @@ if [[ -z "$CLANG" ]]; then
   exit 1
 fi
 
-# Native arena runtime (`__arena_create` / `__arena_alloc_bytes` …).
+# Native arena runtime (`__arena_create` / `__arena_alloc_bytes` …) and the
+# std native functions (`__strlen`, `__floor`, …).
 RT="${ROOT}/zig-out/lib/llts-runtime.o"
-if [[ ! -f "$RT" ]]; then
-  echo "error: missing runtime object $RT — run 'zig build' first" >&2
+RT_NATIVES="${ROOT}/zig-out/lib/llts-runtime-natives.o"
+if [[ ! -f "$RT" || ! -f "$RT_NATIVES" ]]; then
+  echo "error: missing runtime objects — run 'zig build' first" >&2
   exit 1
 fi
 
-"$CLANG" "$BC" "$RT" -o "$EXE" -lm
+"$CLANG" "$BC" "$RT" "$RT_NATIVES" -o "$EXE" -lm -lcurl
 echo "running $EXE"
 "$EXE"

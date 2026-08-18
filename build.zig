@@ -60,6 +60,20 @@ pub fn build(b: *std.Build) void {
     const install_runtime = b.addInstallFileWithDir(runtime_obj.getEmittedBin(), .lib, "llts-runtime.o");
     b.getInstallStep().dependOn(&install_runtime.step);
 
+    // Std native functions (`__strlen`, `__floor`, ...) — split per module
+    // under `src/runtime/builtins/`, mirroring the VM's `src/vm/builtins/`.
+    const natives_obj = b.addObject(.{
+        .name = "llts-runtime-natives",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/runtime/builtins/root.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        }),
+    });
+    const install_natives = b.addInstallFileWithDir(natives_obj.getEmittedBin(), .lib, "llts-runtime-natives.o");
+    b.getInstallStep().dependOn(&install_natives.step);
+
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
     if (b.args) |args| {
