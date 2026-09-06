@@ -2,7 +2,7 @@ const std = @import("std");
 const ast = @import("../../ast/root.zig");
 const state_mod = @import("../state.zig");
 const modules = @import("../modules.zig");
-
+const scope = @import("../scope.zig");
 const CompilerState = state_mod.CompilerState;
 
 /// Resolve `lib.Vector3` → `examples/import_test_lib::Vector3` via `$lib` → `module:…`.
@@ -28,6 +28,7 @@ pub fn tryResolveStaticPath(state: *CompilerState, node: *ast.Node) !?[]const u8
     switch (node.*) {
         .primary => |p| {
             if (p.kind != .identifier) return null;
+            if (scope.resolveLocal(state, p.name) != -1) return null;
             var buf: [256]u8 = undefined;
             const key = try std.fmt.bufPrint(&buf, "${s}", .{p.name});
             if (state.global_types.get(key)) |mod| {

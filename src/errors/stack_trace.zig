@@ -13,9 +13,11 @@ pub fn formatVmStackTrace(frames: []const state_mod.CallFrame) void {
     while (i >= 0) : (i -= 1) {
         const f = frames[@intCast(i)];
         const file = if (f.file.len > 0) f.file else "<anonymous>";
-        const ln = if (f.line > 0) f.line else 1;
-        const col = if (f.column > 0) f.column else 1;
-        out.printStderr("    {s}at{s} {s}{s}{s} ({s}:{d}:{d})\n", .{ c_dim, r, c_name, f.func_name, r, file, ln, col });
+        if (f.line > 0) {
+            out.printStderr("    {s}at{s} {s}{s}{s} ({s}:{d}:{d})\n", .{ c_dim, r, c_name, f.func_name, r, file, f.line, f.column });
+        } else {
+            out.printStderr("    {s}at{s} {s}{s}{s} ({s}:?:?)\n", .{ c_dim, r, c_name, f.func_name, r, file });
+        }
     }
 }
 

@@ -13,9 +13,13 @@ pub fn runtimeFail(vm: *state_mod.VMState, message: []const u8) error{RuntimeErr
         break :blk "<anonymous>";
     };
     const source = vm.sourceForFile(file);
-    const line = if (vm.current_line > 0) vm.current_line else 1;
-    const column = if (vm.current_column > 0) vm.current_column else 1;
-    report.reportSourceError(file, source, line, column, message);
+    const line = vm.current_line;
+    const column = vm.current_column;
+    if (line > 0) {
+        report.reportSourceError(file, source, line, column, message);
+    } else {
+        report.reportRuntimeError(message);
+    }
     stack_trace.reportStackTrace(vm.frames.items);
     return error.RuntimeError;
 }

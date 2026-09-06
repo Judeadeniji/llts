@@ -24,8 +24,8 @@ pub const CallFrame = struct {
     func_name: []const u8 = "<anonymous>",
     /// Borrowed path from chunk.sources.
     file: []const u8 = "",
-    line: u32 = 1,
-    column: u32 = 1,
+    line: u32 = 0,
+    column: u32 = 0,
     source_index: u16 = 0,
     /// Value-slot heap bump at call entry. On return, `heap_ptr` rewinds here so
     /// frame-local implicit allocs (bare `Foo{}` / `[…]`) die with the frame.
@@ -72,8 +72,8 @@ pub const VMState = struct {
     bytes_immortal_floor: u32 = 0,
     free_byte_chunks: i32 = 0,
     chunk: *Chunk,
-    current_line: u32 = 1,
-    current_column: u32 = 1,
+    current_line: u32 = 0,
+    current_column: u32 = 0,
     current_source_index: u16 = 0,
     /// Owned module instances created by OP_GET_MODULE.
     modules: std.ArrayList(*ModuleObject) = .empty,

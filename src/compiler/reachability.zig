@@ -323,7 +323,7 @@ fn noteCall(
             const object = mem.object;
             if (object.* == .primary and object.primary.kind == .identifier and std.mem.eql(u8, object.primary.name, "self")) {
                 if (func_name) |fname| {
-                    if (std.mem.indexOf(u8, fname, "::")) |idx| {
+                    if (std.mem.lastIndexOf(u8, fname, "::")) |idx| {
                         const type_name = fname[0..idx];
                         const method_name = try std.fmt.allocPrint(state.allocator, "{s}::{s}", .{ type_name, prop });
                         defer state.allocator.free(method_name);
@@ -331,6 +331,33 @@ fn noteCall(
                         defer targets.deinit(state.allocator);
                         for (targets.items) |target| try enqueueFunction(result, work, target);
                         return;
+                    }
+                }
+            }
+            // self.field.method() — resolve via struct definition when local types aren't available yet
+            if (object.* == .member) {
+                const inner_mem = &object.member;
+                if (inner_mem.property.* == .primary and
+                    inner_mem.object.* == .primary and
+                    inner_mem.object.primary.kind == .identifier and
+                    std.mem.eql(u8, inner_mem.object.primary.name, "self"))
+                {
+                    if (func_name) |fname| {
+                        if (std.mem.lastIndexOf(u8, fname, "::")) |idx| {
+                            const self_type_name = fname[0..idx];
+                            if (types.lookupStruct(state, self_type_name)) |sd| {
+                                const field_name = inner_mem.property.primary.name;
+                                if (sd.types.get(field_name)) |field_ty| {
+                                    const inner_type = types.unwrapOptionalDisplay(field_ty);
+                                    const method_name = try std.fmt.allocPrint(state.allocator, "{s}::{s}", .{ inner_type, prop });
+                                    defer state.allocator.free(method_name);
+                                    var targets = try expandCallTargets(state, method_name);
+                                    defer targets.deinit(state.allocator);
+                                    for (targets.items) |target| try enqueueFunction(result, work, target);
+                                    return;
+                                }
+                            }
+                        }
                     }
                 }
             }

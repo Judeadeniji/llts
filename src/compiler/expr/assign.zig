@@ -75,6 +75,7 @@ fn assignMember(state: *CompilerState, mem: *const ast.Member, right: *ast.Node,
                 try emit.emitConstant(state, .{ .i64 = idx });
                 try expr.compileExpression(state, mem.object);
                 try emit.emitConstant(state, .{ .i64 = idx });
+                try emit.emitLineIfNeeded(state, mem.loc.line, mem.loc.column);
                 try emit.emitOp(state, .OP_GET_ARRAY);
                 try expr.compileExpression(state, right);
                 try emit.emitOp(state, op);
@@ -95,6 +96,7 @@ fn assignMember(state: *CompilerState, mem: *const ast.Member, right: *ast.Node,
                 if (arith) |op| {
                     try expr.compileExpression(state, mem.object);
                     try emit.emitOp(state, .OP_DUP);
+                    try emit.emitLineIfNeeded(state, mem.loc.line, mem.loc.column);
                     try emit.emitLoadField(state, info.offset, kind);
                     try expr.compileExpression(state, right);
                     try emit.emitOp(state, op);
@@ -116,6 +118,7 @@ fn assignMember(state: *CompilerState, mem: *const ast.Member, right: *ast.Node,
         if (arith) |op| {
             try expr.compileExpression(state, mem.object);
             try emit.emitOp(state, .OP_DUP);
+            try emit.emitLineIfNeeded(state, mem.loc.line, mem.loc.column);
             try emit.emitNameGet(state, .OP_GET_PROPERTY, prop);
             try expr.compileExpression(state, right);
             try emit.emitOp(state, op);
@@ -123,6 +126,7 @@ fn assignMember(state: *CompilerState, mem: *const ast.Member, right: *ast.Node,
             try expr.compileExpression(state, mem.object);
             try expr.compileExpression(state, right);
         }
+        try emit.emitLineIfNeeded(state, mem.loc.line, mem.loc.column);
         try emit.emitNameGet(state, .OP_SET_PROPERTY, prop);
     }
 }

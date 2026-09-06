@@ -360,7 +360,7 @@ fn analyzeBody(
                     const prop = c.callee.member.property.primary.name;
                     const object = c.callee.member.object;
                     if (object.* == .primary and object.primary.kind == .identifier and std.mem.eql(u8, object.primary.name, "self")) {
-                        if (std.mem.indexOf(u8, full_name, "::")) |idx| {
+                        if (std.mem.lastIndexOf(u8, full_name, "::")) |idx| {
                             const type_name = full_name[0..idx];
                             const method_name = try std.fmt.allocPrint(state.allocator, "{s}::{s}", .{ type_name, prop });
                             try state.owned.append(state.allocator, method_name);

@@ -263,7 +263,17 @@ pub fn setArray(vm: *VMState) HeapError!void {
 fn baseBytesOffset(vm: *VMState, base: Value) HeapError!u32 {
     return switch (base) {
         .bytes => |b| b.offset,
-        else => return fail(vm, "Packed field access requires a byte object"),
+        .null => return fail(vm, "Null pointer dereference"),
+        .module => |m| {
+            var buf: [256]u8 = undefined;
+            const msg = std.fmt.bufPrint(&buf, "Packed field access requires a byte object, got .module (name={s})", .{m.name}) catch "Packed field access on module";
+            return fail(vm, msg);
+        },
+        else => {
+            var buf: [128]u8 = undefined;
+            const msg = std.fmt.bufPrint(&buf, "Packed field access requires a byte object, got {}", .{std.meta.activeTag(base)}) catch "Packed field access error";
+            return fail(vm, msg);
+        },
     };
 }
 
@@ -428,7 +438,7 @@ pub fn storeField(vm: *VMState, byte_offset: u16, kind: u8) HeapError!void {
                     off = try vm.appendImmortal(data);
                     len = @intCast(data.len);
                 },
-                .function, .native => {
+                .function, .native, .list, .map, .buffer, .i64, .ptr, .module, .array => {
                     const slot = try vm.allocImmortal(1);
                     vm.slot(slot).* = val;
                     off = @intCast(slot);

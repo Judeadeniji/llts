@@ -351,6 +351,9 @@ pub fn compileMember(state: *CompilerState, mem: *const ast.Member, node: *ast.N
             if (types.lookupStructField(state, type_name, mem.property.primary.name)) |info| {
                 const kind: u8 = @intFromEnum(layout.fieldKind(state, info.field_ty));
                 try expr.compileExpression(state, mem.object);
+                // Point runtime diagnostics at the member access itself, not the
+                // enclosing statement (which would leave a stale location).
+                try emit.emitLineIfNeeded(state, mem.loc.line, mem.loc.column);
                 try emit.emitLoadField(state, info.offset, kind);
                 return;
             }
@@ -361,6 +364,7 @@ pub fn compileMember(state: *CompilerState, mem: *const ast.Member, node: *ast.N
                     const field_ty = sd.types.get(mem.property.primary.name) orelse "int";
                     const kind: u8 = @intFromEnum(layout.fieldKind(state, field_ty));
                     try expr.compileExpression(state, mem.object);
+                    try emit.emitLineIfNeeded(state, mem.loc.line, mem.loc.column);
                     try emit.emitLoadField(state, offset, kind);
                     return;
                 }
@@ -369,6 +373,7 @@ pub fn compileMember(state: *CompilerState, mem: *const ast.Member, node: *ast.N
     }
     try expr.compileExpression(state, mem.object);
     if (mem.property.* == .primary) {
+        try emit.emitLineIfNeeded(state, mem.loc.line, mem.loc.column);
         try emit.emitNameGet(state, .OP_GET_PROPERTY, mem.property.primary.name);
     }
 }
