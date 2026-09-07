@@ -1,0 +1,77 @@
+# Port of src/scanner/numbers.zig
+
+@const $ctx = @import("./ctx.lls");
+@const $tokens = @import("./tokens.lls");
+@const $string = @import("std/string.lls");
+
+pub @func scanNumber(self: *ctx.Scanner) {
+    $col = self.column;
+    $line = self.line;
+    $start = self.pos;
+
+    @if (self.peek(0)) |first| {
+        @if (string.eql(first, "0")) {
+            @if (self.peek(1)) |n| {
+                @if (string.eql(n, "x") || string.eql(n, "X")) {
+                    _ = self.advance();
+                    _ = self.advance();
+                    @for (self.peek(0)) |c| {
+                        @if (!ctx.isHex(c)) {
+                            break;
+                        }
+                        _ = self.advance();
+                    }
+                    ctx.pushToken(self, tokens.TokenType.Hex, string.substr(self.source, start, self.pos - start), col, line);
+                    return;
+                }
+                @if (string.eql(n, "b") || string.eql(n, "B")) {
+                    _ = self.advance();
+                    _ = self.advance();
+                    @for (self.peek(0)) |c| {
+                        @if (!string.eql(c, "0") && !string.eql(c, "1")) {
+                            break;
+                        }
+                        _ = self.advance();
+                    }
+                    ctx.pushToken(self, tokens.TokenType.Binary, string.substr(self.source, start, self.pos - start), col, line);
+                    return;
+                }
+                @if (string.eql(n, "o") || string.eql(n, "O")) {
+                    _ = self.advance();
+                    _ = self.advance();
+                    @for (self.peek(0)) |c| {
+                        @if (string.compare(c, "0") < 0 || string.compare(c, "7") > 0) {
+                            break;
+                        }
+                        _ = self.advance();
+                    }
+                    ctx.pushToken(self, tokens.TokenType.Octal, string.substr(self.source, start, self.pos - start), col, line);
+                    return;
+                }
+            }
+        }
+    }
+
+    @for (self.peek(0)) |c| {
+        @if (!ctx.isDigit(c)) {
+            break;
+        }
+        _ = self.advance();
+    }
+    @if (self.peek(0)) |dot| {
+        @if (string.eql(dot, ".")) {
+            @if (self.peek(1)) |d| {
+                @if (ctx.isDigit(d)) {
+                    _ = self.advance();
+                    @for (self.peek(0)) |c| {
+                        @if (!ctx.isDigit(c)) {
+                            break;
+                        }
+                        _ = self.advance();
+                    }
+                }
+            }
+        }
+    }
+    ctx.pushToken(self, tokens.TokenType.Number, string.substr(self.source, start, self.pos - start), col, line);
+}

@@ -1,0 +1,79 @@
+# Port of src/scanner/ctx.zig
+#
+# Token rows are parallel arena-backed lists (kinds/values/lines/cols).
+
+@const $tokens = @import("./tokens.lls");
+@const $list = @import("std/list.lls");
+@const $string = @import("std/string.lls");
+
+pub @struct Scanner {
+    source: string;
+    path: string;
+    pos: i64;
+    line: i64;
+    column: i64;
+    arena: unknown;
+    kinds: unknown;
+    values: unknown;
+    lines: unknown;
+    columns: unknown;
+
+    @func peek(self: *Scanner, step: i64): ?string {
+        $i = self.pos + step;
+        @if (i >= string.len(self.source)) {
+            return null;
+        }
+        return string.substr(self.source, i, 1);
+    }
+
+    @func advance(self: *Scanner): string {
+        $ch = string.substr(self.source, self.pos, 1);
+        self.pos = self.pos + 1;
+        @if (string.eql(ch, "\n")) {
+            self.line = self.line + 1;
+            self.column = 1;
+        } @else {
+            self.column = self.column + 1;
+        }
+        return ch;
+    }
+
+    @func tokenCount(self: *Scanner) {
+        return list.len(self.kinds);
+    }
+
+    @func previousKind(self: *Scanner): ?i64 {
+        $n = list.len(self.kinds);
+        @if (n == 0) {
+            return null;
+        }
+        return list.get(self.kinds, n - 1);
+    }
+}
+
+pub @func pushToken(self: *Scanner, typ: tokens.TokenType, value: string, col: i64, line: i64) {
+    list.push(self.kinds, typ);
+    list.push(self.values, value);
+    list.push(self.lines, line);
+    list.push(self.columns, col);
+}
+
+pub @func isDigit(c: string) {
+    return string.compare(c, "0") >= 0 && string.compare(c, "9") <= 0;
+}
+
+pub @func isAlpha(c: string) {
+    return (string.compare(c, "a") >= 0 && string.compare(c, "z") <= 0)
+        || (string.compare(c, "A") >= 0 && string.compare(c, "Z") <= 0)
+        || string.eql(c, "_");
+}
+
+pub @func isAlphaNumeric(c: string) {
+    return isAlpha(c) || isDigit(c);
+}
+
+pub @func isHex(c: string) {
+    return isDigit(c)
+        || (string.compare(c, "a") >= 0 && string.compare(c, "f") <= 0)
+        || (string.compare(c, "A") >= 0 && string.compare(c, "F") <= 0);
+}

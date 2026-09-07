@@ -1,0 +1,138 @@
+# Port of src/scanner/keywords.zig
+#
+# Zig uses StaticStringMap; LLTS uses enums + exhaustive @switch for the
+# known set, and value @switch on the incoming string for membership.
+
+pub @enum CompilerKeyword {
+    Import,
+    Const,
+    Func,
+    For,
+    If,
+    Else,
+    Switch,
+    Struct,
+    Enum,
+    Error,
+    Type,
+    Alias,
+    IsError,
+    TypeOf,
+    SizeOf,
+    NameOf,
+    As,
+    Extern,
+    New,
+}
+
+pub @enum Keyword {
+    True,
+    False,
+    Return,
+    Pub,
+    Break,
+    Continue,
+    Defer,
+    Errdefer,
+    Error,
+    Null,
+    Const,
+}
+
+pub @func compilerKeywordName(k: CompilerKeyword) {
+    return @switch (k) {
+        CompilerKeyword.Import => { break "import"; },
+        CompilerKeyword.Const => { break "const"; },
+        CompilerKeyword.Func => { break "func"; },
+        CompilerKeyword.For => { break "for"; },
+        CompilerKeyword.If => { break "if"; },
+        CompilerKeyword.Else => { break "else"; },
+        CompilerKeyword.Switch => { break "switch"; },
+        CompilerKeyword.Struct => { break "struct"; },
+        CompilerKeyword.Enum => { break "enum"; },
+        CompilerKeyword.Error => { break "error"; },
+        CompilerKeyword.Type => { break "type"; },
+        CompilerKeyword.Alias => { break "alias"; },
+        CompilerKeyword.IsError => { break "isError"; },
+        CompilerKeyword.TypeOf => { break "typeOf"; },
+        CompilerKeyword.SizeOf => { break "sizeOf"; },
+        CompilerKeyword.NameOf => { break "nameOf"; },
+        CompilerKeyword.As => { break "as"; },
+        CompilerKeyword.Extern => { break "extern"; },
+        CompilerKeyword.New => { break "new"; },
+    };
+}
+
+pub @func keywordName(k: Keyword) {
+    return @switch (k) {
+        Keyword.True => { break "true"; },
+        Keyword.False => { break "false"; },
+        Keyword.Return => { break "return"; },
+        Keyword.Pub => { break "pub"; },
+        Keyword.Break => { break "break"; },
+        Keyword.Continue => { break "continue"; },
+        Keyword.Defer => { break "defer"; },
+        Keyword.Errdefer => { break "errdefer"; },
+        Keyword.Error => { break "error"; },
+        Keyword.Null => { break "null"; },
+        Keyword.Const => { break "const"; },
+    };
+}
+
+pub @func parseCompilerKeyword(w: string): ?CompilerKeyword {
+    return @switch (w) {
+        "import" => { break CompilerKeyword.Import; },
+        "const" => { break CompilerKeyword.Const; },
+        "func" => { break CompilerKeyword.Func; },
+        "for" => { break CompilerKeyword.For; },
+        "if" => { break CompilerKeyword.If; },
+        "else" => { break CompilerKeyword.Else; },
+        "switch" => { break CompilerKeyword.Switch; },
+        "struct" => { break CompilerKeyword.Struct; },
+        "enum" => { break CompilerKeyword.Enum; },
+        "error" => { break CompilerKeyword.Error; },
+        "type" => { break CompilerKeyword.Type; },
+        "alias" => { break CompilerKeyword.Alias; },
+        "isError" => { break CompilerKeyword.IsError; },
+        "typeOf" => { break CompilerKeyword.TypeOf; },
+        "sizeOf" => { break CompilerKeyword.SizeOf; },
+        "nameOf" => { break CompilerKeyword.NameOf; },
+        "as" => { break CompilerKeyword.As; },
+        "extern" => { break CompilerKeyword.Extern; },
+        "new" => { break CompilerKeyword.New; },
+        @else => { break null; },
+    };
+}
+
+pub @func parseKeyword(w: string): ?Keyword {
+    return @switch (w) {
+        "true" => { break Keyword.True; },
+        "false" => { break Keyword.False; },
+        "return" => { break Keyword.Return; },
+        "pub" => { break Keyword.Pub; },
+        "break" => { break Keyword.Break; },
+        "continue" => { break Keyword.Continue; },
+        "defer" => { break Keyword.Defer; },
+        "errdefer" => { break Keyword.Errdefer; },
+        "error" => { break Keyword.Error; },
+        "null" => { break Keyword.Null; },
+        "const" => { break Keyword.Const; },
+        @else => { break null; },
+    };
+}
+
+pub @func isCompilerSymbol(w: string) {
+    return parseCompilerKeyword(w) != null;
+}
+
+pub @func isKeyword(w: string) {
+    return parseKeyword(w) != null;
+}
+
+# Zig: switch (c) { ',', ';', … => true, else => false }
+pub @func isDelimiter(c: string) {
+    return @switch (c) {
+        ",", ";", ":", "(", ")", "{", "}", "[", "]", ".", "?" => { break true; },
+        @else => { break false; },
+    };
+}
