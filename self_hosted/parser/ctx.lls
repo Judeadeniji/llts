@@ -1,0 +1,144 @@
+# Port of src/parser/ctx.zig (token cursor over scanner parallel lists).
+
+@const $tokens = @import("../scanner/tokens.lls");
+@const $list = @import("std/list.lls");
+@const $string = @import("std/string.lls");
+@const $debug = @import("std/debug.lls");
+
+pub @struct Parser {
+    kinds: unknown;
+    values: unknown;
+    lines: unknown;
+    columns: unknown;
+    current: i64;
+    path: string;
+    source: string;
+    arena: unknown;
+
+    @func tokenCount(self: *Parser) {
+        return list.len(self.kinds);
+    }
+
+    @func peekKind(self: *Parser, step: i64): ?tokens.TokenType {
+        $i = self.current + step;
+        @if (i >= list.len(self.kinds)) {
+            return null;
+        }
+        return @as(tokens.TokenType, list.get(self.kinds, i));
+    }
+
+    @func peekValue(self: *Parser, step: i64): ?string {
+        $i = self.current + step;
+        @if (i >= list.len(self.values)) {
+            return null;
+        }
+        return list.get(self.values, i);
+    }
+
+    @func peekLine(self: *Parser, step: i64) {
+        $i = self.current + step;
+        @if (i >= list.len(self.lines)) {
+            return 0;
+        }
+        return list.get(self.lines, i);
+    }
+
+    @func peekColumn(self: *Parser, step: i64) {
+        $i = self.current + step;
+        @if (i >= list.len(self.columns)) {
+            return 0;
+        }
+        return list.get(self.columns, i);
+    }
+
+    @func isAtEnd(self: *Parser) {
+        @if (self.peekKind(0)) |k| {
+            return k == tokens.TokenType.Eof;
+        }
+        return true;
+    }
+
+    @func check(self: *Parser, typ: tokens.TokenType) {
+        @if (self.isAtEnd()) {
+            return false;
+        }
+        @if (self.peekKind(0)) |k| {
+            return k == typ;
+        }
+        return false;
+    }
+
+    @func checkDelim(self: *Parser, value: string) {
+        @if (self.peekKind(0)) |k| {
+            @if (self.peekValue(0)) |v| {
+                @if (!string.eql(v, value)) {
+                    return false;
+                }
+                @if (k == tokens.TokenType.Delimiter) {
+                    return true;
+                }
+                @if (k == tokens.TokenType.BinOp) {
+                    return string.eql(value, "|") || string.eql(value, "*") || string.eql(value, "&");
+                }
+            }
+        }
+        return false;
+    }
+
+    @func advance(self: *Parser) {
+        @if (!self.isAtEnd()) {
+            self.current = self.current + 1;
+        }
+    }
+
+    @func match(self: *Parser, typ: tokens.TokenType) {
+        @if (self.check(typ)) {
+            self.advance();
+            return true;
+        }
+        return false;
+    }
+
+    @func consume(self: *Parser, typ: tokens.TokenType, message: string, value: ?string) {
+        @if (value) |v| {
+            @if (self.peekKind(0)) |k| {
+                @if (self.peekValue(0)) |pv| {
+                    $type_ok = self.check(typ) || (typ == tokens.TokenType.Delimiter && k == tokens.TokenType.BinOp && (string.eql(v, "|") || string.eql(v, "*") || string.eql(v, "&")));
+                    $ok = (string.eql(pv, v) && type_ok) || k == tokens.TokenType.Eof;
+                    @if (!ok) {
+                        return self.fail(message);
+                    }
+                    self.advance();
+                    return;
+                }
+            }
+            return self.fail(message);
+        }
+        @if (self.check(typ)) {
+            self.advance();
+            return;
+        }
+        return self.fail(message);
+    }
+
+    @func fail(self: *Parser, message: string) {
+        $line = self.peekLine(0);
+        $col = self.peekColumn(0);
+        debug.err(message);
+        debug.printLn("  --> {s}:{i}:{i}", self.path, line, col);
+        return error("ParseFailed", message);
+    }
+}
+
+pub @func fromLists(arena, kinds, values, lines, columns, path: string, source: string): *Parser {
+    return @new(arena, Parser {
+        kinds: kinds,
+        values: values,
+        lines: lines,
+        columns: columns,
+        current: 0,
+        path: path,
+        source: source,
+        arena: arena,
+    });
+}

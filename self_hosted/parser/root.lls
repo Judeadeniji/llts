@@ -1,0 +1,15 @@
+# Port of src/parser/root.zig — expression entry for the first vertical slice.
+
+@const $scanner = @import("../scanner/root.lls");
+@const $pctx = @import("./ctx.lls");
+@const $expr = @import("./expr.lls");
+@const $mem = @import("std/mem.lls");
+
+pub @func parseExpression(arena: mem.Arena, source: string, path: string) {
+    $sc = scanner.scanRaw(arena, source, path);
+    @if (@isError(sc)) {
+        return sc;
+    }
+    $p = pctx.fromLists(arena, sc.kinds, sc.values, sc.lines, sc.columns, path, source);
+    return expr.parseExpression(p);
+}

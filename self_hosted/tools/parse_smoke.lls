@@ -1,0 +1,33 @@
+# Smoke: scan → parse a binary expression.
+# Usage: llts run self_hosted/tools/parse_smoke.lls
+
+@const $parser = @import("../parser/root.lls");
+@const $nodes = @import("../ast/nodes.lls");
+@const $common = @import("../ast/common.lls");
+@const $mem = @import("std/mem.lls");
+@const $debug = @import("std/debug.lls");
+@const $os = @import("std/os.lls");
+
+$arena = mem.create(0);
+$n: *nodes.Node = parser.parseExpression(arena, "1 + 2 * 3", "smoke.lls");
+@if (@isError(n)) {
+    debug.err("parse failed");
+    os.exit(1);
+}
+
+# Expect: Binary(+), left Literal, right Binary(*)
+debug.printLn("{i}", n.kind);
+@if (n.kind == common.NodeKind.Binary) {
+    $b: *nodes.Binary = @as(*nodes.Binary, n);
+    debug.printLn("{s}", b.operator);
+    debug.printLn("{i}", b.left.kind);
+    debug.printLn("{i}", b.right.kind);
+    @if (b.right.kind == common.NodeKind.Binary) {
+        $r: *nodes.Binary = @as(*nodes.Binary, b.right);
+        debug.printLn("{s}", r.operator);
+    }
+}
+
+arena.deinit();
+
+pub @func main() {}

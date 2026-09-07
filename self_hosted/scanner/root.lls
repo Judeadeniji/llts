@@ -20,24 +20,12 @@ pub @const $TokenType = tokens.TokenType;
 }
 
 # Caller owns `arena`. Token rows live there and are invalid after reset/deinit.
+# Flat [name, value, line, col] × n — harness / tokenize tool.
 pub @func scan(arena: mem.Arena, source: string, path: string) {
-    $sc = ctx.Scanner {
-        source: source,
-        path: path,
-        pos: 0,
-        line: 1,
-        column: 1,
-        arena: arena,
-        kinds: list.create(arena),
-        values: list.create(arena),
-        lines: list.create(arena),
-        columns: list.create(arena),
-    };
-    $err = scanAll(&sc);
-    @if (@isError(err)) {
-        return err;
+    $sc = scanRaw(arena, source, path);
+    @if (@isError(sc)) {
+        return sc;
     }
-    # Flat [name, value, line, col] × n on the caller's arena.
     $out = list.create(arena);
     $n = list.len(sc.kinds);
     @for (0..n) |i| {
@@ -48,6 +36,27 @@ pub @func scan(arena: mem.Arena, source: string, path: string) {
         list.push(out, list.get(sc.columns, i));
     }
     return out;
+}
+
+# Parallel token lists for the parser (kinds are TokenType, not names).
+pub @func scanRaw(arena: mem.Arena, source: string, path: string) {
+    $sc = @new(arena, ctx.Scanner {
+        source: source,
+        path: path,
+        pos: 0,
+        line: 1,
+        column: 1,
+        arena: arena,
+        kinds: list.create(arena),
+        values: list.create(arena),
+        lines: list.create(arena),
+        columns: list.create(arena),
+    });
+    $err = scanAll(sc);
+    @if (@isError(err)) {
+        return err;
+    }
+    return sc;
 }
 
 @func scanAll(self: *ctx.Scanner) {

@@ -1,0 +1,47 @@
+# Port of src/shared/precedence.zig
+
+@const $ops = @import("./ops.lls");
+@const $string = @import("std/string.lls");
+
+pub @func of(op: string) {
+    @if (ops.isAssignOp(op)) {
+        return 1;
+    }
+    @if (string.eql(op, "||")) {
+        return 2;
+    }
+    @if (string.eql(op, "&&")) {
+        return 3;
+    }
+    @if (string.eql(op, "|")) {
+        return 4;
+    }
+    @if (string.eql(op, "~")) {
+        return 5;
+    }
+    @if (string.eql(op, "&")) {
+        return 6;
+    }
+    @if (string.eql(op, "==") || string.eql(op, "!=")) {
+        return 7;
+    }
+    @if (string.eql(op, ">") || string.eql(op, ">=") || string.eql(op, "<") || string.eql(op, "<=")) {
+        return 8;
+    }
+    @if (string.eql(op, "<<") || string.eql(op, ">>")) {
+        return 9;
+    }
+    @if (string.eql(op, "+") || string.eql(op, "-") || string.eql(op, "|>")) {
+        return 10;
+    }
+    @if (string.eql(op, "*") || string.eql(op, "/") || string.eql(op, "%") || string.eql(op, "**")) {
+        return 11;
+    }
+    @if (string.eql(op, "^")) {
+        return 12;
+    }
+    @if (string.eql(op, "..")) {
+        return 13;
+    }
+    return -1;
+}

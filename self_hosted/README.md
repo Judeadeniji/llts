@@ -16,7 +16,8 @@
 | `shared/ops` | done |
 | `scanner/` | done (parity harness vs Zig tokenizer; `scan(arena, source, path)`) |
 | `ast/` | `common` + `nodes` (`*Node` children) + Document; smoke in `tools/ast_smoke.lls` |
-| `parser/`, `bytecode/`, `compiler/`, `cli/` | not started |
+| `parser/` | thin slice: expr (lit/ident/unary/binary/assign) + `parse_smoke` |
+| `bytecode/`, `compiler/`, `cli/` | not started |
 | `vm/` | deferred (host Zig VM executes `.llb`) |
 
 Known Zig gaps hit during this port (fixed or worked around):
@@ -27,6 +28,7 @@ Known Zig gaps hit during this port (fixed or worked around):
 - Host `std/list` / `map` / `buffer` immortal host heap (fixed: arena-backed; `create(arena)`)
 - Forward `@type` names + covariant `*Arm ⊑ *Union` (fixed in typechecker / typedef stubs)
 - Module rewrite of `@type` union/pointer type AST (fixed in `rewriteRefs`)
+- Functions returning `@new` typed as `*T` (fixed in analyzeBody)
 
 Known LLTS gaps (documented, continue with workarounds):
 - Cross-module circular `*other.Node` still weak — keep Node arms + `@type Node` in one module
