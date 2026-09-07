@@ -15,7 +15,8 @@
 |--------|--------|
 | `shared/ops` | done |
 | `scanner/` | done (parity harness vs Zig tokenizer; `scan(arena, source, path)`) |
-| `ast/`, `parser/`, `bytecode/`, `compiler/`, `cli/` | not started |
+| `ast/` | types + smoke (`tools/ast_smoke.lls`); child links are `unknown` (*Node) until forward refs land |
+| `parser/`, `bytecode/`, `compiler/`, `cli/` | not started |
 | `vm/` | deferred (host Zig VM executes `.llb`) |
 
 Known Zig gaps hit during this port (fixed or worked around):
@@ -24,6 +25,10 @@ Known Zig gaps hit during this port (fixed or worked around):
 - `self.method()` reachability for free `self: *T` (fixed in call graph)
 - `@if (opt) \|t\|` capture typing for struct fields (fixed in `compileIf`)
 - Host `std/list` / `map` / `buffer` immortal host heap (fixed: arena-backed; `create(arena)`)
+
+Known LLTS gaps (documented, continue with workarounds):
+- No forward reference into `@type` union arms → AST children typed `unknown`
+- Packing structs into `std/list` across modules → scanner uses parallel lists
 
 ## Harness
 

@@ -1,0 +1,45 @@
+# Shared AST tags / location (no imports — avoids cycles with expr/stmt/types).
+
+pub @struct Location {
+    line: i64;
+    column: i64;
+    path: string;
+}
+
+pub @enum NodeKind {
+    Declaration,
+    Literal,
+    Primary,
+    Binary,
+    Unary,
+    Assignment,
+    Call,
+    Member,
+    Index,
+    ArrayLiteral,
+    FunctionDecl,
+    Params,
+    Block,
+    Return,
+    If,
+    Switch,
+    For,
+    Break,
+    Continue,
+    Defer,
+    StructDecl,
+    EnumDecl,
+    ErrorDecl,
+    TypeDecl,
+    StructInit,
+    TryExpr,
+    ErrorExpr,
+    Extern,
+    ArrayType,
+    TupleType,
+    UnionType,
+    IntersectType,
+    PointerType,
+    FuncType,
+    ShapeType,
+}
