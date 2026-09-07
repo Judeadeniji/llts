@@ -5,6 +5,7 @@ test("@if optional unwrap keeps struct field access", () => {
 	expectOutput(
 		runSource(`
 @const $list = @import("std/list");
+@const $mem = @import("std/mem");
 @struct Tok {
     kind: i64;
     value: string;
@@ -15,7 +16,8 @@ test("@if optional unwrap keeps struct field access", () => {
     return t;
 }
 pub @func main() {
-    $l = list.create();
+    $a = mem.create(0);
+    $l = list.create(a);
     list.push(l, Tok { kind: 7, value: "hi" });
     @if (prev(l)) |t| {
         print(t.kind);

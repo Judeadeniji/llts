@@ -47,9 +47,15 @@ fn readFileBufferFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
         return try util.makeIoError(vm, err, path);
     };
     defer vm.allocator.free(content);
-    
+
+    const mem = @import("mem.zig");
     const buf = try vm.allocBuffer();
-    try buf.bytes.appendSlice(vm.allocator, content);
+    buf.arena_ctrl = 0;
+    buf.arena_gen = 0;
+    buf.data = try mem.allocBytesImmortal(vm, @intCast(content.len), @intCast(content.len));
+    if (content.len > 0) {
+        @memcpy(vm.bytes.items[buf.data.offset..][0..content.len], content);
+    }
     return .{ .buffer = buf };
 }
 
@@ -100,7 +106,7 @@ fn writeFileBufferFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
         return try util.makeIoError(vm, err, path);
     };
     defer file.close();
-    file.writeAll(args[1].buffer.bytes.items) catch |err| {
+    file.writeAll(vm.bytes.items[args[1].buffer.data.offset..][0..args[1].buffer.data.len]) catch |err| {
         return try util.makeIoError(vm, err, path);
     };
     return .null;

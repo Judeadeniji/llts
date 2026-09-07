@@ -82,7 +82,7 @@ fn formatValue(
         .ptr => |p| try w.print("ptr {d}", .{p}),
         .slice => |s| try w.print("slice offset={d} len={d}", .{ s.offset, s.len }),
         .bytes => |b| try w.print("bytes offset={d} len={d}", .{ b.offset, b.len }),
-        .array => |a| try w.print("array offset={d} count={d}", .{ a.offset, a.count }),
+        .array => |a| try w.print("array offset={d} count={d} cap={d}", .{ a.offset, a.count, a.capacity }),
         .module => |m| try w.print("module {s}", .{m.name}),
         .list => try buf.appendSlice(allocator, "list"),
         .map => try buf.appendSlice(allocator, "map"),

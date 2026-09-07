@@ -44,9 +44,11 @@ test("io.writeAll through a pipe", () => {
 @const $io = @import("std/io");
 @const $syscall = @import("std/syscall");
 @const $buffer = @import("std/buffer");
+@const $mem = @import("std/mem");
 $fds = syscall.pipe();
 print(io.writeAll(fds[1], "ping") == 4);
-$b = buffer.alloc(8);
+$a = mem.create(0);
+$b = buffer.alloc(a, 8);
 print(io.read(fds[0], b) == 4);
 print(buffer.readString(b, 0, 4));
 syscall.close(fds[0]);
@@ -69,7 +71,7 @@ $fds = syscall.pipe();
 $w = io.fromFd(a, fds[1]);
 $r = io.fromFd(a, fds[0]);
 print(w.writeAll("pong") == 4);
-$b = buffer.alloc(8);
+$b = buffer.alloc(a, 8);
 print(r.read(b) == 4);
 print(buffer.readString(b, 0, 4));
 syscall.close(fds[0]);
@@ -100,9 +102,11 @@ test("syscall.writeAll writes full payload", () => {
 		runSource(`
 @const $syscall = @import("std/syscall");
 @const $buffer = @import("std/buffer");
+@const $mem = @import("std/mem");
 $fds = syscall.pipe();
 print(syscall.writeAll(fds[1], "abcdef") == 6);
-$b = buffer.alloc(8);
+$a = mem.create(0);
+$b = buffer.alloc(a, 8);
 print(syscall.read(fds[0], b) == 6);
 print(buffer.readString(b, 0, 6));
 syscall.close(fds[0]);

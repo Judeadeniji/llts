@@ -10,7 +10,7 @@ This document provides a technical overview of arrays in the `llts` language, in
   ```
 - **Type**: These literals are length-prefixed under the hood, making their size retrievable at runtime.
 
-## 2. `@new(allocator, …)` — arena byte buffers (not string literals)
+## 2. `@new(allocator, …)` — arena allocation
 
 Allocate into an arena (reclaim with `reset` / `deinit`):
 
@@ -27,15 +27,34 @@ $s = @new(a, []byte, n);
 # equivalent element type:
 $t = @new(a, string, n);
 
+# Runtime-sized value arrays (int, i32, number, named types, ?T / *T)
+$xs = @new(a, []int, n);
+$xs[0] = 7;
+
 print(len(s));  # 64
 s[0] = 65;      # OK: mutating an arena []byte buffer
 ```
 
-This is a **mutable packed byte array** on the arena's byte heap (one host byte per element). It is not an interned string literal and not a `std/string` slice. Plain `"text"` values and `$b = x` string assignment semantics are documented in [String semantics](../std/string.md#string-semantics).
+`[]byte` / `string` / `[N]byte` are **mutable packed byte arrays** on the arena's byte heap (one host byte per element). Other `[]T` use value-slot arrays. Neither is an interned string literal. Plain `"text"` values and `$b = x` string assignment semantics are documented in [String semantics](../std/string.md#string-semantics).
 
 Also: `@new(a, Point)` zero-fills structs; `@new(a, Point{ x: 1 })` / `@new(a, [1,2,3])` for explicit inits.
 
+Growable value arrays: `__arena_array_push(arena, arr, x)` (and `std/list` on top) extend capacity in the arena. Bare `[…]` stays frame-local fixed length.
+
 Bare `[…]` / `Foo{}` stay **frame-local** (rewound on return) and are not individually freeable.
+
+## 3. `std/list` / `buffer` / `map`
+
+Prefer arena-backed std wrappers:
+
+```llts
+@const $list = @import("std/list");
+@const $mem = @import("std/mem");
+$a = mem.create(0);
+$l = list.create(a);
+list.push(l, 1);
+a.reset(); # reclaim list storage
+```
 
 ## 3. Indexing and assignment
 

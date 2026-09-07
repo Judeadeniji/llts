@@ -20,6 +20,7 @@ test("syscall: open/write/read/lseek/unlink roundtrip", () => {
 		runSource(`
 @const $syscall = @import("std/syscall");
 @const $buffer = @import("std/buffer");
+@const $mem = @import("std/mem");
 $path = "test_syscall_roundtrip.txt";
 $flags = syscall.O_CREAT | syscall.O_WRONLY | syscall.O_TRUNC;
 $fd = syscall.open(path, flags, 420);
@@ -27,7 +28,8 @@ print(@isError(fd) == false);
 print(syscall.write(fd, "abc") == 3);
 syscall.close(fd);
 $fd2 = syscall.open(path, syscall.O_RDONLY);
-$b = buffer.alloc(8);
+$a = mem.create(0);
+$b = buffer.alloc(a, 8);
 print(syscall.read(fd2, b) == 3);
 print(buffer.readString(b, 0, 3));
 print(syscall.lseek(fd2, 0, syscall.SEEK_SET) == 0);
@@ -45,10 +47,12 @@ test("syscall: pipe duplex", () => {
 		runSource(`
 @const $syscall = @import("std/syscall");
 @const $buffer = @import("std/buffer");
+@const $mem = @import("std/mem");
 $fds = syscall.pipe();
 print(len(fds) == 2);
 syscall.write(fds[1], "z");
-$b = buffer.alloc(4);
+$a = mem.create(0);
+$b = buffer.alloc(a, 4);
 print(syscall.read(fds[0], b) == 1);
 print(buffer.get(b, 0) == 122);
 syscall.close(fds[0]);

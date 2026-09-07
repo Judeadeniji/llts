@@ -5,7 +5,9 @@ test("errdefer runs on error exit; defer always", () => {
 	expectOutput(
 		runSource(`
 @const $list = @import("std/list");
-$state = list.create();
+@const $mem = @import("std/mem");
+$arena = mem.create(0);
+$state = list.create(arena);
 
 @func f(fail) {
     defer list.push(state, 1);
@@ -37,6 +39,7 @@ test("errdefer LIFO with defer on success path", () => {
 	expectOutput(
 		runSource(`
 @const $list = @import("std/list");
+@const $mem = @import("std/mem");
 
 @func okFn(l) {
     defer list.push(l, 1);
@@ -47,7 +50,8 @@ test("errdefer LIFO with defer on success path", () => {
 }
 
 pub @func main() {
-    $l = list.create();
+    $arena = mem.create(0);
+    $l = list.create(arena);
     okFn(l);
     print(list.len(l));
     print(list.get(l, 0));
@@ -63,6 +67,7 @@ test("errdefer LIFO with defer on error path", () => {
 	expectOutput(
 		runSource(`
 @const $list = @import("std/list");
+@const $mem = @import("std/mem");
 
 @func failFn(l) {
     defer list.push(l, 1);
@@ -73,7 +78,8 @@ test("errdefer LIFO with defer on error path", () => {
 }
 
 pub @func main() {
-    $l = list.create();
+    $arena = mem.create(0);
+    $l = list.create(arena);
     $err = failFn(l);
     print(@isError(err));
     print(list.len(l));
@@ -92,7 +98,9 @@ test("errdefer with try operator unwinding", () => {
 	expectOutput(
 		runSource(`
 @const $list = @import("std/list");
-$state = list.create();
+@const $mem = @import("std/mem");
+$arena = mem.create(0);
+$state = list.create(arena);
 
 @func throws() {
     return error("Crash");
@@ -157,7 +165,9 @@ test("nested block errdefer runs on ? unwind", () => {
 	expectOutput(
 		runSource(`
 @const $list = @import("std/list");
-$state = list.create();
+@const $mem = @import("std/mem");
+$arena = mem.create(0);
+$state = list.create(arena);
 
 @func throws() {
     return error("inner");
@@ -192,7 +202,9 @@ test("return non-error after local error does not run errdefer", () => {
 	expectOutput(
 		runSource(`
 @const $list = @import("std/list");
-$state = list.create();
+@const $mem = @import("std/mem");
+$arena = mem.create(0);
+$state = list.create(arena);
 
 @func f() {
     defer list.push(state, 1);
@@ -231,7 +243,9 @@ test("error payload can be a map", () => {
 	expectOutput(
 		runSource(`
 @const $map = @import("std/map");
-$m = map.create();
+@const $mem = @import("std/mem");
+$arena = mem.create(0);
+$m = map.create(arena);
 map.set(m, "path", "/tmp/x");
 $e = error("FileNotFound", m);
 print(e.code);

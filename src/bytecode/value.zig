@@ -30,35 +30,55 @@ pub const ModuleObject = struct {
 };
 
 pub const MapObject = struct {
-    entries: std.StringHashMap(Value),
+    /// Arena control block (for growth); elems invalid after arena reset.
+    arena_ctrl: i32,
+    /// `arenaGeneration` at create time; mismatched after `reset`.
+    arena_gen: i32 = 0,
+    keys: ArrayRef,
+    values: ArrayRef,
 
     pub fn deinit(self: *MapObject, allocator: std.mem.Allocator) void {
-        var it = self.entries.keyIterator();
-        while (it.next()) |k| allocator.free(k.*);
-        self.entries.deinit();
+        _ = self;
+        _ = allocator;
+        // Element storage lives in the arena bump — nothing host-owned to free.
     }
 };
 
 pub const ListObject = struct {
-    items: std.ArrayList(Value),
+    arena_ctrl: i32,
+    arena_gen: i32 = 0,
+    items: ArrayRef,
 
     pub fn deinit(self: *ListObject, allocator: std.mem.Allocator) void {
-        self.items.deinit(allocator);
+        _ = self;
+        _ = allocator;
     }
 };
 
 pub const BufferObject = struct {
-    bytes: std.ArrayList(u8),
+    arena_ctrl: i32,
+    arena_gen: i32 = 0,
+    data: BytesRef,
 
     pub fn deinit(self: *BufferObject, allocator: std.mem.Allocator) void {
-        self.bytes.deinit(allocator);
+        _ = self;
+        _ = allocator;
     }
 };
 
 /// Handle for a packed value array living in `VMState.bytes`.
+/// `capacity` ≥ `count`; growable arena arrays may reallocate on push.
 pub const ArrayRef = struct {
     offset: u32,
     count: u32,
+    capacity: u32 = 0,
+};
+
+/// Packed byte buffer in `VMState.bytes` (growable when capacity > len).
+pub const BytesRef = struct {
+    offset: u32,
+    len: u32,
+    capacity: u32 = 0,
 };
 
 /// Tagged runtime value — numeric tags match Zig-like widths end-to-end.
@@ -90,11 +110,11 @@ pub const Value = union(enum) {
     array: ArrayRef,
     /// Module object from OP_GET_MODULE.
     module: *ModuleObject,
-    /// Growable List (std/list).
+    /// Arena-backed growable list header (elems in arena bump).
     list: *ListObject,
-    /// Growable Map (std/map).
+    /// Arena-backed map header (keys/values in arena bump).
     map: *MapObject,
-    /// Byte Buffer (std/buffer).
+    /// Arena-backed byte buffer header (payload in arena bump).
     buffer: *BufferObject,
 
     pub fn fromBool(b: bool) Value {

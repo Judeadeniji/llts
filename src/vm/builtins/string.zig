@@ -527,10 +527,10 @@ fn joinFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
             }
         },
         .list => |lst| {
-            const items = lst.items.items;
-            for (items, 0..) |item_val, i| {
-                try util.appendStr(vm, item_val);
-                if (i + 1 < items.len) try util.appendStr(vm, args[1]);
+            var i: u32 = 0;
+            while (i < lst.items.count) : (i += 1) {
+                try util.appendStr(vm, vm.arrayElemConst(lst.items, i));
+                if (i + 1 < lst.items.count) try util.appendStr(vm, args[1]);
             }
         },
         else => return error.TypeError,

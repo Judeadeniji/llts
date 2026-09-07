@@ -43,12 +43,12 @@
 }
 
 # Build a short string preview from the byte slice (via std/buffer).
-@func preview(buf, max) {
+@func preview(arena, buf, max) {
     $n = len(buf);
     @if (n > max) {
         n = max;
     }
-    $out = buffer.create();
+    $out = buffer.create(arena);
     @for (0..n) |i| {
         buffer.push(out, buf[i]);
     }
@@ -76,5 +76,5 @@ pub @func main() {
     debug.printLn("newlines={i}", countNewlines(slice), null, null, null);
 
     uppercaseAscii(slice);
-    debug.printLn("preview={s}", preview(slice, 60), null, null, null);
+    debug.printLn("preview={s}", preview(a, slice, 60), null, null, null);
 }

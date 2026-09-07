@@ -1,13 +1,22 @@
-pub @func alloc(size) {
-    return __bufferAlloc(size);
+# Arena-backed byte buffer. Reclaimed with `arena.reset()` / `deinit()`.
+# `createImmortal` is process-lifetime only (fs/io escape hatch) — prefer `create(arena)`.
+
+@const $mem = @import("std/mem.lls");
+
+pub @func alloc(arena: mem.Arena, size) {
+    return __bufferAlloc(arena, size);
 }
 
-pub @func create() {
-    return __bufferCreate();
+pub @func create(arena: mem.Arena) {
+    return __bufferCreate(arena);
 }
 
-pub @func fromString(str) {
-    return __bufferFromString(str);
+pub @func createImmortal() {
+    return __bufferCreateImmortal();
+}
+
+pub @func fromString(arena: mem.Arena, str) {
+    return __bufferFromString(arena, str);
 }
 
 pub @func writeString(buf, offset, str) {

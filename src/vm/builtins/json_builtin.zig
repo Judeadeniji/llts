@@ -103,22 +103,24 @@ fn stringifyNode(vm: *VMState, val: Value, out: *std.io.Writer.Allocating) !void
         },
         .list => |lst| {
             try out.writer.writeAll("[");
-            for (lst.items.items, 0..) |item, i| {
+            var i: u32 = 0;
+            while (i < lst.items.count) : (i += 1) {
                 if (i > 0) try out.writer.writeAll(",");
-                try stringifyNode(vm, item, out);
+                try stringifyNode(vm, vm.arrayElemConst(lst.items, i), out);
             }
             try out.writer.writeAll("]");
         },
         .map => |mp| {
             try out.writer.writeAll("{");
-            var it = mp.entries.iterator();
-            var first = true;
-            while (it.next()) |entry| {
-                if (!first) try out.writer.writeAll(",");
-                try out.writer.print("{f}", .{std.json.fmt(entry.key_ptr.*, .{})});
+            var i: u32 = 0;
+            while (i < mp.keys.count) : (i += 1) {
+                if (i > 0) try out.writer.writeAll(",");
+                var kbuf: std.ArrayList(u8) = .empty;
+                defer kbuf.deinit(vm.allocator);
+                const k = try util.valueToStr(vm, vm.arrayElemConst(mp.keys, i), &kbuf);
+                try out.writer.print("{f}", .{std.json.fmt(k, .{})});
                 try out.writer.writeAll(":");
-                try stringifyNode(vm, entry.value_ptr.*, out);
-                first = false;
+                try stringifyNode(vm, vm.arrayElemConst(mp.values, i), out);
             }
             try out.writer.writeAll("}");
         },
