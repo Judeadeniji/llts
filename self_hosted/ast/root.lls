@@ -1,55 +1,14 @@
-# Port of src/ast/root.zig
-#
-# Tagged union via enum-literal `kind` fields (see examples/tagged.lls).
-# Child links are `unknown` until LLTS supports forward refs into `@type` unions.
+# Port of src/ast/root.zig — Document + re-exports.
 
 @const $common = @import("./common.lls");
-@const $expr = @import("./expr.lls");
-@const $stmt = @import("./stmt.lls");
-@const $types = @import("./types.lls");
+@const $nodes = @import("./nodes.lls");
 @const $mem = @import("std/mem.lls");
 @const $list = @import("std/list.lls");
 
-pub @const $Location = common.Location;
-
-# Use `common.NodeKind` / `ast.Node` from importers; enum re-export is not comptime.
-
-pub @type Node =
-    stmt.Declaration
-    | expr.Literal
-    | expr.Primary
-    | expr.Binary
-    | expr.Unary
-    | expr.Assignment
-    | expr.Call
-    | expr.Member
-    | expr.Index
-    | expr.ArrayLiteral
-    | stmt.FunctionDecl
-    | stmt.Params
-    | stmt.Block
-    | stmt.Return
-    | stmt.If
-    | stmt.Switch
-    | stmt.For
-    | stmt.Break
-    | stmt.Continue
-    | stmt.Defer
-    | stmt.StructDecl
-    | stmt.EnumDecl
-    | stmt.ErrorDecl
-    | stmt.TypeDecl
-    | expr.StructInit
-    | expr.TryExpr
-    | expr.ErrorExpr
-    | stmt.Extern
-    | types.ArrayType
-    | types.TupleType
-    | types.UnionType
-    | types.IntersectType
-    | types.PointerType
-    | types.FuncType
-    | types.ShapeType;
+# Re-export for the parser port (same module object; arm types live on `nodes`).
+pub @const $expr = nodes;
+pub @const $stmt = nodes;
+pub @const $types = nodes;
 
 pub @struct Document {
     path: string;
