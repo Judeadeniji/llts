@@ -65,9 +65,11 @@ pub const ErrorSetDef = struct {
 /// `@type` (distinct) or `@alias` (transparent) binding.
 pub const TypeDef = struct {
     name: []const u8,
-    /// Display string of the RHS (may name another typedef).
+    /// Display string of the RHS (may name another typedef). Empty while `stub`.
     underlying: []const u8,
     distinct: bool,
+    /// Name reserved before RHS compile so field types may forward-ref it.
+    stub: bool = false,
 };
 
 pub const LoopTracker = struct {

@@ -2,7 +2,10 @@
  * @type (Go-style distinct) and @alias (transparent).
  */
 import { test } from "bun:test";
-import { expectError, expectOutput, runSource } from "./helpers";
+import { expectError, expectOutput, runFile, runSource } from "./helpers";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 
 test("@type UUID and ID are not interchangeable", () => {
 	expectError(
@@ -233,4 +236,91 @@ print(f(1));
 `),
 		"not assignable",
 	);
+});
+
+test("*Arm assigns to *Union field (covariant pointers)", () => {
+	expectOutput(
+		runSource(`
+@enum Kind { Lit, Bin }
+@struct Lit { kind: Kind.Lit; value: i64; }
+@struct Bin { kind: Kind.Bin; left: *Expr; right: *Expr; }
+@type Expr = Lit | Bin;
+@const $mem = @import("std/mem");
+$a = mem.create(0);
+$l = @new(a, Lit { kind: Kind.Lit, value: 9 });
+$b = @new(a, Bin { kind: Kind.Bin, left: l, right: l });
+print(b.kind);
+print(l.value);
+a.deinit();
+`),
+		["1", "9"],
+	);
+});
+
+test("forward-ref: struct fields may name @type declared later", () => {
+	expectOutput(
+		runSource(`
+@enum Kind { Lit, Bin }
+@struct Lit { kind: Kind.Lit; value: i64; }
+@struct Bin { kind: Kind.Bin; left: *Expr; right: *Expr; }
+@type Expr = Lit | Bin;
+@const $mem = @import("std/mem");
+$a = mem.create(0);
+$l = @new(a, Lit { kind: Kind.Lit, value: 3 });
+$b = @new(a, Bin { kind: Kind.Bin, left: l, right: l });
+print(l.value);
+print(@typeOf(b));
+a.deinit();
+`),
+		["3", "*Bin"],
+	);
+});
+
+test("@as(*Union, *Arm) is allowed", () => {
+	expectOutput(
+		runSource(`
+@enum Kind { Lit, Bin }
+@struct Lit { kind: Kind.Lit; value: i64; }
+@struct Bin { kind: Kind.Bin; left: i64; right: i64; }
+@type Expr = Lit | Bin;
+@const $mem = @import("std/mem");
+$a = mem.create(0);
+$l: *Expr = @as(*Expr, @new(a, Lit { kind: Kind.Lit, value: 4 }));
+print(@typeOf(l));
+print(l.kind);
+a.deinit();
+`),
+		["*Expr", "0"],
+	);
+});
+
+test("imported @type Lit | Bin rewrites arm names", () => {
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "llts_typedef_"));
+	try {
+		fs.writeFileSync(
+			path.join(dir, "node.lls"),
+			`
+pub @enum Kind { Lit, Bin }
+pub @struct Lit { kind: Kind.Lit; value: i64; }
+pub @struct Bin { kind: Kind.Bin; left: *Node; right: *Node; }
+pub @type Node = Lit | Bin;
+`,
+		);
+		fs.writeFileSync(
+			path.join(dir, "use.lls"),
+			`
+@const $n = @import("./node.lls");
+@const $mem = @import("std/mem");
+$a = mem.create(0);
+$l = @new(a, n.Lit { kind: n.Kind.Lit, value: 7 });
+$b = @new(a, n.Bin { kind: n.Kind.Bin, left: l, right: l });
+print(b.kind);
+print(l.value);
+pub @func main() {}
+`,
+		);
+		expectOutput(runFile(path.join(dir, "use.lls")), ["1", "7"]);
+	} finally {
+		fs.rmSync(dir, { recursive: true, force: true });
+	}
 });

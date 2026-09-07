@@ -340,8 +340,10 @@ pub fn compileTypeDecl(state: *CompilerState, td: *const ast.TypeDecl) !void {
     if (state.structs.contains(td.name) or state.enums.contains(td.name) or state.error_sets.contains(td.name)) {
         return @import("../../errors/compile.zig").compileFailFmt(state, "Type name '{s}' already used by a struct, enum, or error set", .{td.name});
     }
-    if (state.typedefs.contains(td.name)) {
-        return @import("../../errors/compile.zig").compileFailFmt(state, "Duplicate type '{s}'", .{td.name});
+    if (state.typedefs.get(td.name)) |existing| {
+        if (!existing.stub) {
+            return @import("../../errors/compile.zig").compileFailFmt(state, "Duplicate type '{s}'", .{td.name});
+        }
     }
     if (ir.isBuiltinTypeName(td.name)) {
         return @import("../../errors/compile.zig").compileFailFmt(state, "Cannot redefine builtin type '{s}'", .{td.name});
@@ -353,6 +355,7 @@ pub fn compileTypeDecl(state: *CompilerState, td: *const ast.TypeDecl) !void {
         .name = td.name,
         .underlying = disp,
         .distinct = td.distinct,
+        .stub = false,
     });
     // Shape / merged-intersection RHS: layout under typedef name and display key.
     if (disp.len > 0 and disp[0] == '{') {

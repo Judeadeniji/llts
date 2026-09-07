@@ -581,7 +581,8 @@ pub fn isSubtype(a: Type, b: Type) bool {
             else => false,
         },
         .ptr => |bp| switch (a) {
-            .ptr => |ap| typeEquals(ap.*, bp.*),
+            // Covariant pointees: `*Lit ⊑ *Expr` when `Lit ⊑ Expr` (e.g. Expr = Lit | Bin).
+            .ptr => |ap| isSubtype(ap.*, bp.*),
             .union_ => |arms| subtypeAll(arms, b),
             .defined => false,
             else => false,

@@ -858,6 +858,29 @@ fn rewriteRefs(node: *ast.Node, local_map: *std.StringHashMap([]const u8)) void 
         .error_decl => {},
         .try_expr => |t| rewriteRefs(t.expression, local_map),
         .error_expr => |e| rewriteRefs(e.args[0], local_map),
+        // Type positions (e.g. `@type Node = Lit | Bin`, field `*Node`).
+        .pointer_type => |p| rewriteRefs(p.elem, local_map),
+        .array_type => |a| rewriteRefs(a.elem, local_map),
+        .tuple_type => |t| {
+            for (t.elems) |e| rewriteRefs(e, local_map);
+        },
+        .union_type => |u| {
+            rewriteRefs(u.left, local_map);
+            rewriteRefs(u.right, local_map);
+        },
+        .intersection_type => |ix| {
+            rewriteRefs(ix.left, local_map);
+            rewriteRefs(ix.right, local_map);
+        },
+        .func_type => |f| {
+            for (f.params) |p| rewriteRefs(p, local_map);
+            if (f.return_type) |rt| rewriteRefs(rt, local_map);
+        },
+        .shape_type => |s| {
+            for (s.fields) |f| {
+                if (f.type_annotation) |ta| rewriteRefs(ta, local_map);
+            }
+        },
         else => {},
     }
 }
