@@ -501,6 +501,19 @@ pub fn isError(vm: *VMState) HeapError!void {
     try stack.push(vm, Value.fromBool(ok ));
 }
 
+/// `@nameOf` on errors: push the code string (declared member / open message).
+pub fn errorName(vm: *VMState) HeapError!void {
+    const val = stack.pop(vm);
+    const p: i32 = switch (val) {
+        .ptr => |x| x,
+        else => return fail(vm, "@nameOf expects an error value"),
+    };
+    if (p < state_mod.HEAP_START or !vm.isValidHeapPtr(p - 1) or vm.slot(p - 1).* != .i64 or vm.slot(p - 1).*.i64 != ERROR_TAG) {
+        return fail(vm, "@nameOf expects an error value");
+    }
+    try stack.push(vm, vm.slot(p).*);
+}
+
 pub fn stringAdd(vm: *VMState) HeapError!void {
     const b = stack.pop(vm);
     const a = stack.pop(vm);

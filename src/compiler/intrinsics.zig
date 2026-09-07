@@ -19,6 +19,7 @@ pub const Intrinsic = enum {
     typeOf,
     isError,
     sizeOf,
+    nameOf,
     as,
     new,
 };
@@ -28,6 +29,7 @@ pub fn match(callee: []const u8) ?Intrinsic {
     if (std.mem.eql(u8, callee, "@typeOf")) return .typeOf;
     if (std.mem.eql(u8, callee, "@isError")) return .isError;
     if (std.mem.eql(u8, callee, "@sizeOf")) return .sizeOf;
+    if (std.mem.eql(u8, callee, "@nameOf")) return .nameOf;
     if (std.mem.eql(u8, callee, "@as")) return .as;
     if (std.mem.eql(u8, callee, "@new")) return .new;
     return null;
@@ -44,6 +46,7 @@ pub fn arity(intr: Intrinsic) Arity {
         .typeOf => .{ .exact = 1 },
         .isError => .{ .exact = 1 },
         .sizeOf => .{ .exact = 1 },
+        .nameOf => .{ .exact = 1 },
         .as => .{ .exact = 2 },
         .new => .{ .range = .{ .min = 2, .max = 3 } },
     };
@@ -95,6 +98,22 @@ pub fn typecheck(state: *CompilerState, env: *typecheck_root.Env, ta: ir.TypeAll
         .sizeOf => {
             _ = try typecheck_root.inferExpr(state, env, ta, c.args[0]);
             return ir.TInt;
+        },
+        .nameOf => {
+            const arg_type = try typecheck_root.inferExpr(state, env, ta, c.args[0]);
+            const peeled = ir.peelDefined(arg_type);
+            const plan: state_mod.NameOfPlan = switch (peeled) {
+                .enum_lit => |e| .{ .fold = e.variant },
+                .enum_ => |ename| .{ .enum_type = ename },
+                .error_lit => |e| .{ .fold = e.variant },
+                .error_set, .error_ => .error_code,
+                else => {
+                    const disp = try typecheck_root.ownDisplay(state, arg_type);
+                    return compile_errors.compileFailFmt(state, "@nameOf expects an enum or error value, got '{s}'", .{disp});
+                },
+            };
+            try state.name_of_plans.put(call_node, plan);
+            return ir.TString;
         },
         .as => {
             return try typecheckCast(state, env, ta, c.args[0], c.args[1]);
@@ -220,6 +239,23 @@ pub fn compile(state: *CompilerState, intr: Intrinsic, node: *ast.Node, c: *cons
             try expr.compileExpression(state, c.args[0]);
             try emit.emitOp(state, .OP_SIZEOF);
         },
+        .nameOf => {
+            const plan = state.name_of_plans.get(node) orelse {
+                return compile_errors.compileFailFmt(state, "@nameOf missing type plan", .{});
+            };
+            switch (plan) {
+                .fold => |spelling| {
+                    try expr.compileExpression(state, c.args[0]);
+                    try emit.emitOp(state, .OP_POP);
+                    try emit.emitString(state, spelling);
+                },
+                .enum_type => |ename| try compileNameOfEnum(state, ename, c.args[0]),
+                .error_code => {
+                    try expr.compileExpression(state, c.args[0]);
+                    try emit.emitOp(state, .OP_ERROR_NAME);
+                },
+            }
+        },
         .as => {
             try compileCast(state, c.args[0], c.args[1]);
         },
@@ -227,6 +263,47 @@ pub fn compile(state: *CompilerState, intr: Intrinsic, node: *ast.Node, c: *cons
             try aggregate.compileNew(state, c);
         },
     }
+}
+
+fn compileNameOfEnum(state: *CompilerState, ename: []const u8, arg: *ast.Node) !void {
+    const ed = state.enums.get(ename) orelse {
+        return compile_errors.compileFailFmt(state, "@nameOf: unknown enum '{s}'", .{ename});
+    };
+
+    const Entry = struct { name: []const u8, val: i32 };
+    var variants: std.ArrayList(Entry) = .empty;
+    defer variants.deinit(state.allocator);
+    var it = ed.variants.iterator();
+    while (it.next()) |e| {
+        try variants.append(state.allocator, .{ .name = e.key_ptr.*, .val = e.value_ptr.* });
+    }
+    std.mem.sort(Entry, variants.items, {}, struct {
+        fn less(_: void, a: Entry, b: Entry) bool {
+            return a.val < b.val;
+        }
+    }.less);
+
+    try expr.compileExpression(state, arg);
+
+    var end_jumps: std.ArrayList(usize) = .empty;
+    defer end_jumps.deinit(state.allocator);
+
+    for (variants.items) |item| {
+        try emit.emitOp(state, .OP_DUP);
+        try emit.emitConstant(state, .{ .i64 = item.val });
+        try emit.emitOp(state, .OP_EQUAL);
+        const miss = try emit.emitJump(state, .OP_JUMP_IF_FALSE);
+        try emit.emitOp(state, .OP_POP);
+        try emit.emitOp(state, .OP_POP);
+        try emit.emitString(state, item.name);
+        const done = try emit.emitJump(state, .OP_JUMP);
+        try end_jumps.append(state.allocator, done);
+        emit.patchJump(state, miss);
+        try emit.emitOp(state, .OP_POP);
+    }
+    try emit.emitOp(state, .OP_POP);
+    try emit.emitString(state, "");
+    for (end_jumps.items) |j| emit.patchJump(state, j);
 }
 
 /// `Name(expr)` cast sugar when `Name` is a type and not a function/native.

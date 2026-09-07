@@ -377,7 +377,10 @@ fn parseArrayLiteral(self: *Parser, token: ctx.Token) ParseError!*Node {
             try elements.append(self.arena, try parseExpression(self));
             if (self.checkDelim(",")) {
                 _ = self.advance();
-            } else break;
+                if (self.checkDelim("]")) break; // trailing comma
+                continue;
+            }
+            break;
         }
     }
     _ = try self.consume(.delimiter, "Expected ']'", "]");

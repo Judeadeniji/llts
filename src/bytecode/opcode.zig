@@ -75,4 +75,6 @@ pub const OpCode = enum(u8) {
     OP_AS,
     /// Slice view: stack [obj, lo, hi] → view (exclusive hi). Bytes/string only.
     OP_SLICE,
+    /// Pop error value; push its code string (member name / open `error("…")` message).
+    OP_ERROR_NAME,
 };

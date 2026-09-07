@@ -58,7 +58,7 @@ pub fn isConstantExpr(state: *CompilerState, env: *const ConstEnv, node: ?*ast.N
         },
         .call => |c| blk: {
             if (c.callee.* == .primary) {
-                if (std.mem.eql(u8, c.callee.primary.name, "@typeOf") or std.mem.eql(u8, c.callee.primary.name, "@import")) {
+                if (std.mem.eql(u8, c.callee.primary.name, "@typeOf") or std.mem.eql(u8, c.callee.primary.name, "@import") or std.mem.eql(u8, c.callee.primary.name, "@nameOf")) {
                     break :blk true;
                 }
             }

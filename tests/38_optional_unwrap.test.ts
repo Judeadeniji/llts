@@ -1,6 +1,32 @@
 import { test } from "bun:test";
 import { expectOutput, runSource } from "./helpers";
 
+test("@if optional unwrap keeps struct field access", () => {
+	expectOutput(
+		runSource(`
+@const $list = @import("std/list");
+@struct Tok {
+    kind: i64;
+    value: string;
+}
+@func prev(l): ?Tok {
+    @if (list.len(l) == 0) { return null; }
+    $t: Tok = list.get(l, 0);
+    return t;
+}
+pub @func main() {
+    $l = list.create();
+    list.push(l, Tok { kind: 7, value: "hi" });
+    @if (prev(l)) |t| {
+        print(t.kind);
+        print(t.value);
+    }
+}
+`),
+		["7", "hi"],
+	);
+});
+
 test("@if optional unwrap", () => {
 	expectOutput(
 		runSource(`

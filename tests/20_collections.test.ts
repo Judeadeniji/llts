@@ -21,6 +21,20 @@ print(list.len(l));
 	);
 });
 
+test("array literal allows trailing comma", () => {
+	expectOutput(
+		runSource(`
+@const $ops = [
+    "+", "-", "*",
+];
+print(len(ops));
+print(ops[0]);
+print(ops[2]);
+`),
+		["3", "+", "*"],
+	);
+});
+
 test("map: set, get, has, delete, size", () => {
 	expectOutput(
 		runSource(`
