@@ -8,6 +8,7 @@ const stmt = @import("root.zig");
 const for_loop = @import("for_loop.zig");
 
 const CompilerState = state_mod.CompilerState;
+const from_ast = @import("../typecheck/from_ast.zig");
 
 pub fn compileIf(state: *CompilerState, if_expr: *const ast.If) !void {
     try expr.compileExpression(state, if_expr.condition);
@@ -16,7 +17,17 @@ pub fn compileIf(state: *CompilerState, if_expr: *const ast.If) !void {
     try scope.beginScope(state);
     if (if_expr.pipe_value) |pv| {
         if (pv.* != .primary) return fail(state, "if capture must be an identifier");
-        _ = try scope.addLocal(state, pv.primary.name, true);
+        const slot = try scope.addLocal(state, pv.primary.name, true);
+        // Bind capture to optional payload type so `t.field` uses LOAD_FIELD, not dynamic GET_PROPERTY.
+        if (from_ast.resolveType(state, if_expr.condition)) |cond_ty| {
+            const trimmed = std.mem.trim(u8, cond_ty, " \t");
+            const payload = from_ast.unwrapOptionalDisplay(trimmed);
+            if (!std.mem.eql(u8, payload, trimmed)) {
+                const owned = try state.allocator.dupe(u8, payload);
+                try state.owned.append(state.allocator, owned);
+                state.locals.items[slot].type_name = owned;
+            }
+        }
     } else {
         try emit.emitOp(state, .OP_POP);
     }

@@ -605,8 +605,11 @@ fn rewriteModuleRefs(
         .function_decl => |*f| {
             const mark = bound.items.len;
             if (f.params.* == .params) {
-                for (f.params.params.params) |p| {
-                    try bound.append(state.allocator, p.name);
+                for (f.params.params.params) |*param| {
+                    // Qualify param types before binding names so a param named like a
+                    // local type (unlikely) cannot block rewriting the annotation.
+                    if (param.type_annotation) |ta| try rewriteModuleRefs(state, ta, local_map, bound);
+                    try bound.append(state.allocator, param.name);
                 }
             }
             if (f.return_type) |rt| try rewriteModuleRefs(state, rt, local_map, bound);

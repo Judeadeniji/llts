@@ -394,3 +394,16 @@ pub @func main() {}
 		"non-error-union",
 	);
 });
+
+test("@nameOf returns error member spelling as declared", () => {
+	expectOutput(
+		runSource(`
+@error IoError { NotFound, AccessDenied }
+print(@nameOf(IoError.NotFound));
+$e: IoError = IoError.AccessDenied;
+print(@nameOf(e));
+print(@nameOf(error("OpenFailed")));
+`),
+		["NotFound", "AccessDenied", "OpenFailed"],
+	);
+});

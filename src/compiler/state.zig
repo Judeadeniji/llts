@@ -44,6 +44,16 @@ pub const EnumDef = struct {
     variants: std.StringHashMap(i32),
 };
 
+/// How to lower `@nameOf(x)` after typecheck.
+pub const NameOfPlan = union(enum) {
+    /// Known arm spelling (enum/error literal).
+    fold: []const u8,
+    /// Runtime enum discriminant → variant name.
+    enum_type: []const u8,
+    /// Runtime error object → code string.
+    error_code,
+};
+
 /// `@error Name { A, B }` — closed error set. `origins` maps member → declaring set name
 /// (same as `name` for a plain decl; component set for merges).
 pub const ErrorSetDef = struct {
@@ -116,6 +126,8 @@ pub const CompilerState = struct {
     /// Imported module ASTs (own their arenas). Freed in `deinit`.
     module_docs: std.ArrayList(*ast.Document) = .empty,
     type_of_results: std.AutoHashMap(*ast.Node, []const u8),
+    /// `@nameOf` lowering plan per call node (variant spelling as declared).
+    name_of_plans: std.AutoHashMap(*ast.Node, NameOfPlan),
     for_is_cond: std.AutoHashMap(*const ast.For, void),
     last_emitted_line: i32 = -1,
     last_emitted_column: i32 = -1,
@@ -148,6 +160,7 @@ pub fn create(allocator: std.mem.Allocator) !CompilerState {
         .native_globals = std.StringHashMap(void).init(allocator),
         .global_slots = std.StringHashMap(u16).init(allocator),
         .type_of_results = std.AutoHashMap(*ast.Node, []const u8).init(allocator),
+        .name_of_plans = std.AutoHashMap(*ast.Node, NameOfPlan).init(allocator),
         .for_is_cond = std.AutoHashMap(*const ast.For, void).init(allocator),
         .import_from = std.StringHashMap(ImportFrame).init(allocator),
     };
@@ -228,6 +241,7 @@ pub fn deinit(self: *CompilerState) void {
     self.native_globals.deinit();
     self.global_slots.deinit();
     self.type_of_results.deinit();
+    self.name_of_plans.deinit();
     self.for_is_cond.deinit();
     self.import_stack.deinit(self.allocator);
     self.import_from.deinit();

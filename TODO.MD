@@ -113,6 +113,7 @@ Packed byte heap + honest numeric widths. See [`docs/memory-model.md`](docs/memo
 - [x] **Debug type asserts**; strip with `--release`.
 - [x] **`@typeOf(expr)`**
 - [x] **`@sizeOf(T_or_expr)`** — static sizes for types / typed values; runtime `OP_SIZEOF` fallback (`tests/26_sizeof.test.ts`).
+- [x] **`@nameOf(enum_or_error)`** — variant/member spelling as declared (`tests/15_enums.test.ts`, `tests/37_error_sets.test.ts`).
 - [x] **`pub` for user files** — private decls stay in-module; relative `./` / `../` imports.
 
 ### P5 — Memory

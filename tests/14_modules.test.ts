@@ -203,3 +203,68 @@ pub @func main() {}
 	);
 	expectError(runFile(entry), "has no export 'Hidden'");
 });
+
+test("imported free function can call methods on self: *T param", () => {
+	const { entry } = withTempModules(
+		{
+			"box.lls": `
+pub @struct Box {
+    n: i64;
+
+    @func bump(self: *Box) {
+        self.n = self.n + 1;
+    }
+}
+`,
+			"util.lls": `
+@const $box = @import("./box.lls");
+
+pub @func once(self: *box.Box) {
+    self.bump();
+}
+`,
+			"main.lls": `
+@const $box = @import("./box.lls");
+@const $util = @import("./util.lls");
+$b = box.Box { n: 0 };
+util.once(&b);
+print(b.n);
+pub @func main() {}
+`,
+		},
+		"main.lls",
+	);
+	expectOutput(runFile(entry), ["1"]);
+});
+
+test("imported module enum used in struct fields and function params", () => {
+	const { entry } = withTempModules(
+		{
+			"tokens.lls": `
+pub @enum TokenType {
+    Keyword,
+    Eof,
+}
+
+pub @struct Token {
+    type: TokenType;
+    value: string;
+}
+
+pub @func typeName(t: TokenType) {
+    return @switch (t) {
+        TokenType.Keyword => { break "keyword"; },
+        TokenType.Eof => { break "eof"; },
+    };
+}
+`,
+			"main.lls": `
+@const $tokens = @import("./tokens.lls");
+print(tokens.typeName(tokens.TokenType.Eof));
+pub @func main() {}
+`,
+		},
+		"main.lls",
+	);
+	expectOutput(runFile(entry), ["eof"]);
+});

@@ -158,6 +158,28 @@ print(x);
 	);
 });
 
+test("@nameOf returns enum variant spelling as declared", () => {
+	expectOutput(
+		runSource(`
+@enum TokenType { Keyword, VRegister, Eof }
+print(@nameOf(TokenType.Keyword));
+print(@nameOf(TokenType.VRegister));
+$t: TokenType = TokenType.Eof;
+print(@nameOf(t));
+`),
+		["Keyword", "VRegister", "Eof"],
+	);
+});
+
+test("@nameOf rejects non-enum non-error values", () => {
+	expectError(
+		runSource(`
+print(@nameOf(42));
+`),
+		"@nameOf expects an enum or error value",
+	);
+});
+
 test("discriminated struct + kind enum (preferred tagged data)", () => {
 	expectOutput(
 		runSource(`

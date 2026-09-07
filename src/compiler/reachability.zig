@@ -301,6 +301,23 @@ fn noteGlobalRead(state: *CompilerState, name: []const u8, result: *Result) !voi
     }
 }
 
+fn selfReceiverTypeName(state: *CompilerState, full_name: []const u8) ?[]const u8 {
+    const def = state.functions.get(full_name) orelse return null;
+    if (def.node.* != .function_decl) return null;
+    const f = &def.node.function_decl;
+    const plist = switch (f.params.*) {
+        .params => |p| p.params,
+        else => return null,
+    };
+    for (plist) |param| {
+        if (!std.mem.eql(u8, param.name, "self")) continue;
+        const ann = param.type_annotation orelse return null;
+        const disp = (types.typeAstToDisplay(ann, state) catch return null) orelse return null;
+        return types.unwrapOptionalDisplay(disp);
+    }
+    return null;
+}
+
 fn noteCall(
     state: *CompilerState,
     func_name: ?[]const u8,
@@ -323,9 +340,13 @@ fn noteCall(
             const object = mem.object;
             if (object.* == .primary and object.primary.kind == .identifier and std.mem.eql(u8, object.primary.name, "self")) {
                 if (func_name) |fname| {
-                    if (std.mem.lastIndexOf(u8, fname, "::")) |idx| {
-                        const type_name = fname[0..idx];
-                        const method_name = try std.fmt.allocPrint(state.allocator, "{s}::{s}", .{ type_name, prop });
+                    // Prefer annotated `self: *T` over assuming `fname` is `T::method`.
+                    const type_name = selfReceiverTypeName(state, fname) orelse blk: {
+                        if (std.mem.lastIndexOf(u8, fname, "::")) |idx| break :blk fname[0..idx];
+                        break :blk null;
+                    };
+                    if (type_name) |tn| {
+                        const method_name = try std.fmt.allocPrint(state.allocator, "{s}::{s}", .{ tn, prop });
                         defer state.allocator.free(method_name);
                         var targets = try expandCallTargets(state, method_name);
                         defer targets.deinit(state.allocator);
@@ -343,9 +364,12 @@ fn noteCall(
                     std.mem.eql(u8, inner_mem.object.primary.name, "self"))
                 {
                     if (func_name) |fname| {
-                        if (std.mem.lastIndexOf(u8, fname, "::")) |idx| {
-                            const self_type_name = fname[0..idx];
-                            if (types.lookupStruct(state, self_type_name)) |sd| {
+                        const self_type_name = selfReceiverTypeName(state, fname) orelse blk: {
+                            if (std.mem.lastIndexOf(u8, fname, "::")) |idx| break :blk fname[0..idx];
+                            break :blk null;
+                        };
+                        if (self_type_name) |stn| {
+                            if (types.lookupStruct(state, stn)) |sd| {
                                 const field_name = inner_mem.property.primary.name;
                                 if (sd.types.get(field_name)) |field_ty| {
                                     const inner_type = types.unwrapOptionalDisplay(field_ty);

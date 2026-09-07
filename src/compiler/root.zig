@@ -360,9 +360,14 @@ fn analyzeBody(
                     const prop = c.callee.member.property.primary.name;
                     const object = c.callee.member.object;
                     if (object.* == .primary and object.primary.kind == .identifier and std.mem.eql(u8, object.primary.name, "self")) {
-                        if (std.mem.lastIndexOf(u8, full_name, "::")) |idx| {
-                            const type_name = full_name[0..idx];
-                            const method_name = try std.fmt.allocPrint(state.allocator, "{s}::{s}", .{ type_name, prop });
+                        // Prefer the `self` param's type (`self: *Scanner`) over assuming
+                        // `full_name` is `Struct::method` — free functions also use `self`.
+                        const type_name = selfReceiverTypeName(state, full_name) orelse blk: {
+                            if (std.mem.lastIndexOf(u8, full_name, "::")) |idx| break :blk full_name[0..idx];
+                            break :blk null;
+                        };
+                        if (type_name) |tn| {
+                            const method_name = try std.fmt.allocPrint(state.allocator, "{s}::{s}", .{ tn, prop });
                             try state.owned.append(state.allocator, method_name);
                             try calls.put(method_name, {});
                         } else {
@@ -485,6 +490,28 @@ fn dfsRecursive(
 
     _ = stack.remove(func_name);
     return def.is_recursive;
+}
+
+/// Type of a `self` parameter, for `self.method()` call-graph edges.
+/// Free functions often take `self: *T`; using `fn_name` alone would treat the
+/// module path as the struct (wrong). Falls back to null when unannotated.
+fn selfReceiverTypeName(state: *state_mod.CompilerState, full_name: []const u8) ?[]const u8 {
+    const def = state.functions.get(full_name) orelse return null;
+    if (def.node.* != .function_decl) return null;
+    const f = &def.node.function_decl;
+    const plist = switch (f.params.*) {
+        .params => |p| p.params,
+        else => return null,
+    };
+    for (plist) |param| {
+        if (!std.mem.eql(u8, param.name, "self")) continue;
+        const ann = param.type_annotation orelse return null;
+        const disp = (typecheck.typeAstToDisplay(ann, state) catch return null) orelse return null;
+        const bare = types.unwrapOptionalDisplay(disp);
+        if (types.lookupStruct(state, bare) != null) return bare;
+        return bare;
+    }
+    return null;
 }
 
 fn registerModuleDecls(state: *state_mod.CompilerState, doc: *ast.Document) !void {

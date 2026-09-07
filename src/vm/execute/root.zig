@@ -122,6 +122,7 @@ pub fn execute(vm: *VMState, start_ip: usize) RuntimeError!void {
             .OP_MAKE_ERROR => try heap.makeError(vm),
             .OP_MAKE_ERROR_PAYLOAD => try heap.makeErrorPayload(vm),
             .OP_IS_ERROR => try heap.isError(vm),
+            .OP_ERROR_NAME => try heap.errorName(vm),
             .OP_STRING_ADD => try heap.stringAdd(vm),
             .OP_GET_INDEX => try heap.getIndex(vm),
             .OP_SET_INDEX => try heap.setIndex(vm),
