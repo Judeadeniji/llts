@@ -1,0 +1,44 @@
+# Smoke-test self-hosted AST constructors.
+# Usage: llts run self_hosted/tools/ast_smoke.lls
+
+@const $ast = @import("../ast/root.lls");
+@const $common = @import("../ast/common.lls");
+@const $expr = @import("../ast/expr.lls");
+@const $mem = @import("std/mem.lls");
+@const $list = @import("std/list.lls");
+@const $debug = @import("std/debug.lls");
+
+$arena = mem.create(0);
+$doc = ast.createDocument(arena, "smoke.lls", "1 + 2");
+
+$loc = common.Location { line: 1, column: 1, path: "smoke.lls" };
+$left = @new(arena, expr.Literal {
+    kind: common.NodeKind.Literal,
+    literal_type: expr.LiteralKind.Number,
+    value: "1",
+    type_name: null,
+    loc: loc,
+});
+$right = @new(arena, expr.Literal {
+    kind: common.NodeKind.Literal,
+    literal_type: expr.LiteralKind.Number,
+    value: "2",
+    type_name: null,
+    loc: loc,
+});
+$bin = @new(arena, expr.Binary {
+    kind: common.NodeKind.Binary,
+    left: left,
+    operator: "+",
+    right: right,
+    loc: loc,
+});
+
+list.push(doc.statements, bin);
+debug.printLn("{i}", list.len(doc.statements));
+debug.printLn("{s}", @nameOf(bin.kind));
+debug.printLn("{s}", left.value);
+
+arena.deinit();
+
+pub @func main() {}

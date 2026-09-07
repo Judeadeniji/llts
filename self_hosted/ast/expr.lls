@@ -1,0 +1,116 @@
+# Port of src/ast/expr.zig
+#
+# Child nodes are `unknown` (*Node) — LLTS cannot forward-reference the
+# `@type Node = …` union inside arm structs yet.
+
+@const $common = @import("./common.lls");
+
+pub @enum LiteralKind {
+    Number,
+    String,
+    Boolean,
+    Hex,
+    Octal,
+    Binary,
+    Null,
+}
+
+pub @enum PrimaryKind {
+    Identifier,
+    Register,
+    Literal,
+    Memory,
+    Immediate,
+}
+
+pub @struct Literal {
+    kind: common.NodeKind.Literal;
+    literal_type: LiteralKind;
+    value: string;
+    type_name: ?string;
+    loc: common.Location;
+}
+
+pub @struct Primary {
+    kind: common.NodeKind.Primary;
+    primary_kind: PrimaryKind;
+    name: string;
+    loc: common.Location;
+}
+
+pub @struct Binary {
+    kind: common.NodeKind.Binary;
+    left: unknown;
+    operator: string;
+    right: unknown;
+    loc: common.Location;
+}
+
+pub @struct Unary {
+    kind: common.NodeKind.Unary;
+    operator: string;
+    arg: unknown;
+    loc: common.Location;
+}
+
+pub @struct Assignment {
+    kind: common.NodeKind.Assignment;
+    left: unknown;
+    operator: string;
+    right: unknown;
+    loc: common.Location;
+}
+
+pub @struct Call {
+    kind: common.NodeKind.Call;
+    callee: unknown;
+    args: unknown;
+    loc: common.Location;
+}
+
+pub @struct Member {
+    kind: common.NodeKind.Member;
+    object: unknown;
+    property: unknown;
+    loc: common.Location;
+}
+
+pub @struct Index {
+    kind: common.NodeKind.Index;
+    object: unknown;
+    index: unknown;
+    end: unknown;
+    is_slice: bool;
+    type_annotation: unknown;
+    loc: common.Location;
+}
+
+pub @struct ArrayLiteral {
+    kind: common.NodeKind.ArrayLiteral;
+    elements: unknown;
+    loc: common.Location;
+}
+
+pub @struct TryExpr {
+    kind: common.NodeKind.TryExpr;
+    expression: unknown;
+    loc: common.Location;
+}
+
+pub @struct ErrorExpr {
+    kind: common.NodeKind.ErrorExpr;
+    args: unknown;
+    loc: common.Location;
+}
+
+pub @struct StructFieldInit {
+    name: string;
+    value: unknown;
+}
+
+pub @struct StructInit {
+    kind: common.NodeKind.StructInit;
+    type_expr: unknown;
+    fields: unknown;
+    loc: common.Location;
+}

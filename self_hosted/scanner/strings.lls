@@ -1,0 +1,60 @@
+# Port of src/scanner/strings.zig
+
+@const $ctx = @import("./ctx.lls");
+@const $tokens = @import("./tokens.lls");
+@const $string = @import("std/string.lls");
+@const $buffer = @import("std/buffer.lls");
+@const $debug = @import("std/debug.lls");
+
+pub @func scanString(self: *ctx.Scanner) {
+    $quote = self.advance();
+    $col = self.column - 1;
+    $line = self.line;
+    $buf = buffer.create(self.arena);
+
+    @for (self.peek(0)) |c| {
+        @if (string.eql(c, quote)) {
+            break;
+        }
+        @if (string.eql(c, "\n")) {
+            debug.err("Multiline string literal");
+            return error("MultilineString", "Multiline string literal");
+        }
+        @if (string.eql(c, "\\")) {
+            _ = self.advance();
+            @if (self.peek(0)) |esc| {
+                @if (string.eql(esc, "n")) {
+                    buffer.appendString(buf, "\n");
+                } @else {
+                    @if (string.eql(esc, "r")) {
+                        buffer.appendString(buf, "\r");
+                    } @else {
+                        @if (string.eql(esc, "t")) {
+                            buffer.appendString(buf, "\t");
+                        } @else {
+                            @if (string.eql(esc, "\\") || string.eql(esc, "\"") || string.eql(esc, "'")) {
+                                buffer.appendString(buf, esc);
+                            } @else {
+                                buffer.appendString(buf, esc);
+                            }
+                        }
+                    }
+                }
+                _ = self.advance();
+                continue;
+            } @else {
+                debug.err("Unterminated string");
+                return error("UnterminatedString", "Unterminated string");
+            }
+        }
+        buffer.appendString(buf, c);
+        _ = self.advance();
+    }
+    @if (self.peek(0) == null) {
+        debug.err("Unterminated string");
+        return error("UnterminatedString", "Unterminated string");
+    }
+    _ = self.advance();
+    $final_str = buffer.readString(buf, 0, buffer.len(buf));
+    ctx.pushToken(self, tokens.TokenType.String, final_str, col, line);
+}

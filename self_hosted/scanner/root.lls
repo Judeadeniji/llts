@@ -1,0 +1,276 @@
+# Port of src/scanner/root.zig
+
+@const $tokens = @import("./tokens.lls");
+@const $keywords = @import("./keywords.lls");
+@const $numbers = @import("./numbers.lls");
+@const $strings = @import("./strings.lls");
+@const $ctx = @import("./ctx.lls");
+@const $ops = @import("../shared/ops.lls");
+@const $string = @import("std/string.lls");
+@const $list = @import("std/list.lls");
+@const $debug = @import("std/debug.lls");
+@const $mem = @import("std/mem.lls");
+
+pub @const $Token = tokens.Token;
+pub @const $TokenType = tokens.TokenType;
+
+@func failScan(self: *ctx.Scanner, code: string, message: string) {
+    debug.err(message);
+    return error(code, message);
+}
+
+# Caller owns `arena`. Token rows live there and are invalid after reset/deinit.
+pub @func scan(arena: mem.Arena, source: string, path: string) {
+    $sc = ctx.Scanner {
+        source: source,
+        path: path,
+        pos: 0,
+        line: 1,
+        column: 1,
+        arena: arena,
+        kinds: list.create(arena),
+        values: list.create(arena),
+        lines: list.create(arena),
+        columns: list.create(arena),
+    };
+    $err = scanAll(&sc);
+    @if (@isError(err)) {
+        return err;
+    }
+    # Flat [name, value, line, col] × n on the caller's arena.
+    $out = list.create(arena);
+    $n = list.len(sc.kinds);
+    @for (0..n) |i| {
+        $kind: tokens.TokenType = @as(tokens.TokenType, list.get(sc.kinds, i));
+        list.push(out, @nameOf(kind));
+        list.push(out, list.get(sc.values, i));
+        list.push(out, list.get(sc.lines, i));
+        list.push(out, list.get(sc.columns, i));
+    }
+    return out;
+}
+
+@func scanAll(self: *ctx.Scanner) {
+    @for (self.pos < string.len(self.source)) {
+        $err = scanNext(self);
+        @if (@isError(err)) {
+            return err;
+        }
+    }
+    ctx.pushToken(self, tokens.TokenType.Eof, "", self.column, self.line);
+}
+
+@func scanNext(self: *ctx.Scanner) {
+    @if (self.peek(0)) |ch| {
+        @if (string.eql(ch, " ") || string.eql(ch, "\t") || string.eql(ch, "\r") || string.eql(ch, "\n")) {
+            _ = self.advance();
+            return;
+        }
+        @if (string.eql(ch, "#")) {
+            @for (self.peek(0)) |c| {
+                @if (string.eql(c, "\n")) {
+                    break;
+                }
+                _ = self.advance();
+            }
+            return;
+        }
+        @if (string.eql(ch, "\"") || string.eql(ch, "'")) {
+            return strings.scanString(self);
+        }
+        @if (string.eql(ch, "$")) {
+            $err = scanRegister(self);
+            @if (@isError(err)) {
+                return err;
+            }
+            @if (self.peek(0)) |dot| {
+                @if (string.eql(dot, ".")) {
+                    return scanMemberExpression(self);
+                }
+            }
+            return;
+        }
+        @if (string.eql(ch, "@")) {
+            return scanCompilerKeyword(self);
+        }
+        @if (ctx.isDigit(ch)) {
+            numbers.scanNumber(self);
+            return;
+        }
+        @if (ctx.isAlpha(ch)) {
+            scanIdentifierOrKeyword(self);
+            @if (self.peek(0)) |dot| {
+                @if (string.eql(dot, ".")) {
+                    return scanMemberExpression(self);
+                }
+            }
+            return;
+        }
+        @if (string.eql(ch, ".")) {
+            @if (self.peek(1)) |c1| {
+                @if (string.eql(c1, ".")) {
+                    @if (self.peek(2)) |c2| {
+                        @if (string.eql(c2, ".")) {
+                            $col = self.column;
+                            $line = self.line;
+                            _ = self.advance();
+                            _ = self.advance();
+                            _ = self.advance();
+                            ctx.pushToken(self, tokens.TokenType.Delimiter, "...", col, line);
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+
+        @if (self.peek(1)) |c2| {
+            @if (self.peek(2)) |c3| {
+                $three = string.concat(string.concat(ch, c2), c3);
+                @if (ops.isAssignOp(three)) {
+                    $col = self.column;
+                    $line = self.line;
+                    $val = string.substr(self.source, self.pos, 3);
+                    _ = self.advance();
+                    _ = self.advance();
+                    _ = self.advance();
+                    ctx.pushToken(self, tokens.TokenType.AssignOp, val, col, line);
+                    return;
+                }
+            }
+            $two = string.concat(ch, c2);
+            @if (ops.isAssignOp(two)) {
+                $col = self.column;
+                $line = self.line;
+                $val = string.substr(self.source, self.pos, 2);
+                _ = self.advance();
+                _ = self.advance();
+                ctx.pushToken(self, tokens.TokenType.AssignOp, val, col, line);
+                return;
+            }
+            @if (ops.isBinOp(two)) {
+                $col = self.column;
+                $line = self.line;
+                $val = string.substr(self.source, self.pos, 2);
+                _ = self.advance();
+                _ = self.advance();
+                ctx.pushToken(self, tokens.TokenType.BinOp, val, col, line);
+                return;
+            }
+        }
+
+        $one = string.substr(self.source, self.pos, 1);
+        @if (ops.isAssignOp(one) || ops.isBinOp(one) || ops.isUnaryOp(one)) {
+            $col = self.column;
+            $line = self.line;
+            _ = self.advance();
+            $typ = tokens.TokenType.UnaryOp;
+            @if (ops.isBinOp(one)) {
+                typ = tokens.TokenType.BinOp;
+            } @else {
+                @if (ops.isAssignOp(one)) {
+                    typ = tokens.TokenType.AssignOp;
+                }
+            }
+            ctx.pushToken(self, typ, one, col, line);
+            return;
+        }
+
+        @if (keywords.isDelimiter(ch)) {
+            $col = self.column;
+            $line = self.line;
+            _ = self.advance();
+            ctx.pushToken(self, tokens.TokenType.Delimiter, one, col, line);
+            return;
+        }
+
+        return failScan(self, "UnexpectedCharacter", "Unexpected character");
+    }
+}
+
+@func scanRegister(self: *ctx.Scanner) {
+    $col = self.column;
+    $line = self.line;
+    _ = self.advance();
+    $start = self.pos;
+    @for (self.peek(0)) |c| {
+        @if (!ctx.isAlphaNumeric(c)) {
+            break;
+        }
+        _ = self.advance();
+    }
+    @if (self.pos == start) {
+        return failScan(self, "ExpectedRegister", "Expected register name after $");
+    }
+    ctx.pushToken(self, tokens.TokenType.VRegister, string.substr(self.source, start, self.pos - start), col, line);
+}
+
+@func scanCompilerKeyword(self: *ctx.Scanner) {
+    $col = self.column;
+    $line = self.line;
+    _ = self.advance();
+    $start = self.pos;
+    @for (self.peek(0)) |c| {
+        @if (!ctx.isAlphaNumeric(c)) {
+            break;
+        }
+        _ = self.advance();
+    }
+    @if (self.pos == start) {
+        return failScan(self, "ExpectedCompilerKeyword", "Expected compiler keyword after @");
+    }
+    $kw = string.substr(self.source, start, self.pos - start);
+    ctx.pushToken(self, tokens.TokenType.CompilerKeyword, kw, col, line);
+}
+
+@func scanIdentifierOrKeyword(self: *ctx.Scanner) {
+    $col = self.column;
+    $line = self.line;
+    $start = self.pos;
+    @for (self.peek(0)) |c| {
+        @if (!ctx.isAlphaNumeric(c)) {
+            break;
+        }
+        _ = self.advance();
+    }
+    $word = string.substr(self.source, start, self.pos - start);
+    @if (string.len(word) == 0) {
+        return;
+    }
+    @if (string.eql(word, "true") || string.eql(word, "false")) {
+        ctx.pushToken(self, tokens.TokenType.Boolean, word, col, line);
+        return;
+    }
+    $typ = tokens.TokenType.Identifier;
+    @if (keywords.isKeyword(word)) {
+        typ = tokens.TokenType.Keyword;
+    }
+    ctx.pushToken(self, typ, word, col, line);
+}
+
+@func scanMemberExpression(self: *ctx.Scanner) {
+    @if (self.previousKind()) |base_kind| {
+        @if (base_kind != tokens.TokenType.VRegister && base_kind != tokens.TokenType.Identifier) {
+            return failScan(self, "InvalidMember", "Invalid member access");
+        }
+        @for (self.peek(0)) |dot| {
+            @if (!string.eql(dot, ".")) {
+                break;
+            }
+            $col = self.column;
+            $line = self.line;
+            _ = self.advance();
+            ctx.pushToken(self, tokens.TokenType.Delimiter, ".", col, line);
+            @if (self.peek(0)) |ch| {
+                @if (!ctx.isAlphaNumeric(ch)) {
+                    return failScan(self, "InvalidMember", "Expected property name after '.'");
+                }
+                scanIdentifierOrKeyword(self);
+            } @else {
+                return failScan(self, "InvalidMember", "Expected property name after '.'");
+            }
+        }
+    } @else {
+        return failScan(self, "InvalidMember", "Invalid member access");
+    }
+}

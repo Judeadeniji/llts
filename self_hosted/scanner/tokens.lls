@@ -1,0 +1,22 @@
+# Port of src/scanner/tokens.zig
+#
+# Variant spellings are as declared; harness prints via `@nameOf`.
+
+pub @enum TokenType {
+    Keyword,
+    Identifier,
+    VRegister,
+    CompilerKeyword,
+    String,
+    Number,
+    Hex,
+    Octal,
+    Binary,
+    Boolean,
+    Delimiter,
+    TypeDecl,
+    BinOp,
+    UnaryOp,
+    AssignOp,
+    Eof,
+}

@@ -248,6 +248,12 @@ fn resolveTypedef(
     }
     try seen.put(name, {});
 
+    // Forward stub: name is known but RHS not compiled yet.
+    if (td.stub or td.underlying.len == 0) {
+        if (td.distinct) return try ta.definedType(td.name, ir.TUnknown);
+        return ir.TUnknown;
+    }
+
     const under = try parseDisplayType(state, ta, td.underlying, seen);
     if (!td.distinct) return under;
     return try ta.definedType(td.name, under);

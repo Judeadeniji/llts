@@ -241,6 +241,18 @@ fn registerStructNames(state: *state_mod.CompilerState, doc: *ast.Document) !voi
                 .name = s.error_decl.name,
                 .variants = std.StringHashMap([]const u8).init(state.allocator),
             });
+        } else if (s.* == .type_decl) {
+            // Stub so `@struct` fields may mention `*Name` before `@type Name = …`.
+            if (state.typedefs.contains(s.type_decl.name)) continue;
+            if (state.structs.contains(s.type_decl.name) or state.enums.contains(s.type_decl.name) or
+                state.error_sets.contains(s.type_decl.name))
+                continue;
+            try state.typedefs.put(s.type_decl.name, .{
+                .name = s.type_decl.name,
+                .underlying = "",
+                .distinct = s.type_decl.distinct,
+                .stub = true,
+            });
         }
     }
 }

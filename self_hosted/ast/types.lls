@@ -1,0 +1,55 @@
+# Port of src/ast/types.zig
+
+@const $common = @import("./common.lls");
+
+pub @struct ArrayType {
+    kind: common.NodeKind.ArrayType;
+    elem: unknown;
+    length_text: ?string;
+    loc: common.Location;
+}
+
+pub @struct TupleType {
+    kind: common.NodeKind.TupleType;
+    elems: unknown;
+    loc: common.Location;
+}
+
+pub @struct UnionType {
+    kind: common.NodeKind.UnionType;
+    left: unknown;
+    right: unknown;
+    loc: common.Location;
+}
+
+pub @struct IntersectType {
+    kind: common.NodeKind.IntersectType;
+    left: unknown;
+    right: unknown;
+    loc: common.Location;
+}
+
+pub @struct PointerType {
+    kind: common.NodeKind.PointerType;
+    elem: unknown;
+    loc: common.Location;
+}
+
+pub @struct FuncType {
+    kind: common.NodeKind.FuncType;
+    params: unknown;
+    return_type: unknown;
+    is_variadic: bool;
+    loc: common.Location;
+}
+
+pub @struct ShapeField {
+    name: string;
+    type_annotation: unknown;
+}
+
+pub @struct ShapeType {
+    kind: common.NodeKind.ShapeType;
+    fields: unknown;
+    loc: common.Location;
+}

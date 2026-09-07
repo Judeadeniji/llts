@@ -1,0 +1,47 @@
+# Tokenize a .lls file with the self-hosted scanner.
+# Usage: llts run self_hosted/tools/tokenize.lls <path>
+
+@const $scanner = @import("../scanner/root.lls");
+@const $fs = @import("std/fs.lls");
+@const $os = @import("std/os.lls");
+@const $list = @import("std/list.lls");
+@const $debug = @import("std/debug.lls");
+@const $io = @import("std/io.lls");
+@const $mem = @import("std/mem.lls");
+
+$args = os.args();
+@if (len(args) < 2) {
+    io.eprintln("Usage: llts run self_hosted/tools/tokenize.lls <path>");
+    os.exit(1);
+}
+
+$path = args[1];
+$source = fs.readFile(path);
+@if (@isError(source)) {
+    io.eprintln("failed to read file");
+    os.exit(1);
+}
+
+$arena = mem.create(0);
+$result = scanner.scan(arena, source, path);
+@if (@isError(result)) {
+    io.eprintln("scan failed");
+    os.exit(1);
+}
+
+# Write name/value via writeAll so `{i}` inside string tokens is not format-expanded.
+# Flat list layout: [name, value, line, col] × n
+@for (0..(list.len(result) / 4)) |j| {
+    $i = j * 4;
+    $name = list.get(result, i);
+    $val = list.get(result, i + 1);
+    $line = list.get(result, i + 2);
+    $col = list.get(result, i + 3);
+    io.stdout.writeAll(name);
+    io.stdout.writeAll("\t");
+    io.stdout.writeAll(val);
+    io.stdout.writeAll("\t");
+    debug.printLn("{i}:{i}", line, col);
+}
+
+pub @func main() {}

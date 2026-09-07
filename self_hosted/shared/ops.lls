@@ -1,0 +1,38 @@
+# Port of src/shared/ops.zig
+
+@const $string = @import("std/string.lls");
+
+pub @const $bin_ops = [
+    "+", "-", "*", "/", "%", "^", "==", "!=", ">", ">=", "<", "<=",
+    "&&", "||", "**", "|>", "..", "=>",
+    "&", "|", "~", "<<", ">>",
+];
+
+pub @const $unary_ops = ["!", "-", "~"];
+
+pub @const $assign_ops = [
+    "=", "+=", "-=", "*=", "/=", "%=", "^=", "&&=", "||=",
+    "&=", "|=", "~=", "<<=", ">>=",
+];
+
+@func contains(ops, s) {
+    $n = len(ops);
+    @for (0..n) |i| {
+        @if (string.eql(ops[i], s)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+pub @func isBinOp(s) {
+    return contains(bin_ops, s);
+}
+
+pub @func isUnaryOp(s) {
+    return contains(unary_ops, s);
+}
+
+pub @func isAssignOp(s) {
+    return contains(assign_ops, s);
+}
