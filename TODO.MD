@@ -153,7 +153,8 @@ Forcing function: keep writing the self-hosted compiler. Whatever that parser ca
 
 - [x] **Function types** — e.g. `$f: @func(i64): i64`. First-class functions exist; their types do not. (Also listed under `@type` ship order.)
 - [ ] **Nested / capturing functions** — nested `@func` is not supported; closures do not capture. Decide yes (with region rules) or no.
-- [ ] **Allocator / Reader / Writer without generics** — either small interfaces/vtables, or stay concrete (`mem.Arena` + `[]T` only). Untyped native `std/list` / `std/map` should not remain a third language.
+- [ ] **Allocator / Reader / Writer without generics** — either small interfaces/vtables, or stay concrete (`mem.Arena` + `[]T` only).
+- [x] **`std/list` / `std/map` / `std/buffer` arena-backed** — require `Arena` (or immortal escape hatch); element storage in arena bump; free via `reset`/`deinit`.
 
 #### Tagged data (done — enums + struct unions)
 

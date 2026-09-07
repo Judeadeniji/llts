@@ -307,7 +307,7 @@ pub const VMState = struct {
             try self.allocImmortalBytes(nbytes)
         else
             try self.allocFrameBytes(nbytes);
-        return .{ .array = .{ .offset = @intCast(off), .count = count } };
+        return .{ .array = .{ .offset = @intCast(off), .count = count, .capacity = count } };
     }
 
     pub fn allocFrameArray(self: *VMState, count: u32) !Value {
@@ -341,21 +341,25 @@ pub const VMState = struct {
 
     pub fn allocList(self: *VMState) !*ListObject {
         const lst = try self.allocator.create(ListObject);
-        lst.* = .{ .items = .empty };
+        lst.* = .{ .arena_ctrl = 0, .items = .{ .offset = 0, .count = 0, .capacity = 0 } };
         try self.lists.append(self.allocator, lst);
         return lst;
     }
 
     pub fn allocMap(self: *VMState) !*value.MapObject {
         const mp = try self.allocator.create(value.MapObject);
-        mp.* = .{ .entries = std.StringHashMap(Value).init(self.allocator) };
+        mp.* = .{
+            .arena_ctrl = 0,
+            .keys = .{ .offset = 0, .count = 0, .capacity = 0 },
+            .values = .{ .offset = 0, .count = 0, .capacity = 0 },
+        };
         try self.maps.append(self.allocator, mp);
         return mp;
     }
 
     pub fn allocBuffer(self: *VMState) !*value.BufferObject {
         const buf = try self.allocator.create(value.BufferObject);
-        buf.* = .{ .bytes = .empty };
+        buf.* = .{ .arena_ctrl = 0, .data = .{ .offset = 0, .len = 0, .capacity = 0 } };
         try self.buffers.append(self.allocator, buf);
         return buf;
     }

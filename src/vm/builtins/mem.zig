@@ -25,6 +25,7 @@ const DEFAULT_CHUNK: i32 = 64;
 //   [4] alive
 //   [5] byte_current
 //   [6] byte_first
+//   [7] generation       (bumped on reset; containers stamp this)
 //
 // Value chunk layout (immortal):
 //   [0] CHUNK_MAGIC
@@ -273,7 +274,7 @@ fn arenaCreate(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
 
     const chunk = try makeChunk(vm, cap);
     const byte_chunk = try makeByteChunk(vm, cap);
-    const ctrl = try vm.allocImmortal(7);
+    const ctrl = try vm.allocImmortal(8);
     vm.slot(ctrl).* = .{ .i64 = ARENA_MAGIC };
     vm.slot(ctrl + 1).* = .{ .ptr = chunk }; // current
     vm.slot(ctrl + 2).* = .{ .ptr = chunk }; // first
@@ -281,6 +282,7 @@ fn arenaCreate(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     vm.slot(ctrl + 4).* = .{ .i64 = 1 }; // alive
     vm.slot(ctrl + 5).* = .{ .ptr = byte_chunk };
     vm.slot(ctrl + 6).* = .{ .ptr = byte_chunk };
+    vm.slot(ctrl + 7).* = .{ .i64 = 0 }; // generation
 
     // Packed `Arena { handle: int }` — 8-byte object in the byte heap.
     const off = try vm.allocImmortalBytes(8);
@@ -347,8 +349,14 @@ fn arenaAllocArray(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
         else => return fail(vm, "__arena_alloc_array", "invalid allocation"),
     };
     const aligned: u32 = @intCast(std.mem.alignForward(usize, b.offset, state_mod.VMState.value_align));
-    // Zero only the element region (already zeroed by arenaAllocBytes).
-    return .{ .array = .{ .offset = aligned, .count = len } };
+    const arr: value.ArrayRef = .{ .offset = aligned, .count = len, .capacity = len };
+    // Typed zero for numeric elems (raw memset → .null tag). Callers that need
+    // float/bool zeros should still emit a typed fill for fixed lengths.
+    var i: u32 = 0;
+    while (i < len) : (i += 1) {
+        vm.arrayElemPtr(arr, i).* = .{ .i64 = 0 };
+    }
+    return .{ .array = arr };
 }
 
 /// Packed `n` bytes (one byte per element). Returns `.bytes`.
@@ -414,6 +422,8 @@ fn arenaReset(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
         if (next_p == 0) break;
     }
     vm.slot(ctrl + 5).* = vm.slot(ctrl + 6).*;
+    // Invalidate container handles that stamped the previous generation.
+    vm.slot(ctrl + 7).* = .{ .i64 = vm.slot(ctrl + 7).*.i64 + 1 };
     return .null;
 }
 
@@ -454,6 +464,137 @@ fn arenaDeinit(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     return .null;
 }
 
+/// Public: resolve Arena value → control block base.
+pub fn resolveArena(vm: *VMState, v: Value) !i32 {
+    return resolveArenaControl(vm, v);
+}
+
+pub fn requireArenaAlive(vm: *VMState, ctrl: i32, comptime op: []const u8) !void {
+    try arenaAlive(vm, ctrl, op);
+}
+
+pub fn arenaGeneration(vm: *VMState, ctrl: i32) i32 {
+    if (ctrl == 0) return 0;
+    return @intCast(vm.slot(ctrl + 7).*.i64);
+}
+
+/// Arena-backed containers: fail if the owning arena was reset/deinit'd.
+/// `ctrl == 0` means process-lifetime (immortal) storage — always allowed.
+/// `gen` is the generation stamped at container create time.
+pub fn requireContainerArena(vm: *VMState, ctrl: i32, gen: i32, comptime op: []const u8) !void {
+    if (ctrl == 0) return;
+    try arenaAlive(vm, ctrl, op);
+    if (arenaGeneration(vm, ctrl) != gen)
+        return fail(vm, op, "arena was reset");
+}
+
+fn growCap(old: u32, min: u32) u32 {
+    var c: u32 = if (old == 0) 8 else old;
+    while (c < min) {
+        const next = c + c / 2;
+        c = if (next > c) next else c + 1;
+    }
+    return c;
+}
+
+/// Allocate a value array in an arena with explicit capacity (≥ count).
+pub fn allocArrayInArena(vm: *VMState, arena: Value, count: u32, capacity: u32) !value.ArrayRef {
+    const cap = @max(count, capacity);
+    if (cap == 0) return .{ .offset = 0, .count = 0, .capacity = 0 };
+    var args = [_]Value{ arena, .{ .i64 = @intCast(cap) } };
+    // Reuse arenaAllocArray but need capacity > count — allocate cap elems then shrink count.
+    const full = try arenaAllocArray(@ptrCast(vm), &args);
+    var a = full.array;
+    a.count = count;
+    a.capacity = cap;
+    // Zero only used? Already zeroed full capacity.
+    return a;
+}
+
+pub fn allocArrayImmortal(vm: *VMState, count: u32, capacity: u32) !value.ArrayRef {
+    const cap = @max(count, capacity);
+    if (cap == 0) return .{ .offset = 0, .count = 0, .capacity = 0 };
+    const v = try vm.allocImmortalArray(cap);
+    var a = v.array;
+    a.count = count;
+    a.capacity = cap;
+    return a;
+}
+
+pub fn ensureArrayCapacity(vm: *VMState, arena: ?Value, arena_ctrl: i32, arr: value.ArrayRef, min_cap: u32) !value.ArrayRef {
+    if (arr.capacity >= min_cap) return arr;
+    const new_cap = growCap(arr.capacity, min_cap);
+    const fresh = if (arena_ctrl != 0)
+        try allocArrayInArena(vm, arena.?, arr.count, new_cap)
+    else
+        try allocArrayImmortal(vm, arr.count, new_cap);
+    var i: u32 = 0;
+    while (i < arr.count) : (i += 1) {
+        vm.arrayElemPtr(fresh, i).* = vm.arrayElemConst(arr, i);
+    }
+    return fresh;
+}
+
+pub fn pushArray(vm: *VMState, arena: ?Value, arena_ctrl: i32, arr: value.ArrayRef, val: Value) !value.ArrayRef {
+    var a = try ensureArrayCapacity(vm, arena, arena_ctrl, arr, arr.count + 1);
+    vm.arrayElemPtr(a, a.count).* = val;
+    a.count += 1;
+    return a;
+}
+
+pub fn popArray(arr: value.ArrayRef) struct { value.ArrayRef, Value } {
+    if (arr.count == 0) return .{ arr, .null };
+    var a = arr;
+    a.count -= 1;
+    // Caller reads elem at a.count (old last)
+    return .{ a, .null }; // value filled by caller
+}
+
+/// Allocate growable bytes in arena.
+pub fn allocBytesInArena(vm: *VMState, arena: Value, len: u32, capacity: u32) !value.BytesRef {
+    const cap = @max(len, capacity);
+    if (cap == 0) return .{ .offset = 0, .len = 0, .capacity = 0 };
+    var args = [_]Value{ arena, .{ .i64 = @intCast(cap) } };
+    const full = try arenaAllocBytes(@ptrCast(vm), &args);
+    const b = full.bytes;
+    return .{ .offset = b.offset, .len = len, .capacity = cap };
+}
+
+/// Immortal growable bytes (for fs/io escape without a caller arena).
+pub fn allocBytesImmortal(vm: *VMState, len: u32, capacity: u32) !value.BytesRef {
+    const cap = @max(len, capacity);
+    if (cap == 0) return .{ .offset = 0, .len = 0, .capacity = 0 };
+    const off = try vm.allocImmortalBytes(@intCast(cap));
+    return .{ .offset = @intCast(off), .len = len, .capacity = cap };
+}
+
+pub fn ensureBytesCapacity(vm: *VMState, arena_ctrl: i32, arena: ?Value, data: value.BytesRef, min_cap: u32) !value.BytesRef {
+    if (data.capacity >= min_cap) return data;
+    const new_cap = growCap(data.capacity, min_cap);
+    const fresh = if (arena_ctrl != 0)
+        try allocBytesInArena(vm, arena.?, data.len, new_cap)
+    else
+        try allocBytesImmortal(vm, data.len, new_cap);
+    if (data.len > 0) {
+        @memcpy(
+            vm.bytes.items[fresh.offset..][0..data.len],
+            vm.bytes.items[data.offset..][0..data.len],
+        );
+    }
+    return fresh;
+}
+
+fn arenaArrayPushFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
+    const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
+    if (args.len < 3) return error.ArityError;
+    if (args[1] != .array) return fail(vm, "__arena_array_push", "expected array");
+    const ctrl = try resolveArenaControl(vm, args[0]);
+    const a = try pushArray(vm, args[0], ctrl, args[1].array, args[2]);
+    return .{ .array = a };
+}
+
+var arena_array_push_native: NativeFunction = undefined;
+
 pub fn register(vm: *VMState) !void {
     alloc_native = .{ .name = "__alloc", .func = allocFn, .arity = 1 };
     alloc_immortal_native = .{ .name = "__allocImmortal", .func = allocImmortalFn, .arity = 1 };
@@ -468,6 +609,7 @@ pub fn register(vm: *VMState) !void {
     arena_deinit_native = .{ .name = "__arena_deinit", .func = arenaDeinit, .arity = 1 };
     arena_alloc_bytes_native = .{ .name = "__arena_alloc_bytes", .func = arenaAllocBytes, .arity = 2 };
     clone_bytes_native = .{ .name = "__cloneBytes", .func = cloneBytesFn, .arity = 1 };
+    arena_array_push_native = .{ .name = "__arena_array_push", .func = arenaArrayPushFn, .arity = 3 };
 
     try vm.defineGlobal("__alloc", .{ .native = &alloc_native });
     try vm.defineGlobal("__allocImmortal", .{ .native = &alloc_immortal_native });
@@ -482,4 +624,5 @@ pub fn register(vm: *VMState) !void {
     try vm.defineGlobal("__arena_reset", .{ .native = &arena_reset_native });
     try vm.defineGlobal("__arena_deinit", .{ .native = &arena_deinit_native });
     try vm.defineGlobal("__cloneBytes", .{ .native = &clone_bytes_native });
+    try vm.defineGlobal("__arena_array_push", .{ .native = &arena_array_push_native });
 }

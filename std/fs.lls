@@ -8,6 +8,7 @@
 
 @const $syscall = @import("std/syscall.lls");
 @const $buffer = @import("std/buffer.lls");
+@const $mem = @import("std/mem.lls");
 
 pub @struct Stat {
     size: int;
@@ -41,11 +42,15 @@ pub @struct Stat {
 }
 
 @func readAllFd(fd, path) {
-    $chunk = buffer.alloc(8192);
-    $out = buffer.create();
+    $scratch = mem.create(0);
+    $chunk = buffer.alloc(scratch, 8192);
+    # Process-lifetime escape hatch: result must outlive scratch. Prefer a
+    # caller-owned arena when the API can take one.
+    $out = buffer.createImmortal();
     @for (0..1000000) |i| {
         $n = syscall.read(fd, chunk);
         @if (@isError(n)) {
+            scratch.deinit();
             return mapIo(path, n);
         }
         @if (n == 0) {
@@ -53,6 +58,7 @@ pub @struct Stat {
         }
         buffer.appendString(out, buffer.readString(chunk, 0, n));
     }
+    scratch.deinit();
     return out;
 }
 

@@ -16,7 +16,7 @@ fn lenFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
         .slice => |s| .{ .i64 = s.len },
         .bytes => |b| .{ .i64 = b.len },
         .array => |a| .{ .i64 = a.count },
-        .buffer => |buf| .{ .i64 = @intCast(buf.bytes.items.len) },
+        .buffer => |buf| .{ .i64 = @intCast(buf.data.len) },
         else => .{ .i64 = 0 },
     };
 }

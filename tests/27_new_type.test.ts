@@ -106,6 +106,25 @@ a.reset();
 	);
 });
 
+test("@new(a, []int, n) value array", () => {
+	expectOutput(
+		runSource(`
+@const $mem = @import("std/mem");
+$a = mem.create(0);
+$n = 3;
+$xs = @new(a, []int, n);
+print(len(xs));
+xs[0] = 10;
+xs[2] = 30;
+print(xs[0]);
+print(xs[1]);
+print(xs[2]);
+a.deinit();
+`),
+		["3", "10", "0", "30"],
+	);
+});
+
 test("@new(a, string, n) makes a byte buffer", () => {
 	expectOutput(
 		runSource(`

@@ -159,7 +159,7 @@ fn readFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     if (args.len < 2) return error.ArityError;
     const fd: std.posix.fd_t = @intCast(try util.asInt(args[0]));
     const buf: []u8 = switch (args[1]) {
-        .buffer => |b| b.bytes.items,
+        .buffer => |b| vm.bytes.items[b.data.offset..][0..b.data.len],
         .bytes => |b| vm.bytes.items[b.offset..][0..b.len],
         else => return error.TypeError,
     };
@@ -173,7 +173,8 @@ fn writeFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const fd: std.posix.fd_t = @intCast(try util.asInt(args[0]));
 
     if (args[1] == .buffer) {
-        const n = std.posix.write(fd, args[1].buffer.bytes.items) catch |err| {
+        const b = args[1].buffer.data;
+        const n = std.posix.write(fd, vm.bytes.items[b.offset..][0..b.len]) catch |err| {
             return try makeSyscallError(vm, err);
         };
         return .{ .i64 = @intCast(n) };
@@ -202,7 +203,7 @@ fn writeAllFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     defer if (owned) |o| vm.allocator.free(o);
 
     const bytes: []const u8 = if (args[1] == .buffer)
-        args[1].buffer.bytes.items
+        vm.bytes.items[args[1].buffer.data.offset..][0..args[1].buffer.data.len]
     else if (args[1] == .bytes)
         vm.bytes.items[args[1].bytes.offset..][0..args[1].bytes.len]
     else blk: {

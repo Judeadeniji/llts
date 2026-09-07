@@ -91,12 +91,15 @@ pub @func eprintln(data) {
 }
 
 # Drain stdin until EOF into a string.
+# Uses createImmortal (process-lifetime) so the result outlives the scratch arena.
 pub @func readAll() {
-    $chunk = buffer.alloc(8192);
-    $out = buffer.create();
+    $scratch = mem.create(0);
+    $chunk = buffer.alloc(scratch, 8192);
+    $out = buffer.createImmortal();
     @for (0..1000000) |i| {
         $n = stdin.read(chunk);
         @if (@isError(n)) {
+            scratch.deinit();
             return n;
         }
         @if (n == 0) {
@@ -104,5 +107,6 @@ pub @func readAll() {
         }
         buffer.appendString(out, buffer.readString(chunk, 0, n));
     }
+    scratch.deinit();
     return buffer.readString(out, 0, buffer.len(out));
 }

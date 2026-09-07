@@ -1,5 +1,9 @@
-pub @func create() {
-    return __mapCreate();
+# Arena-backed map (string keys). Reclaimed with `arena.reset()` / `deinit()`.
+
+@const $mem = @import("std/mem.lls");
+
+pub @func create(arena: mem.Arena) {
+    return __mapCreate(arena);
 }
 
 pub @func set(mp, key, value) {

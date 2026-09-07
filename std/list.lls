@@ -1,5 +1,16 @@
-pub @func create() {
-    return __listCreate();
+# Arena-backed growable list. Storage is reclaimed with `arena.reset()` / `deinit()`.
+# The list handle is invalid after the arena is reset.
+# `createImmortal` is process-lifetime only (fs/io escape hatch) — prefer `create(arena)`.
+
+@const $mem = @import("std/mem.lls");
+
+pub @func create(arena: mem.Arena) {
+    return __listCreate(arena);
+}
+
+# Process-lifetime; never reclaimed by arena reset. Prefer create(arena).
+pub @func createImmortal() {
+    return __listCreateImmortal();
 }
 
 pub @func push(lst, item) {

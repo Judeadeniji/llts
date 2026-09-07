@@ -15,6 +15,7 @@ Compiler intrinsic (see also [arrays](../usage/arrays.md)):
 ```llts
 $buf = @new(arena, [256]byte);      # packed bytes (1 host byte per element)
 $s = @new(arena, string, n);      # runtime-length packed byte buffer
+$xs = @new(arena, []int, n);      # runtime-length value array
 $p = @new(arena, Point);            # zero-filled struct
 $q = @new(arena, Point{ x: 1 });  # explicit init
 ```

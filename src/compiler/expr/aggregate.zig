@@ -175,15 +175,11 @@ fn isByteElemType(elem_type: *ast.Node) bool {
 }
 
 fn requireSimpleElemType(state: *CompilerState, elem_type: *ast.Node) !void {
+    // Value-slot arrays: named elems, pointers, or `?T` (desugars to `T | null`).
     switch (elem_type.*) {
-        .primary => |p| {
-            if (std.mem.eql(u8, p.name, "byte") or std.mem.eql(u8, p.name, "int") or
-                std.mem.eql(u8, p.name, "i32") or std.mem.eql(u8, p.name, "number"))
-                return;
-            return compiler_errors.compileFailFmt(state, "@new([]T, n) currently supports byte/int elements, got '{s}'", .{p.name});
-        },
+        .primary, .pointer_type, .union_type => return,
         else => {
-            return compiler_errors.compileFailFmt(state, "@new([]T, n) element type must be a simple name", .{});
+            return compiler_errors.compileFailFmt(state, "@new([]T, n) element type must be a named type (or ?T / *T)", .{});
         },
     }
 }
