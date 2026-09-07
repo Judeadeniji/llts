@@ -19,6 +19,24 @@ a.deinit();
 	);
 });
 
+test("function returning @new is *T not T", () => {
+	expectOutput(
+		runSource(`
+@const $mem = @import("std/mem");
+@struct Point { x: i64; y: i64; }
+@func mk(arena) {
+    return @new(arena, Point { x: 1, y: 2 });
+}
+$a = mem.create(0);
+$p = mk(a);
+print(@typeOf(p));
+print(p.x);
+a.deinit();
+`),
+		["*Point", "1"],
+	);
+});
+
 test("*Point is not assignable to Point without being the same kind", () => {
 	expectError(
 		runSource(`

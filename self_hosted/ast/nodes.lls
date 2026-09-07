@@ -1,0 +1,365 @@
+# Port of src/ast/{expr,stmt,types,root Node union}.
+#
+# Arms and `@type Node` live in one module so `*Node` fields resolve (no
+# cross-module forward typedef yet). Location / NodeKind stay in common.lls.
+
+@const $common = @import("./common.lls");
+
+# --- expr ---
+
+pub @enum LiteralKind {
+    Number,
+    String,
+    Boolean,
+    Hex,
+    Octal,
+    Binary,
+    Null,
+}
+
+pub @enum PrimaryKind {
+    Identifier,
+    Register,
+    Literal,
+    Memory,
+    Immediate,
+}
+
+pub @struct Literal {
+    kind: common.NodeKind.Literal;
+    literal_type: LiteralKind;
+    value: string;
+    type_name: ?string;
+    loc: common.Location;
+}
+
+pub @struct Primary {
+    kind: common.NodeKind.Primary;
+    primary_kind: PrimaryKind;
+    name: string;
+    loc: common.Location;
+}
+
+pub @struct Binary {
+    kind: common.NodeKind.Binary;
+    left: *Node;
+    operator: string;
+    right: *Node;
+    loc: common.Location;
+}
+
+pub @struct Unary {
+    kind: common.NodeKind.Unary;
+    operator: string;
+    arg: *Node;
+    loc: common.Location;
+}
+
+pub @struct Assignment {
+    kind: common.NodeKind.Assignment;
+    left: *Node;
+    operator: string;
+    right: *Node;
+    loc: common.Location;
+}
+
+pub @struct Call {
+    kind: common.NodeKind.Call;
+    callee: *Node;
+    args: unknown;
+    loc: common.Location;
+}
+
+pub @struct Member {
+    kind: common.NodeKind.Member;
+    object: *Node;
+    property: *Node;
+    loc: common.Location;
+}
+
+pub @struct Index {
+    kind: common.NodeKind.Index;
+    object: *Node;
+    index: ?*Node;
+    end: ?*Node;
+    is_slice: bool;
+    type_annotation: ?*Node;
+    loc: common.Location;
+}
+
+pub @struct ArrayLiteral {
+    kind: common.NodeKind.ArrayLiteral;
+    elements: unknown;
+    loc: common.Location;
+}
+
+pub @struct TryExpr {
+    kind: common.NodeKind.TryExpr;
+    expression: *Node;
+    loc: common.Location;
+}
+
+pub @struct ErrorExpr {
+    kind: common.NodeKind.ErrorExpr;
+    args: unknown;
+    loc: common.Location;
+}
+
+pub @struct StructFieldInit {
+    name: string;
+    value: *Node;
+}
+
+pub @struct StructInit {
+    kind: common.NodeKind.StructInit;
+    type_expr: *Node;
+    fields: unknown;
+    loc: common.Location;
+}
+
+# --- stmt ---
+
+pub @struct Declaration {
+    kind: common.NodeKind.Declaration;
+    name: string;
+    value: *Node;
+    is_const: bool;
+    is_public: bool;
+    type_annotation: ?*Node;
+    loc: common.Location;
+}
+
+pub @struct Param {
+    name: string;
+    type_annotation: ?*Node;
+    is_rest: bool;
+    loc: common.Location;
+}
+
+pub @struct Params {
+    kind: common.NodeKind.Params;
+    params: unknown;
+    is_variadic: bool;
+    loc: common.Location;
+}
+
+pub @struct FunctionDecl {
+    kind: common.NodeKind.FunctionDecl;
+    name: string;
+    params: *Node;
+    body: *Node;
+    return_type: ?*Node;
+    is_public: bool;
+    loc: common.Location;
+}
+
+pub @struct Block {
+    kind: common.NodeKind.Block;
+    statements: unknown;
+    label: ?string;
+    loc: common.Location;
+}
+
+pub @struct Return {
+    kind: common.NodeKind.Return;
+    return_value: ?*Node;
+    loc: common.Location;
+}
+
+pub @struct Defer {
+    kind: common.NodeKind.Defer;
+    body: *Node;
+    is_errdefer: bool;
+    loc: common.Location;
+}
+
+pub @struct Break {
+    kind: common.NodeKind.Break;
+    label: ?string;
+    value: ?*Node;
+    loc: common.Location;
+}
+
+pub @struct Continue {
+    kind: common.NodeKind.Continue;
+    label: ?string;
+    loc: common.Location;
+}
+
+pub @struct If {
+    kind: common.NodeKind.If;
+    condition: *Node;
+    pipe_value: ?*Node;
+    body: *Node;
+    else_body: ?*Node;
+    label: ?string;
+    loc: common.Location;
+}
+
+pub @struct Capture {
+    name: string;
+    by_ref: bool;
+}
+
+pub @struct For {
+    kind: common.NodeKind.For;
+    expr: *Node;
+    captures: unknown;
+    label: ?string;
+    body: *Node;
+    loc: common.Location;
+}
+
+pub @struct SwitchProng {
+    patterns: unknown;
+    is_else: bool;
+    body: *Node;
+    loc: common.Location;
+}
+
+pub @struct Switch {
+    kind: common.NodeKind.Switch;
+    condition: *Node;
+    prongs: unknown;
+    label: ?string;
+    loc: common.Location;
+}
+
+pub @struct Extern {
+    kind: common.NodeKind.Extern;
+    name: string;
+    is_public: bool;
+    loc: common.Location;
+}
+
+pub @struct StructField {
+    name: string;
+    type_annotation: ?*Node;
+}
+
+pub @struct StructDecl {
+    kind: common.NodeKind.StructDecl;
+    name: string;
+    fields: unknown;
+    methods: unknown;
+    is_public: bool;
+    loc: common.Location;
+}
+
+pub @struct EnumDecl {
+    kind: common.NodeKind.EnumDecl;
+    name: string;
+    variants: unknown;
+    is_public: bool;
+    loc: common.Location;
+}
+
+pub @struct TypeDecl {
+    kind: common.NodeKind.TypeDecl;
+    name: string;
+    type_expr: *Node;
+    distinct: bool;
+    is_public: bool;
+    loc: common.Location;
+}
+
+pub @struct ErrorDecl {
+    kind: common.NodeKind.ErrorDecl;
+    name: string;
+    variants: unknown;
+    is_public: bool;
+    loc: common.Location;
+}
+
+# --- types ---
+
+pub @struct ArrayType {
+    kind: common.NodeKind.ArrayType;
+    elem: *Node;
+    length_text: ?string;
+    loc: common.Location;
+}
+
+pub @struct TupleType {
+    kind: common.NodeKind.TupleType;
+    elems: unknown;
+    loc: common.Location;
+}
+
+pub @struct UnionType {
+    kind: common.NodeKind.UnionType;
+    left: *Node;
+    right: *Node;
+    loc: common.Location;
+}
+
+pub @struct IntersectType {
+    kind: common.NodeKind.IntersectType;
+    left: *Node;
+    right: *Node;
+    loc: common.Location;
+}
+
+pub @struct PointerType {
+    kind: common.NodeKind.PointerType;
+    elem: *Node;
+    loc: common.Location;
+}
+
+pub @struct FuncType {
+    kind: common.NodeKind.FuncType;
+    params: unknown;
+    return_type: ?*Node;
+    is_variadic: bool;
+    loc: common.Location;
+}
+
+pub @struct ShapeField {
+    name: string;
+    type_annotation: ?*Node;
+}
+
+pub @struct ShapeType {
+    kind: common.NodeKind.ShapeType;
+    fields: unknown;
+    loc: common.Location;
+}
+
+# Tagged union (enum-literal `kind` on each arm). Declared after arms; fields
+# above may forward-ref `*Node` via typedef name stubs.
+pub @type Node =
+    Declaration
+    | Literal
+    | Primary
+    | Binary
+    | Unary
+    | Assignment
+    | Call
+    | Member
+    | Index
+    | ArrayLiteral
+    | FunctionDecl
+    | Params
+    | Block
+    | Return
+    | If
+    | Switch
+    | For
+    | Break
+    | Continue
+    | Defer
+    | StructDecl
+    | EnumDecl
+    | ErrorDecl
+    | TypeDecl
+    | StructInit
+    | TryExpr
+    | ErrorExpr
+    | Extern
+    | ArrayType
+    | TupleType
+    | UnionType
+    | IntersectType
+    | PointerType
+    | FuncType
+    | ShapeType;

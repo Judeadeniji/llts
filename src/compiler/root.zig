@@ -345,12 +345,21 @@ fn analyzeBody(
                     // `@new(a, Foo{…}|Foo|[N]T)` — return type from value or type arg.
                     if (v.* == .call) {
                         const c = v.call;
-                        if (c.callee.* == .primary and std.mem.eql(u8, c.callee.primary.name, "@new") and c.args.len == 2) {
+                        if (c.callee.* == .primary and std.mem.eql(u8, c.callee.primary.name, "@new") and c.args.len >= 2) {
                             const arg = c.args[1];
+                            // `@new` of a struct yields `*T` (handle), not `T`.
                             if (arg.* == .struct_init) {
-                                return_type.* = types.resolveStructName(state, arg.struct_init.type_expr);
+                                if (types.resolveStructName(state, arg.struct_init.type_expr)) |sname| {
+                                    const ptr_ty = try std.fmt.allocPrint(state.allocator, "*{s}", .{sname});
+                                    try state.owned.append(state.allocator, ptr_ty);
+                                    return_type.* = ptr_ty;
+                                }
                             } else if (arg.* == .primary and arg.primary.kind == .identifier) {
-                                return_type.* = arg.primary.name;
+                                if (state.structs.contains(arg.primary.name)) {
+                                    const ptr_ty = try std.fmt.allocPrint(state.allocator, "*{s}", .{arg.primary.name});
+                                    try state.owned.append(state.allocator, ptr_ty);
+                                    return_type.* = ptr_ty;
+                                }
                             }
                         }
                     }
