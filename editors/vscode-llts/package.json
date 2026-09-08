@@ -1,0 +1,77 @@
+{
+  "name": "llts",
+  "displayName": "LLTS",
+  "description": "LLTS language support (.lls) via Tree-sitter + TextMate",
+  "version": "0.1.1",
+  "publisher": "llts",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Programming Languages"],
+  "activationEvents": ["onLanguage:llts"],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "llts",
+        "aliases": ["LLTS", "llts"],
+        "extensions": [".lls"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "llts",
+        "scopeName": "source.lls",
+        "path": "./syntaxes/llts.tmLanguage.json"
+      }
+    ],
+    "semanticTokenScopes": [
+      {
+        "language": "llts",
+        "scopes": {
+          "comment": ["comment.line"],
+          "string": ["string.quoted"],
+          "keyword": ["keyword.control"],
+          "number": ["constant.numeric"],
+          "enumMember": ["variable.other.enummember", "constant.other"],
+          "variable": ["variable.other"],
+          "parameter": ["variable.parameter"],
+          "function": ["entity.name.function"],
+          "method": ["entity.name.function.member"],
+          "type": ["entity.name.type"],
+          "property": ["variable.other.property", "variable.other.member"],
+          "operator": ["keyword.operator"]
+        }
+      }
+    ],
+    "configurationDefaults": {
+      "[llts]": {
+        "editor.semanticHighlighting.enabled": true
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p .",
+    "watch": "tsc -watch -p .",
+    "vscode:prepublish": "npm run compile",
+    "sync:wasm": "cp ../../tree-sitter-llts/tree-sitter-llts.wasm media/ && cp ../../tree-sitter-llts/queries/highlights.scm media/",
+    "build:wasm": "cd ../../tree-sitter-llts && bunx tree-sitter build --wasm && /bin/cp -f tree-sitter-llts.wasm ../editors/vscode-llts/media/ && /bin/cp -f queries/highlights.scm ../editors/vscode-llts/media/",
+    "package": "npm run compile && npx @vscode/vsce package"
+  },
+  "files": [
+    "out",
+    "media",
+    "syntaxes",
+    "language-configuration.json",
+    "README.md"
+  ],
+  "dependencies": {
+    "web-tree-sitter": "^0.25.10"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.9.3"
+  }
+}

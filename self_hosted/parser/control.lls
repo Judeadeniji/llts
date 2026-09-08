@@ -1,0 +1,325 @@
+# Port of src/parser/control.zig
+
+@const $pctx = @import("./ctx.lls");
+@const $tokens = @import("../scanner/tokens.lls");
+@const $nodes = @import("../ast/nodes.lls");
+@const $common = @import("../ast/common.lls");
+@const $expr = @import("./expr.lls");
+@const $stmt = @import("./stmt.lls");
+@const $list = @import("std/list.lls");
+@const $string = @import("std/string.lls");
+
+@func asNode(p: *nodes.Node): *nodes.Node {
+    return p;
+}
+
+pub @func parseBlock(self: *pctx.Parser) {
+    self.consume(tokens.TokenType.Delimiter, "Expected '{'", "{")?;
+    $statements = list.create(self.arena);
+    @for (true) {
+        @if (self.isAtEnd() || self.checkDelim("}")) {
+            break;
+        }
+        list.push(statements, stmt.parseStatement(self)?);
+    }
+    self.consume(tokens.TokenType.Delimiter, "Expected '}'", "}")?;
+    return asNode(@new(self.arena, nodes.Block {
+        kind: common.NodeKind.Block,
+        statements: statements,
+        label: null,
+        loc: self.locHere(),
+    }));
+}
+
+pub @func parseLabeledBlock(self: *pctx.Parser, label) {
+    $block: *nodes.Node = parseBlock(self)?;
+    $b: *nodes.Block = @as(*nodes.Block, block);
+    $lab: ?string = label;
+    b.label = lab;
+    return block;
+}
+
+pub @func parseSwitchExpression(self: *pctx.Parser) {
+    $loc = self.prevLoc();
+    self.consume(tokens.TokenType.Delimiter, "Expects \"(\"", "(")?;
+    $cond: *nodes.Node = expr.parseExpression(self)?;
+    self.consume(tokens.TokenType.Delimiter, "Expects \")\"", ")")?;
+    self.consume(tokens.TokenType.Delimiter, "Expected '{' before switch body", "{")?;
+
+    $prongs = list.create(self.arena);
+    $saw_else = false;
+    @for (true) {
+        @if (self.isAtEnd() || self.checkDelim("}")) {
+            break;
+        }
+        $prong_loc = self.locHere();
+        $is_else = false;
+        $patterns = list.create(self.arena);
+
+        @if (self.check(tokens.TokenType.CompilerKeyword) && string.eql(self.value(), "else")) {
+            self.advance();
+            is_else = true;
+            saw_else = true;
+        }
+
+        @if (!is_else) {
+            @if (saw_else) {
+                return self.fail("Additional switch prongs are not allowed after '@else'");
+            }
+            @for (true) {
+                list.push(patterns, expr.parseExpression(self)?);
+                @if (self.checkDelim(",")) {
+                    self.advance();
+                    @if (self.check(tokens.TokenType.BinOp) && string.eql(self.value(), "=>")) {
+                        return self.fail("Expected pattern after ',' in switch prong");
+                    }
+                    continue;
+                }
+                break;
+            }
+        }
+
+        @if (!self.check(tokens.TokenType.BinOp) || !string.eql(self.value(), "=>")) {
+            return self.fail("Expected '=>' in switch prong");
+        }
+        self.advance();
+        $body: *nodes.Node = parseBlock(self)?;
+        @if (self.checkDelim(",")) {
+            self.advance();
+        }
+        list.push(prongs, @new(self.arena, nodes.SwitchProng {
+            patterns: patterns,
+            is_else: is_else,
+            body: body,
+            loc: prong_loc,
+        }));
+    }
+
+    self.consume(tokens.TokenType.Delimiter, "Expected '}' after switch body", "}")?;
+    return asNode(@new(self.arena, nodes.Switch {
+        kind: common.NodeKind.Switch,
+        condition: cond,
+        prongs: prongs,
+        label: null,
+        loc: loc,
+    }));
+}
+
+pub @func parseIfExpression(self: *pctx.Parser) {
+    $loc = self.prevLoc();
+    self.consume(tokens.TokenType.Delimiter, "Expects \"(\"", "(")?;
+    $cond: *nodes.Node = expr.parseExpression(self)?;
+    self.consume(tokens.TokenType.Delimiter, "Expects \")\"", ")")?;
+
+    $pipe_value: ?*nodes.Node = null;
+    @if (self.checkDelim("|")) {
+        self.advance();
+        pipe_value = expr.parsePrimary(self)?;
+        self.consume(tokens.TokenType.Delimiter, "Expected \"|\" after pipe capture", "|")?;
+    }
+
+    $body: *nodes.Node = parseBlock(self)?;
+    $else_body: ?*nodes.Node = null;
+
+    @if (self.check(tokens.TokenType.CompilerKeyword) && string.eql(self.value(), "else")) {
+        self.advance();
+        @if (self.check(tokens.TokenType.CompilerKeyword) && string.eql(self.value(), "if")) {
+            self.advance();
+            else_body = parseIfExpression(self)?;
+        } @else {
+            else_body = parseBlock(self)?;
+        }
+    }
+
+    return asNode(@new(self.arena, nodes.If {
+        kind: common.NodeKind.If,
+        condition: cond,
+        pipe_value: pipe_value,
+        body: body,
+        else_body: else_body,
+        label: null,
+        loc: loc,
+    }));
+}
+
+pub @func parseForExpression(self: *pctx.Parser) {
+    $loc = self.prevLoc();
+    self.consume(tokens.TokenType.Delimiter, "Expects \"(\"", "(")?;
+    $expr1: *nodes.Node = expr.parseExpression(self)?;
+
+    @if (self.checkDelim(";")) {
+        return self.fail("C-style for loops are not supported");
+    }
+
+    @if (self.checkDelim(",")) {
+        self.advance();
+        self.consume(tokens.TokenType.Number, "Expected '0' for array index range", "0")?;
+        @if (!self.check(tokens.TokenType.BinOp) || !string.eql(self.value(), "..")) {
+            return self.fail("Expected '..' for array index range");
+        }
+        self.advance();
+    }
+
+    self.consume(tokens.TokenType.Delimiter, "Expects \")\"", ")")?;
+
+    $captures = list.create(self.arena);
+    @if (self.checkDelim("|")) {
+        self.advance();
+        @for (true) {
+            @if (!self.check(tokens.TokenType.Identifier)) {
+                return self.fail("Expected capture name");
+            }
+            $cname = self.value();
+            self.advance();
+            list.push(captures, @new(self.arena, nodes.Capture {
+                name: cname,
+                by_ref: false,
+            }));
+            @if (self.checkDelim(",")) {
+                self.advance();
+                continue;
+            }
+            break;
+        }
+        self.consume(tokens.TokenType.Delimiter, "Expected '|' to close captures", "|")?;
+    }
+
+    $body: *nodes.Node = parseBlock(self)?;
+    return asNode(@new(self.arena, nodes.For {
+        kind: common.NodeKind.For,
+        expr: expr1,
+        captures: captures,
+        label: null,
+        body: body,
+        loc: loc,
+    }));
+}
+
+pub @func parseReturnStatement(self: *pctx.Parser) {
+    @if (!self.check(tokens.TokenType.Keyword) || !string.eql(self.value(), "return")) {
+        return self.fail("Expected \"return\"");
+    }
+    $loc = self.locHere();
+    self.advance();
+    $return_value: ?*nodes.Node = null;
+    @if (!self.checkDelim(";")) {
+        return_value = expr.parseExpression(self)?;
+    }
+    self.consume(tokens.TokenType.Delimiter, "Expected \";\"", ";")?;
+    return asNode(@new(self.arena, nodes.Return {
+        kind: common.NodeKind.Return,
+        return_value: return_value,
+        loc: loc,
+    }));
+}
+
+pub @func parseDeferStatement(self: *pctx.Parser, is_errdefer: bool) {
+    @if (is_errdefer) {
+        @if (!self.check(tokens.TokenType.Keyword) || !string.eql(self.value(), "errdefer")) {
+            return self.fail("Expected keyword");
+        }
+    } @else {
+        @if (!self.check(tokens.TokenType.Keyword) || !string.eql(self.value(), "defer")) {
+            return self.fail("Expected keyword");
+        }
+    }
+    $loc = self.locHere();
+    self.advance();
+    @if (self.checkDelim("{")) {
+        $body: *nodes.Node = parseBlock(self)?;
+        return asNode(@new(self.arena, nodes.Defer {
+            kind: common.NodeKind.Defer,
+            body: body,
+            is_errdefer: is_errdefer,
+            loc: loc,
+        }));
+    }
+    $e: *nodes.Node = expr.parseExpression(self)?;
+    self.consume(tokens.TokenType.Delimiter, "Expected \";\" after defer", ";")?;
+    return asNode(@new(self.arena, nodes.Defer {
+        kind: common.NodeKind.Defer,
+        body: e,
+        is_errdefer: is_errdefer,
+        loc: loc,
+    }));
+}
+
+pub @func parseBreakStatement(self: *pctx.Parser) {
+    @if (!self.check(tokens.TokenType.Keyword) || !string.eql(self.value(), "break")) {
+        return self.fail("Expected \"break\"");
+    }
+    $loc = self.locHere();
+    self.advance();
+
+    @if (self.checkDelim(":")) {
+        self.advance();
+        @if (!self.check(tokens.TokenType.Identifier)) {
+            return self.fail("Expected label after ':' in break statement");
+        }
+        $label = self.value();
+        self.advance();
+        @if (!self.checkDelim(";")) {
+            $value: *nodes.Node = expr.parseExpression(self)?;
+            self.consume(tokens.TokenType.Delimiter, "Expected \";\"", ";")?;
+            return asNode(@new(self.arena, nodes.Break {
+                kind: common.NodeKind.Break,
+                label: label,
+                value: value,
+                loc: loc,
+            }));
+        }
+        self.consume(tokens.TokenType.Delimiter, "Expected \";\"", ";")?;
+        return asNode(@new(self.arena, nodes.Break {
+            kind: common.NodeKind.Break,
+            label: label,
+            value: null,
+            loc: loc,
+        }));
+    }
+
+    @if (!self.checkDelim(";")) {
+        $value2: *nodes.Node = expr.parseExpression(self)?;
+        self.consume(tokens.TokenType.Delimiter, "Expected \";\"", ";")?;
+        return asNode(@new(self.arena, nodes.Break {
+            kind: common.NodeKind.Break,
+            label: null,
+            value: value2,
+            loc: loc,
+        }));
+    }
+    self.consume(tokens.TokenType.Delimiter, "Expected \";\"", ";")?;
+    return asNode(@new(self.arena, nodes.Break {
+        kind: common.NodeKind.Break,
+        label: null,
+        value: null,
+        loc: loc,
+    }));
+}
+
+pub @func parseContinueStatement(self: *pctx.Parser) {
+    @if (!self.check(tokens.TokenType.Keyword) || !string.eql(self.value(), "continue")) {
+        return self.fail("Expected \"continue\"");
+    }
+    $loc = self.locHere();
+    self.advance();
+    @if (self.checkDelim(":")) {
+        self.advance();
+        @if (!self.check(tokens.TokenType.Identifier)) {
+            return self.fail("Expected label after ':' in continue statement");
+        }
+        $label = self.value();
+        self.advance();
+        self.consume(tokens.TokenType.Delimiter, "Expected \";\"", ";")?;
+        return asNode(@new(self.arena, nodes.Continue {
+            kind: common.NodeKind.Continue,
+            label: label,
+            loc: loc,
+        }));
+    }
+    self.consume(tokens.TokenType.Delimiter, "Expected \";\"", ";")?;
+    return asNode(@new(self.arena, nodes.Continue {
+        kind: common.NodeKind.Continue,
+        label: null,
+        loc: loc,
+    }));
+}

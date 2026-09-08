@@ -1,0 +1,14 @@
+$x = 1 + 2;
+@const $y = foo(1).bar[0];
+@enum Color { Red, Green, Blue }
+@struct Point {
+    x: i64;
+    y: i64;
+}
+pub @func main(): i64 {
+    @if (true) {
+        return 1;
+    } @else {
+        return 0;
+    }
+}

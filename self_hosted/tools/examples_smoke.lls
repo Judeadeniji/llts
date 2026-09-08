@@ -1,0 +1,13 @@
+# Prefer the shell driver — a large LLS harness cannot load beside the
+# self-hosted compiler (host emit panics with os.args / std/fs / big bodies).
+#
+#   ./self_hosted/tools/examples_smoke.sh
+#   ./self_hosted/tools/examples_smoke.sh all
+
+@const $debug = @import("std/debug.lls");
+@const $os = @import("std/os.lls");
+
+debug.err("Use ./self_hosted/tools/examples_smoke.sh instead of this .lls entry");
+os.exit(1);
+
+pub @func main() {}

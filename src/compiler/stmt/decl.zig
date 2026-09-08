@@ -76,7 +76,15 @@ pub fn compileDeclaration(state: *CompilerState, decl: *const ast.Declaration) !
             }
         }
     } else {
-        type_name = if (state.global_types.get(decl.name)) |gt| gt else inferDeclType(state, decl.value);
+        // Prefer typecheck's recorded type for this initializer (function locals must
+        // not clobber `global_types`; see Env.in_function). Fall back to global /
+        // AST inference for module-level and pre-typecheck paths.
+        type_name = if (state.type_of_results.get(decl.value)) |tr|
+            tr
+        else if (state.global_types.get(decl.name)) |gt|
+            gt
+        else
+            inferDeclType(state, decl.value);
     }
 
     if (state.scope_depth > 0 and !is_module_export) {

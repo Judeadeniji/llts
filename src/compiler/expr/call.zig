@@ -76,6 +76,19 @@ pub fn compileCall(state: *CompilerState, c: *const ast.Call, node: *ast.Node) !
 }
 
 fn emitMethodCall(state: *CompilerState, name: []const u8, self_obj: *ast.Node, args: []*ast.Node) !void {
+    const argc: u8 = @intCast(args.len + 1);
+    const addr: ?u32 = if (state.functions.getPtr(name)) |def|
+        def.address
+    else if (state.chunk.functions.get(name)) |fn_info|
+        fn_info.address
+    else
+        return @import("../../errors/compile.zig").compileFailFmt(state, "Unknown method {s}", .{name});
+
+    // OP_CALL expects [callee, self, ...args]. GET_FUNCTION must precede args.
+    // CALL_STATIC only needs [self, ...args] (no callee value).
+    if (needsDynamicCall(addr)) {
+        try emit.emitNameGet(state, .OP_GET_FUNCTION, name);
+    }
     // `self: T` (by value) must receive a shallow copy so field stores do not alias the caller.
     // Unannotated / `self: *T` keep the shared handle.
     if (try methodSelfIsByValue(state, name)) {
@@ -87,25 +100,7 @@ fn emitMethodCall(state: *CompilerState, name: []const u8, self_obj: *ast.Node, 
         try expr.compileExpression(state, self_obj);
     }
     for (args) |arg| try expr.compileExpression(state, arg);
-    const argc: u8 = @intCast(args.len + 1);
-    if (state.functions.getPtr(name)) |def| {
-        if (def.address) |addr| {
-            try emit.emitCallStatic(state, @intCast(addr), argc);
-        } else {
-            try emit.emitOp(state, .OP_CALL_STATIC);
-            const patch = state.chunk.code.items.len;
-            try emit.emitByte(state, 0xff);
-            try emit.emitByte(state, 0xff);
-            try emit.emitByte(state, argc);
-            try def.forward_jumps.append(state.allocator, patch);
-        }
-        return;
-    }
-    if (state.chunk.functions.get(name)) |fn_info| {
-        try emit.emitCallStatic(state, @intCast(fn_info.address), argc);
-        return;
-    }
-    return @import("../../errors/compile.zig").compileFailFmt(state, "Unknown method {s}", .{name});
+    try finishCall(state, addr, argc);
 }
 
 fn methodSelfIsByValue(state: *CompilerState, name: []const u8) !bool {
@@ -126,26 +121,39 @@ fn methodSelfIsByValue(state: *CompilerState, name: []const u8) !bool {
 }
 
 fn emitNamedCall(state: *CompilerState, name: []const u8, args: []*ast.Node, _: bool, _: ?*ast.Node) !bool {
-    if (state.functions.getPtr(name)) |def| {
-        for (args) |arg| try expr.compileExpression(state, arg);
-        if (def.address) |addr| {
-            try emit.emitCallStatic(state, @intCast(addr), @intCast(args.len));
-        } else {
-            try emit.emitOp(state, .OP_CALL_STATIC);
-            const patch = state.chunk.code.items.len;
-            try emit.emitByte(state, 0xff);
-            try emit.emitByte(state, 0xff);
-            try emit.emitByte(state, @intCast(args.len));
-            try def.forward_jumps.append(state.allocator, patch);
+    const addr: ?u32 = if (state.functions.getPtr(name)) |def|
+        def.address
+    else if (state.chunk.functions.get(name)) |fn_info|
+        fn_info.address
+    else
+        return false;
+
+    const argc: u8 = @intCast(args.len);
+    // OP_CALL stack: [callee, arg0, ...]. Emit GET_FUNCTION before args when
+    // the target is a forward ref or beyond CALL_STATIC's u16 address limit.
+    if (needsDynamicCall(addr)) {
+        try emit.emitNameGet(state, .OP_GET_FUNCTION, name);
+    }
+    for (args) |arg| try expr.compileExpression(state, arg);
+    try finishCall(state, addr, argc);
+    return true;
+}
+
+/// True when we must use GET_FUNCTION+CALL instead of CALL_STATIC.
+fn needsDynamicCall(addr: ?u32) bool {
+    return if (addr) |a| a > 0xffff else true;
+}
+
+/// After args (and optional callee) are on the stack: CALL_STATIC or CALL.
+fn finishCall(state: *CompilerState, addr: ?u32, argc: u8) !void {
+    if (addr) |a| {
+        if (a <= 0xffff) {
+            try emit.emitCallStatic(state, @intCast(a), argc);
+            return;
         }
-        return true;
     }
-    if (state.chunk.functions.get(name)) |fn_info| {
-        for (args) |arg| try expr.compileExpression(state, arg);
-        try emit.emitCallStatic(state, @intCast(fn_info.address), @intCast(args.len));
-        return true;
-    }
-    return false;
+    try emit.emitOp(state, .OP_CALL);
+    try emit.emitByte(state, argc);
 }
 
 pub fn compilePipe(state: *CompilerState, bin: *const ast.Binary) !void {
@@ -154,19 +162,13 @@ pub fn compilePipe(state: *CompilerState, bin: *const ast.Binary) !void {
         // Build a synthetic call: callee(left, ...args)
         if (try resolveCalleeName(state, c.callee)) |name| {
             if (state.functions.getPtr(name)) |def| {
+                const argc: u8 = @intCast(c.args.len + 1);
+                if (needsDynamicCall(def.address)) {
+                    try emit.emitNameGet(state, .OP_GET_FUNCTION, name);
+                }
                 try expr.compileExpression(state, bin.left);
                 for (c.args) |arg| try expr.compileExpression(state, arg);
-                const argc: u8 = @intCast(c.args.len + 1);
-                if (def.address) |addr| {
-                    try emit.emitCallStatic(state, @intCast(addr), argc);
-                } else {
-                    try emit.emitOp(state, .OP_CALL_STATIC);
-                    const patch = state.chunk.code.items.len;
-                    try emit.emitByte(state, 0xff);
-                    try emit.emitByte(state, 0xff);
-                    try emit.emitByte(state, argc);
-                    try def.forward_jumps.append(state.allocator, patch);
-                }
+                try finishCall(state, def.address, argc);
                 return;
             }
         }

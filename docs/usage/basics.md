@@ -156,7 +156,7 @@ std.debug.printLn("Final counter value: {i}", final_val);
 ## 8. Key Rules & Constraints for AI Agents
 1. **Declaration vs Usage:** NEVER use the `$` prefix when referencing an already declared variable (e.g., `$x = 10; $y = x + 5;` NOT `$y = $x + 5;`).
 2. **Scoping & Mutability:** Use `@const $name` for imports and immutable values. Use `$name` for standard variable declaration.
-3. **Escaping Local Scope:** If a struct instance is returned from a function, you MUST use `@new(heap, ...)` to allocate it on the heap.
+3. **Escaping Local Scope:** Returning a bare `Foo{…}` / `[…]` literal immortalizes it (process-lifetime). Returning a frame-local *variable* (or embedding one) is a compile error — use `@new(arena, …)` when the value should live in a reclaimable arena.
 4. **Method Receivers:** Struct methods MUST explicitly declare `self` as their first parameter.
 5. **Formatting:** `std.debug.printLn` supports format strings (e.g., `{i}` for integers, `{s}` for strings).
 6. **Error Handling & Logging:** Use `error(code, payload)` for structured error objects. Use `std.debug.info()`, `warn()`, and `err()` instead of `printLn` for diagnostic logging.

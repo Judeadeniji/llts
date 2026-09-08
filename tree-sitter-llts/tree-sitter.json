@@ -1,0 +1,30 @@
+{
+  "grammars": [
+    {
+      "name": "llts",
+      "camelcase": "Llts",
+      "scope": "source.lls",
+      "path": ".",
+      "file-types": ["lls"],
+      "highlights": "queries/highlights.scm",
+      "injection-regex": "^lls$"
+    }
+  ],
+  "metadata": {
+    "version": "0.1.0",
+    "license": "MIT",
+    "description": "LLTS grammar for tree-sitter",
+    "links": {
+      "repository": "https://github.com/antigravity/llts-zig"
+    }
+  },
+  "bindings": {
+    "c": true,
+    "go": false,
+    "node": true,
+    "python": false,
+    "rust": false,
+    "swift": false,
+    "zig": false
+  }
+}

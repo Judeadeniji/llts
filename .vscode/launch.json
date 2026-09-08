@@ -1,0 +1,13 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Run LLTS Extension",
+      "type": "extensionHost",
+      "request": "launch",
+      "args": ["--extensionDevelopmentPath=${workspaceFolder}/editors/vscode-llts"],
+      "outFiles": ["${workspaceFolder}/editors/vscode-llts/out/**/*.js"],
+      "preLaunchTask": "vscode-llts: compile"
+    }
+  ]
+}

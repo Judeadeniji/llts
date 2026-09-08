@@ -6,9 +6,14 @@ const CompilerState = state_mod.CompilerState;
 const AllocRegion = state_mod.AllocRegion;
 
 /// Escape policy: frame-local heap must not outlive its frame.
-/// Returning it is a **compile error** (no silent promote / no UAF).
-/// Use `@new(allocator, Foo{…})` so the value is born in a Pass arena.
+///
+/// Returning a **frame-bound local** (or `&` of one) is a compile error.
+/// Returning a bare `Foo{…}` / `[…]` **literal** whose fields/elements are not
+/// frame-colored is allowed: the return site compiles it immortal (see
+/// `compileReturn`), matching module-level init. Prefer `@new(allocator, …)`
+/// when the value should live in a reclaimable arena.
 pub fn checkReturnValue(state: *CompilerState, value: *ast.Node) !void {
+    if (canPromoteReturnLiteral(state, value)) return;
     switch (regionOf(state, value)) {
         .frame => {
             const loc = value.loc();
@@ -33,10 +38,36 @@ pub fn checkReturnValue(state: *CompilerState, value: *ast.Node) !void {
     }
 }
 
+/// True when `return <value>` can immortalize a literal shell instead of erroring.
+pub fn canPromoteReturnLiteral(state: *CompilerState, value: *ast.Node) bool {
+    switch (value.*) {
+        .struct_init => |*init| {
+            for (init.fields) |f| {
+                if (!operandOkForPromote(state, f.value)) return false;
+            }
+            return true;
+        },
+        .array_literal => |*arr| {
+            for (arr.elements) |el| {
+                if (!operandOkForPromote(state, el)) return false;
+            }
+            return true;
+        },
+        else => return false,
+    }
+}
+
+fn operandOkForPromote(state: *CompilerState, node: *ast.Node) bool {
+    switch (node.*) {
+        .struct_init, .array_literal => return canPromoteReturnLiteral(state, node),
+        else => return regionOf(state, node) != .frame,
+    }
+}
+
 /// Classify an expression's heap region (syntactic / local-tracking first cut).
 pub fn regionOf(state: *CompilerState, node: *ast.Node) AllocRegion {
     switch (node.*) {
-        // Bare literals → frame bump; immortal only for module-level inits (`alloc_immortal`).
+        // Bare literals → frame bump; immortal only for module-level inits / return promotion.
         .struct_init, .array_literal => return if (state.alloc_immortal) .pass else .frame,
         // `@new(a, Foo{…})` — compiler intrinsic; Pass / outer allocator.
         .call => |c| {

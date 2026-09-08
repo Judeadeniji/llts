@@ -1,0 +1,121 @@
+# Port of src/bytecode/serialize.zig — write .llb v3 (execution artifact).
+
+@const $chunk_mod = @import("./chunk.lls");
+@const $buffer = @import("std/buffer.lls");
+@const $list = @import("std/list.lls");
+@const $fs = @import("std/fs.lls");
+@const $string = @import("std/string.lls");
+
+pub @const $version = 3;
+
+@func writeU16LE(buf, v: i64) {
+    buffer.push(buf, @as(u8, v & 255));
+    buffer.push(buf, @as(u8, (v >> 8) & 255));
+}
+
+@func writeU32LE(buf, v: i64) {
+    buffer.push(buf, @as(u8, v & 255));
+    buffer.push(buf, @as(u8, (v >> 8) & 255));
+    buffer.push(buf, @as(u8, (v >> 16) & 255));
+    buffer.push(buf, @as(u8, (v >> 24) & 255));
+}
+
+@func writeI64LE(buf, v: i64) {
+    $u = v;
+    # Write as eight little-endian bytes (two's complement bit pattern via successive & 255).
+    @for (0..8) |_| {
+        buffer.push(buf, @as(u8, u & 255));
+        u = u >> 8;
+    }
+}
+
+@func writeString(buf, s: string) {
+    writeU32LE(buf, string.len(s));
+    buffer.appendString(buf, s);
+}
+
+# Write Chunk → growable byte buffer (LLTS v3 layout).
+pub @func writeToBuffer(c: *chunk_mod.Chunk, out) {
+    # magic
+    buffer.push(out, 76); # L
+    buffer.push(out, 76); # L
+    buffer.push(out, 84); # T
+    buffer.push(out, 83); # S
+    writeU16LE(out, version);
+    writeU16LE(out, 0); # flags
+
+    $code_len = buffer.len(c.code);
+    writeU32LE(out, code_len);
+    @for (0..code_len) |i| {
+        buffer.push(out, buffer.get(c.code, i));
+    }
+
+    # strings (none for int-only smoke)
+    writeU32LE(out, list.len(c.strings));
+    @for (0..list.len(c.strings)) |i| {
+        writeString(out, list.get(c.strings, i));
+    }
+
+    writeU32LE(out, list.len(c.constants));
+    @for (0..list.len(c.constants)) |i| {
+        $con: *chunk_mod.Constant = @as(*chunk_mod.Constant, list.get(c.constants, i));
+        @if (con.tag == chunk_mod.ConstTag.Null) {
+            buffer.push(out, 0);
+        } @else {
+            @if (con.tag == chunk_mod.ConstTag.Bool) {
+                buffer.push(out, 1);
+                buffer.push(out, @as(u8, con.i_val));
+            } @else {
+                @if (con.tag == chunk_mod.ConstTag.Int) {
+                    buffer.push(out, 2);
+                    writeI64LE(out, con.i_val);
+                } @else {
+                    @if (con.tag == chunk_mod.ConstTag.Float) {
+                        buffer.push(out, 3);
+                        # float not needed for smoke — write 0.0 bits
+                        writeI64LE(out, 0);
+                    } @else {
+                        buffer.push(out, 4);
+                        writeU32LE(out, con.str_index);
+                    }
+                }
+            }
+        }
+    }
+
+    writeU32LE(out, list.len(c.global_names));
+    @for (0..list.len(c.global_names)) |gi| {
+        writeString(out, list.get(c.global_names, gi));
+    }
+
+    writeU32LE(out, list.len(c.functions));
+    @for (0..list.len(c.functions)) |fi| {
+        $fn: *chunk_mod.FuncInfo = @as(*chunk_mod.FuncInfo, list.get(c.functions, fi));
+        $name_idx = -1;
+        @for (0..list.len(c.strings)) |si| {
+            @if (string.eql(list.get(c.strings, si), fn.name)) {
+                name_idx = si;
+                break;
+            }
+        }
+        @if (name_idx < 0) {
+            return error("Serialize", "function name missing from string table");
+        }
+        writeU32LE(out, name_idx);
+        writeU32LE(out, fn.address);
+        buffer.push(out, @as(u8, fn.arity));
+        @if (fn.is_variadic) {
+            buffer.push(out, 1);
+        } @else {
+            buffer.push(out, 0);
+        }
+    }
+
+    writeString(out, c.file);
+}
+
+pub @func writeFile(c: *chunk_mod.Chunk, path: string) {
+    $out = buffer.create(c.arena);
+    writeToBuffer(c, out)?;
+    return fs.writeFileBuffer(path, out);
+}

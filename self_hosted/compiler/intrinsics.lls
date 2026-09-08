@@ -1,0 +1,95 @@
+# Port of src/compiler/intrinsics.zig — match / arity / asCastKind.
+# Emit `compile` switch lives in root.lls (needs emExpr); names mirror Zig.
+
+@const $widths = @import("./widths.lls");
+@const $nodes = @import("../ast/nodes.lls");
+@const $common = @import("../ast/common.lls");
+@const $string = @import("std/string.lls");
+
+pub @enum Intrinsic {
+    import,
+    typeOf,
+    isError,
+    sizeOf,
+    nameOf,
+    as,
+    new,
+}
+
+pub @func match(callee: string) {
+    @if (string.eql(callee, "@import")) {
+        return Intrinsic.import;
+    }
+    @if (string.eql(callee, "@typeOf")) {
+        return Intrinsic.typeOf;
+    }
+    @if (string.eql(callee, "@isError")) {
+        return Intrinsic.isError;
+    }
+    @if (string.eql(callee, "@sizeOf")) {
+        return Intrinsic.sizeOf;
+    }
+    @if (string.eql(callee, "@nameOf")) {
+        return Intrinsic.nameOf;
+    }
+    @if (string.eql(callee, "@as")) {
+        return Intrinsic.as;
+    }
+    @if (string.eql(callee, "@new")) {
+        return Intrinsic.new;
+    }
+    return null;
+}
+
+pub @func checkArity(intr: Intrinsic, name: string, got: int) {
+    @switch (intr) {
+        Intrinsic.import, Intrinsic.typeOf, Intrinsic.isError, Intrinsic.sizeOf, Intrinsic.nameOf => {
+            @if (got != 1) {
+                return error("EmitUnsupported", "intrinsic arity");
+            }
+        }
+        Intrinsic.as => {
+            @if (got != 2) {
+                return error("EmitUnsupported", "intrinsic arity");
+            }
+        }
+        Intrinsic.new => {
+            @if (got < 2 || got > 3) {
+                return error("EmitUnsupported", "intrinsic arity");
+            }
+        }
+    }
+}
+
+# Operand for OP_AS: Width discriminant, or null when no runtime cast needed.
+pub @func asCastKind(type_node: *nodes.Node) {
+    @if (type_node.kind == common.NodeKind.Primary) {
+        $p: *nodes.Primary = @as(*nodes.Primary, type_node);
+        $w = widths.fromName(p.name);
+        @if (w != null) {
+            return @as(u8, w);
+        }
+        return null;
+    }
+    return null;
+}
+
+# Static @sizeOf(T) when T is a width / string / pointer name.
+pub @func sizeOfTypeName(name: string) {
+    $w = widths.fromName(name);
+    @if (w != null) {
+        return widths.size(w);
+    }
+    @if (string.eql(name, "string") || string.eql(name, "[]byte")) {
+        return 8;
+    }
+    @if (string.eql(name, "null")) {
+        return 0;
+    }
+    @if (string.len(name) > 0) {
+        @if (string.eql(string.slice(name, 0, 1), "*") || string.eql(string.slice(name, 0, 1), "?")) {
+            return 8;
+        }
+    }
+    return null;
+}

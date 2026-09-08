@@ -1,4 +1,4 @@
-# Smoke: scan → parse a binary expression.
+# Smoke: document parse covering decl / func / control / struct / enum.
 # Usage: llts run self_hosted/tools/parse_smoke.lls
 
 @const $parser = @import("../parser/root.lls");
@@ -7,26 +7,59 @@
 @const $mem = @import("std/mem.lls");
 @const $debug = @import("std/debug.lls");
 @const $os = @import("std/os.lls");
+@const $list = @import("std/list.lls");
+@const $string = @import("std/string.lls");
+@const $fs = @import("std/fs.lls");
 
 $arena = mem.create(0);
-$n: *nodes.Node = parser.parseExpression(arena, "1 + 2 * 3", "smoke.lls");
-@if (@isError(n)) {
+
+# Fixture lives beside this tool so we can feed a real multi-statement file.
+$path = "self_hosted/tools/parse_smoke_fixture.lls";
+$src = fs.readFile(path);
+@if (@isError(src)) {
+    debug.err("failed to read fixture");
+    os.exit(1);
+}
+
+$doc = parser.parse(arena, src, path);
+@if (@isError(doc)) {
     debug.err("parse failed");
     os.exit(1);
 }
 
-# Expect: Binary(+), left Literal, right Binary(*)
-debug.printLn("{i}", n.kind);
-@if (n.kind == common.NodeKind.Binary) {
-    $b: *nodes.Binary = @as(*nodes.Binary, n);
-    debug.printLn("{s}", b.operator);
-    debug.printLn("{i}", b.left.kind);
-    debug.printLn("{i}", b.right.kind);
-    @if (b.right.kind == common.NodeKind.Binary) {
-        $r: *nodes.Binary = @as(*nodes.Binary, b.right);
-        debug.printLn("{s}", r.operator);
-    }
+debug.printLn("{i}", list.len(doc.statements));
+@if (list.len(doc.statements) != 5) {
+    debug.err("expected 5 top-level statements");
+    os.exit(1);
 }
+
+$s0: *nodes.Node = @as(*nodes.Node, list.get(doc.statements, 0));
+$s1: *nodes.Node = @as(*nodes.Node, list.get(doc.statements, 1));
+$s2: *nodes.Node = @as(*nodes.Node, list.get(doc.statements, 2));
+$s3: *nodes.Node = @as(*nodes.Node, list.get(doc.statements, 3));
+$s4: *nodes.Node = @as(*nodes.Node, list.get(doc.statements, 4));
+
+@if (s0.kind != common.NodeKind.Declaration) { debug.err("0"); os.exit(1); }
+@if (s1.kind != common.NodeKind.Declaration) { debug.err("1"); os.exit(1); }
+@if (s2.kind != common.NodeKind.EnumDecl) { debug.err("2"); os.exit(1); }
+@if (s3.kind != common.NodeKind.StructDecl) { debug.err("3"); os.exit(1); }
+@if (s4.kind != common.NodeKind.FunctionDecl) { debug.err("4"); os.exit(1); }
+
+$en: *nodes.EnumDecl = @as(*nodes.EnumDecl, s2);
+debug.printLn("{s}", en.name);
+debug.printLn("{i}", list.len(en.variants));
+
+$st: *nodes.StructDecl = @as(*nodes.StructDecl, s3);
+debug.printLn("{s}", st.name);
+debug.printLn("{i}", list.len(st.fields));
+
+$fn: *nodes.FunctionDecl = @as(*nodes.FunctionDecl, s4);
+debug.printLn("{s}", fn.name);
+@if (!fn.is_public) {
+    debug.err("expected pub");
+    os.exit(1);
+}
+debug.printLn("ok");
 
 arena.deinit();
 

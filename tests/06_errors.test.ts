@@ -337,3 +337,39 @@ test("error() rejects more than 2 arguments with a clear message", () => {
   }
 });
 
+test("annotated T return widens to T | error when body returns error()", () => {
+	expectOutput(
+		runSource(`
+@struct Box { n: int; }
+@func make(): Box {
+    @if (false) {
+        return error("nope");
+    }
+    return Box { n: 7 };
+}
+$r = make()?;
+print(r.n);
+`),
+		["7"],
+	);
+});
+
+test("return of error-returning helper widens caller for ?", () => {
+	expectOutput(
+		runSource(`
+@struct Box { n: int; }
+@func boom(): Box {
+    return error("x");
+}
+@func make(): Box {
+    @if (false) {
+        return boom();
+    }
+    return Box { n: 3 };
+}
+print(make()?.n);
+`),
+		["3"],
+	);
+});
+

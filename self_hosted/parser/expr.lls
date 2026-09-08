@@ -1,14 +1,74 @@
-# Port of src/parser/expr.zig — thin slice: literals, idents, parens, unary, binary, assign.
+# Port of src/parser/expr.zig — assignment/binary/unary/postfix + primary slice.
 
 @const $pctx = @import("./ctx.lls");
 @const $tokens = @import("../scanner/tokens.lls");
 @const $nodes = @import("../ast/nodes.lls");
 @const $common = @import("../ast/common.lls");
 @const $precedence = @import("../shared/precedence.lls");
+@const $control = @import("./control.lls");
+@const $types = @import("./types.lls");
 @const $string = @import("std/string.lls");
+@const $list = @import("std/list.lls");
 
 @func asNode(p: *nodes.Node): *nodes.Node {
     return p;
+}
+
+@func locHere(self: *pctx.Parser): common.Location {
+    return common.Location { line: self.line(), column: self.column(), path: self.path };
+}
+
+# *Node is a union — field access needs an arm cast (assign, then read).
+@func nodeLoc(n: *nodes.Node): common.Location {
+    @if (n.kind == common.NodeKind.Literal) {
+        $x: *nodes.Literal = @as(*nodes.Literal, n);
+        return x.loc;
+    }
+    @if (n.kind == common.NodeKind.Primary) {
+        $x: *nodes.Primary = @as(*nodes.Primary, n);
+        return x.loc;
+    }
+    @if (n.kind == common.NodeKind.Binary) {
+        $x: *nodes.Binary = @as(*nodes.Binary, n);
+        return x.loc;
+    }
+    @if (n.kind == common.NodeKind.Unary) {
+        $x: *nodes.Unary = @as(*nodes.Unary, n);
+        return x.loc;
+    }
+    @if (n.kind == common.NodeKind.Assignment) {
+        $x: *nodes.Assignment = @as(*nodes.Assignment, n);
+        return x.loc;
+    }
+    @if (n.kind == common.NodeKind.Call) {
+        $x: *nodes.Call = @as(*nodes.Call, n);
+        return x.loc;
+    }
+    @if (n.kind == common.NodeKind.Member) {
+        $x: *nodes.Member = @as(*nodes.Member, n);
+        return x.loc;
+    }
+    @if (n.kind == common.NodeKind.Index) {
+        $x: *nodes.Index = @as(*nodes.Index, n);
+        return x.loc;
+    }
+    @if (n.kind == common.NodeKind.ArrayLiteral) {
+        $x: *nodes.ArrayLiteral = @as(*nodes.ArrayLiteral, n);
+        return x.loc;
+    }
+    @if (n.kind == common.NodeKind.StructInit) {
+        $x: *nodes.StructInit = @as(*nodes.StructInit, n);
+        return x.loc;
+    }
+    @if (n.kind == common.NodeKind.TryExpr) {
+        $x: *nodes.TryExpr = @as(*nodes.TryExpr, n);
+        return x.loc;
+    }
+    @if (n.kind == common.NodeKind.ErrorExpr) {
+        $x: *nodes.ErrorExpr = @as(*nodes.ErrorExpr, n);
+        return x.loc;
+    }
+    return common.Location { line: 0, column: 0, path: "" };
 }
 
 pub @func parseExpression(self: *pctx.Parser) {
@@ -16,62 +76,41 @@ pub @func parseExpression(self: *pctx.Parser) {
 }
 
 @func parseAssignment(self: *pctx.Parser) {
-    $left: *nodes.Node = parseBinary(self, 0);
-    @if (@isError(left)) {
-        return left;
-    }
-    @if (self.peekKind(0)) |k| {
-        @if (k == tokens.TokenType.AssignOp) {
-            @if (self.peekValue(0)) |op| {
-                $op_loc = common.Location { line: self.peekLine(0), column: self.peekColumn(0), path: self.path };
-                self.advance();
-                $right: *nodes.Node = parseAssignment(self);
-                @if (@isError(right)) {
-                    return right;
-                }
-                return asNode(@new(self.arena, nodes.Assignment {
-                    kind: common.NodeKind.Assignment,
-                    left: left,
-                    operator: op,
-                    right: right,
-                    loc: op_loc,
-                }));
-            }
-        }
+    $left: *nodes.Node = parseBinary(self, 0)?;
+    @if (self.ifKind(tokens.TokenType.AssignOp)) |op| {
+        $loc = locHere(self);
+        self.advance();
+        $right: *nodes.Node = parseAssignment(self)?;
+        return asNode(@new(self.arena, nodes.Assignment {
+            kind: common.NodeKind.Assignment,
+            left: left,
+            operator: op,
+            right: right,
+            loc: loc,
+        }));
     }
     return left;
 }
 
 @func parseBinary(self: *pctx.Parser, min_prec: i64) {
-    $left: *nodes.Node = parseUnary(self);
-    @if (@isError(left)) {
-        return left;
-    }
+    $left: *nodes.Node = parseUnary(self)?;
     @for (true) {
-        @if (self.peekKind(0)) |k| {
-            @if (k != tokens.TokenType.BinOp) {
+        @if (self.ifKind(tokens.TokenType.BinOp)) |op| {
+            $prec = precedence.of(op);
+            @if (prec < 0 || prec < min_prec) {
                 break;
             }
-            @if (self.peekValue(0)) |op| {
-                $prec = precedence.of(op);
-                @if (prec < 0 || prec < min_prec) {
-                    break;
-                }
-                $op_loc = common.Location { line: self.peekLine(0), column: self.peekColumn(0), path: self.path };
-                self.advance();
-                $right: *nodes.Node = parseBinary(self, prec + 1);
-                @if (@isError(right)) {
-                    return right;
-                }
-                left = asNode(@new(self.arena, nodes.Binary {
-                    kind: common.NodeKind.Binary,
-                    left: left,
-                    operator: op,
-                    right: right,
-                    loc: op_loc,
-                }));
-                continue;
-            }
+            $loc = locHere(self);
+            self.advance();
+            $right: *nodes.Node = parseBinary(self, prec + 1)?;
+            left = asNode(@new(self.arena, nodes.Binary {
+                kind: common.NodeKind.Binary,
+                left: left,
+                operator: op,
+                right: right,
+                loc: loc,
+            }));
+            continue;
         }
         break;
     }
@@ -79,136 +118,447 @@ pub @func parseExpression(self: *pctx.Parser) {
 }
 
 @func parseUnary(self: *pctx.Parser) {
-    @if (self.peekKind(0)) |k| {
-        @if (k == tokens.TokenType.UnaryOp) {
-            @if (self.peekValue(0)) |op| {
-                $op_loc = common.Location { line: self.peekLine(0), column: self.peekColumn(0), path: self.path };
-                self.advance();
-                $arg: *nodes.Node = parseUnary(self);
-                @if (@isError(arg)) {
-                    return arg;
-                }
-                return asNode(@new(self.arena, nodes.Unary {
-                    kind: common.NodeKind.Unary,
-                    operator: op,
-                    arg: arg,
-                    loc: op_loc,
-                }));
-            }
-        }
-        @if (k == tokens.TokenType.BinOp) {
-            @if (self.peekValue(0)) |op| {
-                @if (string.eql(op, "+") || string.eql(op, "-") || string.eql(op, "~") || string.eql(op, "&")) {
-                    $op_loc = common.Location { line: self.peekLine(0), column: self.peekColumn(0), path: self.path };
-                    self.advance();
-                    $arg: *nodes.Node = parseUnary(self);
-                    @if (@isError(arg)) {
-                        return arg;
-                    }
-                    return asNode(@new(self.arena, nodes.Unary {
-                        kind: common.NodeKind.Unary,
-                        operator: op,
-                        arg: arg,
-                        loc: op_loc,
-                    }));
-                }
-            }
-        }
+    @if (self.ifKind(tokens.TokenType.UnaryOp)) |op| {
+        $loc = locHere(self);
+        self.advance();
+        $arg: *nodes.Node = parseUnary(self)?;
+        return asNode(@new(self.arena, nodes.Unary {
+            kind: common.NodeKind.Unary,
+            operator: op,
+            arg: arg,
+            loc: loc,
+        }));
     }
-    return parsePrimary(self);
-}
-
-@func literalKindFor(tok: tokens.TokenType): nodes.LiteralKind {
-    @if (tok == tokens.TokenType.Number) {
-        return nodes.LiteralKind.Number;
-    }
-    @if (tok == tokens.TokenType.String) {
-        return nodes.LiteralKind.String;
-    }
-    @if (tok == tokens.TokenType.Boolean) {
-        return nodes.LiteralKind.Boolean;
-    }
-    @if (tok == tokens.TokenType.Hex) {
-        return nodes.LiteralKind.Hex;
-    }
-    @if (tok == tokens.TokenType.Octal) {
-        return nodes.LiteralKind.Octal;
-    }
-    @if (tok == tokens.TokenType.Binary) {
-        return nodes.LiteralKind.Binary;
-    }
-    return nodes.LiteralKind.Null;
-}
-
-@func parseLiteral(self: *pctx.Parser) {
-    @if (self.peekKind(0)) |k| {
-        @if (self.peekValue(0)) |v| {
-            $loc = common.Location { line: self.peekLine(0), column: self.peekColumn(0), path: self.path };
+    @if (self.ifKind(tokens.TokenType.BinOp)) |op| {
+        @if (string.eql(op, "+") || string.eql(op, "-") || string.eql(op, "~") || string.eql(op, "&")) {
+            $loc = locHere(self);
             self.advance();
-            return asNode(@new(self.arena, nodes.Literal {
-                kind: common.NodeKind.Literal,
-                literal_type: literalKindFor(k),
-                value: v,
-                type_name: null,
+            $arg: *nodes.Node = parseUnary(self)?;
+            return asNode(@new(self.arena, nodes.Unary {
+                kind: common.NodeKind.Unary,
+                operator: op,
+                arg: arg,
                 loc: loc,
             }));
         }
     }
-    return self.fail("Expected literal");
+    @if (self.check(tokens.TokenType.Keyword) && string.eql(self.value(), "const")) {
+        $loc = locHere(self);
+        self.advance();
+        $arg: *nodes.Node = parseUnary(self)?;
+        return asNode(@new(self.arena, nodes.Unary {
+            kind: common.NodeKind.Unary,
+            operator: "const",
+            arg: arg,
+            loc: loc,
+        }));
+    }
+    return parsePostfix(self);
 }
 
-@func parsePrimary(self: *pctx.Parser) {
-    @if (self.peekKind(0)) |k| {
-        @if (k == tokens.TokenType.Boolean || k == tokens.TokenType.String || k == tokens.TokenType.Number || k == tokens.TokenType.Hex || k == tokens.TokenType.Octal || k == tokens.TokenType.Binary) {
-            return parseLiteral(self);
+@func parsePostfix(self: *pctx.Parser) {
+    $e: *nodes.Node = parsePrimary(self)?;
+    @for (true) {
+        @if (self.checkDelim("(")) {
+            e = finishCall(self, e)?;
+            continue;
         }
-        @if (k == tokens.TokenType.Keyword) {
-            @if (self.peekValue(0)) |v| {
-                @if (string.eql(v, "null")) {
-                    $loc = common.Location { line: self.peekLine(0), column: self.peekColumn(0), path: self.path };
-                    self.advance();
-                    return asNode(@new(self.arena, nodes.Literal {
-                        kind: common.NodeKind.Literal,
-                        literal_type: nodes.LiteralKind.Null,
-                        value: "null",
-                        type_name: null,
-                        loc: loc,
-                    }));
-                }
+        @if (self.checkDelim(".")) {
+            self.advance();
+            @if (self.isAtEnd()) {
+                return self.fail("Expected property name");
             }
-            return self.fail("Unexpected keyword in expression");
-        }
-        @if (k == tokens.TokenType.Identifier) {
-            @if (self.peekValue(0)) |name| {
-                $loc = common.Location { line: self.peekLine(0), column: self.peekColumn(0), path: self.path };
+            $k = self.kind();
+            @if (k == tokens.TokenType.Number || k == tokens.TokenType.Hex || k == tokens.TokenType.Octal || k == tokens.TokenType.Binary) {
+                $num = self.value();
+                $ploc = locHere(self);
                 self.advance();
-                return asNode(@new(self.arena, nodes.Primary {
+                $prop = asNode(@new(self.arena, nodes.Primary {
                     kind: common.NodeKind.Primary,
                     primary_kind: nodes.PrimaryKind.Identifier,
-                    name: name,
+                    name: num,
+                    loc: ploc,
+                }));
+                e = asNode(@new(self.arena, nodes.Member {
+                    kind: common.NodeKind.Member,
+                    object: e,
+                    property: prop,
+                    loc: nodeLoc(e),
+                }));
+                continue;
+            }
+            @if (!self.check(tokens.TokenType.Identifier)) {
+                return self.fail("Expected property name");
+            }
+            $name = self.value();
+            $ploc = locHere(self);
+            self.advance();
+            $prop2 = asNode(@new(self.arena, nodes.Primary {
+                kind: common.NodeKind.Primary,
+                primary_kind: nodes.PrimaryKind.Identifier,
+                name: name,
+                loc: ploc,
+            }));
+            e = asNode(@new(self.arena, nodes.Member {
+                kind: common.NodeKind.Member,
+                object: e,
+                property: prop2,
+                loc: nodeLoc(e),
+            }));
+            continue;
+        }
+        @if (self.checkDelim("[")) {
+            e = finishIndex(self, e)?;
+            continue;
+        }
+        @if (self.checkDelim("{")) {
+            @if (e.kind == common.NodeKind.Primary || e.kind == common.NodeKind.Member) {
+                e = finishStructInit(self, e)?;
+                continue;
+            }
+        }
+        @if (self.checkDelim("?")) {
+            self.advance();
+            e = asNode(@new(self.arena, nodes.TryExpr {
+                kind: common.NodeKind.TryExpr,
+                expression: e,
+                loc: nodeLoc(e),
+            }));
+            continue;
+        }
+        break;
+    }
+    return e;
+}
+
+@func finishCall(self: *pctx.Parser, callee: *nodes.Node) {
+    self.consume(tokens.TokenType.Delimiter, "Expected '('", "(")?;
+    $args = list.create(self.arena);
+    @if (!self.checkDelim(")")) {
+        @for (true) {
+            list.push(args, parseExpression(self)?);
+            @if (self.checkDelim(",")) {
+                self.advance();
+                continue;
+            }
+            break;
+        }
+    }
+    self.consume(tokens.TokenType.Delimiter, "Expected ')'", ")")?;
+    return asNode(@new(self.arena, nodes.Call {
+        kind: common.NodeKind.Call,
+        callee: callee,
+        args: args,
+        loc: nodeLoc(callee),
+    }));
+}
+
+@func finishIndex(self: *pctx.Parser, object: *nodes.Node) {
+    self.advance();
+    $start_expr: ?*nodes.Node = null;
+    $end_expr: ?*nodes.Node = null;
+    $is_slice = false;
+
+    @if (self.check(tokens.TokenType.BinOp) && string.eql(self.value(), "..")) {
+        is_slice = true;
+        self.advance();
+        @if (!self.checkDelim("]")) {
+            end_expr = parseBinary(self, 14)?;
+        }
+    } @else {
+        start_expr = parseBinary(self, 14)?;
+        @if (self.check(tokens.TokenType.BinOp) && string.eql(self.value(), "..")) {
+            is_slice = true;
+            self.advance();
+            @if (!self.checkDelim("]")) {
+                end_expr = parseBinary(self, 14)?;
+            }
+        }
+    }
+    self.consume(tokens.TokenType.Delimiter, "Expected ']'", "]")?;
+    @if (!is_slice && start_expr == null) {
+        return self.fail("Expected index expression");
+    }
+    return asNode(@new(self.arena, nodes.Index {
+        kind: common.NodeKind.Index,
+        object: object,
+        index: start_expr,
+        end: end_expr,
+        is_slice: is_slice,
+        type_annotation: null,
+        loc: nodeLoc(object),
+    }));
+}
+
+@func finishStructInit(self: *pctx.Parser, type_expr: *nodes.Node) {
+    $loc = locHere(self);
+    self.advance();
+    $fields = list.create(self.arena);
+    @for (true) {
+        @if (self.isAtEnd() || self.checkDelim("}")) {
+            break;
+        }
+        @if (!self.check(tokens.TokenType.Identifier)) {
+            return self.fail("Expected field name in struct initialization");
+        }
+        $fname = self.value();
+        self.advance();
+        self.consume(tokens.TokenType.Delimiter, "Expected ':' after field name", ":")?;
+        $fval: *nodes.Node = parseExpression(self)?;
+        list.push(fields, @new(self.arena, nodes.StructFieldInit {
+            name: fname,
+            value: fval,
+        }));
+        @if (self.checkDelim(",")) {
+            self.advance();
+            continue;
+        }
+        break;
+    }
+    self.consume(tokens.TokenType.Delimiter, "Expected '}' after struct initialization", "}")?;
+    return asNode(@new(self.arena, nodes.StructInit {
+        kind: common.NodeKind.StructInit,
+        type_expr: type_expr,
+        fields: fields,
+        loc: loc,
+    }));
+}
+
+pub @func looksLikeFieldInitObject(self: *pctx.Parser) {
+    @if (!self.checkDelim("{")) {
+        return false;
+    }
+    @if (self.peekKind(1) != tokens.TokenType.Identifier) {
+        return false;
+    }
+    return self.peekKind(2) == tokens.TokenType.Delimiter && string.eql(self.peekValue(2), ":");
+}
+
+pub @func parseStructInitWithType(self: *pctx.Parser, type_expr: *nodes.Node) {
+    @if (!self.checkDelim("{")) {
+        return self.fail("Expected '{' for object initialization");
+    }
+    return finishStructInit(self, type_expr);
+}
+
+@func looksLikeTypeContinuation(offset: i64, self: *pctx.Parser) {
+    $k = self.peekKind(offset);
+    $v = self.peekValue(offset);
+    @if (k == tokens.TokenType.Delimiter && (string.eql(v, "[") || string.eql(v, "?"))) {
+        return true;
+    }
+    @if (k == tokens.TokenType.BinOp && string.eql(v, "*")) {
+        return true;
+    }
+    @if (k == tokens.TokenType.Identifier) {
+        return true;
+    }
+    return k == tokens.TokenType.Keyword && (string.eql(v, "error") || string.eql(v, "null"));
+}
+
+@func isArrayLengthToken(k: tokens.TokenType) {
+    return k == tokens.TokenType.Number || k == tokens.TokenType.Hex || k == tokens.TokenType.Octal || k == tokens.TokenType.Binary;
+}
+
+@func parseBracketPrimary(self: *pctx.Parser) {
+    $t1 = self.peekKind(1);
+    $v1 = self.peekValue(1);
+
+    @if (t1 == tokens.TokenType.Delimiter && string.eql(v1, "]")) {
+        @if (looksLikeTypeContinuation(2, self)) {
+            return types.parseType(self);
+        }
+        return parseArrayLiteral(self);
+    }
+
+    @if (isArrayLengthToken(t1)) {
+        $t2 = self.peekKind(2);
+        $v2 = self.peekValue(2);
+        @if (t2 == tokens.TokenType.Delimiter && string.eql(v2, "]")) {
+            @if (looksLikeTypeContinuation(3, self)) {
+                return types.parseType(self);
+            }
+        }
+    }
+
+    return parseArrayLiteral(self);
+}
+
+@func literalKindFor(tok: tokens.TokenType): nodes.LiteralKind {
+    return @switch (tok) {
+        tokens.TokenType.Number => { break nodes.LiteralKind.Number; },
+        tokens.TokenType.String => { break nodes.LiteralKind.String; },
+        tokens.TokenType.Boolean => { break nodes.LiteralKind.Boolean; },
+        tokens.TokenType.Hex => { break nodes.LiteralKind.Hex; },
+        tokens.TokenType.Octal => { break nodes.LiteralKind.Octal; },
+        tokens.TokenType.Binary => { break nodes.LiteralKind.Binary; },
+        @else => { break nodes.LiteralKind.Null; },
+    };
+}
+
+@func parseLiteral(self: *pctx.Parser) {
+    $k = self.kind();
+    $v = self.value();
+    $loc = locHere(self);
+    self.advance();
+    return asNode(@new(self.arena, nodes.Literal {
+        kind: common.NodeKind.Literal,
+        literal_type: literalKindFor(k),
+        value: v,
+        type_name: null,
+        loc: loc,
+    }));
+}
+
+@func parseArrayLiteral(self: *pctx.Parser) {
+    $loc = locHere(self);
+    self.advance();
+    $elements = list.create(self.arena);
+    @if (!self.checkDelim("]")) {
+        @for (true) {
+            list.push(elements, parseExpression(self)?);
+            @if (self.checkDelim(",")) {
+                self.advance();
+                @if (self.checkDelim("]")) {
+                    break;
+                }
+                continue;
+            }
+            break;
+        }
+    }
+    self.consume(tokens.TokenType.Delimiter, "Expected ']'", "]")?;
+    return asNode(@new(self.arena, nodes.ArrayLiteral {
+        kind: common.NodeKind.ArrayLiteral,
+        elements: elements,
+        loc: loc,
+    }));
+}
+
+@func parseErrorExpr(self: *pctx.Parser) {
+    $loc = locHere(self);
+    self.advance();
+    self.consume(tokens.TokenType.Delimiter, "Expected '(' after error", "(")?;
+    $args = list.create(self.arena);
+    @if (!self.checkDelim(")")) {
+        @for (true) {
+            list.push(args, parseExpression(self)?);
+            @if (self.checkDelim(",")) {
+                self.advance();
+                continue;
+            }
+            break;
+        }
+    }
+    self.consume(tokens.TokenType.Delimiter, "Expected ')' after error(...)", ")")?;
+    return asNode(@new(self.arena, nodes.ErrorExpr {
+        kind: common.NodeKind.ErrorExpr,
+        args: args,
+        loc: loc,
+    }));
+}
+
+pub @func parsePrimary(self: *pctx.Parser) {
+    @if (self.isAtEnd()) {
+        return self.fail("Unexpected end of expression");
+    }
+    return @switch (self.kind()) {
+        tokens.TokenType.Boolean,
+        tokens.TokenType.String,
+        tokens.TokenType.Number,
+        tokens.TokenType.Hex,
+        tokens.TokenType.Octal,
+        tokens.TokenType.Binary => {
+            break parseLiteral(self);
+        },
+        tokens.TokenType.Keyword => {
+            @if (string.eql(self.value(), "error")) {
+                break parseErrorExpr(self);
+            }
+            @if (string.eql(self.value(), "null")) {
+                $loc = locHere(self);
+                self.advance();
+                break asNode(@new(self.arena, nodes.Literal {
+                    kind: common.NodeKind.Literal,
+                    literal_type: nodes.LiteralKind.Null,
+                    value: "null",
+                    type_name: null,
                     loc: loc,
                 }));
             }
-        }
-        @if (k == tokens.TokenType.Delimiter) {
-            @if (self.peekValue(0)) |v| {
-                @if (string.eql(v, "(")) {
+            break self.fail("Unexpected keyword in expression");
+        },
+        tokens.TokenType.CompilerKeyword => {
+            $raw = self.value();
+            @if (string.eql(raw, "if")) {
+                self.advance();
+                break control.parseIfExpression(self);
+            }
+            @if (string.eql(raw, "switch")) {
+                self.advance();
+                break control.parseSwitchExpression(self);
+            }
+            @if (string.eql(raw, "for")) {
+                self.advance();
+                break control.parseForExpression(self);
+            }
+            $loc = locHere(self);
+            self.advance();
+            break asNode(@new(self.arena, nodes.Primary {
+                kind: common.NodeKind.Primary,
+                primary_kind: nodes.PrimaryKind.Identifier,
+                name: string.concat("@", raw),
+                loc: loc,
+            }));
+        },
+        tokens.TokenType.Identifier => {
+            @if (self.peekKind(1) == tokens.TokenType.Delimiter && string.eql(self.peekValue(1), ":")) {
+                @if (self.peekKind(2) == tokens.TokenType.Delimiter && string.eql(self.peekValue(2), "{")) {
+                    $label = @as(string, self.value());
                     self.advance();
-                    $inner: *nodes.Node = parseExpression(self);
-                    @if (@isError(inner)) {
-                        return inner;
-                    }
-                    $err = self.consume(tokens.TokenType.Delimiter, "Expected ')'", ")");
-                    @if (@isError(err)) {
-                        return err;
-                    }
-                    return inner;
+                    self.advance();
+                    break control.parseLabeledBlock(self, label);
                 }
             }
-        }
-        @if (k == tokens.TokenType.VRegister) {
-            return self.fail("'$' is only used in declarations");
-        }
-    }
-    return self.fail("Unexpected end of expression");
+            $name = self.value();
+            $loc = locHere(self);
+            self.advance();
+            break asNode(@new(self.arena, nodes.Primary {
+                kind: common.NodeKind.Primary,
+                primary_kind: nodes.PrimaryKind.Identifier,
+                name: name,
+                loc: loc,
+            }));
+        },
+        tokens.TokenType.Delimiter => {
+            @if (string.eql(self.value(), "(")) {
+                self.advance();
+                $inner: *nodes.Node = parseExpression(self)?;
+                self.consume(tokens.TokenType.Delimiter, "Expected ')'", ")")?;
+                break inner;
+            }
+            @if (string.eql(self.value(), "[")) {
+                break parseBracketPrimary(self);
+            }
+            @if (string.eql(self.value(), "{")) {
+                break control.parseBlock(self);
+            }
+            @if (string.eql(self.value(), "?") && looksLikeTypeContinuation(1, self)) {
+                break types.parseType(self);
+            }
+            break self.fail("Unexpected end of expression");
+        },
+        tokens.TokenType.BinOp => {
+            @if (string.eql(self.value(), "*") && looksLikeTypeContinuation(1, self)) {
+                break types.parseType(self);
+            }
+            break self.fail("Unexpected end of expression");
+        },
+        tokens.TokenType.VRegister => {
+            break self.fail("'$' is only used in declarations");
+        },
+        @else => {
+            break self.fail("Unexpected end of expression");
+        },
+    };
 }

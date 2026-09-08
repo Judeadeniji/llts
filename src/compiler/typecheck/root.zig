@@ -20,6 +20,8 @@ pub const Env = struct {
     const_names: std.StringHashMap(void),
     /// When set, literals keep singleton types (`"x"`, `0`, `true`) and arrays become deep tuples.
     prefer_literals: bool = false,
+    /// True while typechecking a function body — locals must not overwrite `global_types`.
+    in_function: bool = false,
     allocator: std.mem.Allocator,
 
     fn init(allocator: std.mem.Allocator) Env {
@@ -1038,6 +1040,11 @@ fn inferExprInner(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, 
             const cond_t = try inferExpr(state, env, ta, i.condition);
             try env.pushScope();
             defer env.popScope();
+            // `@if (@isError(x))` — narrow `x` to `error` in the then-body so
+            // `return x` typechecks against any error-union return.
+            if (isErrorNarrowName(i.condition)) |ename| {
+                try env.define(ename, ir.TError);
+            }
             if (i.pipe_value) |pv| {
                 if (pv.* != .primary) return compiler_errors.compileFailFmt(state, "if capture must be identifier", .{});
                 const unwrapped = ir.optionalPayload(cond_t) orelse cond_t;
@@ -1189,6 +1196,19 @@ fn isCmpOrLogic(op: []const u8) bool {
         std.mem.eql(u8, op, "<") or std.mem.eql(u8, op, "<=") or
         std.mem.eql(u8, op, ">") or std.mem.eql(u8, op, ">=") or
         std.mem.eql(u8, op, "&&") or std.mem.eql(u8, op, "||");
+}
+
+/// `@if (@isError(name))` → `name` for then-branch narrowing to `error`.
+fn isErrorNarrowName(cond: *ast.Node) ?[]const u8 {
+    if (cond.* != .call) return null;
+    const c = &cond.call;
+    if (c.callee.* != .primary) return null;
+    if (!std.mem.eql(u8, c.callee.primary.name, "@isError")) return null;
+    if (c.args.len != 1) return null;
+    if (c.args[0].* != .primary) return null;
+    const p = c.args[0].primary;
+    if (p.kind != .identifier and p.kind != .register) return null;
+    return p.name;
 }
 
 fn isArith(op: []const u8) bool {
@@ -1438,6 +1458,11 @@ fn checkStmt(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node:
             if (d.is_const and d.value.* == .literal) env.prefer_literals = true;
             defer env.prefer_literals = prev_lit;
             const value_type = try inferExpr(state, env, ta, d.value);
+            // Module-level names only: function locals sharing names like `path` / `args`
+            // must not clobber `global_types` (breaks multi-module compile / emit).
+            // Module-qualified names (`path.lls::cwd`) ARE module globals and must persist
+            // so method calls resolve before those decls are emitted.
+            const persist_global = !env.in_function;
             if (d.type_annotation) |ann| {
                 const annot = try from_ast.typeFromAst(ann, state, ta);
                 var ctx_buf: [160]u8 = undefined;
@@ -1446,13 +1471,13 @@ fn checkStmt(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node:
                 // Contextual typing: initializer / uses see the annotation width for codegen.
                 try recordExprType(state, d.value, annot);
                 try env.define(d.name, annot);
-                if (std.mem.indexOf(u8, d.name, "::") == null) {
+                if (persist_global) {
                     const disp = try ownDisplay(state, annot);
                     try state.global_types.put(d.name, disp);
                 }
             } else if (value_type == .struct_) {
                 try env.define(d.name, value_type);
-                try state.global_types.put(d.name, value_type.struct_);
+                if (persist_global) try state.global_types.put(d.name, value_type.struct_);
             } else if (value_type == .enum_ or value_type == .enum_lit or
                 value_type == .error_set or value_type == .error_lit or
                 value_type == .str_lit or value_type == .int_lit or value_type == .bool_lit or
@@ -1463,16 +1488,18 @@ fn checkStmt(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node:
                 // cross-module lookups resolve to a parseable type name rather than
                 // the raw literal value ("10", etc.).  @const preserves the literal
                 // display for singleton type matching.
-                const disp = if (value_type == .int_lit and !d.is_const)
-                    "i64"
-                else
-                    try ownDisplay(state, value_type);
-                try state.global_types.put(d.name, disp);
+                if (persist_global) {
+                    const disp = if (value_type == .int_lit and !d.is_const)
+                        "i64"
+                    else
+                        try ownDisplay(state, value_type);
+                    try state.global_types.put(d.name, disp);
+                }
             } else {
                 try env.define(d.name, value_type);
                 // Persist pointer / array / function displays so emit can resolve layout / types.
                 // Skip `error` — builtin `error` struct would steal LOAD_FIELD from runtime errors.
-                if (std.mem.indexOf(u8, d.name, "::") == null and
+                if (persist_global and
                     (value_type == .ptr or value_type == .array or value_type == .func))
                 {
                     const disp = try ownDisplay(state, value_type);
@@ -1493,6 +1520,12 @@ fn checkStmt(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node:
             }
             return t;
         },
+        // `break value` / `continue` feed the enclosing `@switch`/`@for` — not a discard.
+        .break_expr => |br| {
+            if (br.value) |v| _ = try inferExpr(state, env, ta, v);
+            return null;
+        },
+        .continue_expr => return null,
         .defer_stmt => |d| {
             _ = try checkStmt(state, env, ta, d.body);
             return null;
@@ -1545,8 +1578,19 @@ fn checkFunction(state: *state_mod.CompilerState, ta: ir.TypeAlloc, f: *ast.Func
     while (nit.next()) |n| try env.globals.put(n.*, ir.TUnknown);
 
     const annotated: ?ir.Type = if (f.return_type) |rt| try from_ast.typeFromAst(rt, state, ta) else null;
-    env.annotated_return = annotated;
-    env.expected_return = annotated;
+    // Prefer the refined `def.return_type` when it includes `error` (e.g. annotation
+    // was `T` but the body returns `error(...)` / `fail()` — see refineErrorReturns).
+    var expected = annotated;
+    if (state.functions.get(f.name)) |def| {
+        if (def.return_type) |rt| {
+            if (from_ast.typeAllowsError(rt)) {
+                expected = try from_ast.parseDisplayType(state, ta, rt, null);
+            }
+        }
+    }
+    env.annotated_return = expected;
+    env.expected_return = expected;
+    env.in_function = true;
 
     try env.pushScope();
     defer env.popScope();
@@ -1591,10 +1635,173 @@ fn checkFunction(state: *state_mod.CompilerState, ta: ir.TypeAlloc, f: *ast.Func
         }
     }
 
-    if (annotated) |a| {
+    if (expected) |a| {
         if (state.functions.getPtr(f.name)) |def| {
-            def.return_type = try ownDisplay(state, a);
+            const disp = try ownDisplay(state, a);
+            // `unknown | error` from refineErrorReturns — upgrade success arm from body.
+            const weak_success = std.mem.eql(u8, disp, "unknown") or
+                std.mem.eql(u8, disp, "error") or
+                std.mem.startsWith(u8, disp, "unknown |");
+            if (weak_success) {
+                if (inferReturnDisplayFromBody(state, f.body)) |better| {
+                    var final = better;
+                    if (from_ast.typeAllowsError(disp) and !from_ast.typeAllowsError(final)) {
+                        const w = try std.fmt.allocPrint(state.allocator, "{s} | error", .{final});
+                        try state.owned.append(state.allocator, w);
+                        final = w;
+                    }
+                    def.return_type = final;
+                } else {
+                    def.return_type = disp;
+                }
+            } else {
+                def.return_type = disp;
+            }
         }
+    } else if (state.functions.getPtr(f.name)) |def| {
+        // Unannotated: refine from return-value types recorded while checking the body
+        // (`return sc` after `$sc = @new(...)` is invisible to analyzeBody).
+        if (inferReturnDisplayFromBody(state, f.body)) |inferred| {
+            const cur = def.return_type;
+            const weak = cur == null or
+                std.mem.eql(u8, cur.?, "unknown") or
+                std.mem.eql(u8, cur.?, "error") or
+                std.mem.startsWith(u8, cur.?, "unknown |");
+            if (weak) {
+                // Preserve `| error` when analyzeBody/refineErrorReturns already saw
+                // an error path but body walk only found the success arm.
+                var final = inferred;
+                if (cur) |c| {
+                    if (from_ast.typeAllowsError(c) and !from_ast.typeAllowsError(final)) {
+                        const w = std.fmt.allocPrint(state.allocator, "{s} | error", .{final}) catch final;
+                        state.owned.append(state.allocator, w) catch {};
+                        final = w;
+                    }
+                }
+                def.return_type = final;
+            }
+        }
+    }
+}
+
+/// Merge return-value displays from `type_of_results` into a function return display.
+fn inferReturnDisplayFromBody(state: *state_mod.CompilerState, body: *ast.Node) ?[]const u8 {
+    var success: ?[]const u8 = null;
+    var has_error = false;
+    walkReturnDisplays(state, body, &success, &has_error);
+    if (success) |s| {
+        if (has_error and !from_ast.typeAllowsError(s)) {
+            const w = std.fmt.allocPrint(state.allocator, "{s} | error", .{s}) catch return s;
+            state.owned.append(state.allocator, w) catch {};
+            return w;
+        }
+        return s;
+    }
+    // Keep a success arm open — pure `error` breaks `T = f()?` when f's success
+    // type is not yet refined (call-order / mutual recursion).
+    if (has_error) return "unknown | error";
+    return null;
+}
+
+fn walkReturnDisplays(
+    state: *state_mod.CompilerState,
+    node: *ast.Node,
+    success: *?[]const u8,
+    has_error: *bool,
+) void {
+    switch (node.*) {
+        .return_expr => |r| {
+            if (r.return_value) |v| {
+                if (v.* == .error_expr) {
+                    has_error.* = true;
+                } else if (state.type_of_results.get(v)) |t| {
+                    if (std.mem.eql(u8, t, "error") or std.mem.eql(u8, t, "unknown | error")) {
+                        has_error.* = true;
+                    } else if (from_ast.typeAllowsError(t)) {
+                        has_error.* = true;
+                        var arena = std.heap.ArenaAllocator.init(state.allocator);
+                        defer arena.deinit();
+                        const peeled = from_ast.unwrapErrorDisplay(arena.allocator(), t) catch t;
+                        if (!std.mem.eql(u8, peeled, "unknown") and !std.mem.eql(u8, peeled, "null")) {
+                            if (success.* == null) {
+                                const owned = state.allocator.dupe(u8, peeled) catch peeled;
+                                state.owned.append(state.allocator, owned) catch {};
+                                success.* = owned;
+                            }
+                        }
+                    } else if (!std.mem.eql(u8, t, "unknown") and !std.mem.eql(u8, t, "null")) {
+                        if (success.* == null) success.* = t;
+                    }
+                } else if (v.* == .call) {
+                    // Callee already refined to an error-carrying return (e.g. `self.fail`).
+                    if (v.call.callee.* == .member and v.call.callee.member.property.* == .primary) {
+                        const prop = v.call.callee.member.property.primary.name;
+                        const object = v.call.callee.member.object;
+                        if (object.* == .primary and std.mem.eql(u8, object.primary.name, "self")) {
+                            var it = state.functions.iterator();
+                            while (it.next()) |e| {
+                                if (std.mem.endsWith(u8, e.key_ptr.*, prop)) {
+                                    const prefix_len = e.key_ptr.*.len - prop.len;
+                                    if (prefix_len >= 2 and std.mem.eql(u8, e.key_ptr.*[prefix_len - 2 .. prefix_len], "::")) {
+                                        if (e.value_ptr.return_type) |rt| {
+                                            if (from_ast.typeAllowsError(rt)) has_error.* = true;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } else if (v.call.callee.* == .primary) {
+                        if (state.functions.get(v.call.callee.primary.name)) |def| {
+                            if (def.return_type) |rt| {
+                                if (from_ast.typeAllowsError(rt)) has_error.* = true;
+                            }
+                        }
+                    }
+                }
+                walkReturnDisplays(state, v, success, has_error);
+            }
+        },
+        // `expr?` propagates error out of the enclosing function.
+        .try_expr => |t| {
+            has_error.* = true;
+            walkReturnDisplays(state, t.expression, success, has_error);
+        },
+        .declaration => |d| walkReturnDisplays(state, d.value, success, has_error),
+        .assignment => |a| {
+            walkReturnDisplays(state, a.left, success, has_error);
+            walkReturnDisplays(state, a.right, success, has_error);
+        },
+        .call => |c| {
+            walkReturnDisplays(state, c.callee, success, has_error);
+            for (c.args) |a| walkReturnDisplays(state, a, success, has_error);
+        },
+        .binary => |b| {
+            walkReturnDisplays(state, b.left, success, has_error);
+            walkReturnDisplays(state, b.right, success, has_error);
+        },
+        .unary => |u| walkReturnDisplays(state, u.arg, success, has_error),
+        .member => |m| walkReturnDisplays(state, m.object, success, has_error),
+        .index => |ix| {
+            walkReturnDisplays(state, ix.object, success, has_error);
+            if (ix.index) |i| walkReturnDisplays(state, i, success, has_error);
+            if (ix.end) |e| walkReturnDisplays(state, e, success, has_error);
+        },
+        .block => |b| for (b.statements) |s| walkReturnDisplays(state, s, success, has_error),
+        .if_expr => |i| {
+            walkReturnDisplays(state, i.condition, success, has_error);
+            walkReturnDisplays(state, i.body, success, has_error);
+            if (i.else_body) |e| walkReturnDisplays(state, e, success, has_error);
+        },
+        .switch_expr => |sw| {
+            walkReturnDisplays(state, sw.condition, success, has_error);
+            for (sw.prongs) |prong| walkReturnDisplays(state, prong.body, success, has_error);
+        },
+        .for_expr => |f| {
+            walkReturnDisplays(state, f.expr, success, has_error);
+            walkReturnDisplays(state, f.body, success, has_error);
+        },
+        .defer_stmt => |d| walkReturnDisplays(state, d.body, success, has_error),
+        else => {},
     }
 }
 

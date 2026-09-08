@@ -1,0 +1,49 @@
+# Port of src/parser/enums.zig
+
+@const $pctx = @import("./ctx.lls");
+@const $tokens = @import("../scanner/tokens.lls");
+@const $nodes = @import("../ast/nodes.lls");
+@const $common = @import("../ast/common.lls");
+@const $list = @import("std/list.lls");
+
+@func asNode(p: *nodes.Node): *nodes.Node {
+    return p;
+}
+
+pub @func parseCompilerEnum(self: *pctx.Parser) {
+    $loc = self.prevLoc();
+    @if (!self.check(tokens.TokenType.Identifier)) {
+        return self.fail("Expected enum name");
+    }
+    $name = self.value();
+    self.advance();
+    self.consume(tokens.TokenType.Delimiter, "Expected '{' before enum body", "{")?;
+
+    $variants = list.create(self.arena);
+    @for (true) {
+        @if (self.isAtEnd() || self.checkDelim("}")) {
+            break;
+        }
+        @if (!self.check(tokens.TokenType.Identifier)) {
+            return self.fail("Expected enum variant name");
+        }
+        list.push(variants, self.value());
+        self.advance();
+        @if (self.checkDelim(",")) {
+            self.advance();
+            continue;
+        }
+        @if (!self.checkDelim("}")) {
+            return self.fail("Expected ',' or '}' after enum variant");
+        }
+    }
+
+    self.consume(tokens.TokenType.Delimiter, "Expected '}' after enum body", "}")?;
+    return asNode(@new(self.arena, nodes.EnumDecl {
+        kind: common.NodeKind.EnumDecl,
+        name: name,
+        variants: variants,
+        is_public: false,
+        loc: loc,
+    }));
+}

@@ -1,0 +1,321 @@
+# Port of src/parser/types.zig
+
+@const $pctx = @import("./ctx.lls");
+@const $tokens = @import("../scanner/tokens.lls");
+@const $nodes = @import("../ast/nodes.lls");
+@const $common = @import("../ast/common.lls");
+@const $list = @import("std/list.lls");
+@const $string = @import("std/string.lls");
+
+@func asNode(p: *nodes.Node): *nodes.Node {
+    return p;
+}
+
+pub @func parseType(self: *pctx.Parser) {
+    $left: *nodes.Node = parseIntersection(self)?;
+    @for (true) {
+        @if (!self.checkDelim("|")) {
+            break;
+        }
+        self.advance();
+        $right: *nodes.Node = parseIntersection(self)?;
+        left = asNode(@new(self.arena, nodes.UnionType {
+            kind: common.NodeKind.UnionType,
+            left: left,
+            right: right,
+            loc: self.locHere(),
+        }));
+    }
+    return left;
+}
+
+@func parseIntersection(self: *pctx.Parser) {
+    $left: *nodes.Node = parseTypeOperand(self)?;
+    @for (true) {
+        @if (!self.checkDelim("&")) {
+            break;
+        }
+        self.advance();
+        $right: *nodes.Node = parseTypeOperand(self)?;
+        left = asNode(@new(self.arena, nodes.IntersectType {
+            kind: common.NodeKind.IntersectType,
+            left: left,
+            right: right,
+            loc: self.locHere(),
+        }));
+    }
+    return left;
+}
+
+@func parseTypeOperand(self: *pctx.Parser) {
+    @if (self.checkDelim("?")) {
+        $loc = self.locHere();
+        self.advance();
+        $inner: *nodes.Node = parseTypeOperand(self)?;
+        $null_node = asNode(@new(self.arena, nodes.Primary {
+            kind: common.NodeKind.Primary,
+            primary_kind: nodes.PrimaryKind.Identifier,
+            name: "null",
+            loc: loc,
+        }));
+        return asNode(@new(self.arena, nodes.UnionType {
+            kind: common.NodeKind.UnionType,
+            left: inner,
+            right: null_node,
+            loc: loc,
+        }));
+    }
+
+    @if (self.checkDelim("*")) {
+        $loc = self.locHere();
+        self.advance();
+        $elem: *nodes.Node = parseTypeOperand(self)?;
+        return asNode(@new(self.arena, nodes.PointerType {
+            kind: common.NodeKind.PointerType,
+            elem: elem,
+            loc: loc,
+        }));
+    }
+
+    @if (self.checkDelim("[")) {
+        $loc = self.locHere();
+        self.advance();
+
+        @if (self.checkDelim("]")) {
+            self.advance();
+            $elem2: *nodes.Node = parseType(self)?;
+            return asNode(@new(self.arena, nodes.ArrayType {
+                kind: common.NodeKind.ArrayType,
+                elem: elem2,
+                length_text: null,
+                loc: loc,
+            }));
+        }
+
+        $k = self.kind();
+        @if (k == tokens.TokenType.Number || k == tokens.TokenType.Hex || k == tokens.TokenType.Octal || k == tokens.TokenType.Binary) {
+            @if (self.peekKind(1) == tokens.TokenType.Delimiter && string.eql(self.peekValue(1), "]")) {
+                $num = self.value();
+                self.advance();
+                self.advance();
+                $elem3: *nodes.Node = parseType(self)?;
+                return asNode(@new(self.arena, nodes.ArrayType {
+                    kind: common.NodeKind.ArrayType,
+                    elem: elem3,
+                    length_text: num,
+                    loc: loc,
+                }));
+            }
+        }
+
+        $elems = list.create(self.arena);
+        @for (true) {
+            list.push(elems, parseType(self)?);
+            @if (self.checkDelim(",")) {
+                self.advance();
+                @if (self.checkDelim("]")) {
+                    break;
+                }
+                continue;
+            }
+            break;
+        }
+        self.consume(tokens.TokenType.Delimiter, "Expected ']' in tuple type", "]")?;
+        return asNode(@new(self.arena, nodes.TupleType {
+            kind: common.NodeKind.TupleType,
+            elems: elems,
+            loc: loc,
+        }));
+    }
+
+    return parseTypeAtom(self);
+}
+
+@func parseTypeAtom(self: *pctx.Parser) {
+    @if (self.isAtEnd()) {
+        return self.fail("Expected type name");
+    }
+
+    @if (self.checkDelim("{")) {
+        return parseShapeType(self);
+    }
+
+    @if (self.check(tokens.TokenType.CompilerKeyword) && string.eql(self.value(), "func")) {
+        @if (self.peekKind(1) == tokens.TokenType.Delimiter && string.eql(self.peekValue(1), "(")) {
+            return parseFuncType(self);
+        }
+        return self.fail("Expected '(' after @func in type position");
+    }
+
+    @if (self.check(tokens.TokenType.String)) {
+        $v = self.value();
+        $loc = self.locHere();
+        self.advance();
+        return asNode(@new(self.arena, nodes.Literal {
+            kind: common.NodeKind.Literal,
+            literal_type: nodes.LiteralKind.String,
+            value: v,
+            type_name: null,
+            loc: loc,
+        }));
+    }
+
+    $tk = self.kind();
+    @if (tk == tokens.TokenType.Number || tk == tokens.TokenType.Hex || tk == tokens.TokenType.Octal || tk == tokens.TokenType.Binary) {
+        $v2 = self.value();
+        $loc2 = self.locHere();
+        $lk = nodes.LiteralKind.Number;
+        @if (tk == tokens.TokenType.Hex) {
+            lk = nodes.LiteralKind.Hex;
+        }
+        @if (tk == tokens.TokenType.Octal) {
+            lk = nodes.LiteralKind.Octal;
+        }
+        @if (tk == tokens.TokenType.Binary) {
+            lk = nodes.LiteralKind.Binary;
+        }
+        self.advance();
+        return asNode(@new(self.arena, nodes.Literal {
+            kind: common.NodeKind.Literal,
+            literal_type: lk,
+            value: v2,
+            type_name: null,
+            loc: loc2,
+        }));
+    }
+
+    @if (self.check(tokens.TokenType.Boolean)) {
+        $v3 = self.value();
+        $loc3 = self.locHere();
+        self.advance();
+        return asNode(@new(self.arena, nodes.Literal {
+            kind: common.NodeKind.Literal,
+            literal_type: nodes.LiteralKind.Boolean,
+            value: v3,
+            type_name: null,
+            loc: loc3,
+        }));
+    }
+
+    @if (self.check(tokens.TokenType.Keyword) && (string.eql(self.value(), "error") || string.eql(self.value(), "null"))) {
+        $name = self.value();
+        $loc4 = self.locHere();
+        self.advance();
+        return asNode(@new(self.arena, nodes.Primary {
+            kind: common.NodeKind.Primary,
+            primary_kind: nodes.PrimaryKind.Identifier,
+            name: name,
+            loc: loc4,
+        }));
+    }
+
+    @if (!self.check(tokens.TokenType.Identifier)) {
+        return self.fail("Expected type name");
+    }
+    $tname = self.value();
+    $tloc = self.locHere();
+    self.advance();
+    $node = asNode(@new(self.arena, nodes.Primary {
+        kind: common.NodeKind.Primary,
+        primary_kind: nodes.PrimaryKind.Identifier,
+        name: tname,
+        loc: tloc,
+    }));
+    @for (true) {
+        @if (!self.checkDelim(".")) {
+            break;
+        }
+        self.advance();
+        @if (!self.check(tokens.TokenType.Identifier)) {
+            return self.fail("Expected type name after '.'");
+        }
+        $pname = self.value();
+        $ploc = self.locHere();
+        self.advance();
+        $prop = asNode(@new(self.arena, nodes.Primary {
+            kind: common.NodeKind.Primary,
+            primary_kind: nodes.PrimaryKind.Identifier,
+            name: pname,
+            loc: ploc,
+        }));
+        node = asNode(@new(self.arena, nodes.Member {
+            kind: common.NodeKind.Member,
+            object: node,
+            property: prop,
+            loc: tloc,
+        }));
+    }
+    return node;
+}
+
+@func parseShapeType(self: *pctx.Parser) {
+    $loc = self.locHere();
+    self.advance();
+    $fields = list.create(self.arena);
+    @for (true) {
+        @if (self.isAtEnd() || self.checkDelim("}")) {
+            break;
+        }
+        @if (!self.check(tokens.TokenType.Identifier)) {
+            return self.fail("Expected field name in shape type");
+        }
+        $fname = self.value();
+        self.advance();
+        self.consume(tokens.TokenType.Delimiter, "Expected ':' after field name", ":")?;
+        $ftype: *nodes.Node = parseType(self)?;
+        self.consume(tokens.TokenType.Delimiter, "Expected ';' after field in shape type", ";")?;
+        list.push(fields, @new(self.arena, nodes.ShapeField {
+            name: fname,
+            type_annotation: ftype,
+        }));
+    }
+    self.consume(tokens.TokenType.Delimiter, "Expected '}' after shape type", "}")?;
+    return asNode(@new(self.arena, nodes.ShapeType {
+        kind: common.NodeKind.ShapeType,
+        fields: fields,
+        loc: loc,
+    }));
+}
+
+@func parseFuncType(self: *pctx.Parser) {
+    $loc = self.locHere();
+    self.advance();
+    self.consume(tokens.TokenType.Delimiter, "Expected '(' after @func", "(")?;
+    $params = list.create(self.arena);
+    $is_variadic = false;
+    @if (!self.checkDelim(")")) {
+        @for (true) {
+            @if (self.checkDelim("...")) {
+                self.advance();
+                is_variadic = true;
+            }
+            list.push(params, parseType(self)?);
+            @if (is_variadic) {
+                self.consume(tokens.TokenType.Delimiter, "Expected ')' after variadic parameter type", ")")?;
+                break;
+            }
+            @if (self.checkDelim(",")) {
+                self.advance();
+                continue;
+            }
+            self.consume(tokens.TokenType.Delimiter, "Expected ',' or ')' in function type", ")")?;
+            break;
+        }
+    } @else {
+        self.advance();
+    }
+
+    $return_type: ?*nodes.Node = null;
+    @if (self.checkDelim(":")) {
+        self.advance();
+        return_type = parseType(self)?;
+    }
+
+    return asNode(@new(self.arena, nodes.FuncType {
+        kind: common.NodeKind.FuncType,
+        params: params,
+        return_type: return_type,
+        is_variadic: is_variadic,
+        loc: loc,
+    }));
+}

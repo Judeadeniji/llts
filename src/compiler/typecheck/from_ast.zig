@@ -595,6 +595,18 @@ pub fn lookupStructField(
         const ty = sd.types.get(field) orelse return null;
         return .{ .def = sd, .offset = off, .field_ty = ty };
     }
+    // `*T | error` / `T | error` — field access uses the success arm (gradual).
+    if (typeAllowsError(bare)) {
+        var arena = std.heap.ArenaAllocator.init(state.allocator);
+        defer arena.deinit();
+        const success = unwrapErrorDisplay(arena.allocator(), bare) catch return null;
+        const peeled = peelTypedefDisplay(state, success);
+        if (lookupStruct(state, peeled)) |sd| {
+            const off = sd.offsets.get(field) orelse return null;
+            const ty = sd.types.get(field) orelse return null;
+            return .{ .def = sd, .offset = off, .field_ty = ty };
+        }
+    }
     // Struct union: `Literal | Add`
     if (std.mem.indexOf(u8, bare, " | ") == null) return null;
     var arena = std.heap.ArenaAllocator.init(state.allocator);
@@ -606,7 +618,9 @@ pub fn lookupStructField(
     var first_ty: ?[]const u8 = null;
     var first_def: ?state_mod.StructDef = null;
     for (parts) |part| {
-        const sd = state.structs.get(std.mem.trim(u8, part, " \t")) orelse return null;
+        const trimmed = std.mem.trim(u8, part, " \t");
+        if (std.mem.eql(u8, trimmed, "error")) continue;
+        const sd = lookupStruct(state, peelTypedefDisplay(state, trimmed)) orelse return null;
         const off = sd.offsets.get(field) orelse return null;
         const ty = sd.types.get(field) orelse return null;
         if (first_off) |fo| {
@@ -617,6 +631,7 @@ pub fn lookupStructField(
             first_def = sd;
         }
     }
+    if (first_def == null) return null;
     return .{ .def = first_def.?, .offset = first_off.?, .field_ty = first_ty.? };
 }
 

@@ -5,8 +5,8 @@ The `std/mem` module provides essential utilities for dynamic memory allocation.
 ## Overview
 
 In `llts-zig`, the memory region model supports different styles of allocation:
-- **Frame-Local Bump Allocation:** Creating simple objects or arrays directly (e.g., `Foo{}` or `[...]`) typically performs a frame-local bump allocation. These objects die when the function returns and cannot safely escape.
-- **Heap/Library Allocation:** Using `alloc` or an `Arena` allocator pushes items to the heap, which allows objects to outlive their current frame.
+- **Frame-Local Bump Allocation:** Creating simple objects or arrays directly (e.g., `Foo{}` or `[...]`) typically performs a frame-local bump allocation. These objects die when the function returns. Returning a frame-local *variable* is a compile error; a bare `return Foo{…}` immortalizes the literal.
+- **Heap/Library Allocation:** Using `@new` with an `Arena` allocator places items in reclaimable heap, which allows objects to outlive their current frame without process-lifetime immortalization.
 
 ### `@new(allocator, Type | value)`
 

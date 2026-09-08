@@ -4,16 +4,32 @@
 import { test } from "bun:test";
 import { expectError, expectOutput, runSource } from "./helpers";
 
-test("returning bare struct literal is a compile error", () => {
-	expectError(
+test("returning bare struct literal is immortalized", () => {
+	expectOutput(
 		runSource(`
 @struct Point { x: int; }
 @func make() {
     return Point { x: 1 };
 }
-print(make());
+print(make().x);
 `),
-		"escapes its frame region",
+		["1"],
+	);
+});
+
+test("returning nested struct literals is immortalized", () => {
+	expectOutput(
+		runSource(`
+@struct Loc { line: int; }
+@struct Point { x: int; loc: Loc; }
+@func make() {
+    return Point { x: 2, loc: Loc { line: 9 } };
+}
+$p = make();
+print(p.x);
+print(p.loc.line);
+`),
+		["2", "9"],
 	);
 });
 
@@ -24,6 +40,21 @@ test("returning local bound to frame struct is a compile error", () => {
 @func make() {
     $p = Point { x: 1 };
     return p;
+}
+print(make());
+`),
+		"escapes its frame region",
+	);
+});
+
+test("returning struct literal that embeds a frame local is a compile error", () => {
+	expectError(
+		runSource(`
+@struct Point { x: int; }
+@struct Wrap { p: Point; }
+@func make() {
+    $p = Point { x: 1 };
+    return Wrap { p: p };
 }
 print(make());
 `),

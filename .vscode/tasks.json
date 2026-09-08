@@ -1,0 +1,15 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "vscode-llts: compile",
+      "type": "shell",
+      "command": "bun run compile",
+      "options": {
+        "cwd": "${workspaceFolder}/editors/vscode-llts"
+      },
+      "group": "build",
+      "problemMatcher": ["$tsc"]
+    }
+  ]
+}

@@ -1,0 +1,60 @@
+# Port of src/parser/structs.zig
+
+@const $pctx = @import("./ctx.lls");
+@const $tokens = @import("../scanner/tokens.lls");
+@const $nodes = @import("../ast/nodes.lls");
+@const $common = @import("../ast/common.lls");
+@const $decl = @import("./decl.lls");
+@const $types = @import("./types.lls");
+@const $list = @import("std/list.lls");
+@const $string = @import("std/string.lls");
+
+@func asNode(p: *nodes.Node): *nodes.Node {
+    return p;
+}
+
+pub @func parseCompilerStruct(self: *pctx.Parser) {
+    $loc = self.prevLoc();
+    @if (!self.check(tokens.TokenType.Identifier)) {
+        return self.fail("Expected struct name");
+    }
+    $name = self.value();
+    self.advance();
+    self.consume(tokens.TokenType.Delimiter, "Expected '{' before struct body", "{")?;
+
+    $fields = list.create(self.arena);
+    $methods = list.create(self.arena);
+
+    @for (true) {
+        @if (self.isAtEnd() || self.checkDelim("}")) {
+            break;
+        }
+        @if (self.check(tokens.TokenType.CompilerKeyword) && string.eql(self.value(), "func")) {
+            self.advance();
+            list.push(methods, decl.parseCompilerFunc(self)?);
+            continue;
+        }
+        @if (!self.check(tokens.TokenType.Identifier)) {
+            return self.fail("Expected field name in struct declaration");
+        }
+        $fname = self.value();
+        self.advance();
+        self.consume(tokens.TokenType.Delimiter, "Expected ':' after field name", ":")?;
+        $ftype: *nodes.Node = types.parseType(self)?;
+        self.consume(tokens.TokenType.Delimiter, "Expected ';' after field declaration", ";")?;
+        list.push(fields, @new(self.arena, nodes.StructField {
+            name: fname,
+            type_annotation: ftype,
+        }));
+    }
+
+    self.consume(tokens.TokenType.Delimiter, "Expected '}' after struct body", "}")?;
+    return asNode(@new(self.arena, nodes.StructDecl {
+        kind: common.NodeKind.StructDecl,
+        name: name,
+        fields: fields,
+        methods: methods,
+        is_public: false,
+        loc: loc,
+    }));
+}

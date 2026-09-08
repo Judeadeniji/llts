@@ -1,15 +1,30 @@
-# Port of src/parser/root.zig — expression entry for the first vertical slice.
+# Port of src/parser/root.zig — scan → statements → Document (thin stmt/expr slice).
 
 @const $scanner = @import("../scanner/root.lls");
 @const $pctx = @import("./ctx.lls");
 @const $expr = @import("./expr.lls");
+@const $stmt = @import("./stmt.lls");
+@const $ast = @import("../ast/root.lls");
+@const $nodes = @import("../ast/nodes.lls");
+@const $list = @import("std/list.lls");
 @const $mem = @import("std/mem.lls");
 
 pub @func parseExpression(arena: mem.Arena, source: string, path: string) {
-    $sc = scanner.scanRaw(arena, source, path);
-    @if (@isError(sc)) {
-        return sc;
-    }
-    $p = pctx.fromLists(arena, sc.kinds, sc.values, sc.lines, sc.columns, path, source);
+    $sc = scanner.scanRaw(arena, source, path)?;
+    $p: *pctx.Parser = pctx.fromLists(arena, sc.kinds, sc.values, sc.lines, sc.columns, path, source);
     return expr.parseExpression(p);
+}
+
+pub @func parse(arena: mem.Arena, source: string, path: string): *ast.Document {
+    $sc = scanner.scanRaw(arena, source, path)?;
+    $doc = ast.createDocument(arena, path, source);
+    $p: *pctx.Parser = pctx.fromLists(arena, sc.kinds, sc.values, sc.lines, sc.columns, path, source);
+    @for (true) {
+        @if (p.isAtEnd()) {
+            break;
+        }
+        $s: *nodes.Node = stmt.parseStatement(p)?;
+        list.push(doc.statements, s);
+    }
+    return doc;
 }

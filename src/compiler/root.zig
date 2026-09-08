@@ -58,13 +58,24 @@ pub fn emitBytecode(state: *state_mod.CompilerState, doc: *ast.Document) !chunk_
     var reach = try reachability.compute(state, doc);
     defer reach.deinit();
 
-    const main_jump = try emit.emitJump(state, .OP_JUMP);
+    // Skip over function bodies to top-level. OP_JUMP is u16-relative, so chain
+    // trampolines every ~60KiB when the function blob exceeds one hop.
+    var skip_jump = try emit.emitJump(state, .OP_JUMP);
+    var skip_base: usize = 0; // code index of the jump operand being chained from
 
     var fit = state.functions.iterator();
     while (fit.next()) |e| {
         const name = e.key_ptr.*;
         const def = e.value_ptr;
         if (!reach.isFunctionReachable(name)) continue;
+
+        // Near the u16 jump limit from the current skip hop — land here and hop again.
+        const dist = state.chunk.code.items.len -% skip_base;
+        if (dist > 0xf000) {
+            emit.patchJump(state, skip_jump);
+            skip_jump = try emit.emitJump(state, .OP_JUMP);
+            skip_base = state.chunk.code.items.len - 2;
+        }
 
         def.address = @intCast(state.chunk.code.items.len);
 
@@ -81,6 +92,13 @@ pub fn emitBytecode(state: *state_mod.CompilerState, doc: *ast.Document) !chunk_
 
         for (def.forward_jumps.items) |patch| {
             const addr = def.address.?;
+            if (addr > 0xffff) {
+                return compile_errors.compileFailFmt(
+                    state,
+                    "function '{s}' address {d} exceeds CALL_STATIC u16 limit (forward ref)",
+                    .{ name, addr },
+                );
+            }
             state.chunk.code.items[patch] = @intCast((addr >> 8) & 0xff);
             state.chunk.code.items[patch + 1] = @intCast(addr & 0xff);
         }
@@ -89,7 +107,7 @@ pub fn emitBytecode(state: *state_mod.CompilerState, doc: *ast.Document) !chunk_
         try stmt.compileFunction(state, &def.node.function_decl, def.node);
     }
 
-    emit.patchJump(state, main_jump);
+    emit.patchJump(state, skip_jump);
 
     for (doc.statements) |s| {
         if (s.* != .function_decl and s.* != .struct_decl and s.* != .enum_decl and s.* != .error_decl and s.* != .type_decl) {
@@ -101,7 +119,13 @@ pub fn emitBytecode(state: *state_mod.CompilerState, doc: *ast.Document) !chunk_
 
     // Language entry: pub zero-arg `main` runs after top-level statements.
     const main_fn = state.chunk.functions.get("main").?;
-    try emit.emitCallStatic(state, @intCast(main_fn.address), 0);
+    if (main_fn.address <= 0xffff) {
+        try emit.emitCallStatic(state, @intCast(main_fn.address), 0);
+    } else {
+        try emit.emitNameGet(state, .OP_GET_FUNCTION, "main");
+        try emit.emitOp(state, .OP_CALL);
+        try emit.emitByte(state, 0);
+    }
     try emit.emitOp(state, .OP_POP); // discard main's return value
 
     try emit.emitOp(state, .OP_NULL);
@@ -260,6 +284,11 @@ fn registerStructNames(state: *state_mod.CompilerState, doc: *ast.Document) !voi
 fn registerFunctions(state: *state_mod.CompilerState, doc: *ast.Document) !void {
     for (doc.statements) |s| try collectFuncs(state, s, null);
 
+    // Widen return types when any return path is `error(...)` or a call that
+    // already returns an error-union (fixpoint so `return self.fail()` sees
+    // `fail`'s refined type).
+    try refineErrorReturns(state);
+
     var visited = std.StringHashMap(void).init(state.allocator);
     defer visited.deinit();
     var stack = std.StringHashMap(void).init(state.allocator);
@@ -269,6 +298,147 @@ fn registerFunctions(state: *state_mod.CompilerState, doc: *ast.Document) !void 
     while (it.next()) |name| {
         if (!visited.contains(name.*)) {
             _ = try dfsRecursive(state, name.*, &visited, &stack);
+        }
+    }
+}
+
+fn widenWithError(state: *state_mod.CompilerState, return_type: *?[]const u8) !void {
+    if (return_type.*) |t| {
+        if (types.typeAllowsError(t)) return;
+        const w = try std.fmt.allocPrint(state.allocator, "{s} | error", .{t});
+        try state.owned.append(state.allocator, w);
+        return_type.* = w;
+    } else {
+        return_type.* = "error";
+    }
+}
+
+fn optionalSliceEql(a: ?[]const u8, b: ?[]const u8) bool {
+    if (a == null and b == null) return true;
+    const aa = a orelse return false;
+    const bb = b orelse return false;
+    return std.mem.eql(u8, aa, bb);
+}
+
+fn calleeReturnType(state: *state_mod.CompilerState, callee: *ast.Node, full_name: []const u8) ?[]const u8 {
+    if (callee.* == .primary and callee.primary.kind == .identifier) {
+        if (state.functions.get(callee.primary.name)) |def| return def.return_type;
+    }
+    if (path_mod.tryResolveStaticPath(state, callee) catch null) |p| {
+        if (state.functions.get(p)) |def| return def.return_type;
+    }
+    if (callee.* == .member and callee.member.property.* == .primary) {
+        const prop = callee.member.property.primary.name;
+        const object = callee.member.object;
+        if (object.* == .primary and object.primary.kind == .identifier and std.mem.eql(u8, object.primary.name, "self")) {
+            const type_name = selfReceiverTypeName(state, full_name) orelse blk: {
+                if (std.mem.lastIndexOf(u8, full_name, "::")) |idx| break :blk full_name[0..idx];
+                break :blk null;
+            };
+            if (type_name) |tn| {
+                var buf: [256]u8 = undefined;
+                const method_name = std.fmt.bufPrint(&buf, "{s}::{s}", .{ types.unwrapOptionalDisplay(tn), prop }) catch return null;
+                if (state.functions.get(method_name)) |def| return def.return_type;
+            }
+        } else if (types.resolveType(state, object)) |obj_type| {
+            var buf: [256]u8 = undefined;
+            const method_name = std.fmt.bufPrint(&buf, "{s}::{s}", .{ types.unwrapOptionalDisplay(obj_type), prop }) catch return null;
+            if (state.functions.get(method_name)) |def| return def.return_type;
+        }
+    }
+    return null;
+}
+
+fn returnValueCarriesError(state: *state_mod.CompilerState, value: *ast.Node, full_name: []const u8) bool {
+    switch (value.*) {
+        .error_expr => return true,
+        .call => |c| {
+            if (calleeReturnType(state, c.callee, full_name)) |rt| {
+                return types.typeAllowsError(rt);
+            }
+            return false;
+        },
+        else => return false,
+    }
+}
+
+fn scanReturnsForError(state: *state_mod.CompilerState, node: *ast.Node, full_name: []const u8, carries: *bool) void {
+    switch (node.*) {
+        .return_expr => |r| {
+            if (r.return_value) |v| {
+                if (returnValueCarriesError(state, v, full_name)) {
+                    carries.* = true;
+                }
+                scanReturnsForError(state, v, full_name, carries);
+            }
+        },
+        // `expr?` propagates error to the caller — same as an error return path.
+        .try_expr => |t| {
+            carries.* = true;
+            scanReturnsForError(state, t.expression, full_name, carries);
+        },
+        .declaration => |d| scanReturnsForError(state, d.value, full_name, carries),
+        .block => |b| for (b.statements) |s| scanReturnsForError(state, s, full_name, carries),
+        .if_expr => |i| {
+            scanReturnsForError(state, i.condition, full_name, carries);
+            scanReturnsForError(state, i.body, full_name, carries);
+            if (i.else_body) |e| scanReturnsForError(state, e, full_name, carries);
+        },
+        .switch_expr => |sw| {
+            scanReturnsForError(state, sw.condition, full_name, carries);
+            for (sw.prongs) |prong| {
+                for (prong.patterns) |pat| scanReturnsForError(state, pat, full_name, carries);
+                scanReturnsForError(state, prong.body, full_name, carries);
+            }
+        },
+        .for_expr => |f| {
+            scanReturnsForError(state, f.expr, full_name, carries);
+            scanReturnsForError(state, f.body, full_name, carries);
+        },
+        .call => |c| {
+            scanReturnsForError(state, c.callee, full_name, carries);
+            for (c.args) |a| scanReturnsForError(state, a, full_name, carries);
+        },
+        .binary => |b| {
+            scanReturnsForError(state, b.left, full_name, carries);
+            scanReturnsForError(state, b.right, full_name, carries);
+        },
+        .unary => |u| scanReturnsForError(state, u.arg, full_name, carries),
+        .assignment => |a| {
+            scanReturnsForError(state, a.left, full_name, carries);
+            scanReturnsForError(state, a.right, full_name, carries);
+        },
+        .defer_stmt => |d| scanReturnsForError(state, d.body, full_name, carries),
+        .break_expr => |br| {
+            if (br.value) |v| scanReturnsForError(state, v, full_name, carries);
+        },
+        else => {},
+    }
+}
+
+fn refineErrorReturns(state: *state_mod.CompilerState) !void {
+    var changed = true;
+    var round: u32 = 0;
+    while (changed and round < 64) : (round += 1) {
+        changed = false;
+        var it = state.functions.iterator();
+        while (it.next()) |e| {
+            const def = e.value_ptr;
+            if (def.node.* != .function_decl) continue;
+            var carries = false;
+            scanReturnsForError(state, def.node.function_decl.body, e.key_ptr.*, &carries);
+            if (!carries) continue;
+            const before = def.return_type;
+            if (def.return_type == null) {
+                // Always keep a success arm when unannotated — pure `error` breaks
+                // `T = f()?` before the success type is refined.
+                const w = try state.allocator.dupe(u8, "unknown | error");
+                try state.owned.append(state.allocator, w);
+                def.return_type = w;
+            } else {
+                try widenWithError(state, &def.return_type);
+            }
+            if (!optionalSliceEql(before, def.return_type)) changed = true;
         }
     }
 }

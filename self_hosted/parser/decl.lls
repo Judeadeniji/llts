@@ -1,0 +1,239 @@
+# Port of src/parser/decl.zig
+
+@const $pctx = @import("./ctx.lls");
+@const $tokens = @import("../scanner/tokens.lls");
+@const $nodes = @import("../ast/nodes.lls");
+@const $common = @import("../ast/common.lls");
+@const $expr = @import("./expr.lls");
+@const $stmt = @import("./stmt.lls");
+@const $types = @import("./types.lls");
+@const $control = @import("./control.lls");
+@const $structs = @import("./structs.lls");
+@const $enums = @import("./enums.lls");
+@const $errors = @import("./errors.lls");
+@const $list = @import("std/list.lls");
+@const $string = @import("std/string.lls");
+
+@func asNode(p: *nodes.Node): *nodes.Node {
+    return p;
+}
+
+pub @func parseDeclaration(self: *pctx.Parser, is_const: bool) {
+    @if (!self.check(tokens.TokenType.VRegister)) {
+        return self.fail("Expected $RegisterName");
+    }
+    $name = self.value();
+    $loc = self.locHere();
+    self.advance();
+
+    $type_node: ?*nodes.Node = null;
+    @if (self.checkDelim(":")) {
+        self.advance();
+        type_node = types.parseType(self)?;
+    }
+
+    @if (!self.check(tokens.TokenType.AssignOp) || !string.eql(self.value(), "=")) {
+        return self.fail("Expected \"=\" after register");
+    }
+    self.advance();
+
+    $value: *nodes.Node = @if (type_node) |tn| {
+        @if (expr.looksLikeFieldInitObject(self)) {
+            break expr.parseStructInitWithType(self, tn)?;
+        }
+        break expr.parseExpression(self)?;
+    } @else {
+        break expr.parseExpression(self)?;
+    };
+
+    @if (self.checkDelim(";")) {
+        self.advance();
+    }
+
+    return asNode(@new(self.arena, nodes.Declaration {
+        kind: common.NodeKind.Declaration,
+        name: name,
+        value: value,
+        is_const: is_const,
+        is_public: false,
+        type_annotation: type_node,
+        loc: loc,
+    }));
+}
+
+pub @func parseCompilerKeyword(self: *pctx.Parser) {
+    @if (!self.check(tokens.TokenType.CompilerKeyword)) {
+        return self.fail("Expected compiler keyword");
+    }
+    $kw = self.value();
+    self.advance();
+
+    @if (string.eql(kw, "const")) {
+        return parseDeclaration(self, true);
+    }
+    @if (string.eql(kw, "func")) {
+        return parseCompilerFunc(self);
+    }
+    @if (string.eql(kw, "for")) {
+        return control.parseForExpression(self);
+    }
+    @if (string.eql(kw, "if")) {
+        return control.parseIfExpression(self);
+    }
+    @if (string.eql(kw, "switch")) {
+        return control.parseSwitchExpression(self);
+    }
+    @if (string.eql(kw, "struct")) {
+        return structs.parseCompilerStruct(self);
+    }
+    @if (string.eql(kw, "enum")) {
+        return enums.parseCompilerEnum(self);
+    }
+    @if (string.eql(kw, "error")) {
+        return errors.parseCompilerError(self);
+    }
+    @if (string.eql(kw, "type")) {
+        return parseTypeDecl(self, true);
+    }
+    @if (string.eql(kw, "alias")) {
+        return parseTypeDecl(self, false);
+    }
+    @if (string.eql(kw, "extern")) {
+        return parseCompilerExtern(self);
+    }
+
+    self.current = self.current - 1;
+    return stmt.parseExpressionStatement(self);
+}
+
+@func parseCompilerExtern(self: *pctx.Parser) {
+    @if (!self.check(tokens.TokenType.Identifier)) {
+        return self.fail("Expected identifier after @extern");
+    }
+    $name = self.value();
+    $loc = self.locHere();
+    self.advance();
+    self.consume(tokens.TokenType.Delimiter, "Expected ';' after @extern declaration", ";")?;
+    return asNode(@new(self.arena, nodes.Extern {
+        kind: common.NodeKind.Extern,
+        name: name,
+        is_public: false,
+        loc: loc,
+    }));
+}
+
+@func parseTypeDecl(self: *pctx.Parser, distinct: bool) {
+    $loc = self.prevLoc();
+    @if (!self.check(tokens.TokenType.Identifier)) {
+        @if (distinct) {
+            return self.fail("Expected name after @type");
+        }
+        return self.fail("Expected name after @alias");
+    }
+    $name = self.value();
+    self.advance();
+    @if (!self.check(tokens.TokenType.AssignOp) || !string.eql(self.value(), "=")) {
+        return self.fail("Expected '=' after type name");
+    }
+    self.advance();
+    $type_expr: *nodes.Node = types.parseType(self)?;
+    @if (self.checkDelim(";")) {
+        self.advance();
+    }
+    return asNode(@new(self.arena, nodes.TypeDecl {
+        kind: common.NodeKind.TypeDecl,
+        name: name,
+        type_expr: type_expr,
+        distinct: distinct,
+        is_public: false,
+        loc: loc,
+    }));
+}
+
+pub @func parseCompilerFunc(self: *pctx.Parser) {
+    @if (!self.check(tokens.TokenType.Identifier)) {
+        return self.fail("Expected a valid function name");
+    }
+    $name = self.value();
+    $loc = self.locHere();
+    self.advance();
+
+    self.consume(tokens.TokenType.Delimiter, "Expected '(' after function name", "(")?;
+    $parsed = parseParamsList(self)?;
+    $params_node = asNode(@new(self.arena, nodes.Params {
+        kind: common.NodeKind.Params,
+        params: parsed.elements,
+        is_variadic: parsed.is_variadic,
+        loc: loc,
+    }));
+
+    $return_type: ?*nodes.Node = null;
+    @if (self.checkDelim(":")) {
+        self.advance();
+        return_type = types.parseType(self)?;
+    }
+
+    $body: *nodes.Node = control.parseBlock(self)?;
+    return asNode(@new(self.arena, nodes.FunctionDecl {
+        kind: common.NodeKind.FunctionDecl,
+        name: name,
+        params: params_node,
+        body: body,
+        return_type: return_type,
+        is_public: false,
+        loc: loc,
+    }));
+}
+
+@struct ParamsResult {
+    elements: unknown;
+    is_variadic: bool;
+}
+
+@func parseParamsList(self: *pctx.Parser): ParamsResult {
+    @if (self.checkDelim(")")) {
+        self.advance();
+        return ParamsResult { elements: list.create(self.arena), is_variadic: false };
+    }
+
+    $params = list.create(self.arena);
+    $is_variadic = false;
+
+    @for (true) {
+        $is_rest = self.checkDelim("...");
+        @if (is_rest) {
+            self.advance();
+            is_variadic = true;
+        }
+
+        @if (!self.check(tokens.TokenType.Identifier)) {
+            return self.fail("Expected parameter name");
+        }
+        $pname = self.value();
+        $ploc = self.locHere();
+        self.advance();
+
+        $type_node: ?*nodes.Node = null;
+        @if (self.checkDelim(":")) {
+            self.advance();
+            type_node = types.parseType(self)?;
+        }
+
+        list.push(params, @new(self.arena, nodes.Param {
+            name: pname,
+            type_annotation: type_node,
+            is_rest: is_rest,
+            loc: ploc,
+        }));
+
+        @if (self.match(tokens.TokenType.Delimiter)) {
+            @if (string.eql(self.prevValue(), ",")) {
+                continue;
+            }
+            break;
+        }
+        break;
+    }
+
+    return ParamsResult { elements: params, is_variadic: is_variadic };
+}

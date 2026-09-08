@@ -21,7 +21,12 @@ pub fn compileDefer(state: *CompilerState, def: *const ast.Defer) !void {
 
 pub fn compileReturn(state: *CompilerState, ret: *const ast.Return) !void {
     if (ret.return_value) |v| {
-        try @import("../escape.zig").checkReturnValue(state, v);
+        const escape = @import("../escape.zig");
+        try escape.checkReturnValue(state, v);
+        // Bare `return Foo{…}` / `[…]` → immortal (same as module init), not frame bump.
+        const prev_immortal = state.alloc_immortal;
+        if (escape.canPromoteReturnLiteral(state, v)) state.alloc_immortal = true;
+        defer state.alloc_immortal = prev_immortal;
         try expr.compileExpression(state, v);
     } else {
         try emit.emitOp(state, .OP_NULL);

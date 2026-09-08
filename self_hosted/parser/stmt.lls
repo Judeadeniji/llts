@@ -1,0 +1,161 @@
+# Port of src/parser/stmt.zig
+
+@const $pctx = @import("./ctx.lls");
+@const $tokens = @import("../scanner/tokens.lls");
+@const $expr = @import("./expr.lls");
+@const $decl = @import("./decl.lls");
+@const $control = @import("./control.lls");
+@const $nodes = @import("../ast/nodes.lls");
+@const $common = @import("../ast/common.lls");
+@const $string = @import("std/string.lls");
+
+pub @func parseStatement(self: *pctx.Parser) {
+    @if (self.isAtEnd()) {
+        return self.fail("Unexpected end of input");
+    }
+
+    return @switch (self.kind()) {
+        tokens.TokenType.VRegister => {
+            $next = self.peekKind(1);
+            @if (next == tokens.TokenType.AssignOp && string.eql(self.peekValue(1), "=")) {
+                break decl.parseDeclaration(self, false);
+            }
+            @if (next == tokens.TokenType.Delimiter && string.eql(self.peekValue(1), ":")) {
+                break decl.parseDeclaration(self, false);
+            }
+            break self.fail("'$' is only used in declarations");
+        },
+        tokens.TokenType.BinOp,
+        tokens.TokenType.UnaryOp,
+        tokens.TokenType.AssignOp,
+        tokens.TokenType.Identifier => {
+            @if (self.peekKind(1) == tokens.TokenType.Delimiter && string.eql(self.peekValue(1), ":")) {
+                $label = self.value();
+                self.advance();
+                self.advance();
+                $s: *nodes.Node = parseStatement(self)?;
+                applyLabel(self, s, label)?;
+                break s;
+            }
+            break parseExpressionStatement(self);
+        },
+        tokens.TokenType.String,
+        tokens.TokenType.Number,
+        tokens.TokenType.Hex,
+        tokens.TokenType.Binary,
+        tokens.TokenType.Octal,
+        tokens.TokenType.Boolean => {
+            break parseExpressionStatement(self);
+        },
+        tokens.TokenType.Keyword => {
+            @if (string.eql(self.value(), "pub")) {
+                self.advance();
+                $s2: *nodes.Node = parseStatement(self)?;
+                setPublic(s2);
+                break s2;
+            }
+            @if (string.eql(self.value(), "return")) {
+                break control.parseReturnStatement(self);
+            }
+            @if (string.eql(self.value(), "defer")) {
+                break control.parseDeferStatement(self, false);
+            }
+            @if (string.eql(self.value(), "errdefer")) {
+                break control.parseDeferStatement(self, true);
+            }
+            @if (string.eql(self.value(), "break")) {
+                break control.parseBreakStatement(self);
+            }
+            @if (string.eql(self.value(), "continue")) {
+                break control.parseContinueStatement(self);
+            }
+            @if (string.eql(self.value(), "true") || string.eql(self.value(), "false") || string.eql(self.value(), "error") || string.eql(self.value(), "null")) {
+                break parseExpressionStatement(self);
+            }
+            break self.fail("Unexpected keyword in statement");
+        },
+        tokens.TokenType.CompilerKeyword => {
+            break decl.parseCompilerKeyword(self);
+        },
+        tokens.TokenType.Delimiter => {
+            @if (string.eql(self.value(), "(") || string.eql(self.value(), "[")) {
+                break parseExpressionStatement(self);
+            }
+            @if (string.eql(self.value(), "{")) {
+                break control.parseBlock(self);
+            }
+            break self.fail("Unexpected token in statement");
+        },
+        @else => {
+            break self.fail("Unexpected token in statement");
+        },
+    };
+}
+
+pub @func parseExpressionStatement(self: *pctx.Parser) {
+    $e: *nodes.Node = expr.parseExpression(self)?;
+    self.consume(tokens.TokenType.Delimiter, "Expected ';' after expression", ";")?;
+    return e;
+}
+
+@func applyLabel(self: *pctx.Parser, s: *nodes.Node, label: string) {
+    # Unique $ names per arm — host shares register types across the module.
+    @if (s.kind == common.NodeKind.For) {
+        $labFor: *nodes.For = @as(*nodes.For, s);
+        labFor.label = label;
+        return;
+    }
+    @if (s.kind == common.NodeKind.If) {
+        $labIf: *nodes.If = @as(*nodes.If, s);
+        labIf.label = label;
+        return;
+    }
+    @if (s.kind == common.NodeKind.Switch) {
+        $labSw: *nodes.Switch = @as(*nodes.Switch, s);
+        labSw.label = label;
+        return;
+    }
+    @if (s.kind == common.NodeKind.Block) {
+        $labBlk: *nodes.Block = @as(*nodes.Block, s);
+        labBlk.label = label;
+        return;
+    }
+    return self.fail("Labels are only allowed on @for, @if, @switch, and blocks");
+}
+
+@func setPublic(s: *nodes.Node) {
+    @if (s.kind == common.NodeKind.Declaration) {
+        $pubDecl: *nodes.Declaration = @as(*nodes.Declaration, s);
+        pubDecl.is_public = true;
+        return;
+    }
+    @if (s.kind == common.NodeKind.FunctionDecl) {
+        $pubFn: *nodes.FunctionDecl = @as(*nodes.FunctionDecl, s);
+        pubFn.is_public = true;
+        return;
+    }
+    @if (s.kind == common.NodeKind.StructDecl) {
+        $pubSt: *nodes.StructDecl = @as(*nodes.StructDecl, s);
+        pubSt.is_public = true;
+        return;
+    }
+    @if (s.kind == common.NodeKind.EnumDecl) {
+        $pubEn: *nodes.EnumDecl = @as(*nodes.EnumDecl, s);
+        pubEn.is_public = true;
+        return;
+    }
+    @if (s.kind == common.NodeKind.ErrorDecl) {
+        $pubEr: *nodes.ErrorDecl = @as(*nodes.ErrorDecl, s);
+        pubEr.is_public = true;
+        return;
+    }
+    @if (s.kind == common.NodeKind.TypeDecl) {
+        $pubTy: *nodes.TypeDecl = @as(*nodes.TypeDecl, s);
+        pubTy.is_public = true;
+        return;
+    }
+    @if (s.kind == common.NodeKind.Extern) {
+        $pubEx: *nodes.Extern = @as(*nodes.Extern, s);
+        pubEx.is_public = true;
+    }
+}

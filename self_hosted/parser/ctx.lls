@@ -1,6 +1,7 @@
 # Port of src/parser/ctx.zig (token cursor over scanner parallel lists).
 
 @const $tokens = @import("../scanner/tokens.lls");
+@const $common = @import("../ast/common.lls");
 @const $list = @import("std/list.lls");
 @const $string = @import("std/string.lls");
 @const $debug = @import("std/debug.lls");
@@ -19,70 +20,110 @@ pub @struct Parser {
         return list.len(self.kinds);
     }
 
-    @func peekKind(self: *Parser, step: i64): ?tokens.TokenType {
-        $i = self.current + step;
-        @if (i >= list.len(self.kinds)) {
+    @func isAtEnd(self: *Parser) {
+        @if (self.current >= list.len(self.kinds)) {
+            return true;
+        }
+        $k: tokens.TokenType = @as(tokens.TokenType, list.get(self.kinds, self.current));
+        return k == tokens.TokenType.Eof;
+    }
+
+    @func kind(self: *Parser): tokens.TokenType {
+        @if (self.current >= list.len(self.kinds)) {
+            return tokens.TokenType.Eof;
+        }
+        return @as(tokens.TokenType, list.get(self.kinds, self.current));
+    }
+
+    @func value(self: *Parser): string {
+        @if (self.current >= list.len(self.values)) {
+            return "";
+        }
+        return list.get(self.values, self.current);
+    }
+
+    @func line(self: *Parser) {
+        @if (self.current >= list.len(self.lines)) {
+            return 0;
+        }
+        return list.get(self.lines, self.current);
+    }
+
+    @func column(self: *Parser) {
+        @if (self.current >= list.len(self.columns)) {
+            return 0;
+        }
+        return list.get(self.columns, self.current);
+    }
+
+    # Token just consumed (index current-1).
+    @func prevKind(self: *Parser): tokens.TokenType {
+        @if (self.current <= 0) {
+            return tokens.TokenType.Eof;
+        }
+        return @as(tokens.TokenType, list.get(self.kinds, self.current - 1));
+    }
+
+    @func prevValue(self: *Parser): string {
+        @if (self.current <= 0) {
+            return "";
+        }
+        return list.get(self.values, self.current - 1);
+    }
+
+    @func prevLoc(self: *Parser): common.Location {
+        @if (self.current <= 0) {
+            return common.Location { line: 0, column: 0, path: self.path };
+        }
+        return common.Location {
+            line: list.get(self.lines, self.current - 1),
+            column: list.get(self.columns, self.current - 1),
+            path: self.path,
+        };
+    }
+
+    @func locHere(self: *Parser): common.Location {
+        return common.Location { line: self.line(), column: self.column(), path: self.path };
+    }
+
+    # If current token is `typ`, return its value (does not advance).
+    @func ifKind(self: *Parser, typ: tokens.TokenType): ?string {
+        @if (self.isAtEnd() || self.kind() != typ) {
             return null;
+        }
+        return self.value();
+    }
+
+    @func check(self: *Parser, typ: tokens.TokenType) {
+        return !self.isAtEnd() && self.kind() == typ;
+    }
+
+    # Lookahead without advancing. Offset 0 = current.
+    @func peekKind(self: *Parser, offset: i64): tokens.TokenType {
+        $i = self.current + offset;
+        @if (i < 0 || i >= list.len(self.kinds)) {
+            return tokens.TokenType.Eof;
         }
         return @as(tokens.TokenType, list.get(self.kinds, i));
     }
 
-    @func peekValue(self: *Parser, step: i64): ?string {
-        $i = self.current + step;
-        @if (i >= list.len(self.values)) {
-            return null;
+    @func peekValue(self: *Parser, offset: i64): string {
+        $i = self.current + offset;
+        @if (i < 0 || i >= list.len(self.values)) {
+            return "";
         }
         return list.get(self.values, i);
     }
 
-    @func peekLine(self: *Parser, step: i64) {
-        $i = self.current + step;
-        @if (i >= list.len(self.lines)) {
-            return 0;
-        }
-        return list.get(self.lines, i);
-    }
-
-    @func peekColumn(self: *Parser, step: i64) {
-        $i = self.current + step;
-        @if (i >= list.len(self.columns)) {
-            return 0;
-        }
-        return list.get(self.columns, i);
-    }
-
-    @func isAtEnd(self: *Parser) {
-        @if (self.peekKind(0)) |k| {
-            return k == tokens.TokenType.Eof;
-        }
-        return true;
-    }
-
-    @func check(self: *Parser, typ: tokens.TokenType) {
-        @if (self.isAtEnd()) {
+    @func checkDelim(self: *Parser, want: string) {
+        @if (self.isAtEnd() || !string.eql(self.value(), want)) {
             return false;
         }
-        @if (self.peekKind(0)) |k| {
-            return k == typ;
+        $k = self.kind();
+        @if (k == tokens.TokenType.Delimiter) {
+            return true;
         }
-        return false;
-    }
-
-    @func checkDelim(self: *Parser, value: string) {
-        @if (self.peekKind(0)) |k| {
-            @if (self.peekValue(0)) |v| {
-                @if (!string.eql(v, value)) {
-                    return false;
-                }
-                @if (k == tokens.TokenType.Delimiter) {
-                    return true;
-                }
-                @if (k == tokens.TokenType.BinOp) {
-                    return string.eql(value, "|") || string.eql(value, "*") || string.eql(value, "&");
-                }
-            }
-        }
-        return false;
+        return k == tokens.TokenType.BinOp && (string.eql(want, "|") || string.eql(want, "*") || string.eql(want, "&"));
     }
 
     @func advance(self: *Parser) {
@@ -99,33 +140,26 @@ pub @struct Parser {
         return false;
     }
 
-    @func consume(self: *Parser, typ: tokens.TokenType, message: string, value: ?string) {
-        @if (value) |v| {
-            @if (self.peekKind(0)) |k| {
-                @if (self.peekValue(0)) |pv| {
-                    $type_ok = self.check(typ) || (typ == tokens.TokenType.Delimiter && k == tokens.TokenType.BinOp && (string.eql(v, "|") || string.eql(v, "*") || string.eql(v, "&")));
-                    $ok = (string.eql(pv, v) && type_ok) || k == tokens.TokenType.Eof;
-                    @if (!ok) {
-                        return self.fail(message);
-                    }
-                    self.advance();
-                    return;
-                }
+    @func consume(self: *Parser, typ: tokens.TokenType, message: string, want: ?string) {
+        @if (want) |v| {
+            $k = self.kind();
+            $type_ok = self.check(typ) || (typ == tokens.TokenType.Delimiter && k == tokens.TokenType.BinOp && (string.eql(v, "|") || string.eql(v, "*") || string.eql(v, "&")));
+            $ok = (string.eql(self.value(), v) && type_ok) || k == tokens.TokenType.Eof;
+            @if (!ok) {
+                return self.fail(message);
             }
-            return self.fail(message);
-        }
-        @if (self.check(typ)) {
             self.advance();
             return;
         }
-        return self.fail(message);
+        @if (!self.check(typ)) {
+            return self.fail(message);
+        }
+        self.advance();
     }
 
     @func fail(self: *Parser, message: string) {
-        $line = self.peekLine(0);
-        $col = self.peekColumn(0);
         debug.err(message);
-        debug.printLn("  --> {s}:{i}:{i}", self.path, line, col);
+        debug.printLn("  --> {s}:{i}:{i}", self.path, self.line(), self.column());
         return error("ParseFailed", message);
     }
 }

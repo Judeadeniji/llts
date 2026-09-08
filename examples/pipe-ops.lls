@@ -6,6 +6,6 @@
 
 $a = 2 |> sqr;
 
-debug.printLn("a: {i}", a)
+debug.printLn("a: {i}", a);
 
 pub @func main() {}

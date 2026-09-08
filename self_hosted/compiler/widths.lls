@@ -1,0 +1,85 @@
+# Port of src/compiler/widths.zig — Width discriminants for OP_AS / layout.
+# Variant order must match Zig `widths.Width` (i8=0 … fsize=13).
+
+@const $string = @import("std/string.lls");
+
+pub @enum Width {
+    i8,
+    i16,
+    i32,
+    i64,
+    u8,
+    u16,
+    u32,
+    u64,
+    f32,
+    f64,
+    u1,
+    isize,
+    usize,
+    fsize,
+}
+
+pub @func size(w: Width) {
+    @switch (w) {
+        Width.u1, Width.i8, Width.u8 => {
+            return 1;
+        }
+        Width.i16, Width.u16 => {
+            return 2;
+        }
+        Width.i32, Width.u32, Width.f32 => {
+            return 4;
+        }
+        Width.i64, Width.u64, Width.f64, Width.isize, Width.usize, Width.fsize => {
+            return 8;
+        }
+    }
+}
+
+# Aliases: int/number→i64, byte→u8, float→f64, bool/boolean→u1.
+pub @func fromName(n: string) {
+    @if (string.eql(n, "u1") || string.eql(n, "bool") || string.eql(n, "boolean")) {
+        return Width.u1;
+    }
+    @if (string.eql(n, "i8")) {
+        return Width.i8;
+    }
+    @if (string.eql(n, "i16")) {
+        return Width.i16;
+    }
+    @if (string.eql(n, "i32")) {
+        return Width.i32;
+    }
+    @if (string.eql(n, "i64") || string.eql(n, "int") || string.eql(n, "number")) {
+        return Width.i64;
+    }
+    @if (string.eql(n, "u8") || string.eql(n, "byte")) {
+        return Width.u8;
+    }
+    @if (string.eql(n, "u16")) {
+        return Width.u16;
+    }
+    @if (string.eql(n, "u32")) {
+        return Width.u32;
+    }
+    @if (string.eql(n, "u64")) {
+        return Width.u64;
+    }
+    @if (string.eql(n, "f32")) {
+        return Width.f32;
+    }
+    @if (string.eql(n, "f64") || string.eql(n, "float")) {
+        return Width.f64;
+    }
+    @if (string.eql(n, "isize")) {
+        return Width.isize;
+    }
+    @if (string.eql(n, "usize")) {
+        return Width.usize;
+    }
+    @if (string.eql(n, "fsize")) {
+        return Width.fsize;
+    }
+    return null;
+}

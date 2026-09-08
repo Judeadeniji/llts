@@ -75,7 +75,7 @@ pub fn compileArray(state: *CompilerState, arr: *const ast.ArrayLiteral) !void {
 
 pub fn compileStructInit(state: *CompilerState, init: *const ast.StructInit) !void {
     const struct_def = try resolveStructDef(state, init);
-    // Frame bump by default; immortal for module/globals and returned literals (escape.zig).
+    // Frame bump by default; immortal for module/globals and `return Foo{…}` (escape.zig).
     const alloc = if (state.alloc_immortal) "__allocImmortalBytes" else "__allocBytes";
     try emit.emitNameGet(state, .OP_GET_GLOBAL, alloc);
     try emit.emitConstant(state, .{ .i64 = struct_def.size });
@@ -343,26 +343,30 @@ pub fn compileMember(state: *CompilerState, mem: *const ast.Member, node: *ast.N
         return;
     }
     if (types.resolveType(state, mem.object)) |type_name| {
-        if (mem.property.* == .primary) {
-            if (types.lookupStructField(state, type_name, mem.property.primary.name)) |info| {
-                const kind: u8 = @intFromEnum(layout.fieldKind(state, info.field_ty));
-                try expr.compileExpression(state, mem.object);
-                // Point runtime diagnostics at the member access itself, not the
-                // enclosing statement (which would leave a stale location).
-                try emit.emitLineIfNeeded(state, mem.loc.line, mem.loc.column);
-                try emit.emitLoadField(state, info.offset, kind);
-                return;
-            }
-        }
-        if (types.lookupStruct(state, type_name)) |sd| {
+        // Builtin `error` is a tagged heap object, not a packed struct — use GET_PROPERTY.
+        const peeled = types.unwrapOptionalDisplay(type_name);
+        if (!std.mem.eql(u8, peeled, "error")) {
             if (mem.property.* == .primary) {
-                if (sd.offsets.get(mem.property.primary.name)) |offset| {
-                    const field_ty = sd.types.get(mem.property.primary.name) orelse "int";
-                    const kind: u8 = @intFromEnum(layout.fieldKind(state, field_ty));
+                if (types.lookupStructField(state, type_name, mem.property.primary.name)) |info| {
+                    const kind: u8 = @intFromEnum(layout.fieldKind(state, info.field_ty));
                     try expr.compileExpression(state, mem.object);
+                    // Point runtime diagnostics at the member access itself, not the
+                    // enclosing statement (which would leave a stale location).
                     try emit.emitLineIfNeeded(state, mem.loc.line, mem.loc.column);
-                    try emit.emitLoadField(state, offset, kind);
+                    try emit.emitLoadField(state, info.offset, kind);
                     return;
+                }
+            }
+            if (types.lookupStruct(state, type_name)) |sd| {
+                if (mem.property.* == .primary) {
+                    if (sd.offsets.get(mem.property.primary.name)) |offset| {
+                        const field_ty = sd.types.get(mem.property.primary.name) orelse "int";
+                        const kind: u8 = @intFromEnum(layout.fieldKind(state, field_ty));
+                        try expr.compileExpression(state, mem.object);
+                        try emit.emitLineIfNeeded(state, mem.loc.line, mem.loc.column);
+                        try emit.emitLoadField(state, offset, kind);
+                        return;
+                    }
                 }
             }
         }

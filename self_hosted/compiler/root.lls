@@ -1,0 +1,1560 @@
+# Self-hosted emit — growing toward 1:1 with Zig `src/compiler` emit.
+# Gate for pointing at examples/: full parity (`examples_smoke --all` green).
+#
+# Note: host LLTS shares `$` register types across a module — use unique em* names.
+
+@const $parser = @import("../parser/root.lls");
+@const $ast = @import("../ast/root.lls");
+@const $nodes = @import("../ast/nodes.lls");
+@const $common = @import("../ast/common.lls");
+@const $chunk_mod = @import("../bytecode/chunk.lls");
+@const $opcode = @import("../bytecode/opcode.lls");
+@const $serialize = @import("../bytecode/serialize.lls");
+@const $intrinsics = @import("./intrinsics.lls");
+@const $list = @import("std/list.lls");
+@const $map = @import("std/map.lls");
+@const $string = @import("std/string.lls");
+@const $mem = @import("std/mem.lls");
+
+@struct EmLocal {
+    name: string;
+    depth: i64;
+    type_name: string;
+}
+
+@struct EmLoop {
+    scope_depth: i64;
+    label: string;
+    break_jumps: unknown;
+    continue_jumps: unknown;
+}
+
+@struct EmExprFrame {
+    scope_depth: i64;
+    result_slot: i64;
+    label: string;
+    break_jumps: unknown;
+}
+
+@struct EmFunc {
+    name: string;
+    node: *nodes.Node;
+    address: i64;
+    arity: i64;
+    patches: unknown;
+}
+
+@struct EmStructDef {
+    name: string;
+    size: i64;
+    field_names: unknown;
+    field_offsets: unknown;
+    field_types: unknown;
+    field_kinds: unknown;
+}
+
+@struct EmEnumDef {
+    name: string;
+    variant_names: unknown;
+    variant_vals: unknown;
+}
+
+@struct EmState {
+    arena: mem.Arena;
+    chunk: *chunk_mod.Chunk;
+    locals: unknown;
+    scope_depth: i64;
+    functions: unknown;
+    loops: unknown;
+    exprs: unknown;
+    structs: unknown;
+    enums: unknown;
+    var_types: unknown;
+}
+
+@func emCreateState(arena: mem.Arena, path: string): *EmState {
+    return @new(arena, EmState {
+        arena: arena,
+        chunk: chunk_mod.create(arena, path),
+        locals: list.create(arena),
+        scope_depth: 0,
+        functions: list.create(arena),
+        loops: list.create(arena),
+        exprs: list.create(arena),
+        structs: map.create(arena),
+        enums: map.create(arena),
+        var_types: map.create(arena),
+    });
+}
+
+@func emBeginScope(em: *EmState) {
+    em.scope_depth = em.scope_depth + 1;
+}
+
+@func emEndScope(em: *EmState) {
+    @for (true) {
+        @if (list.len(em.locals) == 0) {
+            break;
+        }
+        $emLoc: *EmLocal = @as(*EmLocal, list.get(em.locals, list.len(em.locals) - 1));
+        @if (emLoc.depth != em.scope_depth) {
+            break;
+        }
+        _ = list.pop(em.locals);
+        em.chunk.writeOp(opcode.OpCode.OP_POP);
+    }
+    em.scope_depth = em.scope_depth - 1;
+}
+
+@func emPopsUntil(em: *EmState, target_depth: i64) {
+    $emCount = 0;
+    $emIdx = list.len(em.locals) - 1;
+    @for (true) {
+        @if (emIdx < 0) {
+            break;
+        }
+        $emLoc2: *EmLocal = @as(*EmLocal, list.get(em.locals, emIdx));
+        @if (emLoc2.depth > target_depth) {
+            emCount = emCount + 1;
+            emIdx = emIdx - 1;
+        } @else {
+            break;
+        }
+    }
+    @for (0..emCount) |_| {
+        em.chunk.writeOp(opcode.OpCode.OP_POP);
+    }
+}
+
+@func emResolveLocal(em: *EmState, name: string) {
+    $emIdx2 = list.len(em.locals) - 1;
+    @for (true) {
+        @if (emIdx2 < 0) {
+            return -1;
+        }
+        $emLoc3: *EmLocal = @as(*EmLocal, list.get(em.locals, emIdx2));
+        @if (string.eql(emLoc3.name, name)) {
+            return emIdx2;
+        }
+        emIdx2 = emIdx2 - 1;
+    }
+    return -1;
+}
+
+@func emFindFunc(em: *EmState, name: string): ?*EmFunc {
+    @for (0..list.len(em.functions)) |emFi| {
+        $emFn: *EmFunc = @as(*EmFunc, list.get(em.functions, emFi));
+        @if (string.eql(emFn.name, name)) {
+            return emFn;
+        }
+    }
+    return null;
+}
+
+@func emPushLocal(em: *EmState, name: string) {
+    list.push(em.locals, @new(em.arena, EmLocal {
+        name: name,
+        depth: em.scope_depth,
+        type_name: "",
+    }));
+    return list.len(em.locals) - 1;
+}
+
+@func emPushLocalTyped(em: *EmState, name: string, type_name: string) {
+    $emSlotT = emPushLocal(em, name);
+    $emLocT: *EmLocal = @as(*EmLocal, list.get(em.locals, emSlotT));
+    emLocT.type_name = type_name;
+    @if (string.len(type_name) > 0) {
+        map.set(em.var_types, name, type_name);
+    }
+    return emSlotT;
+}
+
+@func emSetVarType(em: *EmState, name: string, type_name: string) {
+    @if (string.len(type_name) == 0) {
+        return;
+    }
+    map.set(em.var_types, name, type_name);
+    $emSlotV = emResolveLocal(em, name);
+    @if (emSlotV >= 0) {
+        $emLocV: *EmLocal = @as(*EmLocal, list.get(em.locals, emSlotV));
+        emLocV.type_name = type_name;
+    }
+}
+
+@func emGetVarType(em: *EmState, name: string) {
+    @if (map.has(em.var_types, name)) {
+        return map.get(em.var_types, name);
+    }
+    return "";
+}
+
+@func emTypeDisplay(n: ?*nodes.Node) {
+    @if (n == null) {
+        return "int";
+    }
+    $emTn: *nodes.Node = @as(*nodes.Node, n);
+    @if (emTn.kind == common.NodeKind.Primary) {
+        $emTp: *nodes.Primary = @as(*nodes.Primary, emTn);
+        return emTp.name;
+    }
+    @if (emTn.kind == common.NodeKind.PointerType) {
+        $emPtr: *nodes.PointerType = @as(*nodes.PointerType, emTn);
+        $emInner: ?*nodes.Node = emPtr.elem;
+        return string.concat("*", emTypeDisplay(emInner));
+    }
+    return "int";
+}
+
+@func emFieldKind(ty: string) {
+    @if (string.eql(ty, "bool") || string.eql(ty, "boolean") || string.eql(ty, "u1")) {
+        return 2;
+    }
+    @if (string.eql(ty, "string") || string.eql(ty, "[]byte")) {
+        return 3;
+    }
+    @if (string.len(ty) > 0) {
+        @if (string.eql(string.slice(ty, 0, 1), "*")) {
+            return 3;
+        }
+    }
+    @if (string.eql(ty, "f32") || string.eql(ty, "f64") || string.eql(ty, "float")) {
+        return 1;
+    }
+    return 0;
+}
+
+@func emFindStruct(em: *EmState, name: string): ?*EmStructDef {
+    @if (map.has(em.structs, name)) {
+        return @as(*EmStructDef, map.get(em.structs, name));
+    }
+    return null;
+}
+
+@func emFindEnum(em: *EmState, name: string): ?*EmEnumDef {
+    @if (map.has(em.enums, name)) {
+        return @as(*EmEnumDef, map.get(em.enums, name));
+    }
+    return null;
+}
+
+@func emEnumVariantValue(ed: *EmEnumDef, variant: string) {
+    @for (0..list.len(ed.variant_names)) |emVi| {
+        @if (string.eql(list.get(ed.variant_names, emVi), variant)) {
+            return list.get(ed.variant_vals, emVi);
+        }
+    }
+    return -1;
+}
+
+# Width discriminant for OP_AS (must stay in sync with Zig widths.Width).
+@func emTyWidth(ty: string) {
+    return -1;
+}
+
+@func emSizeOfName(em: *EmState, tyName: string) {
+    return 8;
+}
+
+@func emInferTypeOf(em: *EmState, emInfNode: *nodes.Node) {
+    return "unknown";
+}
+
+@func emFieldIndex(sd: *EmStructDef, field: string) {
+    @for (0..list.len(sd.field_names)) |emFi| {
+        @if (string.eql(list.get(sd.field_names, emFi), field)) {
+            return emFi;
+        }
+    }
+    return -1;
+}
+
+@func emRegisterStructs(em: *EmState, doc: *ast.Document) {
+    @for (0..list.len(doc.statements)) |emDi| {
+        $emStmt: *nodes.Node = @as(*nodes.Node, list.get(doc.statements, emDi));
+        @if (emStmt.kind == common.NodeKind.StructDecl) {
+            $emSd: *nodes.StructDecl = @as(*nodes.StructDecl, emStmt);
+            $emNames = list.create(em.arena);
+            $emOffs = list.create(em.arena);
+            $emTys = list.create(em.arena);
+            $emKinds = list.create(em.arena);
+            $emOff = 0;
+            @for (0..list.len(emSd.fields)) |emFi| {
+                $emField: *nodes.StructField = @as(*nodes.StructField, list.get(emSd.fields, emFi));
+                $emFty = emTypeDisplay(emField.type_annotation);
+                list.push(emNames, emField.name);
+                list.push(emOffs, emOff);
+                list.push(emTys, emFty);
+                list.push(emKinds, emFieldKind(emFty));
+                emOff = emOff + 8;
+            }
+            $emSize = emOff;
+            @if (emSize == 0) {
+                emSize = 0;
+            }
+            $emDef = @new(em.arena, EmStructDef {
+                name: emSd.name,
+                size: emSize,
+                field_names: emNames,
+                field_offsets: emOffs,
+                field_types: emTys,
+                field_kinds: emKinds,
+            });
+            map.set(em.structs, emSd.name, emDef);
+
+            @for (0..list.len(emSd.methods)) |emMi| {
+                $emMeth: *nodes.Node = @as(*nodes.Node, list.get(emSd.methods, emMi));
+                @if (emMeth.kind == common.NodeKind.FunctionDecl) {
+                    $emMfd: *nodes.FunctionDecl = @as(*nodes.FunctionDecl, emMeth);
+                    $emQ = string.concat(string.concat(emSd.name, "::"), emMfd.name);
+                    emMfd.name = emQ;
+                    $emMarity = 0;
+                    @if (emMfd.params.kind == common.NodeKind.Params) {
+                        $emMps: *nodes.Params = @as(*nodes.Params, emMfd.params);
+                        emMarity = list.len(emMps.params);
+                    }
+                    list.push(em.functions, @new(em.arena, EmFunc {
+                        name: emQ,
+                        node: emMeth,
+                        address: -1,
+                        arity: emMarity,
+                        patches: list.create(em.arena),
+                    }));
+                }
+            }
+        }
+    }
+}
+
+@func emRegisterEnums(em: *EmState, doc: *ast.Document) {
+    @for (0..list.len(doc.statements)) |emDi| {
+        $emStmt: *nodes.Node = @as(*nodes.Node, list.get(doc.statements, emDi));
+        @if (emStmt.kind == common.NodeKind.EnumDecl) {
+            $emEd: *nodes.EnumDecl = @as(*nodes.EnumDecl, emStmt);
+            $emVNames = list.create(em.arena);
+            $emVVals = list.create(em.arena);
+            @for (0..list.len(emEd.variants)) |emVi| {
+                list.push(emVNames, list.get(emEd.variants, emVi));
+                list.push(emVVals, emVi);
+            }
+            map.set(em.enums, emEd.name, @new(em.arena, EmEnumDef {
+                name: emEd.name,
+                variant_names: emVNames,
+                variant_vals: emVVals,
+            }));
+        }
+    }
+}
+
+@func emBeginExprFrame(em: *EmState, label: string) {
+    emBeginScope(em);
+    em.chunk.writeOp(opcode.OpCode.OP_NULL);
+    $emRSlot = emPushLocal(em, "");
+    list.push(em.exprs, @new(em.arena, EmExprFrame {
+        scope_depth: em.scope_depth,
+        result_slot: emRSlot,
+        label: label,
+        break_jumps: list.create(em.arena),
+    }));
+}
+
+@func emFinishExprFrame(em: *EmState) {
+    @if (list.len(em.exprs) == 0) {
+        return error("Emit", "expr frame empty");
+    }
+    $emFr: *EmExprFrame = @as(*EmExprFrame, list.pop(em.exprs));
+    @for (0..list.len(emFr.break_jumps)) |emBj| {
+        em.chunk.patchJump(list.get(emFr.break_jumps, emBj));
+    }
+    @if (list.len(em.locals) == 0) {
+        return error("Emit", "expr result missing");
+    }
+    _ = list.pop(em.locals);
+    em.scope_depth = em.scope_depth - 1;
+}
+
+@func emFindExpr(em: *EmState, label: ?string): ?*EmExprFrame {
+    $emEi = list.len(em.exprs) - 1;
+    @for (true) {
+        @if (emEi < 0) {
+            return null;
+        }
+        $emFr2: *EmExprFrame = @as(*EmExprFrame, list.get(em.exprs, emEi));
+        @if (label == null) {
+            return emFr2;
+        }
+        $emWant: string = @as(string, label);
+        @if (string.eql(emFr2.label, emWant)) {
+            return emFr2;
+        }
+        emEi = emEi - 1;
+    }
+    return null;
+}
+
+@func emBlockValue(em: *EmState, b: *nodes.Block) {
+    @if (b.label == null) {
+        return error("EmitUnsupported", "value block needs label");
+    }
+    $emBlab: string = @as(string, b.label);
+    emBeginExprFrame(em, emBlab);
+    emBeginScope(em);
+    @for (0..list.len(b.statements)) |emSi| {
+        emStatement(em, @as(*nodes.Node, list.get(b.statements, emSi)))?;
+    }
+    emEndScope(em);
+    emFinishExprFrame(em)?;
+}
+
+@func emArrayLiteral(em: *EmState, arr: *nodes.ArrayLiteral) {
+    $emAlen = list.len(arr.elements);
+    em.chunk.emitGetGlobal("__allocImmortalArray");
+    em.chunk.emitConstantInt(emAlen);
+    em.chunk.writeOp(opcode.OpCode.OP_CALL);
+    em.chunk.writeByte(1);
+    @for (0..emAlen) |emAi| {
+        em.chunk.writeOp(opcode.OpCode.OP_DUP);
+        em.chunk.emitConstantInt(emAi);
+        emExpr(em, @as(*nodes.Node, list.get(arr.elements, emAi)))?;
+        em.chunk.writeOp(opcode.OpCode.OP_SET_ARRAY);
+        em.chunk.writeOp(opcode.OpCode.OP_POP);
+    }
+}
+
+@func emIndex(em: *EmState, idx: *nodes.Index) {
+    emExpr(em, idx.object)?;
+    @if (idx.is_slice) {
+        @if (idx.index != null) {
+            emExpr(em, @as(*nodes.Node, idx.index))?;
+        } @else {
+            em.chunk.emitConstantInt(0);
+        }
+        @if (idx.end != null) {
+            emExpr(em, @as(*nodes.Node, idx.end))?;
+        } @else {
+            em.chunk.writeOp(opcode.OpCode.OP_NULL);
+        }
+        em.chunk.writeOp(opcode.OpCode.OP_SLICE);
+        return;
+    }
+    @if (idx.index == null) {
+        return error("EmitUnsupported", "index");
+    }
+    emExpr(em, @as(*nodes.Node, idx.index))?;
+    em.chunk.writeOp(opcode.OpCode.OP_GET_ARRAY);
+}
+
+@func emAssignIndex(em: *EmState, idx: *nodes.Index, right: *nodes.Node, op: string) {
+    @if (idx.is_slice || idx.index == null) {
+        return error("EmitUnsupported", "index assign");
+    }
+    @if (string.eql(op, "=") == false) {
+        emExpr(em, idx.object)?;
+        emExpr(em, @as(*nodes.Node, idx.index))?;
+        emExpr(em, idx.object)?;
+        emExpr(em, @as(*nodes.Node, idx.index))?;
+        em.chunk.writeOp(opcode.OpCode.OP_GET_ARRAY);
+        emExpr(em, right)?;
+        @if (string.eql(op, "+=")) {
+            em.chunk.writeOp(opcode.OpCode.OP_ADD);
+        } @else {
+            return error("EmitUnsupported", "compound index");
+        }
+        em.chunk.writeOp(opcode.OpCode.OP_SET_ARRAY);
+        return;
+    }
+    emExpr(em, idx.object)?;
+    emExpr(em, @as(*nodes.Node, idx.index))?;
+    emExpr(em, right)?;
+    em.chunk.writeOp(opcode.OpCode.OP_SET_ARRAY);
+}
+
+@func emSwitchValue(em: *EmState, sw: *nodes.Switch) {
+    @if (sw.label != null) {
+        emBeginExprFrame(em, @as(string, sw.label));
+    } @else {
+        emBeginExprFrame(em, "");
+    }
+    emBeginScope(em);
+    emExpr(em, sw.condition)?;
+    $emScrut = emPushLocal(em, "");
+    $emEnds = list.create(em.arena);
+    @for (0..list.len(sw.prongs)) |emPi| {
+        $emPr: *nodes.SwitchProng = @as(*nodes.SwitchProng, list.get(sw.prongs, emPi));
+        @if (emPr.is_else) {
+            emBeginScope(em);
+            @if (emPr.body.kind == common.NodeKind.Block) {
+                $emEb: *nodes.Block = @as(*nodes.Block, emPr.body);
+                @for (0..list.len(emEb.statements)) |emSi| {
+                    emStatement(em, @as(*nodes.Node, list.get(emEb.statements, emSi)))?;
+                }
+            } @else {
+                emStatement(em, emPr.body)?;
+            }
+            emEndScope(em);
+            list.push(emEnds, em.chunk.emitJump(opcode.OpCode.OP_JUMP));
+        } @else {
+            @if (list.len(emPr.patterns) != 1) {
+                return error("EmitUnsupported", "multi-pattern switch");
+            }
+            em.chunk.emitGetLocal(emScrut);
+            emExpr(em, @as(*nodes.Node, list.get(emPr.patterns, 0)))?;
+            em.chunk.writeOp(opcode.OpCode.OP_EQUAL);
+            $emNoMatch = em.chunk.emitJump(opcode.OpCode.OP_JUMP_IF_FALSE);
+            em.chunk.writeOp(opcode.OpCode.OP_POP);
+            emBeginScope(em);
+            @if (emPr.body.kind == common.NodeKind.Block) {
+                $emPb: *nodes.Block = @as(*nodes.Block, emPr.body);
+                @for (0..list.len(emPb.statements)) |emSi2| {
+                    emStatement(em, @as(*nodes.Node, list.get(emPb.statements, emSi2)))?;
+                }
+            } @else {
+                emStatement(em, emPr.body)?;
+            }
+            emEndScope(em);
+            list.push(emEnds, em.chunk.emitJump(opcode.OpCode.OP_JUMP));
+            em.chunk.patchJump(emNoMatch);
+            em.chunk.writeOp(opcode.OpCode.OP_POP);
+        }
+    }
+    @for (0..list.len(emEnds)) |emEi| {
+        em.chunk.patchJump(list.get(emEnds, emEi));
+    }
+    emEndScope(em);
+    emFinishExprFrame(em)?;
+}
+
+@func emArgNode(args, i: int): *nodes.Node {
+    return @as(*nodes.Node, list.get(args, i));
+}
+
+# Port of src/compiler/intrinsics.zig `compile` — switch on Intrinsic.
+@func compileIntrinsic(em: *EmState, intr: intrinsics.Intrinsic, name: string, args) {
+    intrinsics.checkArity(intr, name, list.len(args))?;
+    @switch (intr) {
+        intrinsics.Intrinsic.import => {
+            emExpr(em, emArgNode(args, 0))?;
+            em.chunk.writeOp(opcode.OpCode.OP_POP);
+        }
+        intrinsics.Intrinsic.isError => {
+            emExpr(em, emArgNode(args, 0))?;
+            em.chunk.writeOp(opcode.OpCode.OP_IS_ERROR);
+        }
+        intrinsics.Intrinsic.typeOf => {
+            emExpr(em, emArgNode(args, 0))?;
+            em.chunk.writeOp(opcode.OpCode.OP_POP);
+            em.chunk.emitString("unknown");
+        }
+        intrinsics.Intrinsic.sizeOf => {
+            $arg0 = emArgNode(args, 0);
+            @if (arg0.kind == common.NodeKind.Primary) {
+                $p: *nodes.Primary = @as(*nodes.Primary, arg0);
+                $sz = intrinsics.sizeOfTypeName(p.name);
+                @if (sz != null) {
+                    em.chunk.emitConstantInt(sz);
+                    return;
+                }
+                $sd = emFindStruct(em, p.name);
+                @if (sd != null) {
+                    $def: *EmStructDef = @as(*EmStructDef, sd);
+                    em.chunk.emitConstantInt(def.size);
+                    return;
+                }
+            }
+            emExpr(em, arg0)?;
+            em.chunk.writeOp(opcode.OpCode.OP_SIZEOF);
+        }
+        intrinsics.Intrinsic.nameOf => {
+            emExpr(em, emArgNode(args, 0))?;
+            em.chunk.writeOp(opcode.OpCode.OP_ERROR_NAME);
+        }
+        intrinsics.Intrinsic.as => {
+            compileCast(em, emArgNode(args, 0), emArgNode(args, 1))?;
+        }
+        intrinsics.Intrinsic.new => {
+            return error("EmitUnsupported", "@new");
+        }
+    }
+}
+
+# Port of compileCast / asCastKind.
+@func compileCast(em: *EmState, type_node: *nodes.Node, value: *nodes.Node) {
+    $kind = intrinsics.asCastKind(type_node);
+    emExpr(em, value)?;
+    @if (kind != null) {
+        em.chunk.writeOp(opcode.OpCode.OP_AS);
+        em.chunk.writeByte(kind);
+    }
+}
+
+@func emIntrinsic(em: *EmState, name: string, args) {
+    $intr = intrinsics.match(name);
+    @if (intr == null) {
+        return error("EmitUnsupported", "intrinsic");
+    }
+    compileIntrinsic(em, intr, name, args)?;
+}
+
+@func emStructInit(em: *EmState, init: *nodes.StructInit) {
+    @if (init.type_expr.kind != common.NodeKind.Primary) {
+        return error("EmitUnsupported", "struct type");
+    }
+    $emTyP: *nodes.Primary = @as(*nodes.Primary, init.type_expr);
+    $emSd2o = emFindStruct(em, emTyP.name);
+    @if (emSd2o == null) {
+        return error("EmitUnsupported", "unknown struct");
+    }
+    $emSd2: *EmStructDef = @as(*EmStructDef, emSd2o);
+    em.chunk.emitGetGlobal("__allocImmortalBytes");
+    em.chunk.emitConstantInt(emSd2.size);
+    em.chunk.writeOp(opcode.OpCode.OP_CALL);
+    em.chunk.writeByte(1);
+    @for (0..list.len(init.fields)) |emFi2| {
+        $emFiN: *nodes.StructFieldInit = @as(*nodes.StructFieldInit, list.get(init.fields, emFi2));
+        $emIdx = emFieldIndex(emSd2, emFiN.name);
+        @if (emIdx < 0) {
+            return error("EmitUnsupported", "unknown field");
+        }
+        em.chunk.writeOp(opcode.OpCode.OP_DUP);
+        emExpr(em, emFiN.value)?;
+        em.chunk.emitStoreField(list.get(emSd2.field_offsets, emIdx), list.get(emSd2.field_kinds, emIdx));
+        em.chunk.writeOp(opcode.OpCode.OP_POP);
+    }
+}
+
+@func emMember(em: *EmState, mem: *nodes.Member) {
+    @if (mem.property.kind != common.NodeKind.Primary) {
+        return error("EmitUnsupported", "member prop");
+    }
+    $emProp: *nodes.Primary = @as(*nodes.Primary, mem.property);
+    @if (mem.object.kind == common.NodeKind.Primary) {
+        $emObj: *nodes.Primary = @as(*nodes.Primary, mem.object);
+        $emEno = emFindEnum(em, emObj.name);
+        @if (emEno != null) {
+            $emEn: *EmEnumDef = @as(*EmEnumDef, emEno);
+            $emEv = emEnumVariantValue(emEn, emProp.name);
+            @if (emEv < 0) {
+                return error("EmitUnsupported", "enum variant");
+            }
+            em.chunk.emitConstantInt(emEv);
+            return;
+        }
+        $emOt = emGetVarType(em, emObj.name);
+        @if (string.len(emOt) > 0) {
+            $emSd3o = emFindStruct(em, emOt);
+            @if (emSd3o != null) {
+                $emSd3: *EmStructDef = @as(*EmStructDef, emSd3o);
+                $emIdx2 = emFieldIndex(emSd3, emProp.name);
+                @if (emIdx2 >= 0) {
+                    emExpr(em, mem.object)?;
+                    em.chunk.emitLoadField(list.get(emSd3.field_offsets, emIdx2), list.get(emSd3.field_kinds, emIdx2));
+                    return;
+                }
+            }
+        }
+    }
+    return error("EmitUnsupported", "member");
+}
+
+@func emAssignMember(em: *EmState, mem: *nodes.Member, right: *nodes.Node, op: string) {
+    @if (mem.property.kind != common.NodeKind.Primary) {
+        return error("EmitUnsupported", "assign member");
+    }
+    $emProp2: *nodes.Primary = @as(*nodes.Primary, mem.property);
+    @if (mem.object.kind != common.NodeKind.Primary) {
+        return error("EmitUnsupported", "assign member obj");
+    }
+    $emObj2: *nodes.Primary = @as(*nodes.Primary, mem.object);
+    $emOt2 = emGetVarType(em, emObj2.name);
+    $emSd4o = emFindStruct(em, emOt2);
+    @if (emSd4o == null) {
+        return error("EmitUnsupported", "assign member type");
+    }
+    $emSd4: *EmStructDef = @as(*EmStructDef, emSd4o);
+    $emIdx3 = emFieldIndex(emSd4, emProp2.name);
+    @if (emIdx3 < 0) {
+        return error("EmitUnsupported", "assign field");
+    }
+    $emOff2 = list.get(emSd4.field_offsets, emIdx3);
+    $emKind2 = list.get(emSd4.field_kinds, emIdx3);
+    @if (string.eql(op, "=") == false) {
+        emExpr(em, mem.object)?;
+        em.chunk.writeOp(opcode.OpCode.OP_DUP);
+        em.chunk.emitLoadField(emOff2, emKind2);
+        emExpr(em, right)?;
+        @if (string.eql(op, "+=")) {
+            em.chunk.writeOp(opcode.OpCode.OP_ADD);
+        } @else {
+            @if (string.eql(op, "-=")) {
+                em.chunk.writeOp(opcode.OpCode.OP_SUB);
+            } @else {
+                @if (string.eql(op, "*=")) {
+                    em.chunk.writeOp(opcode.OpCode.OP_MUL);
+                } @else {
+                    @if (string.eql(op, "/=")) {
+                        em.chunk.writeOp(opcode.OpCode.OP_DIV);
+                    } @else {
+                        return error("EmitUnsupported", "compound member");
+                    }
+                }
+            }
+        }
+        em.chunk.emitStoreField(emOff2, emKind2);
+        return;
+    }
+    emExpr(em, mem.object)?;
+    emExpr(em, right)?;
+    em.chunk.emitStoreField(emOff2, emKind2);
+}
+
+@func emMethodCall(em: *EmState, mem: *nodes.Member, args) {
+    @if (mem.property.kind != common.NodeKind.Primary) {
+        return error("EmitUnsupported", "method");
+    }
+    $emMprop: *nodes.Primary = @as(*nodes.Primary, mem.property);
+    @if (mem.object.kind != common.NodeKind.Primary) {
+        return error("EmitUnsupported", "method recv");
+    }
+    $emMobj: *nodes.Primary = @as(*nodes.Primary, mem.object);
+    $emMot = emGetVarType(em, emMobj.name);
+    @if (string.len(emMot) == 0) {
+        return error("EmitUnsupported", "method type");
+    }
+    $emMname = string.concat(string.concat(emMot, "::"), emMprop.name);
+    emExpr(em, mem.object)?;
+    $emMargc = list.len(args) + 1;
+    @for (0..list.len(args)) |emMai| {
+        emExpr(em, @as(*nodes.Node, list.get(args, emMai)))?;
+    }
+    emUserCall(em, emMname, emMargc)?;
+}
+
+@func emPipe(em: *EmState, bin: *nodes.Binary) {
+    @if (bin.right.kind == common.NodeKind.Call) {
+        $emPc: *nodes.Call = @as(*nodes.Call, bin.right);
+        @if (emPc.callee.kind == common.NodeKind.Primary) {
+            $emPcal: *nodes.Primary = @as(*nodes.Primary, emPc.callee);
+            emExpr(em, bin.left)?;
+            @for (0..list.len(emPc.args)) |emPai| {
+                emExpr(em, @as(*nodes.Node, list.get(emPc.args, emPai)))?;
+            }
+            $emParc = list.len(emPc.args) + 1;
+            $emPf = emFindFunc(em, emPcal.name);
+            @if (emPf != null) {
+                emUserCall(em, emPcal.name, emParc)?;
+                return;
+            }
+        }
+        return error("EmitUnsupported", "pipe call");
+    }
+    @if (bin.right.kind == common.NodeKind.Primary) {
+        $emPprim: *nodes.Primary = @as(*nodes.Primary, bin.right);
+        emExpr(em, bin.left)?;
+        $emPf2 = emFindFunc(em, emPprim.name);
+        @if (emPf2 != null) {
+            emUserCall(em, emPprim.name, 1)?;
+            return;
+        }
+    }
+    return error("EmitUnsupported", "pipe");
+}
+
+@func emUserCall(em: *EmState, name: string, argc: i64) {
+    $emFn2o = emFindFunc(em, name);
+    @if (emFn2o == null) {
+        return error("EmitUnsupported", "unknown function");
+    }
+    $emFn2: *EmFunc = @as(*EmFunc, emFn2o);
+    @if (emFn2.address >= 0) {
+        em.chunk.emitCallStatic(emFn2.address, argc);
+        return;
+    }
+    em.chunk.writeOp(opcode.OpCode.OP_CALL_STATIC);
+    $emPatch = em.chunk.codeLen();
+    em.chunk.writeByte(255);
+    em.chunk.writeByte(255);
+    em.chunk.writeByte(@as(u8, argc));
+    list.push(emFn2.patches, emPatch);
+}
+
+@func emBinOp(em: *EmState, op: string) {
+    @if (string.eql(op, "+")) {
+        em.chunk.writeOp(opcode.OpCode.OP_ADD);
+        return;
+    }
+    @if (string.eql(op, "-")) {
+        em.chunk.writeOp(opcode.OpCode.OP_SUB);
+        return;
+    }
+    @if (string.eql(op, "*")) {
+        em.chunk.writeOp(opcode.OpCode.OP_MUL);
+        return;
+    }
+    @if (string.eql(op, "/")) {
+        em.chunk.writeOp(opcode.OpCode.OP_DIV);
+        return;
+    }
+    @if (string.eql(op, "%")) {
+        em.chunk.writeOp(opcode.OpCode.OP_MOD);
+        return;
+    }
+    @if (string.eql(op, "==")) {
+        em.chunk.writeOp(opcode.OpCode.OP_EQUAL);
+        return;
+    }
+    @if (string.eql(op, "!=")) {
+        em.chunk.writeOp(opcode.OpCode.OP_NOT_EQUAL);
+        return;
+    }
+    @if (string.eql(op, "<")) {
+        em.chunk.writeOp(opcode.OpCode.OP_LESS);
+        return;
+    }
+    @if (string.eql(op, "<=")) {
+        em.chunk.writeOp(opcode.OpCode.OP_LESS_EQUAL);
+        return;
+    }
+    @if (string.eql(op, ">")) {
+        em.chunk.writeOp(opcode.OpCode.OP_GREATER);
+        return;
+    }
+    @if (string.eql(op, ">=")) {
+        em.chunk.writeOp(opcode.OpCode.OP_GREATER_EQUAL);
+        return;
+    }
+    @if (string.eql(op, "**") || string.eql(op, "^")) {
+        em.chunk.writeOp(opcode.OpCode.OP_POW);
+        return;
+    }
+    return error("EmitUnsupported", "binary op");
+}
+
+@func emLiteral(em: *EmState, lit: *nodes.Literal) {
+    @if (lit.literal_type == nodes.LiteralKind.Null) {
+        em.chunk.writeOp(opcode.OpCode.OP_NULL);
+        return;
+    }
+    @if (lit.literal_type == nodes.LiteralKind.Boolean) {
+        @if (string.eql(lit.value, "true")) {
+            em.chunk.writeOp(opcode.OpCode.OP_TRUE);
+        } @else {
+            em.chunk.writeOp(opcode.OpCode.OP_FALSE);
+        }
+        return;
+    }
+    @if (lit.literal_type == nodes.LiteralKind.String) {
+        em.chunk.emitString(lit.value);
+        return;
+    }
+    @if (lit.literal_type == nodes.LiteralKind.Number) {
+        @if (string.indexOf(lit.value, ".") >= 0) {
+            # Runtime parse — avoid needing float bits in the constant pool yet.
+            em.chunk.emitGetGlobal("__parseFloat");
+            em.chunk.emitString(lit.value);
+            em.chunk.writeOp(opcode.OpCode.OP_CALL);
+            em.chunk.writeByte(1);
+            return;
+        }
+        em.chunk.emitConstantInt(string.parseInt(lit.value, 10));
+        return;
+    }
+    @if (lit.literal_type == nodes.LiteralKind.Hex) {
+        em.chunk.emitConstantInt(string.parseInt(string.slice(lit.value, 2, string.len(lit.value)), 16));
+        return;
+    }
+    @if (lit.literal_type == nodes.LiteralKind.Octal) {
+        em.chunk.emitConstantInt(string.parseInt(string.slice(lit.value, 2, string.len(lit.value)), 8));
+        return;
+    }
+    @if (lit.literal_type == nodes.LiteralKind.Binary) {
+        em.chunk.emitConstantInt(string.parseInt(string.slice(lit.value, 2, string.len(lit.value)), 2));
+        return;
+    }
+    return error("EmitUnsupported", "literal kind");
+}
+
+@func emResolveName(em: *EmState, name: string) {
+    $emSlot = emResolveLocal(em, name);
+    @if (emSlot >= 0) {
+        em.chunk.emitGetLocal(emSlot);
+        return;
+    }
+    $emFn3 = emFindFunc(em, name);
+    @if (emFn3 != null) {
+        em.chunk.emitGetFunction(name);
+        return;
+    }
+    em.chunk.emitGetGlobal(name);
+}
+
+@func emExpr(em: *EmState, n: *nodes.Node) {
+    @if (n.kind == common.NodeKind.Literal) {
+        emLiteral(em, @as(*nodes.Literal, n))?;
+        return;
+    }
+    @if (n.kind == common.NodeKind.Primary) {
+        $emPrim: *nodes.Primary = @as(*nodes.Primary, n);
+        emResolveName(em, emPrim.name);
+        return;
+    }
+    @if (n.kind == common.NodeKind.Unary) {
+        $emUn: *nodes.Unary = @as(*nodes.Unary, n);
+        emExpr(em, emUn.arg)?;
+        @if (string.eql(emUn.operator, "-")) {
+            em.chunk.writeOp(opcode.OpCode.OP_NEGATE);
+            return;
+        }
+        @if (string.eql(emUn.operator, "!")) {
+            em.chunk.writeOp(opcode.OpCode.OP_NOT);
+            return;
+        }
+        return error("EmitUnsupported", "unary op");
+    }
+    @if (n.kind == common.NodeKind.Binary) {
+        $emBin: *nodes.Binary = @as(*nodes.Binary, n);
+        @if (string.eql(emBin.operator, "&&")) {
+            emExpr(em, emBin.left)?;
+            $emAndJ = em.chunk.emitJump(opcode.OpCode.OP_JUMP_IF_FALSE);
+            em.chunk.writeOp(opcode.OpCode.OP_POP);
+            emExpr(em, emBin.right)?;
+            em.chunk.patchJump(emAndJ);
+            return;
+        }
+        @if (string.eql(emBin.operator, "||")) {
+            emExpr(em, emBin.left)?;
+            $emOrElse = em.chunk.emitJump(opcode.OpCode.OP_JUMP_IF_FALSE);
+            $emOrEnd = em.chunk.emitJump(opcode.OpCode.OP_JUMP);
+            em.chunk.patchJump(emOrElse);
+            em.chunk.writeOp(opcode.OpCode.OP_POP);
+            emExpr(em, emBin.right)?;
+            em.chunk.patchJump(emOrEnd);
+            return;
+        }
+        @if (string.eql(emBin.operator, "|>")) {
+            emPipe(em, emBin)?;
+            return;
+        }
+        emExpr(em, emBin.left)?;
+        emExpr(em, emBin.right)?;
+        emBinOp(em, emBin.operator)?;
+        return;
+    }
+    @if (n.kind == common.NodeKind.Assignment) {
+        emAssign(em, @as(*nodes.Assignment, n))?;
+        return;
+    }
+    @if (n.kind == common.NodeKind.Call) {
+        emCall(em, @as(*nodes.Call, n))?;
+        return;
+    }
+    @if (n.kind == common.NodeKind.Member) {
+        emMember(em, @as(*nodes.Member, n))?;
+        return;
+    }
+    @if (n.kind == common.NodeKind.StructInit) {
+        emStructInit(em, @as(*nodes.StructInit, n))?;
+        return;
+    }
+    @if (n.kind == common.NodeKind.ArrayLiteral) {
+        emArrayLiteral(em, @as(*nodes.ArrayLiteral, n))?;
+        return;
+    }
+    @if (n.kind == common.NodeKind.Index) {
+        emIndex(em, @as(*nodes.Index, n))?;
+        return;
+    }
+    @if (n.kind == common.NodeKind.Switch) {
+        emSwitchValue(em, @as(*nodes.Switch, n))?;
+        return;
+    }
+    @if (n.kind == common.NodeKind.Block) {
+        emBlockValue(em, @as(*nodes.Block, n))?;
+        return;
+    }
+    return error("EmitUnsupported", "expr kind");
+}
+
+@func emAssign(em: *EmState, a: *nodes.Assignment) {
+    @if (a.left.kind == common.NodeKind.Member) {
+        emAssignMember(em, @as(*nodes.Member, a.left), a.right, a.operator)?;
+        return;
+    }
+    @if (a.left.kind == common.NodeKind.Index) {
+        emAssignIndex(em, @as(*nodes.Index, a.left), a.right, a.operator)?;
+        return;
+    }
+    @if (a.left.kind != common.NodeKind.Primary) {
+        return error("EmitUnsupported", "assign target");
+    }
+    $emLeft: *nodes.Primary = @as(*nodes.Primary, a.left);
+    $emArith = a.operator;
+    @if (string.eql(emArith, "=") == false) {
+        emResolveName(em, emLeft.name);
+        emExpr(em, a.right)?;
+        @if (string.eql(emArith, "+=")) {
+            em.chunk.writeOp(opcode.OpCode.OP_ADD);
+        } @else {
+            @if (string.eql(emArith, "-=")) {
+                em.chunk.writeOp(opcode.OpCode.OP_SUB);
+            } @else {
+                @if (string.eql(emArith, "*=")) {
+                    em.chunk.writeOp(opcode.OpCode.OP_MUL);
+                } @else {
+                    @if (string.eql(emArith, "/=")) {
+                        em.chunk.writeOp(opcode.OpCode.OP_DIV);
+                    } @else {
+                        return error("EmitUnsupported", "compound assign");
+                    }
+                }
+            }
+        }
+    } @else {
+        emExpr(em, a.right)?;
+    }
+    $emSlot2 = emResolveLocal(em, emLeft.name);
+    @if (emSlot2 >= 0) {
+        em.chunk.emitSetLocal(emSlot2);
+    } @else {
+        em.chunk.emitSetGlobal(emLeft.name);
+    }
+}
+
+@func emCall(em: *EmState, call: *nodes.Call) {
+    @if (call.callee.kind == common.NodeKind.Member) {
+        emMethodCall(em, @as(*nodes.Member, call.callee), call.args)?;
+        return;
+    }
+    @if (call.callee.kind == common.NodeKind.Primary) {
+        $emCal: *nodes.Primary = @as(*nodes.Primary, call.callee);
+        @if (string.len(emCal.name) > 0) {
+            @if (string.eql(string.slice(emCal.name, 0, 1), "@")) {
+                emIntrinsic(em, emCal.name, call.args)?;
+                return;
+            }
+        }
+        @if (string.eql(emCal.name, "print")) {
+            em.chunk.emitGetGlobal("print");
+            $emArgc = list.len(call.args);
+            @for (0..emArgc) |emAi| {
+                emExpr(em, @as(*nodes.Node, list.get(call.args, emAi)))?;
+            }
+            em.chunk.writeOp(opcode.OpCode.OP_CALL);
+            em.chunk.writeByte(@as(u8, emArgc));
+            return;
+        }
+        @if (string.eql(emCal.name, "len")) {
+            em.chunk.emitGetGlobal("len");
+            $emArgcL = list.len(call.args);
+            @for (0..emArgcL) |emAiL| {
+                emExpr(em, @as(*nodes.Node, list.get(call.args, emAiL)))?;
+            }
+            em.chunk.writeOp(opcode.OpCode.OP_CALL);
+            em.chunk.writeByte(@as(u8, emArgcL));
+            return;
+        }
+        $emFn4 = emFindFunc(em, emCal.name);
+        @if (emFn4 != null) {
+            $emArgc2 = list.len(call.args);
+            @for (0..emArgc2) |emAi2| {
+                emExpr(em, @as(*nodes.Node, list.get(call.args, emAi2)))?;
+            }
+            emUserCall(em, emCal.name, emArgc2)?;
+            return;
+        }
+    }
+    emExpr(em, call.callee)?;
+    $emArgc3 = list.len(call.args);
+    @for (0..emArgc3) |emAi3| {
+        emExpr(em, @as(*nodes.Node, list.get(call.args, emAi3)))?;
+    }
+    em.chunk.writeOp(opcode.OpCode.OP_CALL);
+    em.chunk.writeByte(@as(u8, emArgc3));
+}
+
+@func emIsImportDecl(d: *nodes.Declaration) {
+    @if (d.value.kind != common.NodeKind.Call) {
+        return false;
+    }
+    $emImpCall: *nodes.Call = @as(*nodes.Call, d.value);
+    @if (emImpCall.callee.kind != common.NodeKind.Primary) {
+        return false;
+    }
+    $emImpCal: *nodes.Primary = @as(*nodes.Primary, emImpCall.callee);
+    return string.eql(emImpCal.name, "@import");
+}
+
+@func emDeclaration(em: *EmState, d: *nodes.Declaration) {
+    @if (emIsImportDecl(d)) {
+        return;
+    }
+    emExpr(em, d.value)?;
+    @if (d.type_annotation != null) {
+        $emDeclTyA = emTypeDisplay(d.type_annotation);
+        @if (em.scope_depth > 0) {
+            _ = emPushLocalTyped(em, d.name, emDeclTyA);
+        } @else {
+            em.chunk.emitSetGlobal(d.name);
+            em.chunk.writeOp(opcode.OpCode.OP_POP);
+            emSetVarType(em, d.name, emDeclTyA);
+        }
+        return;
+    }
+    @if (d.value.kind == common.NodeKind.StructInit) {
+        $emSi: *nodes.StructInit = @as(*nodes.StructInit, d.value);
+        @if (emSi.type_expr.kind == common.NodeKind.Primary) {
+            $emSiP: *nodes.Primary = @as(*nodes.Primary, emSi.type_expr);
+            @if (em.scope_depth > 0) {
+                _ = emPushLocalTyped(em, d.name, emSiP.name);
+            } @else {
+                em.chunk.emitSetGlobal(d.name);
+                em.chunk.writeOp(opcode.OpCode.OP_POP);
+                emSetVarType(em, d.name, emSiP.name);
+            }
+            return;
+        }
+    }
+    @if (em.scope_depth > 0) {
+        _ = emPushLocal(em, d.name);
+    } @else {
+        em.chunk.emitSetGlobal(d.name);
+        em.chunk.writeOp(opcode.OpCode.OP_POP);
+    }
+}
+
+@func emReturn(em: *EmState, r: *nodes.Return) {
+    @if (r.return_value != null) {
+        emExpr(em, @as(*nodes.Node, r.return_value))?;
+    } @else {
+        em.chunk.writeOp(opcode.OpCode.OP_NULL);
+    }
+    em.chunk.writeOp(opcode.OpCode.OP_RETURN);
+}
+
+@func emIf(em: *EmState, ife: *nodes.If) {
+    emExpr(em, ife.condition)?;
+    $emThenJ = em.chunk.emitJump(opcode.OpCode.OP_JUMP_IF_FALSE);
+
+    emBeginScope(em);
+    @if (ife.pipe_value != null) {
+        $emPipe: *nodes.Node = @as(*nodes.Node, ife.pipe_value);
+        @if (emPipe.kind != common.NodeKind.Primary) {
+            return error("EmitUnsupported", "if capture");
+        }
+        $emCap: *nodes.Primary = @as(*nodes.Primary, emPipe);
+        _ = emPushLocal(em, emCap.name);
+    } @else {
+        em.chunk.writeOp(opcode.OpCode.OP_POP);
+    }
+
+    @if (ife.body.kind != common.NodeKind.Block) {
+        return error("EmitUnsupported", "if body");
+    }
+    $emThenBody: *nodes.Block = @as(*nodes.Block, ife.body);
+    @for (0..list.len(emThenBody.statements)) |emSi| {
+        emStatement(em, @as(*nodes.Node, list.get(emThenBody.statements, emSi)))?;
+    }
+    emEndScope(em);
+
+    @if (ife.else_body != null) {
+        $emElseN: *nodes.Node = @as(*nodes.Node, ife.else_body);
+        $emElseJ = em.chunk.emitJump(opcode.OpCode.OP_JUMP);
+        em.chunk.patchJump(emThenJ);
+        em.chunk.writeOp(opcode.OpCode.OP_POP);
+        @if (emElseN.kind == common.NodeKind.Block) {
+            emBeginScope(em);
+            $emElseBody: *nodes.Block = @as(*nodes.Block, emElseN);
+            @for (0..list.len(emElseBody.statements)) |emEsi| {
+                emStatement(em, @as(*nodes.Node, list.get(emElseBody.statements, emEsi)))?;
+            }
+            emEndScope(em);
+        } @else {
+            @if (emElseN.kind == common.NodeKind.If) {
+                emIf(em, @as(*nodes.If, emElseN))?;
+            } @else {
+                return error("EmitUnsupported", "else body");
+            }
+        }
+        em.chunk.patchJump(emElseJ);
+    } @else {
+        $emSkipPop = em.chunk.emitJump(opcode.OpCode.OP_JUMP);
+        em.chunk.patchJump(emThenJ);
+        em.chunk.writeOp(opcode.OpCode.OP_POP);
+        em.chunk.patchJump(emSkipPop);
+    }
+}
+
+@func emFindLoop(em: *EmState, want: ?string): ?*EmLoop {
+    $emLi = list.len(em.loops) - 1;
+    @for (true) {
+        @if (emLi < 0) {
+            return null;
+        }
+        $emLp: *EmLoop = @as(*EmLoop, list.get(em.loops, emLi));
+        @if (want == null) {
+            return emLp;
+        }
+        $emWant: string = @as(string, want);
+        @if (string.len(emLp.label) > 0) {
+            @if (string.eql(emLp.label, emWant)) {
+                return emLp;
+            }
+        }
+        emLi = emLi - 1;
+    }
+    return null;
+}
+
+@func emBreak(em: *EmState, brk: *nodes.Break) {
+    @if (brk.value != null) {
+        $emTargetEo = emFindExpr(em, brk.label);
+        @if (emTargetEo == null) {
+            return error("EmitUnsupported", "break value outside expr");
+        }
+        $emTargetE: *EmExprFrame = @as(*EmExprFrame, emTargetEo);
+        emExpr(em, @as(*nodes.Node, brk.value))?;
+        em.chunk.emitSetLocal(emTargetE.result_slot);
+        em.chunk.writeOp(opcode.OpCode.OP_POP);
+        emPopsUntil(em, emTargetE.scope_depth);
+        $emBrJE = em.chunk.emitJump(opcode.OpCode.OP_JUMP);
+        list.push(emTargetE.break_jumps, emBrJE);
+        return;
+    }
+    $emTargeto = emFindLoop(em, brk.label);
+    @if (emTargeto == null) {
+        return error("EmitUnsupported", "break outside loop");
+    }
+    $emTarget: *EmLoop = @as(*EmLoop, emTargeto);
+    emPopsUntil(em, emTarget.scope_depth);
+    $emBrJ = em.chunk.emitJump(opcode.OpCode.OP_JUMP);
+    list.push(emTarget.break_jumps, emBrJ);
+}
+
+@func emContinue(em: *EmState, cont: *nodes.Continue) {
+    $emTarget2o = emFindLoop(em, cont.label);
+    @if (emTarget2o == null) {
+        return error("EmitUnsupported", "continue outside loop");
+    }
+    $emTarget2: *EmLoop = @as(*EmLoop, emTarget2o);
+    emPopsUntil(em, emTarget2.scope_depth);
+    $emCoJ = em.chunk.emitJump(opcode.OpCode.OP_JUMP);
+    list.push(emTarget2.continue_jumps, emCoJ);
+}
+
+@func emRangeFor(em: *EmState, fe: *nodes.For) {
+    @if (fe.expr.kind != common.NodeKind.Binary) {
+        return error("EmitUnsupported", "range for");
+    }
+    $emRBin: *nodes.Binary = @as(*nodes.Binary, fe.expr);
+    @if (string.eql(emRBin.operator, "..") == false) {
+        return error("EmitUnsupported", "range for");
+    }
+    @if (list.len(fe.captures) == 0) {
+        return error("EmitUnsupported", "range capture");
+    }
+    $emCap0: *nodes.Capture = @as(*nodes.Capture, list.get(fe.captures, 0));
+
+    emExpr(em, emRBin.left)?;
+    $emIIndex = emPushLocal(em, emCap0.name);
+
+    emExpr(em, emRBin.right)?;
+    $emEndIndex = emPushLocal(em, ".range_end");
+
+    em.chunk.writeOp(opcode.OpCode.OP_FOR_PREP);
+    em.chunk.writeByte(@as(u8, emIIndex));
+    em.chunk.writeByte(@as(u8, emEndIndex));
+    $emPrepSkip = em.chunk.codeLen();
+    em.chunk.writeByte(255);
+    em.chunk.writeByte(255);
+
+    $emBodyStart = em.chunk.codeLen();
+    emBeginScope(em);
+    @if (fe.body.kind != common.NodeKind.Block) {
+        return error("EmitUnsupported", "for body");
+    }
+    $emForBody: *nodes.Block = @as(*nodes.Block, fe.body);
+    @for (0..list.len(emForBody.statements)) |emSi2| {
+        emStatement(em, @as(*nodes.Node, list.get(emForBody.statements, emSi2)))?;
+    }
+    emEndScope(em);
+
+    $emLoop: *EmLoop = @as(*EmLoop, list.pop(em.loops));
+    @for (0..list.len(emLoop.continue_jumps)) |emCj| {
+        em.chunk.patchJump(list.get(emLoop.continue_jumps, emCj));
+    }
+
+    em.chunk.writeOp(opcode.OpCode.OP_FOR_LOOP);
+    em.chunk.writeByte(@as(u8, emIIndex));
+    em.chunk.writeByte(@as(u8, emEndIndex));
+    $emAfterOp = em.chunk.codeLen() + 2;
+    $emBack = emAfterOp - emBodyStart;
+    em.chunk.writeByte(@as(u8, (emBack >> 8) & 255));
+    em.chunk.writeByte(@as(u8, emBack & 255));
+
+    $emSkip = em.chunk.codeLen() - emPrepSkip - 2;
+    em.chunk.setByte(emPrepSkip, @as(u8, (emSkip >> 8) & 255));
+    em.chunk.setByte(emPrepSkip + 1, @as(u8, emSkip & 255));
+
+    @for (0..list.len(emLoop.break_jumps)) |emBj| {
+        em.chunk.patchJump(list.get(emLoop.break_jumps, emBj));
+    }
+}
+
+@func emFor(em: *EmState, fe: *nodes.For) {
+    emBeginScope(em);
+    @if (fe.label != null) {
+        $emForLab: string = @as(string, fe.label);
+        list.push(em.loops, @new(em.arena, EmLoop {
+            scope_depth: em.scope_depth,
+            label: emForLab,
+            break_jumps: list.create(em.arena),
+            continue_jumps: list.create(em.arena),
+        }));
+    } @else {
+        list.push(em.loops, @new(em.arena, EmLoop {
+            scope_depth: em.scope_depth,
+            label: "",
+            break_jumps: list.create(em.arena),
+            continue_jumps: list.create(em.arena),
+        }));
+    }
+
+    @if (fe.expr.kind == common.NodeKind.Binary) {
+        $emChk: *nodes.Binary = @as(*nodes.Binary, fe.expr);
+        @if (string.eql(emChk.operator, "..")) {
+            emRangeFor(em, fe)?;
+            emEndScope(em);
+            return;
+        }
+    }
+
+    $emLoopStart = em.chunk.codeLen();
+    $emHasExit = false;
+    $emExitJ = 0;
+    $emIsInf = false;
+    @if (fe.expr.kind == common.NodeKind.Literal) {
+        $emLit: *nodes.Literal = @as(*nodes.Literal, fe.expr);
+        @if (string.eql(emLit.value, "true")) {
+            emIsInf = true;
+        }
+    }
+    @if (emIsInf == false) {
+        emExpr(em, fe.expr)?;
+        emExitJ = em.chunk.emitJump(opcode.OpCode.OP_JUMP_IF_FALSE);
+        emHasExit = true;
+        @if (list.len(fe.captures) == 0) {
+            em.chunk.writeOp(opcode.OpCode.OP_POP);
+        }
+    }
+    emBeginScope(em);
+    @if (list.len(fe.captures) > 0) {
+        $emC0: *nodes.Capture = @as(*nodes.Capture, list.get(fe.captures, 0));
+        _ = emPushLocal(em, emC0.name);
+    }
+    @if (fe.body.kind != common.NodeKind.Block) {
+        return error("EmitUnsupported", "for body");
+    }
+    $emCondBody: *nodes.Block = @as(*nodes.Block, fe.body);
+    @for (0..list.len(emCondBody.statements)) |emSi3| {
+        emStatement(em, @as(*nodes.Node, list.get(emCondBody.statements, emSi3)))?;
+    }
+    emEndScope(em);
+
+    $emLoop2: *EmLoop = @as(*EmLoop, list.pop(em.loops));
+    @for (0..list.len(emLoop2.continue_jumps)) |emCj2| {
+        em.chunk.patchJump(list.get(emLoop2.continue_jumps, emCj2));
+    }
+    em.chunk.emitLoop(emLoopStart);
+    @if (emHasExit) {
+        em.chunk.patchJump(emExitJ);
+        em.chunk.writeOp(opcode.OpCode.OP_POP);
+    }
+    @for (0..list.len(emLoop2.break_jumps)) |emBj2| {
+        em.chunk.patchJump(list.get(emLoop2.break_jumps, emBj2));
+    }
+    emEndScope(em);
+}
+
+@func emBlock(em: *EmState, b: *nodes.Block) {
+    emBeginScope(em);
+    @for (0..list.len(b.statements)) |emSi4| {
+        emStatement(em, @as(*nodes.Node, list.get(b.statements, emSi4)))?;
+    }
+    emEndScope(em);
+}
+
+@func emFunctionBody(em: *EmState, fd: *nodes.FunctionDecl) {
+    $emOuterLocals = em.locals;
+    $emOuterDepth = em.scope_depth;
+    em.locals = list.create(em.arena);
+    em.scope_depth = 0;
+
+    emBeginScope(em);
+    @if (fd.params.kind != common.NodeKind.Params) {
+        return error("EmitUnsupported", "params");
+    }
+    $emParams: *nodes.Params = @as(*nodes.Params, fd.params);
+    @for (0..list.len(emParams.params)) |emPi| {
+        $emParam: *nodes.Param = @as(*nodes.Param, list.get(emParams.params, emPi));
+        @if (emParam.type_annotation != null) {
+            $emPty = emTypeDisplay(emParam.type_annotation);
+            _ = emPushLocalTyped(em, emParam.name, emPty);
+        } @else {
+            _ = emPushLocal(em, emParam.name);
+            @if (string.eql(emParam.name, "self")) {
+                $emColon = string.indexOf(fd.name, "::");
+                @if (emColon >= 0) {
+                    $emSName = string.slice(fd.name, 0, emColon);
+                    emSetVarType(em, "self", emSName);
+                    $emSelfLoc: *EmLocal = @as(*EmLocal, list.get(em.locals, list.len(em.locals) - 1));
+                    emSelfLoc.type_name = emSName;
+                }
+            }
+        }
+    }
+
+    @if (fd.body.kind != common.NodeKind.Block) {
+        return error("EmitUnsupported", "func body");
+    }
+    $emFnBody: *nodes.Block = @as(*nodes.Block, fd.body);
+    @for (0..list.len(emFnBody.statements)) |emSi5| {
+        emStatement(em, @as(*nodes.Node, list.get(emFnBody.statements, emSi5)))?;
+    }
+
+    em.chunk.writeOp(opcode.OpCode.OP_NULL);
+    em.chunk.writeOp(opcode.OpCode.OP_RETURN);
+
+    em.locals = emOuterLocals;
+    em.scope_depth = emOuterDepth;
+}
+
+@func emStatement(em: *EmState, n: *nodes.Node) {
+    @if (n.kind == common.NodeKind.FunctionDecl) {
+        return;
+    }
+    @if (n.kind == common.NodeKind.StructDecl) {
+        return;
+    }
+    @if (n.kind == common.NodeKind.EnumDecl) {
+        return;
+    }
+    @if (n.kind == common.NodeKind.ErrorDecl) {
+        return;
+    }
+    @if (n.kind == common.NodeKind.TypeDecl) {
+        return;
+    }
+    @if (n.kind == common.NodeKind.Extern) {
+        return;
+    }
+    @if (n.kind == common.NodeKind.Declaration) {
+        emDeclaration(em, @as(*nodes.Declaration, n))?;
+        return;
+    }
+    @if (n.kind == common.NodeKind.Return) {
+        emReturn(em, @as(*nodes.Return, n))?;
+        return;
+    }
+    @if (n.kind == common.NodeKind.If) {
+        emIf(em, @as(*nodes.If, n))?;
+        return;
+    }
+    @if (n.kind == common.NodeKind.For) {
+        emFor(em, @as(*nodes.For, n))?;
+        return;
+    }
+    @if (n.kind == common.NodeKind.Break) {
+        emBreak(em, @as(*nodes.Break, n))?;
+        return;
+    }
+    @if (n.kind == common.NodeKind.Continue) {
+        emContinue(em, @as(*nodes.Continue, n))?;
+        return;
+    }
+    @if (n.kind == common.NodeKind.Block) {
+        emBlock(em, @as(*nodes.Block, n))?;
+        return;
+    }
+    emExpr(em, n)?;
+    em.chunk.writeOp(opcode.OpCode.OP_POP);
+}
+
+@func emFnArity(n: *nodes.Node) {
+    $emFd: *nodes.FunctionDecl = @as(*nodes.FunctionDecl, n);
+    @if (emFd.params.kind != common.NodeKind.Params) {
+        return 0;
+    }
+    $emPs: *nodes.Params = @as(*nodes.Params, emFd.params);
+    return list.len(emPs.params);
+}
+
+@func emCollectFunctions(em: *EmState, doc: *ast.Document) {
+    @for (0..list.len(doc.statements)) |emDi| {
+        $emStmt: *nodes.Node = @as(*nodes.Node, list.get(doc.statements, emDi));
+        @if (emStmt.kind == common.NodeKind.FunctionDecl) {
+            $emFd2: *nodes.FunctionDecl = @as(*nodes.FunctionDecl, emStmt);
+            list.push(em.functions, @new(em.arena, EmFunc {
+                name: emFd2.name,
+                node: emStmt,
+                address: -1,
+                arity: emFnArity(emStmt),
+                patches: list.create(em.arena),
+            }));
+        }
+    }
+}
+
+@func emEmitAllFunctions(em: *EmState) {
+    @for (0..list.len(em.functions)) |emFi2| {
+        $emFn5: *EmFunc = @as(*EmFunc, list.get(em.functions, emFi2));
+        emFn5.address = em.chunk.codeLen();
+        @for (0..list.len(emFn5.patches)) |emPi2| {
+            $emPatch2 = list.get(emFn5.patches, emPi2);
+            em.chunk.setByte(emPatch2, @as(u8, (emFn5.address >> 8) & 255));
+            em.chunk.setByte(emPatch2 + 1, @as(u8, emFn5.address & 255));
+        }
+        em.chunk.addFunction(emFn5.name, emFn5.address, emFn5.arity);
+        emFunctionBody(em, @as(*nodes.FunctionDecl, emFn5.node))?;
+    }
+}
+
+pub @func compileSource(arena: mem.Arena, source: string, path: string) {
+    $emParsed = parser.parse(arena, source, path);
+    @if (@isError(emParsed)) {
+        return emParsed;
+    }
+    $emDoc: *ast.Document = @as(*ast.Document, emParsed);
+    $em = emCreateState(arena, path);
+    emRegisterStructs(em, emDoc);
+    emRegisterEnums(em, emDoc);
+    emCollectFunctions(em, emDoc);
+
+    $emMainJump = em.chunk.emitJump(opcode.OpCode.OP_JUMP);
+    emEmitAllFunctions(em)?;
+    em.chunk.patchJump(emMainJump);
+
+    @for (0..list.len(emDoc.statements)) |emDi2| {
+        $emTop: *nodes.Node = @as(*nodes.Node, list.get(emDoc.statements, emDi2));
+        @if (emTop.kind != common.NodeKind.FunctionDecl) {
+            emStatement(em, emTop)?;
+        }
+    }
+
+    $emMaino = emFindFunc(em, "main");
+    @if (emMaino != null) {
+        $emMain: *EmFunc = @as(*EmFunc, emMaino);
+        @if (emMain.address < 0) {
+            return error("Emit", "main has no address");
+        }
+        em.chunk.emitCallStatic(emMain.address, 0);
+        em.chunk.writeOp(opcode.OpCode.OP_POP);
+    }
+
+    em.chunk.writeOp(opcode.OpCode.OP_NULL);
+    em.chunk.writeOp(opcode.OpCode.OP_RETURN);
+    return em.chunk;
+}
+
+pub @func compileFile(arena: mem.Arena, source: string, path: string, out_path: string) {
+    $emChunk: *chunk_mod.Chunk = compileSource(arena, source, path)?;
+    return serialize.writeFile(emChunk, out_path);
+}

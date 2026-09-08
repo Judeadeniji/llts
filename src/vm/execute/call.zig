@@ -14,7 +14,7 @@ fn fail(vm: *VMState, msg: []const u8) CallError {
     return runtime.runtimeFail(vm, msg);
 }
 
-pub fn callStatic(vm: *VMState, ip: *usize, addr: u16, argc: u8) CallError!void {
+pub fn callStatic(vm: *VMState, ip: *usize, addr: u32, argc: u8) CallError!void {
     if (vm.frames.items.len >= MAX_FRAMES) return error.TooManyFrames;
     var frame = CallFrame.init(vm.allocator);
     frame.return_ip = ip.*;
@@ -60,7 +60,7 @@ pub fn callDynamic(vm: *VMState, ip: *usize, argc: u8) CallError!void {
                 vm.stack_buf[callee_idx + i] = vm.stack_buf[callee_idx + 1 + i];
             }
             stack.setTop(vm, callee_idx + argc);
-            try callStatic(vm, ip, @intCast(f.address), argc);
+            try callStatic(vm, ip, f.address, argc);
         },
         else => return fail(vm, "Can only call functions"),
     }
@@ -100,7 +100,7 @@ pub fn packRest(vm: *VMState, named: u8) CallError!void {
     try stack.push(vm, arr_v);
 }
 
-fn functionNameAt(vm: *VMState, address: u16) []const u8 {
+fn functionNameAt(vm: *VMState, address: u32) []const u8 {
     var it = vm.chunk.functions.iterator();
     while (it.next()) |e| {
         if (e.value_ptr.address == address) return e.key_ptr.*;

@@ -1,0 +1,46 @@
+{
+  "name": "tree-sitter-llts",
+  "version": "0.1.0",
+  "description": "Tree-sitter grammar for LLTS (.lls)",
+  "type": "module",
+  "private": true,
+  "main": "bindings/node",
+  "types": "bindings/node",
+  "scripts": {
+    "generate": "tree-sitter generate",
+    "build": "tree-sitter generate && tree-sitter build",
+    "test": "tree-sitter test",
+    "parse": "tree-sitter parse"
+  },
+  "keywords": [
+    "incremental",
+    "parsing",
+    "tree-sitter",
+    "llts"
+  ],
+  "files": [
+    "grammar.js",
+    "tree-sitter.json",
+    "binding.gyp",
+    "prebuilds/**",
+    "bindings/**",
+    "queries/**",
+    "src/**"
+  ],
+  "devDependencies": {
+    "@types/bun": "latest",
+    "tree-sitter-cli": "^0.27.0",
+    "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "tree-sitter": "^0.25.1"
+  },
+  "tree-sitter": [
+    {
+      "scope": "source.lls",
+      "file-types": ["lls"],
+      "highlights": ["queries/highlights.scm"],
+      "injection-regex": "^lls$"
+    }
+  ]
+}

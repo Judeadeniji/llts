@@ -1,0 +1,20 @@
+# Self-hosted compile: print(1 + 2); → .llb → Zig VM
+# Usage: llts run self_hosted/tools/compile_smoke.lls
+# Then:  llts run /tmp/llts_compile_smoke.llb
+
+@const $compiler = @import("../compiler/root.lls");
+@const $mem = @import("std/mem.lls");
+@const $debug = @import("std/debug.lls");
+@const $os = @import("std/os.lls");
+
+$arena = mem.create(0);
+$path = "/tmp/llts_compile_smoke.llb";
+$err = compiler.compileFile(arena, "print(1 + 2);\npub @func main() {}\n", "smoke.lls", path);
+@if (@isError(err)) {
+    debug.err("compile failed");
+    os.exit(1);
+}
+debug.printLn("wrote {s}", path);
+arena.deinit();
+
+pub @func main() {}

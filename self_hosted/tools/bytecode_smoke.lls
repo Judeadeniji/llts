@@ -1,0 +1,32 @@
+# Hand-build print(1+2) style smoke via OP_CONSTANT / OP_ADD / OP_PRINT → .llb
+# Usage: llts run self_hosted/tools/bytecode_smoke.lls
+# Then:  llts run /tmp/llts_smoke.llb
+
+@const $chunk_mod = @import("../bytecode/chunk.lls");
+@const $opcode = @import("../bytecode/opcode.lls");
+@const $serialize = @import("../bytecode/serialize.lls");
+@const $mem = @import("std/mem.lls");
+@const $debug = @import("std/debug.lls");
+@const $os = @import("std/os.lls");
+
+$arena = mem.create(0);
+$c = chunk_mod.create(arena, "smoke.lls");
+
+# 1 + 2
+c.emitConstantInt(1);
+c.emitConstantInt(2);
+c.writeOp(opcode.OpCode.OP_ADD);
+c.writeOp(opcode.OpCode.OP_PRINT);
+c.writeByte(1);
+
+$path = "/tmp/llts_smoke.llb";
+$err = serialize.writeFile(c, path);
+@if (@isError(err)) {
+    debug.err("write failed");
+    os.exit(1);
+}
+debug.printLn("wrote {s}", path);
+
+arena.deinit();
+
+pub @func main() {}

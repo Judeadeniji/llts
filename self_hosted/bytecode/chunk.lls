@@ -1,0 +1,212 @@
+# Port of src/bytecode/chunk.zig — arena-backed code + constant pool for .llb emit.
+
+@const $opcode = @import("./opcode.lls");
+@const $buffer = @import("std/buffer.lls");
+@const $list = @import("std/list.lls");
+@const $mem = @import("std/mem.lls");
+@const $string = @import("std/string.lls");
+
+pub @enum ConstTag {
+    Null,
+    Bool,
+    Int,
+    Float,
+    Name,
+}
+
+pub @struct Constant {
+    tag: ConstTag;
+    i_val: i64;
+    str_index: i64;
+}
+
+pub @struct FuncInfo {
+    name: string;
+    address: i64;
+    arity: i64;
+    is_variadic: bool;
+}
+
+pub @struct Chunk {
+    arena: mem.Arena;
+    code: unknown;
+    constants: unknown;
+    strings: unknown;
+    global_names: unknown;
+    functions: unknown;
+    file: string;
+
+    @func codeLen(self: *Chunk) {
+        return buffer.len(self.code);
+    }
+
+    @func setByte(self: *Chunk, at: i64, b: u8) {
+        buffer.set(self.code, at, b);
+    }
+
+    @func writeByte(self: *Chunk, b: u8) {
+        buffer.push(self.code, b);
+    }
+
+    @func writeOp(self: *Chunk, op: opcode.OpCode) {
+        self.writeByte(opcode.byte(op));
+    }
+
+    @func writeU16BE(self: *Chunk, v: i64) {
+        self.writeByte(@as(u8, (v >> 8) & 255));
+        self.writeByte(@as(u8, v & 255));
+    }
+
+    @func emitJump(self: *Chunk, op: opcode.OpCode) {
+        self.writeOp(op);
+        self.writeByte(255);
+        self.writeByte(255);
+        return self.codeLen() - 2;
+    }
+
+    @func patchJump(self: *Chunk, offset: i64) {
+        $jump = self.codeLen() - offset - 2;
+        self.setByte(offset, @as(u8, (jump >> 8) & 255));
+        self.setByte(offset + 1, @as(u8, jump & 255));
+    }
+
+    @func emitLoop(self: *Chunk, loop_start: i64) {
+        self.writeOp(opcode.OpCode.OP_LOOP);
+        $off = self.codeLen() - loop_start + 2;
+        self.writeByte(@as(u8, (off >> 8) & 255));
+        self.writeByte(@as(u8, off & 255));
+    }
+
+    @func addIntConstant(self: *Chunk, n: i64) {
+        $idx = list.len(self.constants);
+        list.push(self.constants, @new(self.arena, Constant {
+            tag: ConstTag.Int,
+            i_val: n,
+            str_index: 0,
+        }));
+        return idx;
+    }
+
+    @func addStringConstant(self: *Chunk, s: string) {
+        @for (0..list.len(self.constants)) |i| {
+            $con: *Constant = @as(*Constant, list.get(self.constants, i));
+            @if (con.tag == ConstTag.Name) {
+                @if (string.eql(list.get(self.strings, con.str_index), s)) {
+                    return i;
+                }
+            }
+        }
+        $str_idx = list.len(self.strings);
+        list.push(self.strings, s);
+        $idx = list.len(self.constants);
+        list.push(self.constants, @new(self.arena, Constant {
+            tag: ConstTag.Name,
+            i_val: 0,
+            str_index: str_idx,
+        }));
+        return idx;
+    }
+
+    @func emitConstantInt(self: *Chunk, n: i64) {
+        $idx = self.addIntConstant(n);
+        self.writeOp(opcode.OpCode.OP_CONSTANT);
+        self.writeU16BE(idx);
+    }
+
+    @func emitString(self: *Chunk, s: string) {
+        $idx = self.addStringConstant(s);
+        self.writeOp(opcode.OpCode.OP_CONSTANT);
+        self.writeU16BE(idx);
+        self.writeOp(opcode.OpCode.OP_MAKE_STRING);
+    }
+
+    @func internGlobal(self: *Chunk, name: string) {
+        @for (0..list.len(self.global_names)) |gi| {
+            @if (string.eql(list.get(self.global_names, gi), name)) {
+                return gi;
+            }
+        }
+        $idx = list.len(self.global_names);
+        list.push(self.global_names, name);
+        return idx;
+    }
+
+    @func emitGetGlobal(self: *Chunk, name: string) {
+        $idx = self.internGlobal(name);
+        self.writeOp(opcode.OpCode.OP_GET_GLOBAL);
+        self.writeU16BE(idx);
+    }
+
+    @func emitSetGlobal(self: *Chunk, name: string) {
+        $idx = self.internGlobal(name);
+        self.writeOp(opcode.OpCode.OP_SET_GLOBAL);
+        self.writeU16BE(idx);
+    }
+
+    @func emitGetFunction(self: *Chunk, name: string) {
+        $idx = self.addStringConstant(name);
+        self.writeOp(opcode.OpCode.OP_GET_FUNCTION);
+        self.writeU16BE(idx);
+    }
+
+    @func emitGetLocal(self: *Chunk, slot: i64) {
+        self.writeOp(opcode.OpCode.OP_GET_LOCAL);
+        self.writeByte(@as(u8, slot));
+    }
+
+    @func emitSetLocal(self: *Chunk, slot: i64) {
+        self.writeOp(opcode.OpCode.OP_SET_LOCAL);
+        self.writeByte(@as(u8, slot));
+    }
+
+    @func emitCallStatic(self: *Chunk, addr: i64, argc: i64) {
+        self.writeOp(opcode.OpCode.OP_CALL_STATIC);
+        self.writeU16BE(addr);
+        self.writeByte(@as(u8, argc));
+    }
+
+    @func emitLoadField(self: *Chunk, offset: i64, kind: i64) {
+        self.writeOp(opcode.OpCode.OP_LOAD_FIELD);
+        self.writeU16BE(offset);
+        self.writeByte(@as(u8, kind));
+    }
+
+    @func emitStoreField(self: *Chunk, offset: i64, kind: i64) {
+        self.writeOp(opcode.OpCode.OP_STORE_FIELD);
+        self.writeU16BE(offset);
+        self.writeByte(@as(u8, kind));
+    }
+
+    @func addFunction(self: *Chunk, name: string, address: i64, arity: i64) {
+        # Ensure name is in string table for serialize remap.
+        _ = self.addStringConstant(name);
+        list.push(self.functions, @new(self.arena, FuncInfo {
+            name: name,
+            address: address,
+            arity: arity,
+            is_variadic: false,
+        }));
+    }
+
+    @func findFunction(self: *Chunk, name: string): ?*FuncInfo {
+        @for (0..list.len(self.functions)) |i| {
+            $f: *FuncInfo = @as(*FuncInfo, list.get(self.functions, i));
+            @if (string.eql(f.name, name)) {
+                return f;
+            }
+        }
+        return null;
+    }
+}
+
+pub @func create(arena: mem.Arena, file: string): *Chunk {
+    return @new(arena, Chunk {
+        arena: arena,
+        code: buffer.create(arena),
+        constants: list.create(arena),
+        strings: list.create(arena),
+        global_names: list.create(arena),
+        functions: list.create(arena),
+        file: file,
+    });
+}
