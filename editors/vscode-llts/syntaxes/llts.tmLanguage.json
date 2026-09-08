@@ -1,69 +1,15 @@
 {
   "scopeName": "source.lls",
   "patterns": [
-    { "include": "#comments" },
-    { "include": "#strings" },
-    { "include": "#numbers" },
-    { "include": "#directives" },
-    { "include": "#registers" },
-    { "include": "#keywords" },
-    { "include": "#types" },
-    { "include": "#constants" },
-    { "include": "#identifiers" },
-    { "include": "#operators" }
-  ],
-  "repository": {
-    "comments": {
+    {
       "match": "#.*$",
       "name": "comment.line.number-sign.lls"
     },
-    "strings": {
-      "patterns": [
-        {
-          "name": "string.quoted.double.lls",
-          "begin": "\"",
-          "end": "\"",
-          "patterns": [{ "match": "\\\\.", "name": "constant.character.escape.lls" }]
-        },
-        {
-          "name": "string.quoted.single.lls",
-          "begin": "'",
-          "end": "'",
-          "patterns": [{ "match": "\\\\.", "name": "constant.character.escape.lls" }]
-        }
-      ]
-    },
-    "numbers": {
-      "match": "\\b(0[xX][0-9a-fA-F]+|0[bB][01]+|0[oO][0-7]+|[0-9]+(\\.[0-9]+)?)\\b",
-      "name": "constant.numeric.lls"
-    },
-    "directives": {
-      "match": "@[A-Za-z_][A-Za-z0-9_]*",
-      "name": "keyword.control.directive.lls"
-    },
-    "registers": {
-      "match": "\\$[A-Za-z_][A-Za-z0-9_]*",
-      "name": "variable.other.register.lls"
-    },
-    "keywords": {
-      "match": "\\b(pub|return|break|continue|defer|errdefer|const|error|true|false|null)\\b",
-      "name": "keyword.control.lls"
-    },
-    "types": {
-      "match": "\\b[A-Z][A-Za-z0-9_]*\\b",
-      "name": "entity.name.type.lls"
-    },
-    "constants": {
-      "match": "\\b[A-Z][A-Za-z0-9_]*(?=\\s*[,}])",
-      "name": "variable.other.constant.lls"
-    },
-    "identifiers": {
-      "match": "\\b[a-z_][A-Za-z0-9_]*\\b",
-      "name": "variable.other.lls"
-    },
-    "operators": {
-      "match": "(\\|>|<<=|>>=|&&=|\\|\\|=|\\*\\*|\\.\\.|=>|==|!=|<=|>=|<<|>>|\\+=|-=|\\*=|/=|%=|\\^=|&=|\\|=|~=|[=+\\-*/%^<>!&|~?:.])",
-      "name": "keyword.operator.lls"
+    {
+      "name": "string.quoted.double.lls",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [{ "match": "\\\\.", "name": "constant.character.escape.lls" }]
     }
-  }
+  ]
 }

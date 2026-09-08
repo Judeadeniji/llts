@@ -1,32 +1,12 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as vscode from "vscode";
-import { Language, Parser, Query, type Tree } from "web-tree-sitter";
+import { Language, Parser, Query, type Node, type Tree } from "web-tree-sitter";
 
 /**
- * Tree-sitter capture → VS Code semantic token type.
- * Keep this set small and map via semanticTokenScopes for theme consistency.
+ * Tree-sitter is the only highlighter. Colors are applied as editor decorations
+ * with explicit foregrounds so we do not depend on theme semantic/TextMate rules.
  */
-const CAPTURE_TO_TOKEN: Record<string, string> = {
-  comment: "comment",
-  keyword: "keyword",
-  boolean: "keyword",
-  "constant.builtin": "enumMember",
-  constant: "enumMember",
-  string: "string",
-  number: "number",
-  variable: "variable",
-  "variable.parameter": "parameter",
-  function: "function",
-  "function.method": "method",
-  "function.builtin": "function",
-  type: "type",
-  property: "property",
-  label: "variable",
-  operator: "operator",
-  "punctuation.bracket": "operator",
-  "punctuation.delimiter": "operator",
-};
 
 /** Higher wins when several captures share the same span. */
 const CAPTURE_PRIORITY: Record<string, number> = {
@@ -34,38 +14,73 @@ const CAPTURE_PRIORITY: Record<string, number> = {
   keyword: 100,
   boolean: 90,
   "constant.builtin": 90,
-  constant: 85,
+  constant: 88,
   string: 90,
   number: 90,
-  "function.builtin": 80,
+  "function.builtin": 82,
   "function.method": 80,
-  function: 75,
-  type: 70,
+  function: 78,
+  type: 72,
+  module: 70,
   property: 65,
-  "variable.parameter": 60,
-  label: 55,
+  "variable.parameter": 62,
+  label: 58,
   variable: 40,
+  "operator.unary": 35,
+  "operator.range": 35,
+  "operator.spread": 35,
   operator: 30,
   "punctuation.bracket": 20,
   "punctuation.delimiter": 20,
 };
 
-const TOKEN_TYPES = [
-  "comment",
-  "string",
-  "keyword",
-  "number",
-  "enumMember",
-  "variable",
-  "parameter",
-  "function",
-  "method",
-  "type",
-  "property",
-  "operator",
-] as const;
+/** Capture → decoration bucket (related operators share a style). */
+const CAPTURE_TO_STYLE: Record<string, string> = {
+  comment: "comment",
+  keyword: "keyword",
+  boolean: "keyword",
+  "constant.builtin": "constant",
+  constant: "constant",
+  string: "string",
+  number: "number",
+  variable: "variable",
+  "variable.parameter": "parameter",
+  label: "label",
+  module: "module",
+  function: "function",
+  "function.method": "method",
+  "function.builtin": "function",
+  type: "type",
+  property: "property",
+  operator: "operator",
+  "operator.unary": "operator",
+  "operator.range": "operator",
+  "operator.spread": "operator",
+};
 
-const legend = new vscode.SemanticTokensLegend([...TOKEN_TYPES], []);
+/** Dark+-inspired palette; applied directly (theme-independent). */
+const STYLE_COLORS: Record<string, string> = {
+  comment: "#6A9955",
+  keyword: "#C586C0",
+  constant: "#4FC1FF",
+  string: "#CE9178",
+  number: "#B5CEA8",
+  variable: "#9CDCFE",
+  parameter: "#9CDCFE",
+  label: "#C8C8C8",
+  module: "#4EC9B0",
+  function: "#DCDCAA",
+  method: "#DCDCAA",
+  type: "#4EC9B0",
+  property: "#9CDCFE",
+  operator: "#D7BA7D",
+  /** `{` `}` in format strings */
+  formatBrace: "#D7BA7D",
+  /** `i` / `s` inside `{i}` */
+  formatSpec: "#B5CEA8",
+};
+
+const FORMAT_PLACEHOLDER = /\{([A-Za-z_][A-Za-z0-9_]*)\}/g;
 
 let parser: Parser | undefined;
 let query: Query | undefined;
@@ -87,17 +102,14 @@ async function ensureParser(extensionPath: string): Promise<void> {
   query = new Query(language, highlights);
 }
 
-function encodeTokens(document: vscode.TextDocument, tree: Tree): vscode.SemanticTokens {
-  if (!query) {
-    return new vscode.SemanticTokens(new Uint32Array());
-  }
-
-  const builder = new vscode.SemanticTokensBuilder(legend);
-  const captures = query.captures(tree.rootNode);
-
-  // Higher-priority captures win for the same span.
-  const bySpan = new Map<string, { name: string; node: (typeof captures)[0]["node"] }>();
+function mergeCaptures(
+  captures: Array<{ name: string; node: Node }>,
+): Array<{ name: string; node: Node }> {
+  const bySpan = new Map<string, { name: string; node: Node }>();
   for (const c of captures) {
+    if (c.name.startsWith("punctuation.")) continue;
+    if (!CAPTURE_TO_STYLE[c.name]) continue;
+
     const key = `${c.node.startIndex}:${c.node.endIndex}`;
     const prev = bySpan.get(key);
     const nextPri = CAPTURE_PRIORITY[c.name] ?? 0;
@@ -106,89 +118,182 @@ function encodeTokens(document: vscode.TextDocument, tree: Tree): vscode.Semanti
       bySpan.set(key, c);
     }
   }
+  return [...bySpan.values()];
+}
 
-  const ranked = [...bySpan.values()].sort((a, b) => {
-    if (a.node.startIndex !== b.node.startIndex) {
-      return a.node.startIndex - b.node.startIndex;
+function rangeFromNode(node: Node): vscode.Range {
+  return new vscode.Range(
+    node.startPosition.row,
+    node.startPosition.column,
+    node.endPosition.row,
+    node.endPosition.column,
+  );
+}
+
+function rangeFromOffsets(
+  document: vscode.TextDocument,
+  start: number,
+  end: number,
+): vscode.Range {
+  return new vscode.Range(document.positionAt(start), document.positionAt(end));
+}
+
+/** Split a string literal into string / `{` / spec / `}` ranges for format placeholders. */
+function paintFormatString(
+  document: vscode.TextDocument,
+  node: Node,
+  rangesByStyle: Map<string, vscode.Range[]>,
+): void {
+  const text = node.text;
+  const base = node.startIndex;
+  FORMAT_PLACEHOLDER.lastIndex = 0;
+
+  const push = (style: string, from: number, to: number) => {
+    if (to <= from) return;
+    rangesByStyle.get(style)?.push(rangeFromOffsets(document, from, to));
+  };
+
+  let last = 0;
+  let match: RegExpExecArray | null;
+  let found = false;
+  while ((match = FORMAT_PLACEHOLDER.exec(text)) !== null) {
+    found = true;
+    const start = match.index;
+    const spec = match[1]!;
+    push("string", base + last, base + start);
+    push("formatBrace", base + start, base + start + 1);
+    push("formatSpec", base + start + 1, base + start + 1 + spec.length);
+    push("formatBrace", base + start + 1 + spec.length, base + start + match[0].length);
+    last = start + match[0].length;
+  }
+
+  if (!found) {
+    push("string", base, base + text.length);
+    return;
+  }
+  push("string", base + last, base + text.length);
+}
+
+class LltsHighlighter implements vscode.Disposable {
+  private readonly decorations = new Map<string, vscode.TextEditorDecorationType>();
+  private readonly trees = new Map<string, Tree>();
+  private readonly debounce = new Map<string, NodeJS.Timeout>();
+  private ready = false;
+
+  constructor(private readonly extensionPath: string) {
+    for (const [style, color] of Object.entries(STYLE_COLORS)) {
+      this.decorations.set(
+        style,
+        vscode.window.createTextEditorDecorationType({ color }),
+      );
     }
-    return a.node.endIndex - b.node.endIndex;
-  });
+  }
 
-  for (const { name, node } of ranked) {
-    const tokenType = CAPTURE_TO_TOKEN[name];
-    if (!tokenType) continue;
+  async init(): Promise<void> {
+    await ensureParser(this.extensionPath);
+    this.ready = true;
+  }
 
-    const typeIndex = TOKEN_TYPES.indexOf(tokenType as (typeof TOKEN_TYPES)[number]);
-    if (typeIndex < 0) continue;
+  dispose(): void {
+    for (const t of this.debounce.values()) clearTimeout(t);
+    this.debounce.clear();
+    for (const tree of this.trees.values()) tree.delete();
+    this.trees.clear();
+    for (const d of this.decorations.values()) d.dispose();
+    this.decorations.clear();
+  }
 
-    const start = node.startPosition;
-    const end = node.endPosition;
-    if (start.row === end.row) {
-      builder.push(start.row, start.column, end.column - start.column, typeIndex, 0);
-    } else {
-      for (let row = start.row; row <= end.row; row++) {
-        const line = document.lineAt(row);
-        const fromCol = row === start.row ? start.column : 0;
-        const toCol = row === end.row ? end.column : line.text.length;
-        if (toCol > fromCol) {
-          builder.push(row, fromCol, toCol - fromCol, typeIndex, 0);
-        }
+  schedule(document: vscode.TextDocument): void {
+    if (document.languageId !== "llts") return;
+    const key = document.uri.toString();
+    const prev = this.debounce.get(key);
+    if (prev) clearTimeout(prev);
+    this.debounce.set(
+      key,
+      setTimeout(() => {
+        this.debounce.delete(key);
+        void this.paint(document);
+      }, 40),
+    );
+  }
+
+  clear(document: vscode.TextDocument): void {
+    const key = document.uri.toString();
+    this.trees.get(key)?.delete();
+    this.trees.delete(key);
+    for (const editor of vscode.window.visibleTextEditors) {
+      if (editor.document.uri.toString() !== key) continue;
+      for (const deco of this.decorations.values()) {
+        editor.setDecorations(deco, []);
       }
     }
   }
 
-  return builder.build();
-}
-
-class LltsSemanticTokensProvider implements vscode.DocumentSemanticTokensProvider {
-  private readonly trees = new Map<string, Tree>();
-
-  constructor(private readonly extensionPath: string) {}
-
-  async provideDocumentSemanticTokens(
-    document: vscode.TextDocument,
-  ): Promise<vscode.SemanticTokens> {
-    await ensureParser(this.extensionPath);
-    if (!parser) {
-      return new vscode.SemanticTokens(new Uint32Array());
+  private async paint(document: vscode.TextDocument): Promise<void> {
+    if (!this.ready) {
+      try {
+        await this.init();
+      } catch (err) {
+        void vscode.window.showErrorMessage(
+          `LLTS Tree-sitter failed to load: ${err instanceof Error ? err.message : err}`,
+        );
+        return;
+      }
     }
+    if (!parser || !query) return;
 
     const key = document.uri.toString();
     this.trees.get(key)?.delete();
     const tree = parser.parse(document.getText());
-    if (!tree) {
-      return new vscode.SemanticTokens(new Uint32Array());
-    }
+    if (!tree) return;
     this.trees.set(key, tree);
-    return encodeTokens(document, tree);
-  }
 
-  disposeDocument(uri: vscode.Uri): void {
-    const key = uri.toString();
-    this.trees.get(key)?.delete();
-    this.trees.delete(key);
+    const merged = mergeCaptures(query.captures(tree.rootNode));
+    const rangesByStyle = new Map<string, vscode.Range[]>();
+    for (const style of this.decorations.keys()) {
+      rangesByStyle.set(style, []);
+    }
+
+    for (const { name, node } of merged) {
+      if (node.startIndex >= node.endIndex) continue;
+
+      if (name === "string") {
+        paintFormatString(document, node, rangesByStyle);
+        continue;
+      }
+
+      const style = CAPTURE_TO_STYLE[name];
+      if (!style) continue;
+      rangesByStyle.get(style)?.push(rangeFromNode(node));
+    }
+
+    for (const editor of vscode.window.visibleTextEditors) {
+      if (editor.document.uri.toString() !== key) continue;
+      for (const [style, deco] of this.decorations) {
+        editor.setDecorations(deco, rangesByStyle.get(style) ?? []);
+      }
+    }
   }
 }
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
-  const provider = new LltsSemanticTokensProvider(context.extensionPath);
+  const highlighter = new LltsHighlighter(context.extensionPath);
+  context.subscriptions.push(highlighter);
+
+  void highlighter.init().then(() => {
+    for (const editor of vscode.window.visibleTextEditors) {
+      highlighter.schedule(editor.document);
+    }
+  });
 
   context.subscriptions.push(
-    vscode.languages.registerDocumentSemanticTokensProvider(
-      { language: "llts" },
-      provider,
-      legend,
-    ),
-    vscode.workspace.onDidCloseTextDocument((doc) => {
-      if (doc.languageId === "llts") provider.disposeDocument(doc.uri);
+    vscode.workspace.onDidOpenTextDocument((doc) => highlighter.schedule(doc)),
+    vscode.workspace.onDidChangeTextDocument((e) => highlighter.schedule(e.document)),
+    vscode.workspace.onDidCloseTextDocument((doc) => highlighter.clear(doc)),
+    vscode.window.onDidChangeVisibleTextEditors((editors) => {
+      for (const editor of editors) highlighter.schedule(editor.document);
     }),
   );
-
-  void ensureParser(context.extensionPath).catch((err) => {
-    void vscode.window.showErrorMessage(
-      `LLTS Tree-sitter failed to load: ${err instanceof Error ? err.message : err}`,
-    );
-  });
 }
 
 export function deactivate(): void {
