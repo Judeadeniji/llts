@@ -168,16 +168,46 @@ fn handleMessage(allocator: std.mem.Allocator, stdout: std.posix.fd_t, body: []c
             }
         } else if (std.mem.eql(u8, method_str, "textDocument/hover")) {
             if (id != null and params != null and params.? == .object) {
-                var hover_value: []const u8 = "Hover support in LLTS Zig LSP\nWe will start identifying types here!";
+                var hover_value: []const u8 = "No basic type info found.";
                 
                 const textDoc = params.?.object.get("textDocument");
-                if (textDoc != null and textDoc.? == .object) {
+                const pos = params.?.object.get("position");
+                if (textDoc != null and textDoc.? == .object and pos != null and pos.? == .object) {
                     const uri = textDoc.?.object.get("uri");
-                    if (uri != null and uri.? == .string) {
-                        if (documents.get(uri.?.string)) |_| {
-                            // Document found! We can parse it and find the type.
-                            // For now, we just acknowledge we have the document.
-                            hover_value = "Hover support in LLTS Zig LSP\nDocument parsed, type inference coming soon!";
+                    const line_val = pos.?.object.get("line");
+                    const char_val = pos.?.object.get("character");
+                    
+                    if (uri != null and uri.? == .string and line_val != null and char_val != null) {
+                        const target_line = @as(u32, @intCast(line_val.?.integer)) + 1; // LSP is 0-indexed, scanner is 1-indexed
+                        const target_col = @as(u32, @intCast(char_val.?.integer)) + 1;
+                        
+                        if (documents.get(uri.?.string)) |source| {
+                            if (llts.scanner.scan(allocator, source, uri.?.string)) |scan_result| {
+                                var result = scan_result; // Make it mutable to pass by ref if needed, but deinit is fine with pointer
+                                defer llts.scanner.deinitScanResult(&result);
+                                
+                                for (result.tokens.items) |t| {
+                                    if (t.line == target_line) {
+                                        const end_col = t.column + @as(u32, @intCast(t.value.len));
+                                        if (target_col >= t.column and target_col <= end_col) {
+                                            // Found the token! Identify basic type!
+                                            hover_value = switch (t.type) {
+                                                .number => "Type: `number`",
+                                                .hex => "Type: `number` (hex)",
+                                                .octal => "Type: `number` (octal)",
+                                                .binary => "Type: `number` (binary)",
+                                                .boolean => "Type: `bool`",
+                                                .string => "Type: `string`",
+                                                .v_register => "Type: `virtual register`",
+                                                .compiler_keyword => "Type: `compiler intrinsic`",
+                                                .identifier => "Identifier: Not yet fully type-checked.",
+                                                else => "Syntax Element",
+                                            };
+                                            break;
+                                        }
+                                    }
+                                }
+                            } else |_| {}
                         }
                     }
                 }
