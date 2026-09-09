@@ -303,6 +303,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.languages.registerDocumentSymbolProvider(
       { language: "llts" },
       new LltsDocumentSymbolProvider(highlighter)
+    ),
+    vscode.languages.registerDefinitionProvider(
+      { language: "llts" },
+      new LltsDefinitionProvider(highlighter)
+    ),
+    vscode.languages.registerHoverProvider(
+      { language: "llts" },
+      new LltsHoverProvider(highlighter)
     )
   );
 }
@@ -493,6 +501,136 @@ class LltsDocumentSymbolProvider implements vscode.DocumentSymbolProvider {
 
     traverse(tree.rootNode, symbols);
     return symbols;
+  }
+}
+
+class LltsDefinitionProvider implements vscode.DefinitionProvider {
+  constructor(private readonly highlighter: LltsHighlighter) {}
+
+  provideDefinition(
+    document: vscode.TextDocument,
+    position: vscode.Position,
+    token: vscode.CancellationToken
+  ): vscode.ProviderResult<vscode.Definition | vscode.LocationLink[]> {
+    const tree = this.highlighter.getTree(document);
+    if (!tree) return null;
+
+    const node = tree.rootNode.descendantForPosition({
+      row: position.line,
+      column: position.character,
+    });
+
+    if (!node || node.type !== "identifier") return null;
+    const searchName = node.text;
+
+    let defNode: Node | undefined;
+
+    function search(n: Node) {
+      if (defNode) return;
+      
+      const isDecl = [
+        "func_declaration",
+        "struct_declaration",
+        "enum_declaration",
+        "error_declaration",
+        "const_declaration",
+        "variable_declaration",
+        "type_declaration",
+        "alias_declaration",
+        "extern_declaration",
+        "parameter",
+      ].includes(n.type);
+
+      if (isDecl) {
+        const nameNode = n.childForFieldName("name");
+        if (nameNode && nameNode.text === searchName) {
+          defNode = nameNode;
+          return;
+        }
+      }
+
+      for (let i = 0; i < n.childCount; i++) {
+        const child = n.child(i);
+        if (child) search(child);
+      }
+    }
+
+    search(tree.rootNode);
+
+    if (defNode) {
+      return new vscode.Location(document.uri, rangeFromNode(defNode));
+    }
+
+    return null;
+  }
+}
+
+class LltsHoverProvider implements vscode.HoverProvider {
+  constructor(private readonly highlighter: LltsHighlighter) {}
+
+  provideHover(
+    document: vscode.TextDocument,
+    position: vscode.Position,
+    token: vscode.CancellationToken
+  ): vscode.ProviderResult<vscode.Hover> {
+    const tree = this.highlighter.getTree(document);
+    if (!tree) return null;
+
+    const node = tree.rootNode.descendantForPosition({
+      row: position.line,
+      column: position.character,
+    });
+
+    if (!node || node.type !== "identifier") return null;
+    const searchName = node.text;
+
+    let declNode: Node | undefined;
+
+    function search(n: Node) {
+      if (declNode) return;
+      
+      const isDecl = [
+        "func_declaration",
+        "struct_declaration",
+        "enum_declaration",
+        "error_declaration",
+        "const_declaration",
+        "variable_declaration",
+        "type_declaration",
+        "alias_declaration",
+        "extern_declaration",
+        "parameter",
+      ].includes(n.type);
+
+      if (isDecl) {
+        const nameNode = n.childForFieldName("name");
+        if (nameNode && nameNode.text === searchName) {
+          declNode = n;
+          return;
+        }
+      }
+
+      for (let i = 0; i < n.childCount; i++) {
+        const child = n.child(i);
+        if (child) search(child);
+      }
+    }
+
+    search(tree.rootNode);
+
+    if (declNode) {
+      // Just show the snippet of the declaration as hover text
+      const codeSnippet = document.getText(rangeFromNode(declNode));
+      // For very long bodies, let's just show the first line
+      const lines = codeSnippet.split('\n');
+      const preview = lines.length > 5 ? lines.slice(0, 5).join('\n') + '\n...' : codeSnippet;
+      
+      const markdown = new vscode.MarkdownString();
+      markdown.appendCodeblock(preview, "llts");
+      return new vscode.Hover(markdown, rangeFromNode(node));
+    }
+
+    return null;
   }
 }
 
