@@ -322,152 +322,162 @@ class LltsDocumentSymbolProvider implements vscode.DocumentSymbolProvider {
     function traverse(node: Node, container: vscode.DocumentSymbol[]) {
       let symbol: vscode.DocumentSymbol | undefined;
 
-      switch (node.type) {
-        case "func_declaration": {
-          const nameNode = node.childForFieldName("name");
-          if (nameNode) {
-            symbol = new vscode.DocumentSymbol(
-              nameNode.text,
-              "function",
-              vscode.SymbolKind.Function,
-              rangeFromNode(node),
-              rangeFromNode(nameNode)
-            );
+      try {
+        switch (node.type) {
+          case "func_declaration": {
+            const nameNode = node.childForFieldName("name");
+            if (nameNode && nameNode.text) {
+              symbol = new vscode.DocumentSymbol(
+                nameNode.text,
+                "function",
+                vscode.SymbolKind.Function,
+                rangeFromNode(node),
+                rangeFromNode(nameNode)
+              );
+            }
+            break;
           }
-          break;
-        }
-        case "struct_declaration": {
-          const nameNode = node.childForFieldName("name");
-          if (nameNode) {
-            symbol = new vscode.DocumentSymbol(
-              nameNode.text,
-              "struct",
-              vscode.SymbolKind.Struct,
-              rangeFromNode(node),
-              rangeFromNode(nameNode)
-            );
+          case "struct_declaration": {
+            const nameNode = node.childForFieldName("name");
+            if (nameNode && nameNode.text) {
+              symbol = new vscode.DocumentSymbol(
+                nameNode.text,
+                "struct",
+                vscode.SymbolKind.Struct,
+                rangeFromNode(node),
+                rangeFromNode(nameNode)
+              );
+            }
+            break;
           }
-          break;
-        }
-        case "enum_declaration": {
-          const nameNode = node.childForFieldName("name");
-          if (nameNode) {
-            symbol = new vscode.DocumentSymbol(
-              nameNode.text,
-              "enum",
-              vscode.SymbolKind.Enum,
-              rangeFromNode(node),
-              rangeFromNode(nameNode)
-            );
+          case "enum_declaration": {
+            const nameNode = node.childForFieldName("name");
+            if (nameNode && nameNode.text) {
+              symbol = new vscode.DocumentSymbol(
+                nameNode.text,
+                "enum",
+                vscode.SymbolKind.Enum,
+                rangeFromNode(node),
+                rangeFromNode(nameNode)
+              );
+            }
+            break;
           }
-          break;
-        }
-        case "error_declaration": {
-          const nameNode = node.childForFieldName("name");
-          if (nameNode) {
-            symbol = new vscode.DocumentSymbol(
-              nameNode.text,
-              "error",
-              vscode.SymbolKind.Enum,
-              rangeFromNode(node),
-              rangeFromNode(nameNode)
-            );
+          case "error_declaration": {
+            const nameNode = node.childForFieldName("name");
+            if (nameNode && nameNode.text) {
+              symbol = new vscode.DocumentSymbol(
+                nameNode.text,
+                "error",
+                vscode.SymbolKind.Enum,
+                rangeFromNode(node),
+                rangeFromNode(nameNode)
+              );
+            }
+            break;
           }
-          break;
-        }
-        case "const_declaration":
-        case "variable_declaration": {
-          const nameNode = node.childForFieldName("name");
-          if (nameNode) {
-            symbol = new vscode.DocumentSymbol(
-              nameNode.text,
-              node.type === "const_declaration" ? "const" : "variable",
-              vscode.SymbolKind.Variable,
-              rangeFromNode(node),
-              rangeFromNode(nameNode)
-            );
+          case "const_declaration":
+          case "variable_declaration": {
+            const nameNode = node.childForFieldName("name");
+            if (nameNode && nameNode.text) {
+              symbol = new vscode.DocumentSymbol(
+                nameNode.text,
+                node.type === "const_declaration" ? "const" : "variable",
+                vscode.SymbolKind.Variable,
+                rangeFromNode(node),
+                rangeFromNode(nameNode)
+              );
+            }
+            break;
           }
-          break;
-        }
-        case "type_declaration":
-        case "alias_declaration": {
-          const nameNode = node.childForFieldName("name");
-          if (nameNode) {
-            symbol = new vscode.DocumentSymbol(
-              nameNode.text,
-              "type",
-              vscode.SymbolKind.Class,
-              rangeFromNode(node),
-              rangeFromNode(nameNode)
-            );
+          case "type_declaration":
+          case "alias_declaration": {
+            const nameNode = node.childForFieldName("name");
+            if (nameNode && nameNode.text) {
+              symbol = new vscode.DocumentSymbol(
+                nameNode.text,
+                "type",
+                vscode.SymbolKind.Class,
+                rangeFromNode(node),
+                rangeFromNode(nameNode)
+              );
+            }
+            break;
           }
-          break;
-        }
-        case "struct_field": {
-          const nameNode = node.childForFieldName("name");
-          if (nameNode) {
-            symbol = new vscode.DocumentSymbol(
-              nameNode.text,
-              "field",
-              vscode.SymbolKind.Field,
-              rangeFromNode(node),
-              rangeFromNode(nameNode)
-            );
+          case "struct_field": {
+            const nameNode = node.childForFieldName("name");
+            if (nameNode && nameNode.text) {
+              symbol = new vscode.DocumentSymbol(
+                nameNode.text,
+                "field",
+                vscode.SymbolKind.Field,
+                rangeFromNode(node),
+                rangeFromNode(nameNode)
+              );
+            }
+            break;
           }
-          break;
-        }
-        case "enum_variant": {
-          const nameNode = node.childForFieldName("name");
-          if (nameNode) {
-            symbol = new vscode.DocumentSymbol(
-              nameNode.text,
-              "variant",
-              vscode.SymbolKind.EnumMember,
-              rangeFromNode(node),
-              rangeFromNode(nameNode)
-            );
+          case "enum_variant": {
+            const nameNode = node.childForFieldName("name");
+            if (nameNode && nameNode.text) {
+              symbol = new vscode.DocumentSymbol(
+                nameNode.text,
+                "variant",
+                vscode.SymbolKind.EnumMember,
+                rangeFromNode(node),
+                rangeFromNode(nameNode)
+              );
+            }
+            break;
           }
-          break;
-        }
-        case "extern_declaration": {
-          const nameNode = node.childForFieldName("name");
-          if (nameNode) {
-            symbol = new vscode.DocumentSymbol(
-              nameNode.text,
-              "extern",
-              vscode.SymbolKind.Function,
-              rangeFromNode(node),
-              rangeFromNode(nameNode)
-            );
+          case "extern_declaration": {
+            const nameNode = node.childForFieldName("name");
+            if (nameNode && nameNode.text) {
+              symbol = new vscode.DocumentSymbol(
+                nameNode.text,
+                "extern",
+                vscode.SymbolKind.Function,
+                rangeFromNode(node),
+                rangeFromNode(nameNode)
+              );
+            }
+            break;
           }
-          break;
-        }
-        case "labeled_expression": {
-          const nameNode = node.childForFieldName("label");
-          if (nameNode) {
-            symbol = new vscode.DocumentSymbol(
-              nameNode.text,
-              "label",
-              vscode.SymbolKind.Key,
-              rangeFromNode(node),
-              rangeFromNode(nameNode)
-            );
+          case "labeled_expression": {
+            const nameNode = node.childForFieldName("label");
+            if (nameNode && nameNode.text) {
+              let selectionRange = rangeFromNode(nameNode);
+              let fullRange = rangeFromNode(node);
+              // Ensure selection is contained in fullRange to prevent VS Code from throwing
+              if (selectionRange.start.isBefore(fullRange.start)) fullRange = new vscode.Range(selectionRange.start, fullRange.end);
+              if (selectionRange.end.isAfter(fullRange.end)) fullRange = new vscode.Range(fullRange.start, selectionRange.end);
+              
+              symbol = new vscode.DocumentSymbol(
+                nameNode.text,
+                "label",
+                vscode.SymbolKind.Key,
+                fullRange,
+                selectionRange
+              );
+            }
+            break;
           }
-          break;
-        }
-        case "parameter": {
-          const nameNode = node.childForFieldName("name");
-          if (nameNode) {
-            symbol = new vscode.DocumentSymbol(
-              nameNode.text,
-              "parameter",
-              vscode.SymbolKind.Variable,
-              rangeFromNode(node),
-              rangeFromNode(nameNode)
-            );
+          case "parameter": {
+            const nameNode = node.childForFieldName("name");
+            if (nameNode && nameNode.text) {
+              symbol = new vscode.DocumentSymbol(
+                nameNode.text,
+                "parameter",
+                vscode.SymbolKind.Variable,
+                rangeFromNode(node),
+                rangeFromNode(nameNode)
+              );
+            }
+            break;
           }
-          break;
         }
+      } catch (err) {
+        console.error("Failed to create document symbol for node", node.type, err);
       }
 
       const targetContainer = symbol ? symbol.children : container;
