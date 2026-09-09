@@ -2,6 +2,7 @@ const std = @import("std");
 const llts = @import("llts");
 const state = @import("state.zig");
 const transport = @import("transport.zig");
+const infer = @import("infer.zig");
 
 pub fn handleMessage(server: *state.ServerState, stdout: std.posix.fd_t, body: []const u8) !void {
     var parsed = std.json.parseFromSlice(std.json.Value, server.allocator, body, .{}) catch return;
@@ -135,10 +136,31 @@ fn handleHover(server: *state.ServerState, stdout: std.posix.fd_t, id: ?std.json
                                     .string => {
                                         type_str = "[]const u8";
                                         prefix = "(literal) ";
+                                        
+                                        // Try to infer type by parsing the AST!
+                                        if (llts.parser.parse(server.allocator, result.tokens.items, uri.?.string, source)) |doc_val| {
+                                            var doc = doc_val;
+                                            defer doc.deinit();
+                                            if (infer.findDeclarationInAst(&doc, t.value)) |decl_node| {
+                                                if (infer.formatType(server.allocator, decl_node)) |fmt_type| {
+                                                    type_str = fmt_type;
+                                                }
+                                            }
+                                        } else |_| {}
                                     },
                                     .v_register => {
                                         type_str = "register";
                                         prefix = "(virtual) ";
+                                        
+                                        if (llts.parser.parse(server.allocator, result.tokens.items, uri.?.string, source)) |doc_val| {
+                                            var doc = doc_val;
+                                            defer doc.deinit();
+                                            if (infer.findDeclarationInAst(&doc, t.value)) |decl_node| {
+                                                if (infer.formatType(server.allocator, decl_node)) |fmt_type| {
+                                                    type_str = fmt_type;
+                                                }
+                                            }
+                                        } else |_| {}
                                     },
                                     .compiler_keyword => {
                                         type_str = "intrinsic";
