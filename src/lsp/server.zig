@@ -190,19 +190,48 @@ fn handleMessage(allocator: std.mem.Allocator, stdout: std.posix.fd_t, body: []c
                                     if (t.line == target_line) {
                                         const end_col = t.column + @as(u32, @intCast(t.value.len));
                                         if (target_col >= t.column and target_col <= end_col) {
-                                            // Found the token! Identify basic type!
-                                            hover_value = switch (t.type) {
-                                                .number => "Type: `number`",
-                                                .hex => "Type: `number` (hex)",
-                                                .octal => "Type: `number` (octal)",
-                                                .binary => "Type: `number` (binary)",
-                                                .boolean => "Type: `bool`",
-                                                .string => "Type: `string`",
-                                                .v_register => "Type: `virtual register`",
-                                                .compiler_keyword => "Type: `compiler intrinsic`",
-                                                .identifier => "Identifier: Not yet fully type-checked.",
-                                                else => "Syntax Element",
-                                            };
+                                            // Format to look like a real LSP!
+                                            var type_str: []const u8 = "unknown";
+                                            var prefix: []const u8 = "";
+                                            
+                                            switch (t.type) {
+                                                .number, .hex, .octal, .binary => {
+                                                    type_str = "int"; // Assuming basic int for numbers
+                                                    prefix = "(literal) ";
+                                                },
+                                                .boolean => {
+                                                    type_str = "bool";
+                                                    prefix = "(literal) ";
+                                                },
+                                                .string => {
+                                                    type_str = "[]const u8";
+                                                    prefix = "(literal) ";
+                                                },
+                                                .v_register => {
+                                                    type_str = "register";
+                                                    prefix = "(virtual) ";
+                                                },
+                                                .compiler_keyword => {
+                                                    type_str = "intrinsic";
+                                                    prefix = "(builtin) ";
+                                                },
+                                                .identifier => {
+                                                    type_str = "?"; // Unknown until typechecking
+                                                },
+                                                else => {},
+                                            }
+                                            
+                                            if (t.type == .delimiter or t.type == .bin_op or t.type == .unary_op or t.type == .assign_op or t.type == .keyword or t.type == .eof) {
+                                                break; // Don't show hover for random punctuation
+                                            }
+
+                                            // We use std.fmt.allocPrint to format the markdown block
+                                            const formatted = std.fmt.allocPrint(allocator, 
+                                                "```llts\n{s}{s}: {s}\n```", 
+                                                .{ prefix, t.value, type_str }
+                                            ) catch "Error formatting hover";
+                                            
+                                            hover_value = formatted;
                                             break;
                                         }
                                     }
