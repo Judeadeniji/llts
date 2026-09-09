@@ -2,13 +2,19 @@
   "name": "llts",
   "displayName": "LLTS",
   "description": "LLTS language support (.lls) via Tree-sitter",
-  "version": "0.3.2",
+  "version": "0.0.0",
   "publisher": "llts",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Judeadeniji/llts.git",
+    "directory": "editors/vscode-llts"
+  },
+  "license": "MIT",
   "engines": {
     "vscode": "^1.85.0"
   },
   "categories": ["Programming Languages"],
-  "activationEvents": ["onLanguage:llts"],
+  "activationEvents": [],
   "main": "./out/extension.js",
   "contributes": {
     "languages": [
@@ -39,14 +45,15 @@
     "sync": "/bin/cp -f ../../tree-sitter-llts/queries/highlights.scm media/highlights.scm && /bin/cp -f ../../tree-sitter-llts/tree-sitter-llts.wasm media/tree-sitter-llts.wasm",
     "build:wasm": "cd ../../tree-sitter-llts && bunx tree-sitter build --wasm && /bin/cp -f tree-sitter-llts.wasm ../editors/vscode-llts/media/ && /bin/cp -f queries/highlights.scm ../editors/vscode-llts/media/",
     "test:roles": "bun run scripts/assert-roles.ts",
-    "package": "npm run compile && npx @vscode/vsce package"
+    "package": "npm run compile && mkdir -p out && npx @vscode/vsce package -o out/"
   },
   "files": [
     "out",
     "media",
     "syntaxes",
     "language-configuration.json",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "dependencies": {
     "web-tree-sitter": "^0.25.10"
