@@ -14,7 +14,9 @@
     "vscode": "^1.85.0"
   },
   "categories": ["Programming Languages"],
-  "activationEvents": [],
+  "activationEvents": [
+    "onLanguage:llts"
+  ],
   "main": "./out/extension.js",
   "contributes": {
     "languages": [
@@ -47,14 +49,6 @@
     "test:roles": "bun run scripts/assert-roles.ts",
     "package": "npm run compile && mkdir -p out && npx @vscode/vsce package -o out/"
   },
-  "files": [
-    "out",
-    "media",
-    "syntaxes",
-    "language-configuration.json",
-    "README.md",
-    "LICENSE"
-  ],
   "dependencies": {
     "web-tree-sitter": "^0.25.10"
   },

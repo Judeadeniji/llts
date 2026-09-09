@@ -229,6 +229,10 @@ class LltsHighlighter implements vscode.Disposable {
     }
   }
 
+  getTree(document: vscode.TextDocument): Tree | undefined {
+    return this.trees.get(document.uri.toString());
+  }
+
   private async paint(document: vscode.TextDocument): Promise<void> {
     if (!this.ready) {
       try {
@@ -294,6 +298,192 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       for (const editor of editors) highlighter.schedule(editor.document);
     }),
   );
+
+  context.subscriptions.push(
+    vscode.languages.registerDocumentSymbolProvider(
+      { language: "llts" },
+      new LltsDocumentSymbolProvider(highlighter)
+    )
+  );
+}
+
+class LltsDocumentSymbolProvider implements vscode.DocumentSymbolProvider {
+  constructor(private readonly highlighter: LltsHighlighter) {}
+
+  provideDocumentSymbols(
+    document: vscode.TextDocument,
+    token: vscode.CancellationToken
+  ): vscode.ProviderResult<vscode.DocumentSymbol[] | vscode.SymbolInformation[]> {
+    const tree = this.highlighter.getTree(document);
+    if (!tree) return [];
+
+    const symbols: vscode.DocumentSymbol[] = [];
+
+    function traverse(node: Node, container: vscode.DocumentSymbol[]) {
+      let symbol: vscode.DocumentSymbol | undefined;
+
+      switch (node.type) {
+        case "func_declaration": {
+          const nameNode = node.childForFieldName("name");
+          if (nameNode) {
+            symbol = new vscode.DocumentSymbol(
+              nameNode.text,
+              "function",
+              vscode.SymbolKind.Function,
+              rangeFromNode(node),
+              rangeFromNode(nameNode)
+            );
+          }
+          break;
+        }
+        case "struct_declaration": {
+          const nameNode = node.childForFieldName("name");
+          if (nameNode) {
+            symbol = new vscode.DocumentSymbol(
+              nameNode.text,
+              "struct",
+              vscode.SymbolKind.Struct,
+              rangeFromNode(node),
+              rangeFromNode(nameNode)
+            );
+          }
+          break;
+        }
+        case "enum_declaration": {
+          const nameNode = node.childForFieldName("name");
+          if (nameNode) {
+            symbol = new vscode.DocumentSymbol(
+              nameNode.text,
+              "enum",
+              vscode.SymbolKind.Enum,
+              rangeFromNode(node),
+              rangeFromNode(nameNode)
+            );
+          }
+          break;
+        }
+        case "error_declaration": {
+          const nameNode = node.childForFieldName("name");
+          if (nameNode) {
+            symbol = new vscode.DocumentSymbol(
+              nameNode.text,
+              "error",
+              vscode.SymbolKind.Enum,
+              rangeFromNode(node),
+              rangeFromNode(nameNode)
+            );
+          }
+          break;
+        }
+        case "const_declaration":
+        case "variable_declaration": {
+          const nameNode = node.childForFieldName("name");
+          if (nameNode) {
+            symbol = new vscode.DocumentSymbol(
+              nameNode.text,
+              node.type === "const_declaration" ? "const" : "variable",
+              vscode.SymbolKind.Variable,
+              rangeFromNode(node),
+              rangeFromNode(nameNode)
+            );
+          }
+          break;
+        }
+        case "type_declaration":
+        case "alias_declaration": {
+          const nameNode = node.childForFieldName("name");
+          if (nameNode) {
+            symbol = new vscode.DocumentSymbol(
+              nameNode.text,
+              "type",
+              vscode.SymbolKind.Class,
+              rangeFromNode(node),
+              rangeFromNode(nameNode)
+            );
+          }
+          break;
+        }
+        case "struct_field": {
+          const nameNode = node.childForFieldName("name");
+          if (nameNode) {
+            symbol = new vscode.DocumentSymbol(
+              nameNode.text,
+              "field",
+              vscode.SymbolKind.Field,
+              rangeFromNode(node),
+              rangeFromNode(nameNode)
+            );
+          }
+          break;
+        }
+        case "enum_variant": {
+          const nameNode = node.childForFieldName("name");
+          if (nameNode) {
+            symbol = new vscode.DocumentSymbol(
+              nameNode.text,
+              "variant",
+              vscode.SymbolKind.EnumMember,
+              rangeFromNode(node),
+              rangeFromNode(nameNode)
+            );
+          }
+          break;
+        }
+        case "extern_declaration": {
+          const nameNode = node.childForFieldName("name");
+          if (nameNode) {
+            symbol = new vscode.DocumentSymbol(
+              nameNode.text,
+              "extern",
+              vscode.SymbolKind.Function,
+              rangeFromNode(node),
+              rangeFromNode(nameNode)
+            );
+          }
+          break;
+        }
+        case "labeled_expression": {
+          const nameNode = node.childForFieldName("label");
+          if (nameNode) {
+            symbol = new vscode.DocumentSymbol(
+              nameNode.text,
+              "label",
+              vscode.SymbolKind.Key,
+              rangeFromNode(node),
+              rangeFromNode(nameNode)
+            );
+          }
+          break;
+        }
+        case "parameter": {
+          const nameNode = node.childForFieldName("name");
+          if (nameNode) {
+            symbol = new vscode.DocumentSymbol(
+              nameNode.text,
+              "parameter",
+              vscode.SymbolKind.Variable,
+              rangeFromNode(node),
+              rangeFromNode(nameNode)
+            );
+          }
+          break;
+        }
+      }
+
+      const targetContainer = symbol ? symbol.children : container;
+      if (symbol) {
+        container.push(symbol);
+      }
+
+      for (let i = 0; i < node.childCount; i++) {
+        const child = node.child(i);
+        if (child) traverse(child, targetContainer);
+      }
+    }
+
+    traverse(tree.rootNode, symbols);
+    return symbols;
+  }
 }
 
 export function deactivate(): void {
