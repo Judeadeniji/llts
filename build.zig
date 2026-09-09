@@ -47,6 +47,20 @@ pub fn build(b: *std.Build) void {
     tokenize_zig.root_module.link_libc = true;
     b.installArtifact(tokenize_zig);
 
+    const lsp_exe = b.addExecutable(.{
+        .name = "llts-lsp",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/lsp/server.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "llts", .module = llts_mod },
+            },
+        }),
+    });
+    lsp_exe.root_module.link_libc = true;
+    b.installArtifact(lsp_exe);
+
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
     if (b.args) |args| {
