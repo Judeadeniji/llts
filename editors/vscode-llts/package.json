@@ -50,6 +50,7 @@
     "package": "npm run compile && mkdir -p out && npx @vscode/vsce package -o out/"
   },
   "dependencies": {
+    "vscode-languageclient": "^10.1.1",
     "web-tree-sitter": "^0.25.10"
   },
   "devDependencies": {
