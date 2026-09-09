@@ -44,6 +44,8 @@ pub fn handleMessage(server: *state.ServerState, stdout: std.posix.fd_t, body: [
             try handleDidClose(server, params);
         } else if (std.mem.eql(u8, method_str, "textDocument/hover")) {
             try handleHover(server, stdout, id, params);
+        } else if (std.mem.eql(u8, method_str, "textDocument/definition")) {
+            try handleDefinition(server, stdout, id, params);
         }
     }
 }
@@ -173,4 +175,107 @@ fn handleHover(server: *state.ServerState, stdout: std.posix.fd_t, id: ?std.json
             .value = hover_value,
         },
     });
+}
+
+fn handleDefinition(server: *state.ServerState, stdout: std.posix.fd_t, id: ?std.json.Value, params: ?std.json.Value) !void {
+    if (id == null or params == null or params.? != .object) return;
+
+    
+    const textDoc = params.?.object.get("textDocument");
+    const pos = params.?.object.get("position");
+    
+    if (textDoc != null and textDoc.? == .object and pos != null and pos.? == .object) {
+        const uri = textDoc.?.object.get("uri");
+        const line_val = pos.?.object.get("line");
+        const char_val = pos.?.object.get("character");
+        
+        if (uri != null and uri.? == .string and line_val != null and char_val != null) {
+            const target_line = @as(u32, @intCast(line_val.?.integer)) + 1;
+            const target_col = @as(u32, @intCast(char_val.?.integer)) + 1;
+            
+            if (server.getDocument(uri.?.string)) |source| {
+                if (llts.scanner.scan(server.allocator, source, uri.?.string)) |scan_result| {
+                    var result = scan_result;
+                    defer llts.scanner.deinitScanResult(&result);
+                    
+                    var target_name: ?[]const u8 = null;
+                    var is_register = false;
+                    
+                    // 1. Find the name we are hovering on
+                    for (result.tokens.items) |t| {
+                        if (t.line == target_line) {
+                            const end_col = t.column + @as(u32, @intCast(t.value.len));
+                            if (target_col >= t.column and target_col <= end_col) {
+                                if (t.type == .identifier or t.type == .v_register) {
+                                    target_name = t.value;
+                                    is_register = (t.type == .v_register);
+                                }
+                                break;
+                            }
+                        }
+                    }
+
+                    // 2. Scan from the top to find the first declaration
+                    if (target_name) |name| {
+                        var decl_token: ?llts.scanner.Token = null;
+                        
+                        for (result.tokens.items, 0..) |t, i| {
+                            if (is_register) {
+                                // For registers, the first time we see it on the LHS of `=` or preceded by `@const` is the decl
+                                if (t.type == .v_register and std.mem.eql(u8, t.value, name)) {
+                                    const prev = if (i > 0) result.tokens.items[i - 1] else null;
+                                    const next = if (i + 1 < result.tokens.items.len) result.tokens.items[i + 1] else null;
+                                    
+                                    const is_const = prev != null and prev.?.type == .compiler_keyword and std.mem.eql(u8, prev.?.value, "const");
+                                    const is_assign = next != null and next.?.type == .assign_op;
+                                    
+                                    if (is_const or is_assign) {
+                                        decl_token = t;
+                                        break;
+                                    }
+                                }
+                            } else {
+                                // For identifiers, look for `@func foo`, `@struct foo`, `@enum foo`, etc.
+                                if (t.type == .identifier and std.mem.eql(u8, t.value, name)) {
+                                    const prev = if (i > 0) result.tokens.items[i - 1] else null;
+                                    if (prev != null and prev.?.type == .compiler_keyword) {
+                                        const kw = prev.?.value;
+                                        if (std.mem.eql(u8, kw, "func") or 
+                                            std.mem.eql(u8, kw, "struct") or 
+                                            std.mem.eql(u8, kw, "enum") or 
+                                            std.mem.eql(u8, kw, "type") or 
+                                            std.mem.eql(u8, kw, "error")) 
+                                        {
+                                            decl_token = t;
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // 3. Populate result
+                        if (decl_token) |tok| {
+                            try transport.sendResponse(server.allocator, stdout, id.?, .{
+                                .uri = uri.?.string,
+                                .range = .{
+                                    .start = .{
+                                        .line = tok.line - 1,
+                                        .character = tok.column - 1,
+                                    },
+                                    .end = .{
+                                        .line = tok.line - 1,
+                                        .character = tok.column - 1 + @as(i64, @intCast(tok.value.len)),
+                                    },
+                                },
+                            });
+                            return;
+                        }
+                    }
+                } else |_| {}
+            }
+        }
+    }
+
+    try transport.sendResponse(server.allocator, stdout, id.?, null);
 }
