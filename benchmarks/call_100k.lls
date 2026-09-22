@@ -1,0 +1,23 @@
+# 100k function-call benchmark (LLTS).
+# Exercises callStatic / doReturn hot path (and per-call const_slots HashMap alloc).
+# Use: llts run --release benchmarks/call_100k.lls
+
+@const $std = @import("std/index");
+
+@func add(a: int, b: int): int {
+    return a + b;
+}
+
+@const $N = 100000;
+$sum = 0;
+$start = std.time.Now();
+
+@for (0..N) |i| {
+    sum = add(sum, i);
+}
+
+$elapsed_ms = std.time.Milliseconds(std.time.Since(start));
+
+print("llts-call:", elapsed_ms, "ms", "sum=", sum);
+
+pub @func main() {}
