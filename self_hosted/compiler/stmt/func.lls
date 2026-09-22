@@ -1,0 +1,129 @@
+# Port of src/compiler/stmt/func.zig — blocks, defers, returns, function bodies.
+
+@const $opcode = @import("../../bytecode/opcode.lls");
+@const $nodes = @import("../../ast/nodes.lls");
+@const $common = @import("../../ast/common.lls");
+@const $state_mod = @import("../state.lls");
+@const $scope = @import("../scope.lls");
+@const $typecheck = @import("../typecheck.lls");
+@const $stmt = @import("./root.lls");
+@const $expr = @import("../expr/root.lls");
+@const $list = @import("std/list.lls");
+@const $string = @import("std/string.lls");
+@const $map = @import("std/map.lls");
+
+pub @func compileBlock(em: *state_mod.EmState, block: *nodes.Block) {
+    scope.beginScope(em);
+    @for (0..list.len(block.statements)) |si| {
+        stmt.compileStatement(em, @as(*nodes.Node, list.get(block.statements, si)))?;
+    }
+    scope.endScope(em)?;
+}
+
+pub @func compileDefer(em: *state_mod.EmState, def: *nodes.Defer) {
+    scope.pushDefer(em, def.body, def.is_errdefer);
+}
+
+pub @func compileReturn(em: *state_mod.EmState, ret: *nodes.Return) {
+    @if (ret.return_value != null) {
+        expr.compileExpression(em, @as(*nodes.Node, ret.return_value))?;
+    } @else {
+        em.chunk.writeOp(opcode.OpCode.OP_NULL);
+    }
+    scope.emitFunctionExitDefers(em, scope.ExitKind.dynamic)?;
+    em.chunk.writeOp(opcode.OpCode.OP_RETURN);
+}
+
+pub @func compileFunction(em: *state_mod.EmState, node: *nodes.FunctionDecl, ast_node: *nodes.Node) {
+    $outer_locals = em.locals;
+    $outer_depth = em.scope_depth;
+
+    em.locals = list.create(em.arena);
+    em.scope_depth = 0;
+
+    scope.beginScope(em);
+
+    $method_struct: ?string = null;
+    $idx = string.lastIndexOf(node.name, "::");
+    @if (idx >= 0) {
+        $sname = string.slice(node.name, 0, idx);
+        @if (state_mod.emHasStruct(em, sname)) {
+            method_struct = sname;
+        }
+    }
+
+    @if (node.params.kind != common.NodeKind.Params) {
+        return error("EmitUnsupported", "function params malformed");
+    }
+    $params: *nodes.Params = @as(*nodes.Params, node.params);
+
+    @if (params.is_variadic) {
+        em.chunk.writeOp(opcode.OpCode.OP_PACK_REST);
+        $rest_count: i64 = 0;
+        @if (list.len(params.params) != 0) {
+            rest_count = list.len(params.params) - 1;
+        }
+        em.chunk.writeByte(@as(u8, rest_count));
+    }
+
+    @for (0..list.len(params.params)) |pi| {
+        $p: *nodes.Param = @as(*nodes.Param, list.get(params.params, pi));
+        pushParam(em, p, method_struct)?;
+    }
+
+    @if (node.body.kind != common.NodeKind.Block) {
+        return error("EmitUnsupported", "function body must be a block");
+    }
+    $body: *nodes.Block = @as(*nodes.Block, node.body);
+    @for (0..list.len(body.statements)) |si2| {
+        stmt.compileStatement(em, @as(*nodes.Node, list.get(body.statements, si2)))?;
+    }
+
+    scope.emitFunctionExitDefers(em, scope.ExitKind.normal)?;
+    em.chunk.writeOp(opcode.OpCode.OP_NULL);
+    em.chunk.writeOp(opcode.OpCode.OP_RETURN);
+
+    # discard function-local state
+    em.locals = outer_locals;
+    em.scope_depth = outer_depth;
+}
+
+@func pushParam(em: *state_mod.EmState, p: *nodes.Param, method_struct: ?string) {
+    $p_type: ?string = null;
+    @if (string.eql(p.name, "self")) {
+        @if (method_struct != null) {
+            # Unannotated method self defaults to *T (honest mutable receiver).
+            $s: string = @as(string, method_struct);
+            p_type = string.concat("*", s);
+        }
+    }
+    @if (p.type_annotation != null) {
+        $d = typecheck.typeAstToDisplay(em, @as(*nodes.Node, p.type_annotation));
+        @if (d != null) {
+            p_type = @as(string, d);
+        }
+    }
+    $slot = list.len(em.locals);
+    list.push(em.locals, @new(em.arena, state_mod.EmLocal {
+        name: p.name,
+        depth: em.scope_depth,
+        type_name: "",
+        is_const: false,
+    }));
+    @if (p_type != null) {
+        $local: *state_mod.EmLocal = @as(*state_mod.EmLocal, list.get(em.locals, slot));
+        local.type_name = @as(string, p_type);
+    }
+    # Register self's struct type so method bodies resolve fields / methods.
+    @if (string.eql(p.name, "self") && p_type == null) {
+        @if (method_struct != null) {
+            $s2: string = @as(string, method_struct);
+            map.set(em.var_types, "self", s2);
+        }
+    }
+    @if (p_type != null) {
+        map.set(em.var_types, p.name, @as(string, p_type));
+    }
+}
+
+@const $map = @import("std/map.lls");

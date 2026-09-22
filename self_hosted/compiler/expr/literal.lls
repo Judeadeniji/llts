@@ -1,0 +1,45 @@
+# Port of src/compiler/expr/literal.zig.
+
+@const $opcode = @import("../../bytecode/opcode.lls");
+@const $nodes = @import("../../ast/nodes.lls");
+@const $common = @import("../../ast/common.lls");
+@const $state_mod = @import("../state.lls");
+@const $string = @import("std/string.lls");
+
+pub @func compileLiteral(em: *state_mod.EmState, lit: *nodes.Literal) {
+    @switch (lit.literal_type) {
+        nodes.LiteralKind.Null => {
+            em.chunk.writeOp(opcode.OpCode.OP_NULL);
+        }
+        nodes.LiteralKind.Boolean => {
+            @if (string.eql(lit.value, "true")) {
+                em.chunk.writeOp(opcode.OpCode.OP_TRUE);
+            } @else {
+                em.chunk.writeOp(opcode.OpCode.OP_FALSE);
+            }
+        }
+        nodes.LiteralKind.String => {
+            em.chunk.emitString(lit.value);
+        }
+        nodes.LiteralKind.Number => {
+            @if (string.contains(lit.value, ".")) {
+                # Runtime parse — avoids float bits in the constant pool.
+                em.chunk.emitGetGlobal("__parseFloat");
+                em.chunk.emitString(lit.value);
+                em.chunk.writeOp(opcode.OpCode.OP_CALL);
+                em.chunk.writeByte(1);
+            } @else {
+                em.chunk.emitConstantInt(string.parseInt(lit.value, 10));
+            }
+        }
+        nodes.LiteralKind.Hex => {
+            em.chunk.emitConstantInt(string.parseInt(string.slice(lit.value, 2, string.len(lit.value)), 16));
+        }
+        nodes.LiteralKind.Octal => {
+            em.chunk.emitConstantInt(string.parseInt(string.slice(lit.value, 2, string.len(lit.value)), 8));
+        }
+        nodes.LiteralKind.Binary => {
+            em.chunk.emitConstantInt(string.parseInt(string.slice(lit.value, 2, string.len(lit.value)), 2));
+        }
+    }
+}

@@ -1,0 +1,144 @@
+# Port of src/compiler/expr/path.zig — static module paths for emit.
+
+@const $nodes = @import("../../ast/nodes.lls");
+@const $common = @import("../../ast/common.lls");
+@const $state_mod = @import("../state.lls");
+@const $scope = @import("../scope.lls");
+@const $string = @import("std/string.lls");
+@const $map = @import("std/map.lls");
+@const $list = @import("std/list.lls");
+
+# Resolve `lib.Vector3` → `examples/import_test_lib::Vector3` via `$lib` → `module:…`.
+pub @func resolveModuleType(em: *state_mod.EmState, type_name: string): string {
+    $dot = string.indexOf(type_name, ".");
+    @if (dot >= 0) {
+        $mod_alias = string.slice(type_name, 0, dot);
+        $short = string.slice(type_name, dot + 1, string.len(type_name));
+        $key = string.concat("$", mod_alias);
+        @if (map.has(em.var_types, key)) {
+            $mod = map.get(em.var_types, key);
+            @if (string.startsWith(mod, "module:")) {
+                $mod_path = string.slice(mod, 7, string.len(mod));
+                return string.concat(string.concat(mod_path, "::"), short);
+            }
+        }
+    }
+    return type_name;
+}
+
+# Resolve an `@import("path")` call node to the module key (Zig resolveImportKey).
+# Returns null when the node is not an import call or the path cannot be read.
+pub @func resolveImportKey(em: *state_mod.EmState, from_path: string, import_path: string) {
+    $resolved = resolvePathFromFile(em, from_path, import_path);
+    @if (resolved == null) {
+        return null;
+    }
+    return moduleKey(@as(string, resolved));
+}
+
+@func moduleKey(resolved: string): string {
+    return resolved;
+}
+
+@func dirnameOf(p: string): string {
+    $slash = string.lastIndexOf(p, "/");
+    @if (slash < 0) {
+        return ".";
+    }
+    @if (slash == 0) {
+        return "/";
+    }
+    return string.slice(p, 0, slash);
+}
+
+pub @func resolvePathFromFile(em: *state_mod.EmState, from: string, import_path: string) {
+    $with_ext = import_path;
+    @if (string.endsWith(import_path, ".lls") == false) {
+        with_ext = string.concat(import_path, ".lls");
+    }
+    $src = __readFile(with_ext);
+    @if (@isError(src) == false) {
+        return with_ext;
+    }
+    $up = string.concat("../", with_ext);
+    $src2 = __readFile(up);
+    @if (@isError(src2) == false) {
+        return up;
+    }
+    $joined = string.concat(string.concat(dirnameOf(from), "/"), with_ext);
+    $src3 = __readFile(joined);
+    @if (@isError(src3) == false) {
+        return joined;
+    }
+    return null;
+}
+
+pub @func tryResolveStaticPath(em: *state_mod.EmState, node: *nodes.Node) {
+    @if (node.kind == common.NodeKind.Primary) {
+        $p: *nodes.Primary = @as(*nodes.Primary, node);
+        @if (p.primary_kind != nodes.PrimaryKind.Identifier) {
+            return null;
+        }
+        @if (scope.resolveLocal(em, p.name) != -1) {
+            return null;
+        }
+        $key = string.concat("$", p.name);
+        @if (map.has(em.var_types, key)) {
+            $mod = map.get(em.var_types, key);
+            @if (string.startsWith(mod, "module:")) {
+                return string.slice(mod, 7, string.len(mod));
+            }
+        }
+        return null;
+    }
+    @if (node.kind == common.NodeKind.Call) {
+        $c: *nodes.Call = @as(*nodes.Call, node);
+        @if (c.callee.kind == common.NodeKind.Primary) {
+            $cal: *nodes.Primary = @as(*nodes.Primary, c.callee);
+            @if (string.eql(cal.name, "@import")) {
+                @if (list.len(c.args) == 1) {
+                    $arg: *nodes.Node = @as(*nodes.Node, list.get(c.args, 0));
+                    @if (arg.kind == common.NodeKind.Literal) {
+                        $lit: *nodes.Literal = @as(*nodes.Literal, arg);
+                        @if (lit.literal_type == nodes.LiteralKind.String) {
+                            $from = em.chunk.file;
+                            @if (string.len(em.diag_path) > 0) {
+                                from = em.diag_path;
+                            }
+                            return resolveImportKey(em, from, lit.value);
+                        }
+                    }
+                }
+            }
+        }
+        return null;
+    }
+    @if (node.kind == common.NodeKind.Member) {
+        $m: *nodes.Member = @as(*nodes.Member, node);
+        $obj_path = tryResolveStaticPath(em, m.object);
+        @if (obj_path == null) {
+            return null;
+        }
+        @if (m.property.kind != common.NodeKind.Primary) {
+            return null;
+        }
+        $prop: *nodes.Primary = @as(*nodes.Primary, m.property);
+        $re_key = string.concat(string.concat("$", obj_path), string.concat("::", prop.name));
+        @if (map.has(em.var_types, re_key)) {
+            $re = map.get(em.var_types, re_key);
+            @if (string.startsWith(re, "module:")) {
+                return string.slice(re, 7, string.len(re));
+            }
+        }
+        # `mod.value.field` — once `mod.value` is a typed binding (not a nested module),
+        # further members are fields/methods, not static path segments.
+        @if (map.has(em.var_types, obj_path)) {
+            $obj_ty = map.get(em.var_types, obj_path);
+            @if (string.startsWith(obj_ty, "module:") == false) {
+                return null;
+            }
+        }
+        return string.concat(string.concat(obj_path, "::"), prop.name);
+    }
+    return null;
+}

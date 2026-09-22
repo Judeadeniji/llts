@@ -1,0 +1,64 @@
+# Port of src/compiler/stmt/root.zig — statement dispatcher.
+
+@const $nodes = @import("../../ast/nodes.lls");
+@const $common = @import("../../ast/common.lls");
+@const $opcode = @import("../../bytecode/opcode.lls");
+@const $state_mod = @import("../state.lls");
+@const $expr = @import("../expr/root.lls");
+@const $decl = @import("./decl.lls");
+@const $control = @import("./control.lls");
+@const $func = @import("./func.lls");
+
+pub @func compileStatement(em: *state_mod.EmState, node: *nodes.Node) {
+    @switch (node.kind) {
+        common.NodeKind.FunctionDecl => {
+            func.compileFunction(em, @as(*nodes.FunctionDecl, node), node)?;
+        }
+        common.NodeKind.Declaration => {
+            decl.compileDeclaration(em, @as(*nodes.Declaration, node))?;
+        }
+        common.NodeKind.Extern => {
+            decl.compileExtern(em, @as(*nodes.Extern, node))?;
+        }
+        common.NodeKind.StructDecl => {
+            decl.compileStruct(em, @as(*nodes.StructDecl, node))?;
+        }
+        common.NodeKind.EnumDecl => {
+            decl.compileEnum(em, @as(*nodes.EnumDecl, node))?;
+        }
+        common.NodeKind.ErrorDecl => {
+            decl.compileErrorDecl(em, @as(*nodes.ErrorDecl, node))?;
+        }
+        common.NodeKind.TypeDecl => {
+            decl.compileTypeDecl(em, @as(*nodes.TypeDecl, node))?;
+        }
+        common.NodeKind.Block => {
+            func.compileBlock(em, @as(*nodes.Block, node))?;
+        }
+        common.NodeKind.Defer => {
+            func.compileDefer(em, @as(*nodes.Defer, node))?;
+        }
+        common.NodeKind.Return => {
+            func.compileReturn(em, @as(*nodes.Return, node))?;
+        }
+        common.NodeKind.If => {
+            control.compileIf(em, @as(*nodes.If, node))?;
+        }
+        common.NodeKind.Switch => {
+            control.compileSwitch(em, @as(*nodes.Switch, node))?;
+        }
+        common.NodeKind.For => {
+            control.compileFor(em, @as(*nodes.For, node))?;
+        }
+        common.NodeKind.Break => {
+            control.compileBreak(em, @as(*nodes.Break, node))?;
+        }
+        common.NodeKind.Continue => {
+            control.compileContinue(em, @as(*nodes.Continue, node))?;
+        }
+        @else => {
+            expr.compileExpression(em, node)?;
+            em.chunk.writeOp(opcode.OpCode.OP_POP);
+        }
+    }
+}

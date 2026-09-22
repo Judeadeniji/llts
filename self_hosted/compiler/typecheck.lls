@@ -1,0 +1,625 @@
+# Port of src/compiler/typecheck/from_ast.zig (emit-critical subset):
+# resolveType + struct/enum/error lookups over EmState maps.
+
+@const $state_mod = @import("./state.lls");
+@const $path = @import("./expr/path.lls");
+@const $scope = @import("./scope.lls");
+@const $nodes = @import("../ast/nodes.lls");
+@const $common = @import("../ast/common.lls");
+@const $list = @import("std/list.lls");
+@const $map = @import("std/map.lls");
+@const $string = @import("std/string.lls");
+
+# Host string.concat rejects ints — render via digits.
+pub @func intToStr(n: i64): string {
+    @if (n == 0) {
+        return "0";
+    }
+    $neg = n < 0;
+    $v = n;
+    @if (neg) {
+        v = -n;
+    }
+    $digits = list.createImmortal();
+    # At most 19 decimal digits in an i64.
+    @for (0..20) {
+        @if (v <= 0) {
+            break;
+        }
+        list.push(digits, v % 10);
+        v = v / 10;
+    }
+    $s: string = "";
+    @if (neg) {
+        s = "-";
+    }
+    # Read the collected digits back most-significant first.
+    @for (0..list.len(digits)) |k| {
+        $i = list.len(digits) - 1 - k;
+        s = string.concat(s, string.fromCharCode(48 + list.get(digits, i)));
+    }
+    return s;
+}
+
+pub @func unwrapOptionalDisplay(display: string): string {
+    $t = string.trim(display);
+    # Peel leading '?' — bounded by the trimmed length.
+    @for (0..string.len(t)) {
+        @if (string.len(t) == 0 || string.eql(string.slice(t, 0, 1), "?") == false) {
+            break;
+        }
+        t = string.trim(string.slice(t, 1, string.len(t)));
+    }
+    @if (string.endsWith(t, " | null")) {
+        t = string.trim(string.slice(t, 0, string.len(t) - 7));
+    } @else @if (string.startsWith(t, "null | ")) {
+        t = string.trim(string.slice(t, 7, string.len(t)));
+    }
+    # Peel leading '*' — bounded by the remaining length.
+    @for (0..string.len(t)) {
+        @if (string.len(t) == 0 || string.eql(string.slice(t, 0, 1), "*") == false) {
+            break;
+        }
+        t = string.trim(string.slice(t, 1, string.len(t)));
+    }
+    return t;
+}
+
+pub @func isStringyType(t) {
+    @if (t == null) {
+        return false;
+    }
+    $s: string = @as(string, t);
+    @if (string.eql(s, "string") || string.eql(s, "[]byte")) {
+        return true;
+    }
+    return string.startsWith(s, "[") && string.endsWith(s, "]byte");
+}
+
+# Display for `const expr` — singleton / deep-literal forms.
+@func resolveTypeLiteral(em: *state_mod.EmState, node: *nodes.Node) {
+    @if (node.kind == common.NodeKind.Literal) {
+        $lit: *nodes.Literal = @as(*nodes.Literal, node);
+        @if (lit.literal_type == nodes.LiteralKind.String) {
+            $s = string.concat("[", string.concat(intToStr(string.len(lit.value)), "]byte"));
+            return s;
+        }
+        @if (lit.literal_type == nodes.LiteralKind.Boolean) {
+            return "u1";
+        }
+        @if (lit.literal_type == nodes.LiteralKind.Null) {
+            return "null";
+        }
+        return "int";
+    }
+    @if (node.kind == common.NodeKind.Binary) {
+        $b: *nodes.Binary = @as(*nodes.Binary, node);
+        @if (string.eql(b.operator, "+")) {
+            return resolveTypeLiteral(em, b.left);
+        }
+        return resolveType(em, b.left);
+    }
+    @if (node.kind == common.NodeKind.Unary) {
+        $u: *nodes.Unary = @as(*nodes.Unary, node);
+        return resolveTypeLiteral(em, u.arg);
+    }
+    return resolveType(em, node);
+}
+
+pub @func resolveType(em: *state_mod.EmState, node: *nodes.Node) {
+    @if (node.kind == common.NodeKind.Literal) {
+        $lit: *nodes.Literal = @as(*nodes.Literal, node);
+        @switch (lit.literal_type) {
+            nodes.LiteralKind.String => {
+                $s = string.concat("[", string.concat(intToStr(string.len(lit.value)), "]byte"));
+                return s;
+            }
+            nodes.LiteralKind.Boolean => {
+                return "u1";
+            }
+            nodes.LiteralKind.Null => {
+                return "null";
+            }
+            nodes.LiteralKind.Number => {
+                # Float if the source spelling contains '.' or exponent.
+                @if (string.contains(lit.value, ".") || string.contains(lit.value, "e") || string.contains(lit.value, "E")) {
+                    return "f64";
+                }
+                return "int";
+            }
+            @else => {
+                return "int";
+            }
+        }
+    }
+    @if (node.kind == common.NodeKind.Primary) {
+        $p: *nodes.Primary = @as(*nodes.Primary, node);
+        @if (p.primary_kind != nodes.PrimaryKind.Identifier && p.primary_kind != nodes.PrimaryKind.Register) {
+            return null;
+        }
+        $local_idx = scope.resolveLocal(em, p.name);
+        $type_name: string = "";
+        @if (local_idx != -1) {
+            $local: *state_mod.EmLocal = @as(*state_mod.EmLocal, list.get(em.locals, local_idx));
+            type_name = local.type_name;
+        } @else {
+            @if (map.has(em.var_types, p.name)) {
+                type_name = map.get(em.var_types, p.name);
+            }
+        }
+        @if (string.len(type_name) > 0) {
+            # Don't treat `ExprKind.Literal` as `mod.Type`.
+            $looks_enum_lit = false;
+            @if (string.contains(type_name, "::") == false) {
+                $dot0 = string.lastIndexOf(type_name, ".");
+                @if (dot0 >= 0) {
+                    looks_enum_lit = state_mod.emHasEnum(em, string.slice(type_name, 0, dot0));
+                }
+            }
+            @if (looks_enum_lit == false && string.contains(type_name, ".")) {
+                type_name = @as(string, path.resolveModuleType(em, type_name));
+            }
+        }
+        @if (string.len(type_name) > 0) {
+            return type_name;
+        }
+        return null;
+    }
+    @if (node.kind == common.NodeKind.Member) {
+        $m: *nodes.Member = @as(*nodes.Member, node);
+        @if (m.property.kind != common.NodeKind.Primary) {
+            return null;
+        }
+        $prop_name = memberPropName(m);
+        @if (resolveEnumName(em, m.object) != null) {
+            $ename: string = @as(string, resolveEnumName(em, m.object));
+            $ed = state_mod.emFindEnum(em, ename);
+            @if (ed != null) {
+                @if (enumHasVariant(@as(*state_mod.EmEnumDef, ed), prop_name)) {
+                    return ename;
+                }
+            }
+            return null;
+        }
+        # Imported value: `io.stdout` → type of global `mod::stdout`.
+        $static_path = path.tryResolveStaticPath(em, node);
+        @if (static_path != null) {
+            @if (map.has(em.var_types, static_path)) {
+                $gt = map.get(em.var_types, static_path);
+                @if (string.startsWith(gt, "module:") == false) {
+                    return gt;
+                }
+            }
+        }
+        $object_type_o = resolveType(em, m.object);
+        @if (object_type_o == null) {
+            return null;
+        }
+        $object_type: string = @as(string, object_type_o);
+        @if (string.contains(object_type, ".")) {
+            object_type = @as(string, path.resolveModuleType(em, object_type));
+        }
+        # Module namespace (`module:path`) — field types come from exported globals.
+        @if (string.startsWith(object_type, "module:")) {
+            $mod_path = string.slice(object_type, 7, string.len(object_type));
+            $q = string.concat(string.concat(mod_path, "::"), prop_name);
+            @if (map.has(em.var_types, q)) {
+                $gt2 = map.get(em.var_types, q);
+                @if (string.startsWith(gt2, "module:") == false) {
+                    return gt2;
+                }
+            }
+            return null;
+        }
+        $sd = lookupStruct(em, object_type);
+        @if (sd == null) {
+            # Struct union field (common fields only, e.g. `kind`).
+            $info = lookupStructField(em, object_type, prop_name);
+            @if (info != null) {
+                # Discrim `kind` on `A | B` → parent enum (not first arm's singleton).
+                @if (string.eql(prop_name, "kind")) {
+                    $dinfo = discrimVariantMap(em, object_type);
+                    @if (dinfo != null) {
+                        return dinfo;
+                    }
+                }
+                return info;
+            }
+            return null;
+        }
+        $fi = state_mod.emFieldIndex(sd, prop_name);
+        @if (fi < 0) {
+            return null;
+        }
+        return list.get(sd.field_types, fi);
+    }
+    @if (node.kind == common.NodeKind.Call) {
+        $c: *nodes.Call = @as(*nodes.Call, node);
+        @if (c.callee.kind == common.NodeKind.Primary) {
+            $cal: *nodes.Primary = @as(*nodes.Primary, c.callee);
+            $def = state_mod.emFindFunc(em, cal.name);
+            @if (def != null) {
+                return def.return_type;
+            }
+        }
+        $p2 = path.tryResolveStaticPath(em, c.callee);
+        @if (p2 != null) {
+            $def2 = state_mod.emFindFunc(em, p2);
+            @if (def2 != null) {
+                return def2.return_type;
+            }
+        }
+        # Method call: obj.method() — resolve via Struct::method
+        @if (c.callee.kind == common.NodeKind.Member) {
+            $mem: *nodes.Member = @as(*nodes.Member, c.callee);
+            @if (mem.property.kind == common.NodeKind.Primary) {
+                $prop = memberPropName(mem);
+                $obj_type_o = resolveType(em, mem.object);
+                @if (obj_type_o != null) {
+                    $obj_type: string = @as(string, obj_type_o);
+                    $struct_name = unwrapOptionalDisplay(obj_type);
+                    $method_name = string.concat(string.concat(struct_name, "::"), prop);
+                    $def3 = state_mod.emFindFunc(em, method_name);
+                    @if (def3 != null) {
+                        return def3.return_type;
+                    }
+                }
+            }
+        }
+        return null;
+    }
+    @if (node.kind == common.NodeKind.TryExpr) {
+        $t: *nodes.TryExpr = @as(*nodes.TryExpr, node);
+        $inner_o = resolveType(em, t.expression);
+        @if (inner_o == null) {
+            return null;
+        }
+        $inner: string = @as(string, inner_o);
+        @if (typeAllowsError(inner) == false) {
+            return inner;
+        }
+        return unwrapErrorDisplay(inner);
+    }
+    @if (node.kind == common.NodeKind.Index) {
+        $idx: *nodes.Index = @as(*nodes.Index, node);
+        $obj_o = resolveType(em, idx.object);
+        @if (obj_o == null) {
+            return null;
+        }
+        $obj: string = @as(string, obj_o);
+        @if (idx.is_slice) {
+            # Slice views are unsized `[]T` / `[]byte`.
+            @if (string.eql(obj, "string") || string.eql(obj, "[]byte")) {
+                return "[]byte";
+            }
+            $e0 = arrayElemDisplay(obj);
+            @if (e0 != null) {
+                return string.concat("[]", e0);
+            }
+            return null;
+        }
+        $elem = arrayElemDisplay(obj);
+        @if (elem != null) {
+            return elem;
+        }
+        return null;
+    }
+    @if (node.kind == common.NodeKind.ArrayLiteral) {
+        $a: *nodes.ArrayLiteral = @as(*nodes.ArrayLiteral, node);
+        @if (list.len(a.elements) == 0) {
+            return "[0]unknown";
+        }
+        $first_o = resolveType(em, @as(*nodes.Node, list.get(a.elements, 0)));
+        @if (first_o == null) {
+            first_o = "unknown";
+        }
+        $first: string = @as(string, first_o);
+        $homo = true;
+        @for (0..list.len(a.elements)) |ai| {
+            $ti_o = resolveType(em, @as(*nodes.Node, list.get(a.elements, ai)));
+            @if (ti_o == null) {
+                ti_o = "unknown";
+            }
+            $ti: string = @as(string, ti_o);
+            @if (string.eql(ti, first) == false) {
+                homo = false;
+            }
+        }
+        # Homogeneous → `[N]T`; else tuple `[T, U, …]` (approximated as unknown).
+        @if (homo) {
+            return string.concat("[", string.concat(intToStr(list.len(a.elements)), string.concat("]", first)));
+        }
+        return null;
+    }
+    @if (node.kind == common.NodeKind.StructInit) {
+        $s: *nodes.StructInit = @as(*nodes.StructInit, node);
+        return resolveStructName(em, s.type_expr);
+    }
+    @if (node.kind == common.NodeKind.Unary) {
+        $u2: *nodes.Unary = @as(*nodes.Unary, node);
+        @if (string.eql(u2.operator, "const")) {
+            return resolveTypeLiteral(em, u2.arg);
+        }
+        @if (string.eql(u2.operator, "&")) {
+            $inner2_o = resolveType(em, u2.arg);
+            @if (inner2_o == null) {
+                return null;
+            }
+            $inner2: string = @as(string, inner2_o);
+            return string.concat("*", inner2);
+        }
+        return resolveType(em, u2.arg);
+    }
+    return null;
+}
+
+@func memberPropName(m: *nodes.Member): string {
+    @if (m.property.kind != common.NodeKind.Primary) {
+        return "";
+    }
+    $p: *nodes.Primary = @as(*nodes.Primary, m.property);
+    return p.name;
+}
+
+@func enumHasVariant(ed: *state_mod.EmEnumDef, variant: string): bool {
+    @for (0..list.len(ed.variant_names)) |vi| {
+        @if (string.eql(list.get(ed.variant_names, vi), variant)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+# `ExprKind.Literal` on `e: A | B` → the arm struct display for that variant.
+@func discrimVariantMap(em: *state_mod.EmState, display: string) {
+    # Peel typedefs to the union display — at most 16 hops.
+    $cur = unwrapOptionalDisplay(display);
+    @for (0..16) {
+        @if (string.len(cur) == 0) {
+            break;
+        }
+        $tdo = state_mod.emFindTypedef(em, cur);
+        @if (tdo == null) {
+            break;
+        }
+        $td: *state_mod.EmTypedef = @as(*state_mod.EmTypedef, tdo);
+        @if (string.len(td.underlying) == 0) {
+            break;
+        }
+        cur = unwrapOptionalDisplay(td.underlying);
+    }
+    # Must be a `A | B` union display; find the enum name via an arm's `kind` enum.
+    @if (string.contains(cur, " | ") == false) {
+        return null;
+    }
+    return null;
+}
+
+pub @func typeAllowsError(t: string): bool {
+    @if (string.eql(t, "error")) {
+        return true;
+    }
+    @if (string.endsWith(t, " | error")) {
+        return true;
+    }
+    @if (string.startsWith(t, "error | ")) {
+        return true;
+    }
+    @if (string.contains(t, " | error | ")) {
+        return true;
+    }
+    @if (string.contains(t, "error | ")) {
+        return true;
+    }
+    return false;
+}
+
+@func unwrapErrorDisplay(t: string): string {
+    @if (string.endsWith(t, " | error")) {
+        return string.slice(t, 0, string.len(t) - 8);
+    }
+    @if (string.startsWith(t, "error | ")) {
+        return string.slice(t, 8, string.len(t));
+    }
+    @if (string.eql(t, "error")) {
+        return "unknown";
+    }
+    # `A | error | B` → `A | B` (first occurrence only; good enough for emit).
+    $idx = string.indexOf(t, " | error | ");
+    @if (idx >= 0) {
+        return string.concat(string.slice(t, 0, idx), string.slice(t, idx + 9, string.len(t)));
+    }
+    return "unknown";
+}
+
+# `[N]T` / `[]T` → `T`.
+pub @func arrayElemDisplay(display: string) {
+    @if (string.len(display) < 2) {
+        return null;
+    }
+    @if (string.eql(string.slice(display, 1, 2), "]")) {
+        return string.slice(display, 2, string.len(display));
+    }
+    # Skip the `[N]` prefix — digits run from index 1.
+    $i: i64 = 1;
+    @for (0..string.len(display)) |k| {
+        $j = 1 + k;
+        @if (j >= string.len(display)) {
+            break;
+        }
+        @if (string.charCodeAt(display, j) < 48 || string.charCodeAt(display, j) > 57) {
+            break;
+        }
+        i = i + 1;
+    }
+    @if (i < string.len(display) && string.eql(string.slice(display, i, i + 1), "]")) {
+        return string.slice(display, i + 1, string.len(display));
+    }
+    return null;
+}
+
+pub @func resolveEnumName(em: *state_mod.EmState, node: *nodes.Node) {
+    @if (node.kind == common.NodeKind.Primary) {
+        $p: *nodes.Primary = @as(*nodes.Primary, node);
+        @if (p.primary_kind != nodes.PrimaryKind.Identifier && p.primary_kind != nodes.PrimaryKind.Register) {
+            return null;
+        }
+        @if (state_mod.emHasEnum(em, p.name)) {
+            return p.name;
+        }
+        # `lib.Tok` → qualified enum name via module map.
+        $dot = string.indexOf(p.name, ".");
+        @if (dot >= 0 && string.contains(p.name, "::") == false) {
+            $qualified: string = @as(string, path.resolveModuleType(em, p.name));
+            @if (state_mod.emHasEnum(em, qualified)) {
+                return qualified;
+            }
+        }
+        return null;
+    }
+    @if (node.kind == common.NodeKind.Member) {
+        # Imported enum: `lib.Enums.Color` — the object must be a static path.
+        $static = path.tryResolveStaticPath(em, node);
+        @if (static != null) {
+            @if (state_mod.emHasEnum(em, static)) {
+                return static;
+            }
+        }
+        return null;
+    }
+    return null;
+}
+
+pub @func resolveErrorSetName(em: *state_mod.EmState, node: *nodes.Node) {
+    @if (node.kind == common.NodeKind.Primary) {
+        $p: *nodes.Primary = @as(*nodes.Primary, node);
+        @if (p.primary_kind != nodes.PrimaryKind.Identifier && p.primary_kind != nodes.PrimaryKind.Register) {
+            return null;
+        }
+        @if (state_mod.emHasErrorSet(em, p.name)) {
+            return p.name;
+        }
+        $dot2 = string.indexOf(p.name, ".");
+        @if (dot2 >= 0 && string.contains(p.name, "::") == false) {
+            $qualified2: string = @as(string, path.resolveModuleType(em, p.name));
+            @if (state_mod.emHasErrorSet(em, qualified2)) {
+                return qualified2;
+            }
+        }
+        return null;
+    }
+    @if (node.kind == common.NodeKind.Member) {
+        $static = path.tryResolveStaticPath(em, node);
+        @if (static != null) {
+            @if (state_mod.emHasErrorSet(em, static)) {
+                return static;
+            }
+        }
+        return null;
+    }
+    return null;
+}
+
+pub @func resolveStructName(em: *state_mod.EmState, node: *nodes.Node) {
+    @if (node.kind == common.NodeKind.Primary) {
+        $p: *nodes.Primary = @as(*nodes.Primary, node);
+        @if (p.primary_kind != nodes.PrimaryKind.Identifier && p.primary_kind != nodes.PrimaryKind.Register) {
+            return null;
+        }
+        @if (state_mod.emHasStruct(em, p.name)) {
+            return p.name;
+        }
+        # Module-qualified struct type: `lib.Vector3`.
+        @if (string.contains(p.name, ".") && string.contains(p.name, "::") == false) {
+            return path.resolveModuleType(em, p.name);
+        }
+        return null;
+    }
+    @if (node.kind == common.NodeKind.Member) {
+        $static = path.tryResolveStaticPath(em, node);
+        @if (static != null) {
+            @if (state_mod.emHasStruct(em, static)) {
+                return static;
+            }
+        }
+        return null;
+    }
+    return null;
+}
+
+# Struct def lookup by display type, peeling `?` / `*` / `T | null` and typedefs.
+pub @func lookupStruct(em: *state_mod.EmState, display: string) {
+    $bare_o = unwrapOptionalDisplay(display);
+    $bare: string = @as(string, bare_o);
+    # Typedef chains are acyclic — 16 hops is far beyond any real nesting.
+    @for (0..16) {
+        $sd = state_mod.emFindStruct(em, bare);
+        @if (sd != null) {
+            return sd;
+        }
+        $tdo = state_mod.emFindTypedef(em, bare);
+        @if (tdo == null) {
+            return null;
+        }
+        $td: *state_mod.EmTypedef = @as(*state_mod.EmTypedef, tdo);
+        @if (string.len(td.underlying) == 0) {
+            return null;
+        }
+        $next = unwrapOptionalDisplay(td.underlying);
+        bare = @as(string, next);
+    }
+    return null;
+}
+
+# Field lookup by display type: (offset, kind, type). Null when not a struct field.
+pub @func lookupStructField(em: *state_mod.EmState, display: string, field: string) {
+    $sd = lookupStruct(em, display);
+    @if (sd == null) {
+        return null;
+    }
+    $fi = state_mod.emFieldIndex(@as(*state_mod.EmStructDef, sd), field);
+    @if (fi < 0) {
+        return null;
+    }
+    return fi;
+}
+
+pub @func typeAstToDisplay(em: *state_mod.EmState, node: *nodes.Node) {
+    @if (node == null) {
+        return null;
+    }
+    @if (node.kind == common.NodeKind.Primary) {
+        $p: *nodes.Primary = @as(*nodes.Primary, node);
+        return p.name;
+    }
+    @if (node.kind == common.NodeKind.PointerType) {
+        $ptr: *nodes.PointerType = @as(*nodes.PointerType, node);
+        $inner = typeAstToDisplay(em, ptr.elem);
+        @if (inner == null) {
+            return null;
+        }
+        return string.concat("*", inner);
+    }
+    @if (node.kind == common.NodeKind.UnionType) {
+        $un: *nodes.UnionType = @as(*nodes.UnionType, node);
+        $l = typeAstToDisplay(em, un.left);
+        $r = typeAstToDisplay(em, un.right);
+        @if (l == null || r == null) {
+            return null;
+        }
+        return string.concat(string.concat(l, " | "), r);
+    }
+    @if (node.kind == common.NodeKind.ArrayType) {
+        $at: *nodes.ArrayType = @as(*nodes.ArrayType, node);
+        $elem = typeAstToDisplay(em, at.elem);
+        @if (elem == null) {
+            return null;
+        }
+        @if (at.length_text != null) {
+            $len_text: string = @as(string, at.length_text);
+            return string.concat(string.concat("[", string.concat(len_text, "]")), elem);
+        }
+        return string.concat("[]", elem);
+    }
+    return null;
+}

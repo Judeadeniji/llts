@@ -149,6 +149,24 @@ pub @struct Chunk {
         self.writeU16BE(idx);
     }
 
+    @func emitGetProperty(self: *Chunk, name: string) {
+        $idx = self.addStringConstant(name);
+        self.writeOp(opcode.OpCode.OP_GET_PROPERTY);
+        self.writeU16BE(idx);
+    }
+
+    @func emitSetProperty(self: *Chunk, name: string) {
+        $idx = self.addStringConstant(name);
+        self.writeOp(opcode.OpCode.OP_SET_PROPERTY);
+        self.writeU16BE(idx);
+    }
+
+    @func emitGetModule(self: *Chunk, name: string) {
+        $idx = self.addStringConstant(name);
+        self.writeOp(opcode.OpCode.OP_GET_MODULE);
+        self.writeU16BE(idx);
+    }
+
     @func emitGetLocal(self: *Chunk, slot: i64) {
         self.writeOp(opcode.OpCode.OP_GET_LOCAL);
         self.writeByte(@as(u8, slot));

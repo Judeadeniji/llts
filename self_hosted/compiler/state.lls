@@ -1,0 +1,323 @@
+# Port of src/compiler/state.zig — emit state + scope/type helpers.
+# (Self-hosted: Em* names avoid host `$` register type collisions across modules.)
+
+@const $nodes = @import("../ast/nodes.lls");
+@const $common = @import("../ast/common.lls");
+@const $chunk_mod = @import("../bytecode/chunk.lls");
+@const $opcode = @import("../bytecode/opcode.lls");
+@const $list = @import("std/list.lls");
+@const $map = @import("std/map.lls");
+@const $string = @import("std/string.lls");
+@const $mem = @import("std/mem.lls");
+
+pub @struct EmLocal {
+    name: string;
+    depth: i64;
+    type_name: string;
+    is_const: bool;
+}
+
+pub @struct EmLoop {
+    scope_depth: i64;
+    label: string;
+    break_jumps: unknown;
+    continue_jumps: unknown;
+}
+
+pub @struct EmExprFrame {
+    scope_depth: i64;
+    result_slot: i64;
+    label: string;
+    break_jumps: unknown;
+}
+
+pub @struct EmFunc {
+    name: string;
+    node: *nodes.Node;
+    address: i64;
+    arity: i64;
+    return_type: ?string;
+    is_public: bool;
+    patches: unknown;
+}
+
+pub @struct EmStructDef {
+    name: string;
+    size: i64;
+    field_names: unknown;
+    field_offsets: unknown;
+    field_types: unknown;
+    field_kinds: unknown;
+}
+
+pub @struct EmEnumDef {
+    name: string;
+    variant_names: unknown;
+    variant_vals: unknown;
+}
+
+pub @struct EmTypedef {
+    name: string;
+    underlying: string;
+    distinct: bool;
+    stub: bool;
+}
+
+pub @struct EmErrorSet {
+    name: string;
+    variant_names: unknown;
+    origins: unknown;
+}
+
+pub @struct EmState {
+    arena: mem.Arena;
+    chunk: *chunk_mod.Chunk;
+    diag_path: string;
+    locals: unknown;
+    scope_depth: i64;
+    functions: unknown;
+    loops: unknown;
+    exprs: unknown;
+    structs: unknown;
+    enums: unknown;
+    error_sets: unknown;
+    typedefs: unknown;
+    var_types: unknown;
+    defer_stacks: unknown;   # list of lists, indexed by scope depth-1
+    global_vars: unknown;
+    global_consts: unknown;
+    native_globals: unknown;
+    ready_global_consts: unknown;
+    type_of_results: unknown;   # unused port note: Zig caches @typeOf by node; port resolves on demand
+    alloc_immortal: bool;
+}
+
+pub @func emCreateState(arena: mem.Arena, path: string): *EmState {
+    return @new(arena, EmState {
+        arena: arena,
+        chunk: chunk_mod.create(arena, path),
+        diag_path: path,
+        locals: list.create(arena),
+        scope_depth: 0,
+        functions: list.create(arena),
+        loops: list.create(arena),
+        exprs: list.create(arena),
+        structs: map.create(arena),
+        enums: map.create(arena),
+        error_sets: map.create(arena),
+        typedefs: map.create(arena),
+        var_types: map.create(arena),
+        defer_stacks: list.create(arena),
+        global_vars: map.create(arena),
+        global_consts: map.create(arena),
+        native_globals: map.create(arena),
+        ready_global_consts: map.create(arena),
+        type_of_results: map.create(arena),
+        alloc_immortal: false,
+    });
+}
+
+pub @func emBeginScope(em: *EmState) {
+    em.scope_depth = em.scope_depth + 1;
+}
+
+pub @func emEndScope(em: *EmState) {
+    @for (true) {
+        @if (list.len(em.locals) == 0) {
+            break;
+        }
+        $emLoc: *EmLocal = @as(*EmLocal, list.get(em.locals, list.len(em.locals) - 1));
+        @if (emLoc.depth != em.scope_depth) {
+            break;
+        }
+        _ = list.pop(em.locals);
+        em.chunk.writeOp(opcode.OpCode.OP_POP);
+    }
+    em.scope_depth = em.scope_depth - 1;
+}
+
+pub @func emPopsUntil(em: *EmState, target_depth: i64) {
+    $emCount = 0;
+    $emIdx = list.len(em.locals) - 1;
+    @for (true) {
+        @if (emIdx < 0) {
+            break;
+        }
+        $emLoc2: *EmLocal = @as(*EmLocal, list.get(em.locals, emIdx));
+        @if (emLoc2.depth > target_depth) {
+            emCount = emCount + 1;
+            emIdx = emIdx - 1;
+        } @else {
+            break;
+        }
+    }
+    @for (0..emCount) |_| {
+        em.chunk.writeOp(opcode.OpCode.OP_POP);
+    }
+}
+
+pub @func emResolveLocal(em: *EmState, name: string) {
+    $emIdx2 = list.len(em.locals) - 1;
+    @for (true) {
+        @if (emIdx2 < 0) {
+            return -1;
+        }
+        $emLoc3: *EmLocal = @as(*EmLocal, list.get(em.locals, emIdx2));
+        @if (string.eql(emLoc3.name, name)) {
+            return emIdx2;
+        }
+        emIdx2 = emIdx2 - 1;
+    }
+    return -1;
+}
+
+pub @func emFindFunc(em: *EmState, name: string): ?*EmFunc {
+    @for (0..list.len(em.functions)) |emFi| {
+        $emFn: *EmFunc = @as(*EmFunc, list.get(em.functions, emFi));
+        @if (string.eql(emFn.name, name)) {
+            return emFn;
+        }
+    }
+    return null;
+}
+
+pub @func emPushLocal(em: *EmState, name: string) {
+    list.push(em.locals, @new(em.arena, EmLocal {
+        name: name,
+        depth: em.scope_depth,
+        type_name: "",
+        is_const: false,
+    }));
+    return list.len(em.locals) - 1;
+}
+
+pub @func emPushLocalTyped(em: *EmState, name: string, type_name: string) {
+    $emSlotT = emPushLocal(em, name);
+    $emLocT: *EmLocal = @as(*EmLocal, list.get(em.locals, emSlotT));
+    emLocT.type_name = type_name;
+    @if (string.len(type_name) > 0) {
+        map.set(em.var_types, name, type_name);
+    }
+    return emSlotT;
+}
+
+pub @func emSetVarType(em: *EmState, name: string, type_name: string) {
+    @if (string.len(type_name) == 0) {
+        return;
+    }
+    map.set(em.var_types, name, type_name);
+    $emSlotV = emResolveLocal(em, name);
+    @if (emSlotV >= 0) {
+        $emLocV: *EmLocal = @as(*EmLocal, list.get(em.locals, emSlotV));
+        emLocV.type_name = type_name;
+    }
+}
+
+pub @func emGetVarType(em: *EmState, name: string) {
+    @if (map.has(em.var_types, name)) {
+        return map.get(em.var_types, name);
+    }
+    return "";
+}
+
+pub @func emTypeDisplay(n: ?*nodes.Node) {
+    @if (n == null) {
+        return "int";
+    }
+    $emTn: *nodes.Node = @as(*nodes.Node, n);
+    @if (emTn.kind == common.NodeKind.Primary) {
+        $emTp: *nodes.Primary = @as(*nodes.Primary, emTn);
+        return emTp.name;
+    }
+    @if (emTn.kind == common.NodeKind.PointerType) {
+        $emPtr: *nodes.PointerType = @as(*nodes.PointerType, emTn);
+        $emInner: ?*nodes.Node = emPtr.elem;
+        return string.concat("*", emTypeDisplay(emInner));
+    }
+    return "int";
+}
+
+pub @func emFieldKind(ty: string) {
+    @if (string.eql(ty, "bool") || string.eql(ty, "boolean") || string.eql(ty, "u1")) {
+        return 2;
+    }
+    @if (string.eql(ty, "string") || string.eql(ty, "[]byte")) {
+        return 3;
+    }
+    @if (string.len(ty) > 0) {
+        @if (string.eql(string.slice(ty, 0, 1), "*")) {
+            return 3;
+        }
+    }
+    @if (string.eql(ty, "f32") || string.eql(ty, "f64") || string.eql(ty, "float")) {
+        return 1;
+    }
+    return 0;
+}
+
+pub @func emFindStruct(em: *EmState, name: string): ?*EmStructDef {
+    @if (map.has(em.structs, name)) {
+        return @as(*EmStructDef, map.get(em.structs, name));
+    }
+    return null;
+}
+
+pub @func emFindEnum(em: *EmState, name: string): ?*EmEnumDef {
+    @if (map.has(em.enums, name)) {
+        return @as(*EmEnumDef, map.get(em.enums, name));
+    }
+    return null;
+}
+
+pub @func emHasEnum(em: *EmState, name: string): bool {
+    return map.has(em.enums, name);
+}
+
+pub @func emFindTypedef(em: *EmState, name: string): ?*EmTypedef {
+    @if (map.has(em.typedefs, name)) {
+        return @as(*EmTypedef, map.get(em.typedefs, name));
+    }
+    return null;
+}
+
+pub @func emHasTypedef(em: *EmState, name: string): bool {
+    return map.has(em.typedefs, name);
+}
+
+pub @func emFindErrorSet(em: *EmState, name: string): ?*EmErrorSet {
+    @if (map.has(em.error_sets, name)) {
+        return @as(*EmErrorSet, map.get(em.error_sets, name));
+    }
+    return null;
+}
+
+pub @func emHasErrorSet(em: *EmState, name: string): bool {
+    return map.has(em.error_sets, name);
+}
+
+pub @func emHasStruct(em: *EmState, name: string): bool {
+    return map.has(em.structs, name);
+}
+
+pub @func emHasFunction(em: *EmState, name: string): bool {
+    $f = emFindFunc(em, name);
+    return f != null;
+}
+
+pub @func emEnumVariantValue(ed: *EmEnumDef, variant: string) {
+    @for (0..list.len(ed.variant_names)) |emVi| {
+        @if (string.eql(list.get(ed.variant_names, emVi), variant)) {
+            return list.get(ed.variant_vals, emVi);
+        }
+    }
+    return -1;
+}
+
+pub @func emFieldIndex(sd: *EmStructDef, field: string) {
+    @for (0..list.len(sd.field_names)) |emFi| {
+        @if (string.eql(list.get(sd.field_names, emFi), field)) {
+            return emFi;
+        }
+    }
+    return -1;
+}

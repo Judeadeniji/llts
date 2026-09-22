@@ -1,0 +1,432 @@
+# Port of src/compiler/expr/aggregate.zig — member / struct init / index / @new.
+
+@const $opcode = @import("../../bytecode/opcode.lls");
+@const $nodes = @import("../../ast/nodes.lls");
+@const $common = @import("../../ast/common.lls");
+@const $state_mod = @import("../state.lls");
+@const $layout = @import("../layout.lls");
+@const $typecheck = @import("../typecheck.lls");
+@const $path = @import("./path.lls");
+@const $expr = @import("./root.lls");
+@const $list = @import("std/list.lls");
+@const $string = @import("std/string.lls");
+@const $map = @import("std/map.lls");
+
+pub @func compileIndex(em: *state_mod.EmState, idx: *nodes.Index) {
+    expr.compileExpression(em, idx.object)?;
+    @if (idx.is_slice) {
+        @if (idx.index != null) {
+            expr.compileExpression(em, @as(*nodes.Node, idx.index))?;
+        } @else {
+            em.chunk.emitConstantInt(0);
+        }
+        @if (idx.end != null) {
+            expr.compileExpression(em, @as(*nodes.Node, idx.end))?;
+        } @else {
+            # Null end → runtime uses object length.
+            em.chunk.writeOp(opcode.OpCode.OP_NULL);
+        }
+        em.chunk.writeOp(opcode.OpCode.OP_SLICE);
+        return;
+    }
+    @if (idx.index == null) {
+        return error("CompileError", "Expected index expression");
+    }
+    expr.compileExpression(em, @as(*nodes.Node, idx.index))?;
+    em.chunk.writeOp(opcode.OpCode.OP_GET_ARRAY);
+}
+
+pub @func compileError(em: *state_mod.EmState, err: *nodes.ErrorExpr) {
+    expr.compileExpression(em, @as(*nodes.Node, list.get(err.args, 0)))?;
+    @if (list.len(err.args) == 2) {
+        expr.compileExpression(em, @as(*nodes.Node, list.get(err.args, 1)))?;
+        em.chunk.writeOp(opcode.OpCode.OP_MAKE_ERROR_PAYLOAD);
+    } @else {
+        em.chunk.writeOp(opcode.OpCode.OP_MAKE_ERROR);
+    }
+}
+
+pub @func compileTry(em: *state_mod.EmState, try_expr: *nodes.TryExpr) {
+    # Compile-time: '?' requires an error-union (or unknown) operand.
+    $disp = typecheck.resolveType(em, try_expr.expression);
+    @if (disp != null) {
+        @if (typecheck.typeAllowsError(@as(string, disp)) == false) {
+            return error("CompileError", string.concat("'?' operator used on non-error-union type '", string.concat(@as(string, disp), "'")));
+        }
+    }
+    expr.compileExpression(em, try_expr.expression)?;
+    em.chunk.writeOp(opcode.OpCode.OP_DUP);
+    em.chunk.writeOp(opcode.OpCode.OP_IS_ERROR);
+    $skip_ret = em.chunk.emitJump(opcode.OpCode.OP_JUMP_IF_FALSE);
+    em.chunk.writeOp(opcode.OpCode.OP_POP);
+    $scope = @import("../scope.lls");
+    scope.emitFunctionExitDefers(em, scope.ExitKind.error_path)?;
+    em.chunk.writeOp(opcode.OpCode.OP_RETURN);
+    em.chunk.patchJump(skip_ret);
+    em.chunk.writeOp(opcode.OpCode.OP_POP);
+}
+
+pub @func compileArray(em: *state_mod.EmState, arr: *nodes.ArrayLiteral) {
+    $length = list.len(arr.elements);
+    $alloc = "__allocArray";
+    @if (em.alloc_immortal) {
+        $alloc = "__allocImmortalArray";
+    }
+    em.chunk.emitGetGlobal(alloc);
+    em.chunk.emitConstantInt(length);
+    em.chunk.writeOp(opcode.OpCode.OP_CALL);
+    em.chunk.writeByte(1);
+    fillArray(em, arr)?;
+}
+
+pub @func compileStructInit(em: *state_mod.EmState, init: *nodes.StructInit) {
+    $struct_def = resolveStructDef(em, init)?;
+    # Frame bump by default; immortal for module/globals and `return Foo{…}`.
+    $alloc = "__allocBytes";
+    @if (em.alloc_immortal) {
+        $alloc = "__allocImmortalBytes";
+    }
+    em.chunk.emitGetGlobal(alloc);
+    em.chunk.emitConstantInt(struct_def.size);
+    em.chunk.writeOp(opcode.OpCode.OP_CALL);
+    em.chunk.writeByte(1);
+    fillStruct(em, init, struct_def)?;
+}
+
+# `@new(allocator, Type | Foo{…} | […])` — allocate into a library Allocator (Arena).
+pub @func compileNew(em: *state_mod.EmState, c: *nodes.Call) {
+    @if (list.len(c.args) != 2 && list.len(c.args) != 3) {
+        return error("CompileError", "@new expects (allocator, type_or_value) or (allocator, []T|string, length)");
+    }
+    $value: *nodes.Node = @as(*nodes.Node, list.get(c.args, 1));
+    @if (value.kind == common.NodeKind.StructInit) {
+        @if (list.len(c.args) != 2) {
+            return error("CompileError", "@new struct literal takes (allocator, value)");
+        }
+        $init: *nodes.StructInit = @as(*nodes.StructInit, value);
+        $sd = resolveStructDef(em, init)?;
+        emitArenaAllocBytes(em, @as(*nodes.Node, list.get(c.args, 0)), null, sd.size)?;
+        fillStruct(em, init, sd)?;
+        return;
+    }
+    @if (value.kind == common.NodeKind.ArrayLiteral) {
+        @if (list.len(c.args) != 2) {
+            return error("CompileError", "@new array literal takes (allocator, value)");
+        }
+        $arr: *nodes.ArrayLiteral = @as(*nodes.ArrayLiteral, value);
+        emitArenaAllocArray(em, @as(*nodes.Node, list.get(c.args, 0)), null, list.len(arr.elements))?;
+        fillArray(em, arr)?;
+        return;
+    }
+    @if (value.kind == common.NodeKind.ArrayType) {
+        $at: *nodes.ArrayType = @as(*nodes.ArrayType, value);
+        @if (at.length_text != null) {
+            $text: string = @as(string, at.length_text);
+            $length = string.parseInt(text, 10);
+            @if (@isError(length)) {
+                return error("CompileError", string.concat("Invalid array length '", string.concat(text, "'")));
+            }
+            @if (list.len(c.args) != 2) {
+                return error("CompileError", "@new([N]T) takes (allocator, [N]T) — length is in the type");
+            }
+            @if (isByteElemType(at.elem)) {
+                emitArenaAllocBytes(em, @as(*nodes.Node, list.get(c.args, 0)), null, length)?;
+            } @else {
+                emitArenaAllocArray(em, @as(*nodes.Node, list.get(c.args, 0)), null, length)?;
+                zeroFillArray(em, length, at.elem)?;
+            }
+        } @else {
+            @if (list.len(c.args) != 3) {
+                return error("CompileError", "@new slice type needs a length: @new(allocator, []T, n)");
+            }
+            @if (isByteElemType(at.elem)) {
+                emitArenaAllocBytes(em, @as(*nodes.Node, list.get(c.args, 0)), @as(*nodes.Node, list.get(c.args, 2)), null)?;
+            } @else {
+                emitArenaAllocArray(em, @as(*nodes.Node, list.get(c.args, 0)), @as(*nodes.Node, list.get(c.args, 2)), null)?;
+            }
+        }
+        return;
+    }
+    @if (value.kind == common.NodeKind.Primary) {
+        $p: *nodes.Primary = @as(*nodes.Primary, value);
+        @if (p.primary_kind != nodes.PrimaryKind.Identifier) {
+            return error("CompileError", "@new type must be a struct, string, or array type");
+        }
+        @if (isStringyTypeName(p.name)) {
+            @if (list.len(c.args) != 3) {
+                return error("CompileError", "@new string/[]byte needs a length: @new(allocator, string, n)");
+            }
+            emitArenaAllocBytes(em, @as(*nodes.Node, list.get(c.args, 0)), @as(*nodes.Node, list.get(c.args, 2)), null)?;
+            return;
+        }
+        @if (list.len(c.args) != 2) {
+            return error("CompileError", "@new struct type takes (allocator, Type)");
+        }
+        $struct_name = p.name;
+        @if (string.contains(struct_name, ".")) {
+            struct_name = @as(string, path.resolveModuleType(em, struct_name));
+        }
+        $sd2 = state_mod.emFindStruct(em, struct_name);
+        @if (sd2 == null) {
+            return error("CompileError", string.concat("@new unknown type '", string.concat(p.name, "'")));
+        }
+        $def: *state_mod.EmStructDef = @as(*state_mod.EmStructDef, sd2);
+        emitArenaAllocBytes(em, @as(*nodes.Node, list.get(c.args, 0)), null, def.size)?;
+        zeroFillStruct(em, def)?;
+        return;
+    }
+    return error("CompileError", "@new expects a type, struct literal, or array literal");
+}
+
+@func isStringyTypeName(name: string): bool {
+    return string.eql(name, "string") || string.eql(name, "[]byte");
+}
+
+@func isByteElemType(elem_type: *nodes.Node): bool {
+    @if (elem_type.kind != common.NodeKind.Primary) {
+        return false;
+    }
+    $p: *nodes.Primary = @as(*nodes.Primary, elem_type);
+    return string.eql(p.name, "byte") || string.eql(p.name, "u8");
+}
+
+@func emitArenaAllocArray(em: *state_mod.EmState, allocator_expr: *nodes.Node, length_expr: ?*nodes.Node, const_len: ?i64) {
+    em.chunk.emitGetGlobal("__arena_alloc_array");
+    expr.compileExpression(em, allocator_expr)?;
+    @if (length_expr != null) {
+        expr.compileExpression(em, @as(*nodes.Node, length_expr))?;
+    } @else {
+        em.chunk.emitConstantInt(@as(i64, const_len));
+    }
+    em.chunk.writeOp(opcode.OpCode.OP_CALL);
+    em.chunk.writeByte(2);
+}
+
+pub @func emitArenaAllocBytes(em: *state_mod.EmState, allocator_expr: *nodes.Node, length_expr: ?*nodes.Node, const_len: ?i64) {
+    em.chunk.emitGetGlobal("__arena_alloc_bytes");
+    expr.compileExpression(em, allocator_expr)?;
+    @if (length_expr != null) {
+        expr.compileExpression(em, @as(*nodes.Node, length_expr))?;
+    } @else {
+        em.chunk.emitConstantInt(@as(i64, const_len));
+    }
+    em.chunk.writeOp(opcode.OpCode.OP_CALL);
+    em.chunk.writeByte(2);
+}
+
+@func zeroFillArray(em: *state_mod.EmState, length: i64, elem_type: *nodes.Node) {
+    # Elements already zeroed (.null) by alloc; write typed zeros.
+    @for (0..length) |i| {
+        em.chunk.writeOp(opcode.OpCode.OP_DUP);
+        em.chunk.emitConstantInt(i);
+        emitZeroForElemType(em, elem_type)?;
+        em.chunk.writeOp(opcode.OpCode.OP_SET_ARRAY);
+        em.chunk.writeOp(opcode.OpCode.OP_POP);
+    }
+}
+
+@func zeroFillStruct(em: *state_mod.EmState, struct_def: *state_mod.EmStructDef) {
+    @for (0..list.len(struct_def.field_names)) |fi| {
+        $offset = list.get(struct_def.field_offsets, fi);
+        $field_ty = list.get(struct_def.field_types, fi);
+        $kind = layout.fieldKind(em, field_ty);
+        em.chunk.writeOp(opcode.OpCode.OP_DUP);
+        emitZeroForTypeName(em, field_ty)?;
+        em.chunk.emitStoreField(offset, kind);
+        em.chunk.writeOp(opcode.OpCode.OP_POP);
+    }
+}
+
+@func emitZeroForElemType(em: *state_mod.EmState, elem_type: *nodes.Node) {
+    @if (elem_type.kind == common.NodeKind.Primary) {
+        $p: *nodes.Primary = @as(*nodes.Primary, elem_type);
+        emitZeroForTypeName(em, p.name)?;
+        return;
+    }
+    return error("CompileError", "@new element type must be a simple named type");
+}
+
+@func emitZeroForTypeName(em: *state_mod.EmState, name: string) {
+    @if (string.eql(name, "float") || string.eql(name, "f64") || string.eql(name, "f32")) {
+        # Runtime parse of "0" — float zero constant.
+        em.chunk.emitGetGlobal("__parseFloat");
+        em.chunk.emitString("0");
+        em.chunk.writeOp(opcode.OpCode.OP_CALL);
+        em.chunk.writeByte(1);
+        return;
+    }
+    @if (string.eql(name, "u1") || string.eql(name, "bool") || string.eql(name, "boolean")) {
+        em.chunk.writeOp(opcode.OpCode.OP_FALSE);
+        return;
+    }
+    @if (string.eql(name, "null")) {
+        em.chunk.writeOp(opcode.OpCode.OP_NULL);
+        return;
+    }
+    $kind = layout.fieldKind(em, name);
+    @switch (kind) {
+        layout.FieldKind.handle, layout.FieldKind.ptr => {
+            em.chunk.writeOp(opcode.OpCode.OP_NULL);
+        }
+        @else => {
+            em.chunk.emitConstantInt(0);
+        }
+    }
+}
+
+pub @func resolveStructDef(em: *state_mod.EmState, init: *nodes.StructInit) {
+    $sn = typecheck.resolveStructName(em, init.type_expr);
+    @if (sn == null) {
+        return error("CompileError", "Invalid struct initialization type");
+    }
+    $struct_name: string = @as(string, sn);
+    @if (string.contains(struct_name, ".")) {
+        struct_name = @as(string, path.resolveModuleType(em, struct_name));
+    }
+    $sdo = state_mod.emFindStruct(em, struct_name);
+    @if (sdo == null) {
+        return error("CompileError", string.concat("Unknown struct: ", string.concat(@as(string, sn), "")));
+    }
+    return @as(*state_mod.EmStructDef, sdo);
+}
+
+@func fillArray(em: *state_mod.EmState, arr: *nodes.ArrayLiteral) {
+    @for (0..list.len(arr.elements)) |i| {
+        em.chunk.writeOp(opcode.OpCode.OP_DUP);
+        em.chunk.emitConstantInt(i);
+        expr.compileExpression(em, @as(*nodes.Node, list.get(arr.elements, i)))?;
+        em.chunk.writeOp(opcode.OpCode.OP_SET_ARRAY);
+        em.chunk.writeOp(opcode.OpCode.OP_POP);
+    }
+}
+
+@func fillStruct(em: *state_mod.EmState, init: *nodes.StructInit, struct_def: *state_mod.EmStructDef) {
+    @for (0..list.len(init.fields)) |fi| {
+        $field: *nodes.StructFieldInit = @as(*nodes.StructFieldInit, list.get(init.fields, fi));
+        $offset = state_mod.emFieldIndex(struct_def, field.name);
+        @if (offset < 0) {
+            return error("CompileError", string.concat("Unknown field ", field.name));
+        }
+        $field_ty = list.get(struct_def.field_types, offset);
+        $kind = layout.fieldKind(em, field_ty);
+        em.chunk.writeOp(opcode.OpCode.OP_DUP);
+        expr.compileExpression(em, field.value)?;
+        em.chunk.emitStoreField(list.get(struct_def.field_offsets, offset), kind);
+        em.chunk.writeOp(opcode.OpCode.OP_POP);
+    }
+}
+
+pub @func compileMember(em: *state_mod.EmState, mem: *nodes.Member, node: *nodes.Node) {
+    @if (compileErrorVariant(em, mem)?) {
+        return;
+    }
+    @if (compileEnumVariant(em, mem)?) {
+        return;
+    }
+
+    # Tuple field `.0` / `.1` — same runtime as array index.
+    @if (mem.property.kind == common.NodeKind.Primary) {
+        $tp: *nodes.Primary = @as(*nodes.Primary, mem.property);
+        $tuple_idx = string.parseInt(tp.name, 10);
+        @if (@isError(tuple_idx) == false) {
+            expr.compileExpression(em, mem.object)?;
+            em.chunk.emitConstantInt(tuple_idx);
+            em.chunk.writeOp(opcode.OpCode.OP_GET_ARRAY);
+            return;
+        }
+    }
+
+    $static_path = path.tryResolveStaticPath(em, node);
+    @if (static_path != null) {
+        $sp: string = @as(string, static_path);
+        @if (state_mod.emHasFunction(em, sp)) {
+            em.chunk.emitGetFunction(sp);
+        } @else @if (string.endsWith(sp, ".lls")) {
+            em.chunk.emitGetModule(sp);
+        } @else {
+            # Module exports are validated during qualification; emit the global.
+            em.chunk.emitGetGlobal(sp);
+        }
+        return;
+    }
+    $obj_type = typecheck.resolveType(em, mem.object);
+    @if (obj_type != null) {
+        $type_name: string = @as(string, obj_type);
+        # Builtin `error` is a tagged heap object, not a packed struct — use GET_PROPERTY.
+        $peeled = typecheck.unwrapOptionalDisplay(type_name);
+        @if (string.eql(peeled, "error") == false) {
+            @if (mem.property.kind == common.NodeKind.Primary) {
+                $mp: *nodes.Primary = @as(*nodes.Primary, mem.property);
+                $fi = typecheck.lookupStructField(em, type_name, mp.name);
+                @if (fi != null) {
+                    $field_index: i64 = @as(i64, fi);
+                    $sd = typecheck.lookupStruct(em, type_name);
+                    $field_ty = list.get(sd.field_types, field_index);
+                    $kind = layout.fieldKind(em, field_ty);
+                    expr.compileExpression(em, mem.object)?;
+                    em.chunk.emitLoadField(list.get(sd.field_offsets, field_index), kind);
+                    return;
+                }
+            }
+        }
+    }
+    expr.compileExpression(em, mem.object)?;
+    @if (mem.property.kind == common.NodeKind.Primary) {
+        $prop: *nodes.Primary = @as(*nodes.Primary, mem.property);
+        em.chunk.emitGetProperty(prop.name);
+    }
+}
+
+@func compileErrorVariant(em: *state_mod.EmState, mem: *nodes.Member) {
+    @if (mem.property.kind != common.NodeKind.Primary) {
+        return false;
+    }
+    $variant: *nodes.Primary = @as(*nodes.Primary, mem.property);
+    $esname = typecheck.resolveErrorSetName(em, mem.object);
+    @if (esname == null) {
+        return false;
+    }
+    $ed = state_mod.emFindErrorSet(em, @as(string, esname));
+    @if (ed == null) {
+        return false;
+    }
+    $es: *state_mod.EmErrorSet = @as(*state_mod.EmErrorSet, ed);
+    @if (errorSetHasVariant(es, variant.name) == false) {
+        return error("CompileError", string.concat("Unknown error member '", string.concat(variant.name, string.concat("' on '", string.concat(@as(string, esname), "'")))));
+    }
+    # Code = member name (open `error("…")` uses the string message the same way).
+    em.chunk.emitString(variant.name);
+    em.chunk.writeOp(opcode.OpCode.OP_MAKE_ERROR);
+    return true;
+}
+
+@func compileEnumVariant(em: *state_mod.EmState, mem: *nodes.Member) {
+    @if (mem.property.kind != common.NodeKind.Primary) {
+        return false;
+    }
+    $variant: *nodes.Primary = @as(*nodes.Primary, mem.property);
+    $ename = typecheck.resolveEnumName(em, mem.object);
+    @if (ename == null) {
+        return false;
+    }
+    $ed = state_mod.emFindEnum(em, @as(string, ename));
+    @if (ed == null) {
+        return false;
+    }
+    $en: *state_mod.EmEnumDef = @as(*state_mod.EmEnumDef, ed);
+    $value = state_mod.emEnumVariantValue(en, variant.name);
+    @if (value < 0) {
+        return error("CompileError", string.concat("Unknown enum variant '", string.concat(variant.name, string.concat("' on '", string.concat(@as(string, ename), "'")))));
+    }
+    em.chunk.emitConstantInt(value);
+    return true;
+}
+
+@func errorSetHasVariant(es: *state_mod.EmErrorSet, variant: string): bool {
+    @for (0..list.len(es.variant_names)) |vi| {
+        @if (string.eql(list.get(es.variant_names, vi), variant)) {
+            return true;
+        }
+    }
+    return false;
+}

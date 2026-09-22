@@ -1,0 +1,210 @@
+# Port of src/compiler/expr/assign.zig — assignment emit (primary/member/index).
+
+@const $opcode = @import("../../bytecode/opcode.lls");
+@const $nodes = @import("../../ast/nodes.lls");
+@const $common = @import("../../ast/common.lls");
+@const $state_mod = @import("../state.lls");
+@const $scope = @import("../scope.lls");
+@const $widths = @import("../widths.lls");
+@const $typecheck = @import("../typecheck.lls");
+@const $expr = @import("./root.lls");
+@const $aggregate = @import("./aggregate.lls");
+@const $list = @import("std/list.lls");
+@const $string = @import("std/string.lls");
+
+@const $layout = @import("../layout.lls");
+@const $map = @import("std/map.lls");
+
+pub @func compileAssignment(em: *state_mod.EmState, assign: *nodes.Assignment) {
+    $arith = compoundOp(assign.operator);
+    @if (assign.left.kind == common.NodeKind.Index) {
+        assignIndex(em, @as(*nodes.Index, assign.left), assign.right, arith)?;
+        return;
+    }
+    @if (assign.left.kind == common.NodeKind.Member) {
+        assignMember(em, @as(*nodes.Member, assign.left), assign.right, arith)?;
+        return;
+    }
+    @if (assign.left.kind == common.NodeKind.Primary) {
+        assignPrimary(em, @as(*nodes.Primary, assign.left), assign.right, arith)?;
+        return;
+    }
+    return error("EmitUnsupported", "assign target");
+}
+
+# Compound operator → base arith op, or null for plain `=`.
+pub @func compoundOp(op: string) {
+    @if (string.eql(op, "+=")) { return opcode.OpCode.OP_ADD; }
+    @if (string.eql(op, "-=")) { return opcode.OpCode.OP_SUB; }
+    @if (string.eql(op, "*=")) { return opcode.OpCode.OP_MUL; }
+    @if (string.eql(op, "/=")) { return opcode.OpCode.OP_DIV; }
+    @if (string.eql(op, "%=")) { return opcode.OpCode.OP_MOD; }
+    @if (string.eql(op, "&=")) { return opcode.OpCode.OP_BIT_AND; }
+    @if (string.eql(op, "|=")) { return opcode.OpCode.OP_BIT_OR; }
+    @if (string.eql(op, "~=")) { return opcode.OpCode.OP_BIT_XOR; }
+    @if (string.eql(op, "<<=")) { return opcode.OpCode.OP_SHL; }
+    @if (string.eql(op, ">>=")) { return opcode.OpCode.OP_SHR; }
+    return null;
+}
+
+@func assignIndex(em: *state_mod.EmState, idx: *nodes.Index, right: *nodes.Node, arith) {
+    @if (idx.is_slice) {
+        return error("CompileError", "Cannot assign to a slice view");
+    }
+    @if (idx.index == null) {
+        return error("CompileError", "Expected index expression");
+    }
+    $start: *nodes.Node = @as(*nodes.Node, idx.index);
+    @if (arith != null) {
+        $op: opcode.OpCode = @as(opcode.OpCode, arith);
+        expr.compileExpression(em, idx.object)?;
+        expr.compileExpression(em, start)?;
+        expr.compileExpression(em, idx.object)?;
+        expr.compileExpression(em, start)?;
+        em.chunk.writeOp(opcode.OpCode.OP_GET_ARRAY);
+        expr.compileExpression(em, right)?;
+        em.chunk.writeOp(op);
+    } @else {
+        expr.compileExpression(em, idx.object)?;
+        expr.compileExpression(em, start)?;
+        expr.compileExpression(em, right)?;
+    }
+    $tn = typecheck.resolveType(em, idx.object);
+    @if (tn != null) {
+        $name: string = @as(string, tn);
+        @if (typecheck.isStringyType(name) || string.endsWith(name, "byte")) {
+            em.chunk.writeOp(opcode.OpCode.OP_AS);
+            em.chunk.writeByte(@as(u8, widths.Width.u8));
+        }
+    }
+    em.chunk.writeOp(opcode.OpCode.OP_SET_ARRAY);
+}
+
+@func assignMember(em: *state_mod.EmState, mem: *nodes.Member, right: *nodes.Node, arith) {
+    # Tuple field `.0` / `.1` — same runtime as array index.
+    @if (mem.property.kind == common.NodeKind.Primary) {
+        $prop: *nodes.Primary = @as(*nodes.Primary, mem.property);
+        $tuple_idx = string.parseInt(prop.name, 10);
+        @if (@isError(tuple_idx) == false) {
+            @if (arith != null) {
+                $op0: opcode.OpCode = @as(opcode.OpCode, arith);
+                expr.compileExpression(em, mem.object)?;
+                em.chunk.emitConstantInt(tuple_idx);
+                expr.compileExpression(em, mem.object)?;
+                em.chunk.emitConstantInt(tuple_idx);
+                em.chunk.writeOp(opcode.OpCode.OP_GET_ARRAY);
+                expr.compileExpression(em, right)?;
+                em.chunk.writeOp(op0);
+            } @else {
+                expr.compileExpression(em, mem.object)?;
+                em.chunk.emitConstantInt(tuple_idx);
+                expr.compileExpression(em, right)?;
+            }
+            em.chunk.writeOp(opcode.OpCode.OP_SET_ARRAY);
+            return;
+        }
+    }
+    @if (mem.property.kind == common.NodeKind.Primary) {
+        $prop2: *nodes.Primary = @as(*nodes.Primary, mem.property);
+        $obj_type = typecheck.resolveType(em, mem.object);
+        @if (obj_type != null) {
+            $type_name: string = @as(string, obj_type);
+            $fi = typecheck.lookupStructField(em, type_name, prop2.name);
+            @if (fi != null) {
+                $field_index: i64 = @as(i64, fi);
+                $sd = typecheck.lookupStruct(em, type_name);
+                $field_ty = list.get(sd.field_types, field_index);
+                $kind = layout.fieldKind(em, field_ty);
+                @if (arith != null) {
+                    $op1: opcode.OpCode = @as(opcode.OpCode, arith);
+                    expr.compileExpression(em, mem.object)?;
+                    em.chunk.writeOp(opcode.OpCode.OP_DUP);
+                    em.chunk.emitLoadField(list.get(sd.field_offsets, field_index), kind);
+                    expr.compileExpression(em, right)?;
+                    em.chunk.writeOp(op1);
+                } @else {
+                    expr.compileExpression(em, mem.object)?;
+                    expr.compileExpression(em, right)?;
+                }
+                $w = layout.widthFromFieldKind(kind);
+                @if (w != null) {
+                    em.chunk.writeOp(opcode.OpCode.OP_AS);
+                    em.chunk.writeByte(@as(u8, w));
+                }
+                em.chunk.emitStoreField(list.get(sd.field_offsets, field_index), kind);
+                return;
+            }
+        }
+    }
+    # Fallback: dynamic property (runtime objects / error payloads).
+    @if (mem.property.kind == common.NodeKind.Primary) {
+        $prop3: *nodes.Primary = @as(*nodes.Primary, mem.property);
+        @if (arith != null) {
+            $op2: opcode.OpCode = @as(opcode.OpCode, arith);
+            expr.compileExpression(em, mem.object)?;
+            em.chunk.writeOp(opcode.OpCode.OP_DUP);
+            em.chunk.emitGetProperty(prop3.name);
+            expr.compileExpression(em, right)?;
+            em.chunk.writeOp(op2);
+        } @else {
+            expr.compileExpression(em, mem.object)?;
+            expr.compileExpression(em, right)?;
+        }
+        em.chunk.emitSetProperty(prop3.name);
+        return;
+    }
+    return error("EmitUnsupported", "assign member prop");
+}
+
+@func assignPrimary(em: *state_mod.EmState, prim: *nodes.Primary, right: *nodes.Node, arith) {
+    @if (prim.primary_kind != nodes.PrimaryKind.Identifier && prim.primary_kind != nodes.PrimaryKind.Register) {
+        return;
+    }
+    $local_arg = scope.resolveLocal(em, prim.name);
+    $is_const = false;
+    @if (local_arg != -1) {
+        $local: *state_mod.EmLocal = @as(*state_mod.EmLocal, list.get(em.locals, local_arg));
+        is_const = local.is_const;
+    } @else {
+        is_const = map.has(em.global_consts, prim.name);
+    }
+    @if (is_const) {
+        return error("CompileError", string.concat("Cannot reassign to constant variable '", string.concat(prim.name, "'")));
+    }
+    @if (arith != null) {
+        $op: opcode.OpCode = @as(opcode.OpCode, arith);
+        scope.resolveVariable(em, prim.name)?;
+        expr.compileExpression(em, right)?;
+        em.chunk.writeOp(op);
+    } @else {
+        expr.compileExpression(em, right)?;
+    }
+    @if (local_arg != -1) {
+        $local2: *state_mod.EmLocal = @as(*state_mod.EmLocal, list.get(em.locals, local_arg));
+        @if (widthCastKindName(local2.type_name) != null) {
+            em.chunk.writeOp(opcode.OpCode.OP_AS);
+            em.chunk.writeByte(@as(u8, widthCastKindName(local2.type_name)));
+        }
+    } @else {
+        @if (map.has(em.var_types, prim.name)) {
+            $gt = map.get(em.var_types, prim.name);
+            @if (widthCastKindName(gt) != null) {
+                em.chunk.writeOp(opcode.OpCode.OP_AS);
+                em.chunk.writeByte(@as(u8, widthCastKindName(gt)));
+            }
+        }
+    }
+    $arg = scope.resolveLocal(em, prim.name);
+    @if (arg != -1) {
+        em.chunk.emitSetLocal(arg);
+    } @else {
+        em.chunk.emitSetGlobal(prim.name);
+    }
+}
+
+@func widthCastKindName(tn: string) {
+    @if (string.len(tn) == 0) {
+        return null;
+    }
+    return widths.fromName(tn);
+}

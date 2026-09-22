@@ -1,0 +1,29 @@
+@const $parser = @import("../parser/root.lls");
+@const $mem = @import("std/mem.lls");
+@const $nodes = @import("../ast/nodes.lls");
+@const $common = @import("../ast/common.lls");
+@const $debug = @import("std/debug.lls");
+@const $list = @import("std/list.lls");
+
+$arena = mem.create(0);
+$src = "@for (0..3) |i| { print(\"x\", i); }";
+$prog = parser.parse(arena, src, "probe.lls");
+@if (@isError(prog)) { debug.printLn("is err");
+    debug.printLn("parse err");
+    @if (true) { }
+}
+# walk top-level statements looking for the For node
+@for (0..list.len(prog.statements)) |si| {
+    $st: *nodes.Node = @as(*nodes.Node, list.get(prog.statements, si));
+    @if (st.kind == common.NodeKind.For) { debug.printLn("found for"); }
+    @if (st.kind == common.NodeKind.For) {
+        $f: *nodes.For = @as(*nodes.For, st);
+        @if (f.expr.kind == common.NodeKind.Binary) {
+            $b: *nodes.Binary = @as(*nodes.Binary, f.expr);
+            debug.printLn("operator: {s}", b.operator);
+        }
+    }
+}
+debug.printLn("done");
+
+pub @func main() {}

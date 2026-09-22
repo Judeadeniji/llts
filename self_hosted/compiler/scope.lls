@@ -1,0 +1,184 @@
+# Port of src/compiler/scope.zig — scopes, locals, defer stacks, variable emit.
+
+@const $opcode = @import("../bytecode/opcode.lls");
+@const $state_mod = @import("./state.lls");
+@const $nodes = @import("../ast/nodes.lls");
+@const $common = @import("../ast/common.lls");
+@const $list = @import("std/list.lls");
+@const $map = @import("std/map.lls");
+@const $string = @import("std/string.lls");
+@const $stmt = @import("./stmt/root.lls");
+
+pub @func beginScope(em: *state_mod.EmState) {
+    em.scope_depth = em.scope_depth + 1;
+    # Defer stacks are indexed by scope depth in a list of lists; scopes nest
+    # strictly, so entry `depth-1` exists once the scope is opened.
+    @if (list.len(em.defer_stacks) < em.scope_depth) {
+        list.push(em.defer_stacks, list.create(em.arena));
+    }
+}
+
+pub @func endScope(em: *state_mod.EmState) {
+    emitScopeDefers(em, em.scope_depth, ExitKind.normal);
+    emitPopsAtDepth(em, em.scope_depth);
+    em.scope_depth = em.scope_depth - 1;
+}
+
+pub @func addLocal(em: *state_mod.EmState, name: string, is_const: bool) {
+    list.push(em.locals, @new(em.arena, state_mod.EmLocal {
+        name: name,
+        depth: em.scope_depth,
+        type_name: "",
+        is_const: is_const,
+    }));
+    return list.len(em.locals) - 1;
+}
+
+pub @func resolveLocal(em: *state_mod.EmState, name: string) {
+    # Scan newest-first over the existing locals.
+    @for (0..list.len(em.locals)) |k| {
+        $i = list.len(em.locals) - 1 - k;
+        $local: *state_mod.EmLocal = @as(*state_mod.EmLocal, list.get(em.locals, i));
+        @if (string.eql(local.name, name)) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+pub @func resolveVariable(em: *state_mod.EmState, name: string) {
+    $arg = resolveLocal(em, name);
+    @if (arg != -1) {
+        em.chunk.emitGetLocal(arg);
+        return;
+    }
+    # `__` natives are provided by the runtime without an explicit listing.
+    @if (string.startsWith(name, "__") || map.has(em.global_vars, name) || map.has(em.global_consts, name) || state_mod.emHasFunction(em, name) || map.has(em.native_globals, name)) {
+        # Variable is known
+    } @else {
+        $type_key = string.concat("$", name);
+        @if (map.has(em.var_types, type_key) == false) {
+            return error("CompileError", string.concat("Unknown identifier '", string.concat(name, "'")));
+        }
+    }
+    @if (state_mod.emHasFunction(em, name)) {
+        em.chunk.emitGetFunction(name);
+    } @else {
+        em.chunk.emitGetGlobal(name);
+    }
+}
+
+pub @func pushDefer(em: *state_mod.EmState, node: *nodes.Node, is_errdefer: bool) {
+    $stack = deferStackAt(em, em.scope_depth);
+    list.push(stack, @new(em.arena, DeferEntry { body: node, is_errdefer: is_errdefer }));
+}
+
+@func deferStackAt(em: *state_mod.EmState, depth: i64) {
+    @if (depth < 1 || depth > list.len(em.defer_stacks)) {
+        return error("Emit", "internal: defer stack out of range");
+    }
+    return @as(unknown, list.get(em.defer_stacks, depth - 1));
+}
+
+pub @enum ExitKind {
+    normal,
+    error_path,
+    dynamic,
+}
+
+pub @struct DeferEntry {
+    body: *nodes.Node;
+    is_errdefer: bool;
+}
+
+pub @func emitFunctionExitDefers(em: *state_mod.EmState, kind: ExitKind) {
+    # Depths 1..=scope_depth, walked outermost→innermost (Zig `d` loop).
+    @for (0..em.scope_depth) |k| {
+        $d = em.scope_depth - k;
+        emitScopeDefers(em, d, kind);
+    }
+}
+
+pub @func emitDefersUntil(em: *state_mod.EmState, target_depth: i64, kind: ExitKind) {
+    # Depths (target_depth, scope_depth].
+    $count = em.scope_depth - target_depth;
+    @for (0..count) |k| {
+        $d = em.scope_depth - k;
+        emitScopeDefers(em, d, kind);
+    }
+}
+
+# Emit OP_POP for locals deeper than target_depth without mutating compiler locals.
+# (break/continue must not permanently drop locals — later statements still need them.)
+pub @func emitPopsUntil(em: *state_mod.EmState, target_depth: i64) {
+    # Count trailing locals deeper than target_depth (contiguous run).
+    $count: i64 = 0;
+    @for (0..list.len(em.locals)) |k| {
+        $i = list.len(em.locals) - 1 - k;
+        $local: *state_mod.EmLocal = @as(*state_mod.EmLocal, list.get(em.locals, i));
+        @if (local.depth > target_depth) {
+            count = count + 1;
+        } @else {
+            break;
+        }
+    }
+    @for (0..count) {
+        em.chunk.writeOp(opcode.OpCode.OP_POP);
+    }
+}
+
+@func emitPopsAtDepth(em: *state_mod.EmState, depth: i64) {
+    # Pop at most the locals that exist at this depth.
+    @for (0..list.len(em.locals)) {
+        @if (list.len(em.locals) == 0) {
+            break;
+        }
+        $local: *state_mod.EmLocal = @as(*state_mod.EmLocal, list.get(em.locals, list.len(em.locals) - 1));
+        @if (local.depth != depth) {
+            break;
+        }
+        list.pop(em.locals);
+        em.chunk.writeOp(opcode.OpCode.OP_POP);
+    }
+}
+
+@func emitScopeDefers(em: *state_mod.EmState, depth: i64, kind: ExitKind) {
+    @if (depth < 1 || depth > list.len(em.defer_stacks)) {
+        return;
+    }
+    $stack = @as(unknown, list.get(em.defer_stacks, depth - 1));
+    @if (list.len(stack) == 0) {
+        return;
+    }
+
+    # Reverse walk (LIFO) over the fixed-size defer stack.
+    @for (0..list.len(stack)) |k| {
+        $i = list.len(stack) - 1 - k;
+        $entry: *DeferEntry = @as(*DeferEntry, list.get(stack, i));
+        $stmt_node: *nodes.Node = entry.body;
+        $is_errdefer = entry.is_errdefer;
+
+        @if (kind == ExitKind.normal) {
+            @if (is_errdefer == false) {
+                stmt.compileStatement(em, stmt_node)?;
+            }
+        } @else @if (kind == ExitKind.error_path) {
+            stmt.compileStatement(em, stmt_node)?;
+        } @else {
+            # dynamic
+            @if (is_errdefer) {
+                em.chunk.writeOp(opcode.OpCode.OP_DUP);
+                em.chunk.writeOp(opcode.OpCode.OP_IS_ERROR);
+                $skip = em.chunk.emitJump(opcode.OpCode.OP_JUMP_IF_FALSE);
+                em.chunk.writeOp(opcode.OpCode.OP_POP);
+                stmt.compileStatement(em, stmt_node)?;
+                $jump_end = em.chunk.emitJump(opcode.OpCode.OP_JUMP);
+                em.chunk.patchJump(skip);
+                em.chunk.writeOp(opcode.OpCode.OP_POP);
+                em.chunk.patchJump(jump_end);
+            } @else {
+                stmt.compileStatement(em, stmt_node)?;
+            }
+        }
+    }
+}

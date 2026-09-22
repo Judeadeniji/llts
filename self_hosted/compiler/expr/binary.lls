@@ -1,0 +1,227 @@
+# Port of src/compiler/expr/binary.zig — binary/unary operators + pipe dispatch.
+
+@const $opcode = @import("../../bytecode/opcode.lls");
+@const $nodes = @import("../../ast/nodes.lls");
+@const $common = @import("../../ast/common.lls");
+@const $state_mod = @import("../state.lls");
+@const $widths = @import("../widths.lls");
+@const $typecheck = @import("../typecheck.lls");
+@const $expr = @import("./root.lls");
+@const $call = @import("./call.lls");
+@const $string = @import("std/string.lls");
+
+pub @func compileBinary(em: *state_mod.EmState, bin: *nodes.Binary) {
+    @if (string.eql(bin.operator, "&&")) {
+        expr.compileExpression(em, bin.left)?;
+        $end_jump = em.chunk.emitJump(opcode.OpCode.OP_JUMP_IF_FALSE);
+        em.chunk.writeOp(opcode.OpCode.OP_POP);
+        expr.compileExpression(em, bin.right)?;
+        em.chunk.patchJump(end_jump);
+        return;
+    }
+    @if (string.eql(bin.operator, "||")) {
+        expr.compileExpression(em, bin.left)?;
+        $else_jump = em.chunk.emitJump(opcode.OpCode.OP_JUMP_IF_FALSE);
+        $end_jump2 = em.chunk.emitJump(opcode.OpCode.OP_JUMP);
+        em.chunk.patchJump(else_jump);
+        em.chunk.writeOp(opcode.OpCode.OP_POP);
+        expr.compileExpression(em, bin.right)?;
+        em.chunk.patchJump(end_jump2);
+        return;
+    }
+    @if (string.eql(bin.operator, "|>")) {
+        call.compilePipe(em, bin)?;
+        return;
+    }
+    @if (foldStringConcat(em, bin)) {
+        return;
+    }
+    expr.compileExpression(em, bin.left)?;
+    expr.compileExpression(em, bin.right)?;
+    emitBinOp(em, bin)?;
+}
+
+# Fold `"a" ++ "b"`-style constant chains into one string constant.
+@func foldStringConcat(em: *state_mod.EmState, bin: *nodes.Binary): bool {
+    @if (string.eql(bin.operator, "+") == false) {
+        return false;
+    }
+    $str = extractConstantString(@as(*nodes.Node, bin));
+    @if (str != null) {
+        em.chunk.emitString(@as(string, str));
+        return true;
+    }
+    return false;
+}
+
+@func extractConstantString(node: *nodes.Node) {
+    @if (node.kind == common.NodeKind.Literal) {
+        $lit: *nodes.Literal = @as(*nodes.Literal, node);
+        @if (lit.literal_type == nodes.LiteralKind.String) {
+            return lit.value;
+        }
+        return null;
+    }
+    @if (node.kind == common.NodeKind.Binary) {
+        $b: *nodes.Binary = @as(*nodes.Binary, node);
+        @if (string.eql(b.operator, "+")) {
+            $left = extractConstantString(b.left);
+            @if (left == null) {
+                return null;
+            }
+            $right = extractConstantString(b.right);
+            @if (right == null) {
+                return null;
+            }
+            return string.concat(@as(string, left), @as(string, right));
+        }
+        return null;
+    }
+    return null;
+}
+
+pub @func emitBinOp(em: *state_mod.EmState, bin: *nodes.Binary) {
+    $op = bin.operator;
+    $l_type = typecheck.resolveType(em, bin.left);
+    $r_type = typecheck.resolveType(em, bin.right);
+    $l_width = 0;
+    $l_is_w = false;
+    $r_is_w = false;
+    @if (l_type != null) {
+        $lw = widths.fromName(@as(string, l_type));
+        @if (lw != null) {
+            l_width = lw;
+            l_is_w = true;
+        }
+    }
+    $r_width = 0;
+    @if (r_type != null) {
+        $rw = widths.fromName(@as(string, r_type));
+        @if (rw != null) {
+            r_width = rw;
+            r_is_w = true;
+        }
+    }
+    $both_int = l_is_w && r_is_w && widths.isFloat(l_width) == false && widths.isFloat(r_width) == false;
+    $l_is_str = typecheck.isStringyType(l_type);
+    $r_is_str = typecheck.isStringyType(r_type);
+
+    @if (string.eql(op, "+")) {
+        @if (l_is_str || r_is_str) {
+            em.chunk.writeOp(opcode.OpCode.OP_STRING_ADD);
+        } @else @if (both_int) {
+            em.chunk.writeOp(opcode.OpCode.OP_ADD_TYPED);
+            em.chunk.writeByte(@as(u8, l_width));
+        } @else {
+            em.chunk.writeOp(opcode.OpCode.OP_ADD);
+        }
+        return;
+    }
+    @if (string.eql(op, "-")) {
+        @if (both_int) {
+            em.chunk.writeOp(opcode.OpCode.OP_SUB_TYPED);
+            em.chunk.writeByte(@as(u8, l_width));
+        } @else {
+            em.chunk.writeOp(opcode.OpCode.OP_SUB);
+        }
+        return;
+    }
+    @if (string.eql(op, "*")) {
+        @if (both_int) {
+            em.chunk.writeOp(opcode.OpCode.OP_MUL_TYPED);
+            em.chunk.writeByte(@as(u8, l_width));
+        } @else {
+            em.chunk.writeOp(opcode.OpCode.OP_MUL);
+        }
+        return;
+    }
+    @if (string.eql(op, "/")) {
+        em.chunk.writeOp(opcode.OpCode.OP_DIV);
+        return;
+    }
+    @if (string.eql(op, "%")) {
+        em.chunk.writeOp(opcode.OpCode.OP_MOD);
+        return;
+    }
+    @if (string.eql(op, "^") || string.eql(op, "**")) {
+        em.chunk.writeOp(opcode.OpCode.OP_POW);
+        return;
+    }
+    @if (string.eql(op, "&")) {
+        em.chunk.writeOp(opcode.OpCode.OP_BIT_AND);
+        return;
+    }
+    @if (string.eql(op, "|")) {
+        em.chunk.writeOp(opcode.OpCode.OP_BIT_OR);
+        return;
+    }
+    @if (string.eql(op, "~")) {
+        em.chunk.writeOp(opcode.OpCode.OP_BIT_XOR);
+        return;
+    }
+    @if (string.eql(op, "<<")) {
+        em.chunk.writeOp(opcode.OpCode.OP_SHL);
+        return;
+    }
+    @if (string.eql(op, ">>")) {
+        em.chunk.writeOp(opcode.OpCode.OP_SHR);
+        return;
+    }
+    @if (string.eql(op, "==") || string.eql(op, "!=")) {
+        $both = l_is_str && r_is_str;
+        @if (string.eql(op, "==")) {
+            @if (both) {
+                em.chunk.writeOp(opcode.OpCode.OP_STRING_EQUAL);
+            } @else {
+                em.chunk.writeOp(opcode.OpCode.OP_EQUAL);
+            }
+        } @else {
+            @if (both) {
+                em.chunk.writeOp(opcode.OpCode.OP_STRING_NOT_EQUAL);
+            } @else {
+                em.chunk.writeOp(opcode.OpCode.OP_NOT_EQUAL);
+            }
+        }
+        return;
+    }
+    @if (string.eql(op, "<")) {
+        @if (both_int) {
+            em.chunk.writeOp(opcode.OpCode.OP_LT_TYPED);
+            em.chunk.writeByte(@as(u8, l_width));
+        } @else {
+            em.chunk.writeOp(opcode.OpCode.OP_LESS);
+        }
+        return;
+    }
+    @if (string.eql(op, "<=")) {
+        em.chunk.writeOp(opcode.OpCode.OP_LESS_EQUAL);
+        return;
+    }
+    @if (string.eql(op, ">")) {
+        em.chunk.writeOp(opcode.OpCode.OP_GREATER);
+        return;
+    }
+    @if (string.eql(op, ">=")) {
+        em.chunk.writeOp(opcode.OpCode.OP_GREATER_EQUAL);
+        return;
+    }
+    return error("EmitUnsupported", string.concat("binary op ", op));
+}
+
+pub @func compileUnary(em: *state_mod.EmState, un: *nodes.Unary) {
+    expr.compileExpression(em, un.arg)?;
+    # `&` is type-level only for struct handles (identity at runtime).
+    @if (string.eql(un.operator, "-")) {
+        em.chunk.writeOp(opcode.OpCode.OP_NEGATE);
+        return;
+    }
+    @if (string.eql(un.operator, "!")) {
+        em.chunk.writeOp(opcode.OpCode.OP_NOT);
+        return;
+    }
+    @if (string.eql(un.operator, "~")) {
+        em.chunk.writeOp(opcode.OpCode.OP_BIT_NOT);
+        return;
+    }
+    return error("EmitUnsupported", string.concat("unary op ", un.operator));
+}

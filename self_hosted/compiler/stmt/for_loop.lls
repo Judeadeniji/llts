@@ -1,0 +1,246 @@
+# Port of src/compiler/stmt/for_loop.zig — cond / range / iterator loops.
+
+@const $opcode = @import("../../bytecode/opcode.lls");
+@const $nodes = @import("../../ast/nodes.lls");
+@const $common = @import("../../ast/common.lls");
+@const $state_mod = @import("../state.lls");
+@const $scope = @import("../scope.lls");
+@const $stmt = @import("./root.lls");
+@const $expr = @import("../expr/root.lls");
+@const $list = @import("std/list.lls");
+@const $string = @import("std/string.lls");
+
+pub @func compileFor(em: *state_mod.EmState, for_expr: *nodes.For) {
+    scope.beginScope(em);
+    list.push(em.loops, @new(em.arena, state_mod.EmLoop {
+        scope_depth: em.scope_depth,
+        label: @as(string, for_expr.label),
+        break_jumps: list.create(em.arena),
+        continue_jumps: list.create(em.arena),
+    }));
+
+    @if (for_expr.expr.kind == common.NodeKind.Binary && string.eql(@as(*nodes.Binary, for_expr.expr).operator, "..")) {
+        compileRangeFor(em, for_expr)?;
+    } @else @if (mapHasForCond(em, for_expr) || list.len(for_expr.captures) == 0) {
+        compileCondFor(em, for_expr)?;
+    } @else {
+        compileIterFor(em, for_expr)?;
+    }
+
+    scope.endScope(em)?;
+}
+
+# Self-hosted typecheck pass marks cond-loops in `for_is_cond`.
+@func mapHasForCond(em: *state_mod.EmState, for_expr: *nodes.For): bool {
+    return false;
+}
+
+@func bodyBlock(for_expr: *nodes.For): *nodes.Block {
+    @if (for_expr.body.kind != common.NodeKind.Block) {
+        return error("CompileError", "for body must be block");
+    }
+    return @as(*nodes.Block, for_expr.body);
+}
+
+@func compileCondFor(em: *state_mod.EmState, for_expr: *nodes.For) {
+    $loop_start = em.chunk.codeLen();
+    $exit_jump: i64 = -1;
+
+    $is_infinite = false;
+    @if (for_expr.expr.kind == common.NodeKind.Literal) {
+        $lit: *nodes.Literal = @as(*nodes.Literal, for_expr.expr);
+        @if (string.eql(lit.value, "true")) {
+            is_infinite = true;
+        }
+    }
+
+    @if (is_infinite == false) {
+        expr.compileExpression(em, for_expr.expr)?;
+        exit_jump = em.chunk.emitJump(opcode.OpCode.OP_JUMP_IF_FALSE);
+        @if (list.len(for_expr.captures) == 0) {
+            em.chunk.writeOp(opcode.OpCode.OP_POP);
+        }
+    }
+
+    scope.beginScope(em);
+    @if (list.len(for_expr.captures) > 0) {
+        $cap0: *nodes.Capture = @as(*nodes.Capture, list.get(for_expr.captures, 0));
+        _ = scope.addLocal(em, cap0.name, true);
+    }
+    $body = bodyBlock(for_expr)?;
+    @for (0..list.len(body.statements)) |si| {
+        stmt.compileStatement(em, @as(*nodes.Node, list.get(body.statements, si)))?;
+    }
+    scope.endScope(em)?;
+
+    $loop: *state_mod.EmLoop = @as(*state_mod.EmLoop, list.pop(em.loops));
+    @for (0..list.len(loop.continue_jumps)) |cj| {
+        em.chunk.patchJump(list.get(loop.continue_jumps, cj));
+    }
+    em.chunk.emitLoop(loop_start);
+
+    @if (exit_jump >= 0) {
+        em.chunk.patchJump(exit_jump);
+        em.chunk.writeOp(opcode.OpCode.OP_POP);
+    }
+    @for (0..list.len(loop.break_jumps)) |bj| {
+        em.chunk.patchJump(list.get(loop.break_jumps, bj));
+    }
+}
+
+@func compileRangeFor(em: *state_mod.EmState, for_expr: *nodes.For) {
+    @if (for_expr.expr.kind != common.NodeKind.Binary) {
+        return error("CompileError", "Range loops must have a start and end.");
+    }
+    $bin: *nodes.Binary = @as(*nodes.Binary, for_expr.expr);
+    @if (string.eql(bin.operator, "..") == false) {
+        return error("CompileError", "Range loops must have a start and end.");
+    }
+    $start = bin.left;
+    $end = bin.right;
+    # Captureless range loops are allowed: the counter slot exists but is unnamed.
+    $cap_name: string = ".range_i";
+    @if (list.len(for_expr.captures) > 0) {
+        $cap: *nodes.Capture = @as(*nodes.Capture, list.get(for_expr.captures, 0));
+        cap_name = cap.name;
+    }
+
+    expr.compileExpression(em, start)?;
+    $i_index = list.len(em.locals);
+    list.push(em.locals, @new(em.arena, state_mod.EmLocal {
+        name: cap_name,
+        depth: em.scope_depth,
+        type_name: "int",
+        is_const: true,
+    }));
+
+    expr.compileExpression(em, end)?;
+    $end_index = list.len(em.locals);
+    list.push(em.locals, @new(em.arena, state_mod.EmLocal {
+        name: ".range_end",
+        depth: em.scope_depth,
+        type_name: "int",
+        is_const: false,
+    }));
+
+    # OP_FOR_PREP i end skip — skip patched after FOR_LOOP
+    em.chunk.writeOp(opcode.OpCode.OP_FOR_PREP);
+    em.chunk.writeByte(@as(u8, i_index));
+    em.chunk.writeByte(@as(u8, end_index));
+    $prep_skip = em.chunk.codeLen();
+    em.chunk.writeByte(255);
+    em.chunk.writeByte(255);
+
+    $body_start = em.chunk.codeLen();
+    scope.beginScope(em);
+    $body = bodyBlock(for_expr)?;
+    @for (0..list.len(body.statements)) |si2| {
+        stmt.compileStatement(em, @as(*nodes.Node, list.get(body.statements, si2)))?;
+    }
+    scope.endScope(em)?;
+
+    $loop: *state_mod.EmLoop = @as(*state_mod.EmLoop, list.pop(em.loops));
+    @for (0..list.len(loop.continue_jumps)) |cj| {
+        em.chunk.patchJump(list.get(loop.continue_jumps, cj));
+    }
+
+    # OP_FOR_LOOP i end back_offset (distance back to body_start from after this insn)
+    em.chunk.writeOp(opcode.OpCode.OP_FOR_LOOP);
+    em.chunk.writeByte(@as(u8, i_index));
+    em.chunk.writeByte(@as(u8, end_index));
+    # offset = (ip after reading operands) - body_start; after emit: len+2 is after short
+    $after_op = em.chunk.codeLen() + 2;
+    $back = after_op - body_start;
+    em.chunk.writeByte(@as(u8, (back >> 8) & 255));
+    em.chunk.writeByte(@as(u8, back & 255));
+
+    # Patch FOR_PREP skip to land here (after FOR_LOOP)
+    $skip = em.chunk.codeLen() - prep_skip - 2;
+    em.chunk.setByte(prep_skip, @as(u8, (skip >> 8) & 255));
+    em.chunk.setByte(prep_skip + 1, @as(u8, skip & 255));
+
+    @for (0..list.len(loop.break_jumps)) |bj| {
+        em.chunk.patchJump(list.get(loop.break_jumps, bj));
+    }
+}
+
+@func compileIterFor(em: *state_mod.EmState, for_expr: *nodes.For) {
+    $iterable = for_expr.expr;
+    expr.compileExpression(em, iterable)?;
+
+    $iterable_idx = list.len(em.locals);
+    list.push(em.locals, @new(em.arena, state_mod.EmLocal {
+        name: ".iterable",
+        depth: em.scope_depth,
+        type_name: "",
+        is_const: false,
+    }));
+
+    $i_index2 = list.len(em.locals);
+    list.push(em.locals, @new(em.arena, state_mod.EmLocal {
+        name: ".i",
+        depth: em.scope_depth,
+        type_name: "int",
+        is_const: false,
+    }));
+    em.chunk.emitConstantInt(0);
+
+    $loop_start = em.chunk.codeLen();
+    em.chunk.emitGetLocal(i_index2);
+    em.chunk.emitGetGlobal("len");
+    em.chunk.emitGetLocal(iterable_idx);
+    em.chunk.writeOp(opcode.OpCode.OP_CALL);
+    em.chunk.writeByte(1);
+    em.chunk.writeOp(opcode.OpCode.OP_LESS);
+
+    $exit_jump = em.chunk.emitJump(opcode.OpCode.OP_JUMP_IF_FALSE);
+    em.chunk.writeOp(opcode.OpCode.OP_POP);
+
+    scope.beginScope(em);
+    em.chunk.emitGetLocal(iterable_idx);
+    em.chunk.emitGetLocal(i_index2);
+    em.chunk.writeOp(opcode.OpCode.OP_GET_INDEX);
+    @if (list.len(for_expr.captures) > 0) {
+        $cap0: *nodes.Capture = @as(*nodes.Capture, list.get(for_expr.captures, 0));
+        list.push(em.locals, @new(em.arena, state_mod.EmLocal {
+            name: cap0.name,
+            depth: em.scope_depth,
+            type_name: "",
+            is_const: false,
+        }));
+    }
+    @if (list.len(for_expr.captures) > 1) {
+        $cap1: *nodes.Capture = @as(*nodes.Capture, list.get(for_expr.captures, 1));
+        em.chunk.emitGetLocal(i_index2);
+        list.push(em.locals, @new(em.arena, state_mod.EmLocal {
+            name: cap1.name,
+            depth: em.scope_depth,
+            type_name: "",
+            is_const: false,
+        }));
+    }
+
+    $body = bodyBlock(for_expr)?;
+    @for (0..list.len(body.statements)) |si3| {
+        stmt.compileStatement(em, @as(*nodes.Node, list.get(body.statements, si3)))?;
+    }
+    scope.endScope(em)?;
+
+    $loop: *state_mod.EmLoop = @as(*state_mod.EmLoop, list.pop(em.loops));
+    @for (0..list.len(loop.continue_jumps)) |cj| {
+        em.chunk.patchJump(list.get(loop.continue_jumps, cj));
+    }
+
+    em.chunk.emitGetLocal(i_index2);
+    em.chunk.emitConstantInt(1);
+    em.chunk.writeOp(opcode.OpCode.OP_ADD);
+    em.chunk.emitSetLocal(i_index2);
+    em.chunk.writeOp(opcode.OpCode.OP_POP);
+
+    em.chunk.emitLoop(loop_start);
+    em.chunk.patchJump(exit_jump);
+    em.chunk.writeOp(opcode.OpCode.OP_POP);
+    @for (0..list.len(loop.break_jumps)) |bj| {
+        em.chunk.patchJump(list.get(loop.break_jumps, bj));
+    }
+}

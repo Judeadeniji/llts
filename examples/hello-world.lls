@@ -46,26 +46,26 @@ $heap = mem.create(0);
 
 # literals + registers
 @const $msg = "Hello, LLTS!";
-$a = 10;
-$b = 20;
-$c = 3;
+@const $a = 10;
+@const $b = 20;
+@const $c = 3;
 
 # basic binary ops
-$d = a + b;
-$e = a * b + c;
-$f = a + b * c;
-$g = (a + b) * c;
+@const $d = a + b;
+@const $e = a * b + c;
+@const $f = a + b * c;
+@const $g = (a + b) * c;
 
 # unary ops
-$h = -a;
-$i = !b;
+@const $h = -a;
+@const $i = !b;
 
 # chained binary ops
-$j = 1 + a + b + c;
-$k = a * b / c % 2;
+@const $j = 1 + a + b + c;
+@const $k = a * b / c % 2;
 
 # assignment expressions
-$l = a = b = c + 1;
+@const $l = a = b = c + 1;
 
 $add = std.math.add;
 

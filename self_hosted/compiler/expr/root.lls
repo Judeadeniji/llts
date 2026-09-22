@@ -1,0 +1,92 @@
+# Port of src/compiler/expr/root.zig — expression dispatcher.
+
+@const $nodes = @import("../../ast/nodes.lls");
+@const $common = @import("../../ast/common.lls");
+@const $opcode = @import("../../bytecode/opcode.lls");
+@const $state_mod = @import("../state.lls");
+@const $scope = @import("../scope.lls");
+@const $typecheck = @import("../typecheck.lls");
+@const $literal = @import("./literal.lls");
+@const $binary = @import("./binary.lls");
+@const $assign = @import("./assign.lls");
+@const $call = @import("./call.lls");
+@const $aggregate = @import("./aggregate.lls");
+@const $path = @import("./path.lls");
+@const $control = @import("../stmt/control.lls");
+@const $string = @import("std/string.lls");
+
+pub @func compileExpression(em: *state_mod.EmState, node: *nodes.Node) {
+    @switch (node.kind) {
+        common.NodeKind.Literal => {
+            literal.compileLiteral(em, @as(*nodes.Literal, node))?;
+        }
+        common.NodeKind.Primary => {
+            compilePrimary(em, @as(*nodes.Primary, node), node)?;
+        }
+        common.NodeKind.Binary => {
+            binary.compileBinary(em, @as(*nodes.Binary, node))?;
+        }
+        common.NodeKind.Unary => {
+            binary.compileUnary(em, @as(*nodes.Unary, node))?;
+        }
+        common.NodeKind.Assignment => {
+            assign.compileAssignment(em, @as(*nodes.Assignment, node))?;
+        }
+        common.NodeKind.Call => {
+            call.compileCall(em, @as(*nodes.Call, node), node)?;
+        }
+        common.NodeKind.Member => {
+            aggregate.compileMember(em, @as(*nodes.Member, node), node)?;
+        }
+        common.NodeKind.Index => {
+            aggregate.compileIndex(em, @as(*nodes.Index, node))?;
+        }
+        common.NodeKind.ArrayLiteral => {
+            aggregate.compileArray(em, @as(*nodes.ArrayLiteral, node))?;
+        }
+        common.NodeKind.StructInit => {
+            aggregate.compileStructInit(em, @as(*nodes.StructInit, node))?;
+        }
+        common.NodeKind.TryExpr => {
+            aggregate.compileTry(em, @as(*nodes.TryExpr, node))?;
+        }
+        common.NodeKind.ErrorExpr => {
+            aggregate.compileError(em, @as(*nodes.ErrorExpr, node))?;
+        }
+        common.NodeKind.If => {
+            control.compileIfValue(em, @as(*nodes.If, node))?;
+        }
+        common.NodeKind.Switch => {
+            control.compileSwitchValue(em, @as(*nodes.Switch, node))?;
+        }
+        common.NodeKind.Block => {
+            control.compileBlockValue(em, @as(*nodes.Block, node))?;
+        }
+        @else => {
+            return error("EmitUnsupported", "expr kind");
+        }
+    }
+}
+
+pub @func compilePrimary(em: *state_mod.EmState, prim: *nodes.Primary, node: *nodes.Node) {
+    $static_path = path.tryResolveStaticPath(em, node);
+    @if (static_path != null) {
+        $sp: string = @as(string, static_path);
+        @if (state_mod.emHasFunction(em, sp)) {
+            em.chunk.emitGetFunction(sp);
+        } @else @if (string.endsWith(sp, ".lls")) {
+            em.chunk.emitGetModule(sp);
+        } @else {
+            em.chunk.emitGetGlobal(sp);
+        }
+        return;
+    }
+    @if (prim.primary_kind != nodes.PrimaryKind.Identifier && prim.primary_kind != nodes.PrimaryKind.Register) {
+        return;
+    }
+    @if (state_mod.emHasFunction(em, prim.name)) {
+        em.chunk.emitGetFunction(prim.name);
+        return;
+    }
+    scope.resolveVariable(em, prim.name)?;
+}

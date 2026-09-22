@@ -1,0 +1,249 @@
+# Port of src/compiler/layout.zig — packed byte layout for structs.
+
+@const $widths = @import("./widths.lls");
+@const $state_mod = @import("./state.lls");
+@const $string = @import("std/string.lls");
+@const $list = @import("std/list.lls");
+
+# Packed field storage kinds. Numeric kinds 10+ match `widths.Width` + offset.
+pub @enum FieldKind {
+    i64,   # 0
+    f64,   # 1
+    u1,    # 2 (was bool; bool/boolean → u1)
+    handle,# 3
+    ptr,   # 4
+    u8,    # 5
+    f32,   # 6
+    i8,    # 7
+    i16,   # 8
+    i32,   # 9
+    u16,   # 10
+    u32,   # 11
+    u64,   # 12
+}
+
+pub @func alignUp(offset: i64, alignment: i64): i64 {
+    $a = alignment - 1;
+    return (offset + a) & ~a;
+}
+
+pub @func unwrapTypeName(type_name: string): string {
+    $s = type_name;
+    # Peel leading '?' — bounded by the string length.
+    @for (0..string.len(s)) {
+        @if (string.len(s) == 0 || string.eql(string.slice(s, 0, 1), "?") == false) {
+            break;
+        }
+        s = string.slice(s, 1, string.len(s));
+    }
+    $idx = string.indexOf(s, " | ");
+    @if (idx >= 0) {
+        return string.trim(string.slice(s, 0, idx));
+    }
+    return s;
+}
+
+pub @func sizeOfTypeName(type_name: string): i64 {
+    $bare = unwrapTypeName(type_name);
+    @if (string.len(bare) > 0 && string.eql(string.slice(bare, 0, 1), "*")) {
+        return 8; # pointer / heap handle
+    }
+    @if (string.startsWith(bare, "@func(")) {
+        return 8; # function value / handle
+    }
+    @if (string.len(bare) > 0 && string.eql(string.slice(bare, 0, 1), "{")) {
+        return 8; # shape / object handle
+    }
+    @if (string.len(bare) > 0 && string.eql(string.slice(bare, 0, 1), "[") && string.contains(bare, ",")) {
+        return 8; # tuple
+    }
+    $w = widths.fromName(bare);
+    @if (w != null) {
+        return widths.size(w);
+    }
+    @if (string.eql(bare, "null")) {
+        return 0;
+    }
+    return 8;
+}
+
+# Size of a named type when enum/struct defs are available.
+pub @func sizeOfNamedType(em: *state_mod.EmState, type_name: string): i64 {
+    $bare = unwrapTypeName(type_name);
+    $tdo = state_mod.emFindTypedef(em, bare);
+    @if (tdo != null) {
+        $td: *state_mod.EmTypedef = @as(*state_mod.EmTypedef, tdo);
+        return sizeOfNamedType(em, td.underlying);
+    }
+    @if (state_mod.emHasEnum(em, bare)) {
+        return 8; # tag-only i64
+    }
+    $sdo = state_mod.emFindStruct(em, bare);
+    @if (sdo != null) {
+        $sd: *state_mod.EmStructDef = @as(*state_mod.EmStructDef, sdo);
+        return sd.size;
+    }
+    return sizeOfTypeName(type_name);
+}
+
+pub @func alignOfTypeName(type_name: string): i64 {
+    $bare = unwrapTypeName(type_name);
+    @if (string.len(bare) > 0 && string.eql(string.slice(bare, 0, 1), "*")) {
+        return 8;
+    }
+    $w = widths.fromName(bare);
+    @if (w != null) {
+        @switch (w) {
+            widths.Width.u1 => { return 1; }
+            widths.Width.i8, widths.Width.u8 => { return 1; }
+            widths.Width.i16, widths.Width.u16 => { return 2; }
+            widths.Width.i32, widths.Width.u32, widths.Width.f32 => { return 4; }
+            widths.Width.i64, widths.Width.u64, widths.Width.f64, widths.Width.isize, widths.Width.usize, widths.Width.fsize => { return 8; }
+        }
+    }
+    @if (string.eql(bare, "null")) {
+        return 1;
+    }
+    return 8;
+}
+
+pub @func fieldKind(em: ?*state_mod.EmState, type_name: string): FieldKind {
+    $bare = unwrapTypeName(type_name);
+    @if (string.len(bare) > 0 && string.eql(string.slice(bare, 0, 1), "*")) {
+        return FieldKind.handle;
+    }
+    @if (string.startsWith(bare, "@func(")) {
+        return FieldKind.handle;
+    }
+    @if (string.len(bare) > 0 && string.eql(string.slice(bare, 0, 1), "{")) {
+        return FieldKind.handle;
+    }
+    @if (string.len(bare) > 0 && string.eql(string.slice(bare, 0, 1), "[") && string.contains(bare, ",")) {
+        return FieldKind.handle;
+    }
+    $w = widths.fromName(bare);
+    @if (w != null) {
+        return fieldKindFromWidth(w);
+    }
+    @if (string.eql(bare, "ptr")) {
+        return FieldKind.ptr;
+    }
+    # Tag-only enums / enum literals are i64 on the wire.
+    @if (em != null) {
+        $em2: *state_mod.EmState = @as(*state_mod.EmState, em);
+        $tdo2 = state_mod.emFindTypedef(em2, bare);
+        @if (tdo2 != null) {
+            $td2: *state_mod.EmTypedef = @as(*state_mod.EmTypedef, tdo2);
+            return fieldKind(em, td2.underlying);
+        }
+        @if (state_mod.emHasEnum(em2, bare)) {
+            return FieldKind.i64;
+        }
+        $dot = string.lastIndexOf(bare, ".");
+        @if (dot >= 0) {
+            @if (state_mod.emHasEnum(em2, string.slice(bare, 0, dot))) {
+                return FieldKind.i64;
+            }
+        }
+    }
+    # Literal type displays: `"a"`, `0`, `true`
+    @if (string.len(bare) >= 2 && string.eql(string.slice(bare, 0, 1), "\"") && string.eql(string.slice(bare, string.len(bare) - 1, string.len(bare)), "\"")) {
+        return FieldKind.handle;
+    }
+    @if (string.eql(bare, "true") || string.eql(bare, "false")) {
+        return FieldKind.u1;
+    }
+    @if (string.len(bare) > 0 && string.charCodeAt(bare, 0) >= 48 && string.charCodeAt(bare, 0) <= 57) {
+        return FieldKind.i64;
+    }
+    @if (string.len(bare) > 1 && string.eql(string.slice(bare, 0, 1), "-") && string.charCodeAt(bare, 1) >= 48 && string.charCodeAt(bare, 1) <= 57) {
+        return FieldKind.i64;
+    }
+    return FieldKind.handle;
+}
+
+pub @func fieldKindFromWidth(w: widths.Width): FieldKind {
+    @switch (w) {
+        widths.Width.u1 => { return FieldKind.u1; }
+        widths.Width.i8 => { return FieldKind.i8; }
+        widths.Width.i16 => { return FieldKind.i16; }
+        widths.Width.i32 => { return FieldKind.i32; }
+        widths.Width.i64 => { return FieldKind.i64; }
+        widths.Width.u8 => { return FieldKind.u8; }
+        widths.Width.u16 => { return FieldKind.u16; }
+        widths.Width.u32 => { return FieldKind.u32; }
+        widths.Width.u64 => { return FieldKind.u64; }
+        widths.Width.f32 => { return FieldKind.f32; }
+        widths.Width.f64 => { return FieldKind.f64; }
+        @else => { return FieldKind.i64; }
+    }
+}
+
+pub @func widthFromFieldKind(kind: FieldKind) {
+    @switch (kind) {
+        FieldKind.u1 => { return widths.Width.u1; }
+        FieldKind.i8 => { return widths.Width.i8; }
+        FieldKind.i16 => { return widths.Width.i16; }
+        FieldKind.i32 => { return widths.Width.i32; }
+        FieldKind.i64 => { return widths.Width.i64; }
+        FieldKind.u8 => { return widths.Width.u8; }
+        FieldKind.u16 => { return widths.Width.u16; }
+        FieldKind.u32 => { return widths.Width.u32; }
+        FieldKind.u64 => { return widths.Width.u64; }
+        FieldKind.f32 => { return widths.Width.f32; }
+        FieldKind.f64 => { return widths.Width.f64; }
+        FieldKind.handle => { return null; }
+        FieldKind.ptr => { return null; }
+    }
+}
+
+pub @struct LayoutResult {
+    size: i64;
+    offsets: unknown; # list of i64, parallel to the input fields
+}
+
+pub @struct FieldSpec {
+    name: string;
+    type_name: string;
+}
+
+# Offsets list is parallel to `fields` (same order). Missing/skipped fields
+# (size 0) still occupy a slot — see Zig `layoutFields`.
+pub @func layoutFields(fields: unknown, arena: mem.Arena): *LayoutResult {
+    $offsets = list.create(arena);
+    $offset: i64 = 0;
+    $max_align: i64 = 1;
+    @for (0..list.len(fields)) |fi| {
+        $f: *FieldSpec = @as(*FieldSpec, list.get(fields, fi));
+        $al = alignOfTypeName(f.type_name);
+        $sz = sizeOfTypeName(f.type_name);
+        @if (sz == 0) {
+            list.push(offsets, offset);
+            continue;
+        }
+        offset = alignUp(offset, al);
+        list.push(offsets, offset);
+        offset = offset + sz;
+        @if (al > max_align) {
+            max_align = al;
+        }
+    }
+    $size: i64 = 0;
+    @if (offset != 0) {
+        $pad = max_align;
+        @if (pad < 8) {
+            pad = 8;
+        }
+        size = alignUp(offset, pad);
+    }
+    return @new(arena, LayoutResult { size: size, offsets: offsets });
+}
+
+pub @func fieldKindForStruct(em: *state_mod.EmState, sd: *state_mod.EmStructDef, field: string): FieldKind {
+    $fi = state_mod.emFieldIndex(sd, field);
+    @if (fi < 0) {
+        return FieldKind.i64;
+    }
+    $ty = list.get(sd.field_types, fi);
+    return fieldKind(em, ty);
+}

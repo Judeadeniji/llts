@@ -1,11 +1,10 @@
-# Port of src/compiler/intrinsics.zig — match / arity / asCastKind.
-# Emit `compile` switch lives in root.lls (needs emExpr); names mirror Zig.
+# Port of src/compiler/intrinsics.zig — match / arity / asCastKind / compile.
+# The emit `compile` switch lives here and delegates to expr/root for sub-expressions.
 
 @const $widths = @import("./widths.lls");
 @const $nodes = @import("../ast/nodes.lls");
 @const $common = @import("../ast/common.lls");
 @const $string = @import("std/string.lls");
-
 pub @enum Intrinsic {
     import,
     typeOf,
@@ -90,6 +89,266 @@ pub @func sizeOfTypeName(name: string) {
         @if (string.eql(string.slice(name, 0, 1), "*") || string.eql(string.slice(name, 0, 1), "?")) {
             return 8;
         }
+    }
+    return null;
+}
+
+# --- emit-side compile (port of intrinsics.zig `compile` / `compileCast`) ---
+
+@const $state_mod = @import("./state.lls");
+@const $opcode = @import("../bytecode/opcode.lls");
+@const $expr = @import("./expr/root.lls");
+@const $aggregate = @import("./expr/aggregate.lls");
+@const $path = @import("./expr/path.lls");
+@const $typecheck = @import("./typecheck.lls");
+@const $layout = @import("./layout.lls");
+@const $list = @import("std/list.lls");
+@const $map = @import("std/map.lls");
+
+pub @func compile(em: *state_mod.EmState, intr: Intrinsic, node: *nodes.Node, c: *nodes.Call) {
+    $name = calleeName(c);
+    checkArity(intr, name, list.len(c.args))?;
+    @switch (intr) {
+        Intrinsic.import => {
+            expr.compileExpression(em, emArg(c, 0))?;
+            em.chunk.writeOp(opcode.OpCode.OP_POP);
+        }
+        Intrinsic.isError => {
+            expr.compileExpression(em, emArg(c, 0))?;
+            em.chunk.writeOp(opcode.OpCode.OP_IS_ERROR);
+        }
+        Intrinsic.typeOf => {
+            $disp = typeOfDisplay(em, node, emArg(c, 0));
+            expr.compileExpression(em, emArg(c, 0))?;
+            em.chunk.writeOp(opcode.OpCode.OP_POP);
+            em.chunk.emitString(disp);
+        }
+        Intrinsic.sizeOf => {
+            compileSizeOf(em, c)?;
+        }
+        Intrinsic.nameOf => {
+            expr.compileExpression(em, emArg(c, 0))?;
+            em.chunk.writeOp(opcode.OpCode.OP_ERROR_NAME);
+        }
+        Intrinsic.as => {
+            compileCast(em, emArg(c, 0), emArg(c, 1))?;
+        }
+        Intrinsic.new => {
+            aggregate.compileNew(em, c)?;
+        }
+    }
+}
+
+@func calleeName(c: *nodes.Call): string {
+    @if (c.callee.kind == common.NodeKind.Primary) {
+        $p: *nodes.Primary = @as(*nodes.Primary, c.callee);
+        return p.name;
+    }
+    return "";
+}
+
+pub @func emArg(c: *nodes.Call, i: i64): *nodes.Node {
+    return @as(*nodes.Node, list.get(c.args, i));
+}
+
+@func typeOfDisplay(em: *state_mod.EmState, node: *nodes.Node, arg: *nodes.Node): string {
+    # Zig caches the typecheck-pass display in `type_of_results`; the port
+    # resolves on demand instead (same fallback chain).
+    $t = typecheck.resolveType(em, arg);
+    @if (t != null) {
+        return @as(string, t);
+    }
+    return "unknown";
+}
+
+@func compileSizeOf(em: *state_mod.EmState, c: *nodes.Call) {
+    $static_type: ?string = null;
+    $arg0 = emArg(c, 0);
+    @if (arg0.kind == common.NodeKind.Primary) {
+        $p: *nodes.Primary = @as(*nodes.Primary, arg0);
+        @if (p.primary_kind == nodes.PrimaryKind.Identifier) {
+            static_type = p.name;
+        }
+    } @else @if (arg0.kind == common.NodeKind.PointerType || arg0.kind == common.NodeKind.ArrayType || arg0.kind == common.NodeKind.UnionType || arg0.kind == common.NodeKind.IntersectType || arg0.kind == common.NodeKind.FuncType || arg0.kind == common.NodeKind.TupleType || arg0.kind == common.NodeKind.ShapeType) {
+        static_type = typecheck.typeAstToDisplay(em, arg0);
+    } @else {
+        $sp = path.tryResolveStaticPath(em, arg0);
+        @if (sp != null) {
+            static_type = @as(string, sp);
+        }
+    }
+
+    @if (static_type != null) {
+        $st: string = @as(string, static_type);
+        $is_type = false;
+        $size: i64 = 0;
+        @if (string.len(st) > 0 && (string.eql(string.slice(st, 0, 1), "*") || string.eql(string.slice(st, 0, 1), "?"))) {
+            is_type = true;
+            size = layout.sizeOfTypeName(st);
+        } @else @if (string.startsWith(st, "@func(")) {
+            is_type = true;
+            size = 8;
+        } @else @if (string.len(st) > 0 && string.eql(string.slice(st, 0, 1), "{")) {
+            is_type = true;
+            size = layout.sizeOfNamedType(em, st);
+        } @else @if (string.len(st) > 0 && string.eql(string.slice(st, 0, 1), "[") && string.contains(st, ",")) {
+            # Tuple type display `[T, U]` — handle-sized like arrays
+            is_type = true;
+            size = 8;
+        } @else {
+            $w = widths.fromName(st);
+            @if (w != null) {
+                is_type = true;
+                size = widths.size(w);
+            } @else @if (string.eql(st, "null")) {
+                is_type = true;
+                size = 0;
+            } @else @if (string.eql(st, "string") || string.eql(st, "[]byte")) {
+                is_type = true;
+                size = 8;
+            } @else {
+                $sd = state_mod.emFindStruct(em, st);
+                @if (sd != null) {
+                    $def: *state_mod.EmStructDef = @as(*state_mod.EmStructDef, sd);
+                    is_type = true;
+                    size = def.size;
+                } @else @if (state_mod.emHasEnum(em, st)) {
+                    is_type = true;
+                    size = 8;
+                } @else @if (state_mod.emHasTypedef(em, st)) {
+                    is_type = true;
+                    size = layout.sizeOfNamedType(em, st);
+                }
+            }
+        }
+        @if (is_type) {
+            em.chunk.emitConstantInt(size);
+            return;
+        }
+    }
+
+    # Value form: expr sizeof → pop and use the static struct size when known.
+    $tn = typecheck.resolveType(em, arg0);
+    @if (tn != null) {
+        $sd2 = typecheck.lookupStruct(em, @as(string, tn));
+        @if (sd2 != null) {
+            expr.compileExpression(em, arg0)?;
+            em.chunk.writeOp(opcode.OpCode.OP_POP);
+            em.chunk.emitConstantInt(sd2.size);
+            return;
+        }
+    }
+
+    expr.compileExpression(em, arg0)?;
+    em.chunk.writeOp(opcode.OpCode.OP_SIZEOF);
+}
+
+# `Name(expr)` cast sugar when `Name` is a type and not a function/native.
+# Returns the type AST node (the callee) on match.
+pub @func tryTypeCastCall(em: *state_mod.EmState, c: *nodes.Call) {
+    @if (list.len(c.args) != 1) {
+        return null;
+    }
+    @if (c.callee.kind == common.NodeKind.Primary) {
+        $p: *nodes.Primary = @as(*nodes.Primary, c.callee);
+        $name = p.name;
+        @if (string.len(name) == 0 || string.startsWith(name, "@")) {
+            return null;
+        }
+        @if (isCallableName(em, name)) {
+            return null;
+        }
+        @if (isTypeName(em, name) == false) {
+            return null;
+        }
+        return c.callee;
+    }
+    @if (c.callee.kind == common.NodeKind.Member) {
+        # `Mod.Type(x)` / `Enum.Variant(x)` via static path only — not `obj.field(x)`.
+        $resolved = path.tryResolveStaticPath(em, c.callee);
+        @if (resolved == null) {
+            return null;
+        }
+        $r: string = @as(string, resolved);
+        @if (isCallableName(em, r)) {
+            return null;
+        }
+        @if (isTypeName(em, r) == false) {
+            return null;
+        }
+        return c.callee;
+    }
+    return null;
+}
+
+@func isCallableName(em: *state_mod.EmState, name: string): bool {
+    @if (state_mod.emHasFunction(em, name)) {
+        return true;
+    }
+    @if (map.has(em.native_globals, name)) {
+        return true;
+    }
+    return false;
+}
+
+@func isTypeName(em: *state_mod.EmState, name: string): bool {
+    @if (widths.fromName(name) != null) {
+        return true;
+    }
+    @if (string.eql(name, "string") || string.eql(name, "[]byte") || string.eql(name, "null")) {
+        return true;
+    }
+    @if (state_mod.emHasTypedef(em, name)) {
+        return true;
+    }
+    @if (state_mod.emHasStruct(em, name)) {
+        return true;
+    }
+    @if (state_mod.emHasEnum(em, name)) {
+        return true;
+    }
+    # `Enum.Variant` singleton type
+    @if (string.contains(name, "::") == false) {
+        $dot = string.lastIndexOf(name, ".");
+        @if (dot > 0 && dot + 1 < string.len(name)) {
+            $ename = string.slice(name, 0, dot);
+            $vname = string.slice(name, dot + 1, string.len(name));
+            $ed = state_mod.emFindEnum(em, ename);
+            @if (ed != null) {
+                $en: *state_mod.EmEnumDef = @as(*state_mod.EmEnumDef, ed);
+                @for (0..list.len(en.variant_names)) |vi| {
+                    @if (string.eql(list.get(en.variant_names, vi), vname)) {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    return false;
+}
+
+# Emit `T(x)` / `@as(T, x)`.
+pub @func compileCast(em: *state_mod.EmState, type_node: *nodes.Node, value: *nodes.Node) {
+    $kind = asCastKind(em, type_node);
+    expr.compileExpression(em, value)?;
+    @if (kind != null) {
+        em.chunk.writeOp(opcode.OpCode.OP_AS);
+        em.chunk.writeByte(@as(u8, kind));
+    }
+}
+
+# Operand for `OP_AS`: `widths.Width` discriminant, or null when no runtime cast needed.
+pub @func asCastKind(em: *state_mod.EmState, type_node: *nodes.Node) {
+    @if (type_node.kind == common.NodeKind.Primary) {
+        $p: *nodes.Primary = @as(*nodes.Primary, type_node);
+        $w = widths.fromName(p.name);
+        @if (w != null) {
+            return @as(u8, w);
+        }
+        @if (state_mod.emHasEnum(em, p.name)) {
+            return @as(u8, widths.Width.i64);
+        }
+        return null;
     }
     return null;
 }

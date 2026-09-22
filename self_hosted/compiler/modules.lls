@@ -1,0 +1,491 @@
+# Port of src/compiler/modules.zig — resolve @import, qualify, flatten into doc.
+
+@const $parser = @import("../parser/root.lls");
+@const $ast = @import("../ast/root.lls");
+@const $nodes = @import("../ast/nodes.lls");
+@const $common = @import("../ast/common.lls");
+@const $state_mod = @import("./state.lls");
+@const $list = @import("std/list.lls");
+@const $map = @import("std/map.lls");
+@const $string = @import("std/string.lls");
+@const $mem = @import("std/mem.lls");
+
+pub @func getImportSite(node: *nodes.Node) {
+    @if (node.kind != common.NodeKind.Call) {
+        return null;
+    }
+    $c: *nodes.Call = @as(*nodes.Call, node);
+    @if (c.callee.kind != common.NodeKind.Primary) {
+        return null;
+    }
+    $cal: *nodes.Primary = @as(*nodes.Primary, c.callee);
+    @if (string.eql(cal.name, "@import") == false) {
+        return null;
+    }
+    @if (list.len(c.args) != 1) {
+        return null;
+    }
+    $arg: *nodes.Node = @as(*nodes.Node, list.get(c.args, 0));
+    @if (arg.kind != common.NodeKind.Literal) {
+        return null;
+    }
+    $lit: *nodes.Literal = @as(*nodes.Literal, arg);
+    @if (lit.literal_type != nodes.LiteralKind.String) {
+        return null;
+    }
+    return lit.value;
+}
+
+@func moduleKey(resolved: string) {
+    return resolved;
+}
+
+@func dirnameOf(path: string) {
+    $slash = string.lastIndexOf(path, "/");
+    @if (slash < 0) {
+        return ".";
+    }
+    @if (slash == 0) {
+        return "/";
+    }
+    return string.slice(path, 0, slash);
+}
+
+@func resolvePath(from: string, import_path: string) {
+    $with_ext = import_path;
+    @if (string.endsWith(import_path, ".lls") == false) {
+        with_ext = string.concat(import_path, ".lls");
+    }
+    $src = __readFile(with_ext);
+    @if (@isError(src) == false) {
+        return with_ext;
+    }
+    $up = string.concat("../", with_ext);
+    $src2 = __readFile(up);
+    @if (@isError(src2) == false) {
+        return up;
+    }
+    $joined = string.concat(string.concat(dirnameOf(from), "/"), with_ext);
+    $src3 = __readFile(joined);
+    @if (@isError(src3) == false) {
+        return joined;
+    }
+    return error("CompileError", "Unknown module");
+}
+
+@func collectLocalBindings(arena: mem.Arena, statements, module_path: string) {
+    $m = map.create(arena);
+    @for (0..list.len(statements)) |i| {
+        $s: *nodes.Node = @as(*nodes.Node, list.get(statements, i));
+        $name: string = "";
+        @if (s.kind == common.NodeKind.StructDecl) {
+            $st: *nodes.StructDecl = @as(*nodes.StructDecl, s);
+            name = st.name;
+        } @else @if (s.kind == common.NodeKind.EnumDecl) {
+            $en: *nodes.EnumDecl = @as(*nodes.EnumDecl, s);
+            name = en.name;
+        } @else @if (s.kind == common.NodeKind.ErrorDecl) {
+            $ed: *nodes.ErrorDecl = @as(*nodes.ErrorDecl, s);
+            name = ed.name;
+        } @else @if (s.kind == common.NodeKind.TypeDecl) {
+            $td: *nodes.TypeDecl = @as(*nodes.TypeDecl, s);
+            name = td.name;
+        } @else @if (s.kind == common.NodeKind.FunctionDecl) {
+            $fd: *nodes.FunctionDecl = @as(*nodes.FunctionDecl, s);
+            name = fd.name;
+        } @else @if (s.kind == common.NodeKind.Declaration) {
+            $d: *nodes.Declaration = @as(*nodes.Declaration, s);
+            name = d.name;
+        }
+        @if (string.len(name) > 0) {
+            @if (string.indexOf(name, "::") < 0) {
+                $q = string.concat(string.concat(module_path, "::"), name);
+                map.set(m, name, q);
+            }
+        }
+    }
+    return m;
+}
+
+@func isOwnDecl(node: *nodes.Node, mod_key: string) {
+    $name: string = "";
+    @if (node.kind == common.NodeKind.StructDecl) {
+        $st: *nodes.StructDecl = @as(*nodes.StructDecl, node);
+        name = st.name;
+    } @else @if (node.kind == common.NodeKind.FunctionDecl) {
+        $fd: *nodes.FunctionDecl = @as(*nodes.FunctionDecl, node);
+        name = fd.name;
+    } @else @if (node.kind == common.NodeKind.Declaration) {
+        $d: *nodes.Declaration = @as(*nodes.Declaration, node);
+        name = d.name;
+    } @else @if (node.kind == common.NodeKind.EnumDecl) {
+        $en: *nodes.EnumDecl = @as(*nodes.EnumDecl, node);
+        name = en.name;
+    }
+    @if (string.len(name) == 0) {
+        return false;
+    }
+    @if (string.startsWith(name, mod_key) == false) {
+        return false;
+    }
+    @if (string.len(name) <= string.len(mod_key)) {
+        return false;
+    }
+    $rest = string.slice(name, string.len(mod_key), string.len(name));
+    return string.startsWith(rest, "::");
+}
+
+@func qualifyNode(em: *state_mod.EmState, node: *nodes.Node, mod_key: string, local_map) {
+    @if (node.kind == common.NodeKind.FunctionDecl) {
+        $f: *nodes.FunctionDecl = @as(*nodes.FunctionDecl, node);
+        @if (string.indexOf(f.name, "::") < 0) {
+            @if (map.has(local_map, f.name)) {
+                f.name = map.get(local_map, f.name);
+            } @else {
+                f.name = string.concat(string.concat(mod_key, "::"), f.name);
+            }
+        }
+        return;
+    }
+    @if (node.kind == common.NodeKind.Declaration) {
+        $d: *nodes.Declaration = @as(*nodes.Declaration, node);
+        @if (string.indexOf(d.name, "::") < 0) {
+            @if (map.has(local_map, d.name)) {
+                d.name = map.get(local_map, d.name);
+            } @else {
+                d.name = string.concat(string.concat(mod_key, "::"), d.name);
+            }
+        }
+        return;
+    }
+    @if (node.kind == common.NodeKind.StructDecl) {
+        $st: *nodes.StructDecl = @as(*nodes.StructDecl, node);
+        @if (string.indexOf(st.name, "::") < 0) {
+            $short = st.name;
+            @if (map.has(local_map, short)) {
+                st.name = map.get(local_map, short);
+            } @else {
+                st.name = string.concat(string.concat(mod_key, "::"), short);
+            }
+        }
+        @for (0..list.len(st.methods)) |mi| {
+            $m: *nodes.Node = @as(*nodes.Node, list.get(st.methods, mi));
+            @if (m.kind == common.NodeKind.FunctionDecl) {
+                $mf: *nodes.FunctionDecl = @as(*nodes.FunctionDecl, m);
+                $mn = mf.name;
+                $idx = string.indexOf(mn, "::");
+                @if (idx >= 0) {
+                    $method_short = string.slice(mn, idx + 2, string.len(mn));
+                    mf.name = string.concat(string.concat(st.name, "::"), method_short);
+                } @else {
+                    mf.name = string.concat(string.concat(st.name, "::"), mn);
+                }
+            }
+        }
+        return;
+    }
+    @if (node.kind == common.NodeKind.EnumDecl) {
+        $en: *nodes.EnumDecl = @as(*nodes.EnumDecl, node);
+        @if (string.indexOf(en.name, "::") < 0) {
+            @if (map.has(local_map, en.name)) {
+                en.name = map.get(local_map, en.name);
+            } @else {
+                en.name = string.concat(string.concat(mod_key, "::"), en.name);
+            }
+        }
+    }
+}
+
+@func boundContains(bound, name: string) {
+    @for (0..list.len(bound)) |i| {
+        @if (string.eql(list.get(bound, i), name)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+@func rewriteModuleRefs(em: *state_mod.EmState, node: *nodes.Node, local_map, bound) {
+    @if (node.kind == common.NodeKind.FunctionDecl) {
+        $f: *nodes.FunctionDecl = @as(*nodes.FunctionDecl, node);
+        $mark = list.len(bound);
+        @if (f.params.kind == common.NodeKind.Params) {
+            $ps: *nodes.Params = @as(*nodes.Params, f.params);
+            @for (0..list.len(ps.params)) |pi| {
+                $param: *nodes.Param = @as(*nodes.Param, list.get(ps.params, pi));
+                @if (param.type_annotation != null) {
+                    rewriteModuleRefs(em, @as(*nodes.Node, param.type_annotation), local_map, bound)?;
+                }
+                list.push(bound, param.name);
+            }
+        }
+        @if (f.return_type != null) {
+            rewriteModuleRefs(em, @as(*nodes.Node, f.return_type), local_map, bound)?;
+        }
+        rewriteModuleRefs(em, f.body, local_map, bound)?;
+        @for (0..(list.len(bound) - mark)) |pk| {
+            list.pop(bound);
+        }
+        return;
+    }
+    @if (node.kind == common.NodeKind.StructDecl) {
+        $st: *nodes.StructDecl = @as(*nodes.StructDecl, node);
+        @for (0..list.len(st.fields)) |fi| {
+            $field: *nodes.StructField = @as(*nodes.StructField, list.get(st.fields, fi));
+            @if (field.type_annotation != null) {
+                rewriteModuleRefs(em, @as(*nodes.Node, field.type_annotation), local_map, bound)?;
+            }
+        }
+        @for (0..list.len(st.methods)) |mi| {
+            rewriteModuleRefs(em, @as(*nodes.Node, list.get(st.methods, mi)), local_map, bound)?;
+        }
+        return;
+    }
+    @if (node.kind == common.NodeKind.Block) {
+        $b: *nodes.Block = @as(*nodes.Block, node);
+        @for (0..list.len(b.statements)) |si| {
+            rewriteModuleRefs(em, @as(*nodes.Node, list.get(b.statements, si)), local_map, bound)?;
+        }
+        return;
+    }
+    @if (node.kind == common.NodeKind.Declaration) {
+        $d: *nodes.Declaration = @as(*nodes.Declaration, node);
+        @if (d.type_annotation != null) {
+            rewriteModuleRefs(em, @as(*nodes.Node, d.type_annotation), local_map, bound)?;
+        }
+        rewriteModuleRefs(em, d.value, local_map, bound)?;
+        list.push(bound, d.name);
+        return;
+    }
+    @if (node.kind == common.NodeKind.Primary) {
+        $p: *nodes.Primary = @as(*nodes.Primary, node);
+        @if (p.primary_kind == nodes.PrimaryKind.Identifier) {
+            @if (map.has(local_map, p.name)) {
+                @if (boundContains(bound, p.name) == false) {
+                    p.name = map.get(local_map, p.name);
+                }
+            }
+        }
+        return;
+    }
+    @if (node.kind == common.NodeKind.Call) {
+        $c: *nodes.Call = @as(*nodes.Call, node);
+        rewriteModuleRefs(em, c.callee, local_map, bound)?;
+        @for (0..list.len(c.args)) |ai| {
+            rewriteModuleRefs(em, @as(*nodes.Node, list.get(c.args, ai)), local_map, bound)?;
+        }
+        return;
+    }
+    @if (node.kind == common.NodeKind.Member) {
+        $m: *nodes.Member = @as(*nodes.Member, node);
+        rewriteModuleRefs(em, m.object, local_map, bound)?;
+        return;
+    }
+    @if (node.kind == common.NodeKind.Binary) {
+        $bin: *nodes.Binary = @as(*nodes.Binary, node);
+        rewriteModuleRefs(em, bin.left, local_map, bound)?;
+        rewriteModuleRefs(em, bin.right, local_map, bound)?;
+        return;
+    }
+    @if (node.kind == common.NodeKind.Unary) {
+        $u: *nodes.Unary = @as(*nodes.Unary, node);
+        rewriteModuleRefs(em, u.arg, local_map, bound)?;
+        return;
+    }
+    @if (node.kind == common.NodeKind.Assignment) {
+        $a: *nodes.Assignment = @as(*nodes.Assignment, node);
+        rewriteModuleRefs(em, a.left, local_map, bound)?;
+        rewriteModuleRefs(em, a.right, local_map, bound)?;
+        return;
+    }
+    @if (node.kind == common.NodeKind.Return) {
+        $r: *nodes.Return = @as(*nodes.Return, node);
+        @if (r.return_value != null) {
+            rewriteModuleRefs(em, @as(*nodes.Node, r.return_value), local_map, bound)?;
+        }
+        return;
+    }
+    @if (node.kind == common.NodeKind.If) {
+        $ife: *nodes.If = @as(*nodes.If, node);
+        rewriteModuleRefs(em, ife.condition, local_map, bound)?;
+        rewriteModuleRefs(em, ife.body, local_map, bound)?;
+        @if (ife.else_body != null) {
+            rewriteModuleRefs(em, @as(*nodes.Node, ife.else_body), local_map, bound)?;
+        }
+        return;
+    }
+    @if (node.kind == common.NodeKind.For) {
+        $fe: *nodes.For = @as(*nodes.For, node);
+        rewriteModuleRefs(em, fe.expr, local_map, bound)?;
+        rewriteModuleRefs(em, fe.body, local_map, bound)?;
+        return;
+    }
+}
+
+@func treeContainsImport(node: *nodes.Node) {
+    @if (getImportSite(node) != null) {
+        return true;
+    }
+    @if (node.kind == common.NodeKind.Declaration) {
+        $d: *nodes.Declaration = @as(*nodes.Declaration, node);
+        return treeContainsImport(d.value);
+    }
+    @if (node.kind == common.NodeKind.Call) {
+        $c: *nodes.Call = @as(*nodes.Call, node);
+        @if (treeContainsImport(c.callee)) {
+            return true;
+        }
+        @for (0..list.len(c.args)) |ai| {
+            @if (treeContainsImport(@as(*nodes.Node, list.get(c.args, ai)))) {
+                return true;
+            }
+        }
+        return false;
+    }
+    @if (node.kind == common.NodeKind.Block) {
+        $b: *nodes.Block = @as(*nodes.Block, node);
+        @for (0..list.len(b.statements)) |si| {
+            @if (treeContainsImport(@as(*nodes.Node, list.get(b.statements, si)))) {
+                return true;
+            }
+        }
+        return false;
+    }
+    @if (node.kind == common.NodeKind.FunctionDecl) {
+        $f: *nodes.FunctionDecl = @as(*nodes.FunctionDecl, node);
+        return treeContainsImport(f.body);
+    }
+    @if (node.kind == common.NodeKind.Member) {
+        $m: *nodes.Member = @as(*nodes.Member, node);
+        return treeContainsImport(m.object);
+    }
+    @if (node.kind == common.NodeKind.Binary) {
+        $bin: *nodes.Binary = @as(*nodes.Binary, node);
+        @if (treeContainsImport(bin.left)) {
+            return true;
+        }
+        return treeContainsImport(bin.right);
+    }
+    return false;
+}
+
+@func loadModule(em: *state_mod.EmState, doc: *ast.Document, import_path: string, bind_name: string, current_module: string, out, visited) {
+    $resolved = resolvePath(doc.path, import_path)?;
+    $key = moduleKey(resolved);
+    @if (string.len(bind_name) > 0) {
+        $mod_val = string.concat("module:", key);
+        map.set(em.var_types, string.concat("$", bind_name), mod_val);
+        @if (string.len(current_module) > 0) {
+            map.set(em.var_types, string.concat(string.concat("$", current_module), string.concat("::", bind_name)), mod_val);
+        }
+    }
+    @if (map.has(visited, resolved)) {
+        return;
+    }
+    map.set(visited, resolved, true);
+
+    $source = __readFile(resolved);
+    @if (@isError(source)) {
+        return error("CompileError", "cannot read import");
+    }
+    $mod_doc = parser.parse(em.arena, source, resolved)?;
+    resolveImportsInner(em, mod_doc, key, visited)?;
+
+    $local_map = collectLocalBindings(em.arena, mod_doc.statements, key);
+    @for (0..list.len(mod_doc.statements)) |i| {
+        $ms: *nodes.Node = @as(*nodes.Node, list.get(mod_doc.statements, i));
+        qualifyNode(em, ms, key, local_map);
+    }
+    @for (0..list.len(mod_doc.statements)) |i2| {
+        $ms2: *nodes.Node = @as(*nodes.Node, list.get(mod_doc.statements, i2));
+        @if (isOwnDecl(ms2, key)) {
+            $bound = list.create(em.arena);
+            rewriteModuleRefs(em, ms2, local_map, bound)?;
+        }
+        list.push(out, ms2);
+    }
+}
+
+@func loadImportsInTree(em: *state_mod.EmState, doc: *ast.Document, node: *nodes.Node, current_module: string, out, visited) {
+    @if (node.kind == common.NodeKind.Declaration) {
+        $d: *nodes.Declaration = @as(*nodes.Declaration, node);
+        $imp = getImportSite(d.value);
+        @if (imp != null) {
+            loadModule(em, doc, imp, d.name, current_module, out, visited)?;
+            return;
+        }
+        loadImportsInTree(em, doc, d.value, current_module, out, visited)?;
+        return;
+    }
+    $imp2 = getImportSite(node);
+    @if (imp2 != null) {
+        loadModule(em, doc, imp2, "", current_module, out, visited)?;
+        return;
+    }
+    @if (node.kind == common.NodeKind.Call) {
+        $c: *nodes.Call = @as(*nodes.Call, node);
+        loadImportsInTree(em, doc, c.callee, current_module, out, visited)?;
+        @for (0..list.len(c.args)) |ai| {
+            loadImportsInTree(em, doc, @as(*nodes.Node, list.get(c.args, ai)), current_module, out, visited)?;
+        }
+        return;
+    }
+    @if (node.kind == common.NodeKind.Block) {
+        $b: *nodes.Block = @as(*nodes.Block, node);
+        @for (0..list.len(b.statements)) |si| {
+            loadImportsInTree(em, doc, @as(*nodes.Node, list.get(b.statements, si)), current_module, out, visited)?;
+        }
+        return;
+    }
+    @if (node.kind == common.NodeKind.FunctionDecl) {
+        $f: *nodes.FunctionDecl = @as(*nodes.FunctionDecl, node);
+        loadImportsInTree(em, doc, f.body, current_module, out, visited)?;
+        return;
+    }
+    @if (node.kind == common.NodeKind.Member) {
+        $m: *nodes.Member = @as(*nodes.Member, node);
+        loadImportsInTree(em, doc, m.object, current_module, out, visited)?;
+        return;
+    }
+    @if (node.kind == common.NodeKind.Binary) {
+        $bin: *nodes.Binary = @as(*nodes.Binary, node);
+        loadImportsInTree(em, doc, bin.left, current_module, out, visited)?;
+        loadImportsInTree(em, doc, bin.right, current_module, out, visited)?;
+        return;
+    }
+}
+
+@func resolveImportsInner(em: *state_mod.EmState, doc: *ast.Document, current_module: string, visited) {
+    $has_import = false;
+    @for (0..list.len(doc.statements)) |i| {
+        @if (treeContainsImport(@as(*nodes.Node, list.get(doc.statements, i)))) {
+            has_import = true;
+            break;
+        }
+    }
+    @if (has_import == false) {
+        return;
+    }
+    $out = list.create(em.arena);
+    @for (0..list.len(doc.statements)) |i2| {
+        $s: *nodes.Node = @as(*nodes.Node, list.get(doc.statements, i2));
+        $is_bound = false;
+        @if (s.kind == common.NodeKind.Declaration) {
+            $d: *nodes.Declaration = @as(*nodes.Declaration, s);
+            @if (getImportSite(d.value) != null) {
+                is_bound = true;
+            }
+        }
+        $is_side = getImportSite(s) != null;
+        @if (is_bound == false && is_side == false) {
+            list.push(out, s);
+        }
+        loadImportsInTree(em, doc, s, current_module, out, visited)?;
+    }
+    doc.statements = out;
+}
+
+pub @func resolveImports(em: *state_mod.EmState, doc: *ast.Document) {
+    $visited = map.create(em.arena);
+    resolveImportsInner(em, doc, "", visited)?;
+}

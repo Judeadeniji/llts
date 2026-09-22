@@ -1,0 +1,349 @@
+# Port of src/compiler/stmt/decl.zig — declaration / struct / enum / error / type emit.
+
+@const $opcode = @import("../../bytecode/opcode.lls");
+@const $nodes = @import("../../ast/nodes.lls");
+@const $common = @import("../../ast/common.lls");
+@const $state_mod = @import("../state.lls");
+@const $expr = @import("../expr/root.lls");
+@const $typecheck = @import("../typecheck.lls");
+@const $layout = @import("../layout.lls");
+@const $scope = @import("../scope.lls");
+@const $list = @import("std/list.lls");
+@const $map = @import("std/map.lls");
+@const $string = @import("std/string.lls");
+@const $widths = @import("../widths.lls");
+
+pub @func compileDeclaration(em: *state_mod.EmState, decl: *nodes.Declaration) {
+    @if (decl.value.kind == common.NodeKind.Call) {
+        $vc: *nodes.Call = @as(*nodes.Call, decl.value);
+        @if (vc.callee.kind == common.NodeKind.Primary) {
+            $cal: *nodes.Primary = @as(*nodes.Primary, vc.callee);
+            @if (string.eql(cal.name, "@import")) {
+                return;
+            }
+        }
+    }
+
+    $is_module_export = string.contains(decl.name, "::");
+    # Module / top-level values outlive any frame — allocate literals immortally.
+    $prev_immortal = em.alloc_immortal;
+    @if (em.scope_depth == 0 || is_module_export) {
+        em.alloc_immortal = true;
+    }
+
+    expr.compileExpression(em, decl.value)?;
+
+    @if (decl.type_annotation != null) {
+        $kind = widthCastKind(em, @as(*nodes.Node, decl.type_annotation));
+        @if (kind != null) {
+            em.chunk.writeOp(opcode.OpCode.OP_AS);
+            em.chunk.writeByte(@as(u8, kind));
+        }
+    }
+
+    $type_name: ?string = null;
+    @if (decl.type_annotation != null) {
+        # Prefer type already validated/normalized by the typecheck pass.
+        @if (map.has(em.var_types, decl.name)) {
+            type_name = map.get(em.var_types, decl.name);
+        } @else {
+            type_name = typecheck.typeAstToDisplay(em, @as(*nodes.Node, decl.type_annotation));
+        }
+    } @else {
+        # Fall back to AST inference for module-level and pre-typecheck paths.
+        type_name = inferDeclType(em, decl.value);
+    }
+
+    @if (em.scope_depth > 0 && is_module_export == false) {
+        checkLocalDup(em, decl.name)?;
+        $slot = scope.addLocal(em, decl.name, decl.is_const);
+        $local: *state_mod.EmLocal = @as(*state_mod.EmLocal, list.get(em.locals, slot));
+        @if (type_name != null) {
+            local.type_name = @as(string, type_name);
+        }
+        @if (decl.is_const) {
+            em.chunk.writeOp(opcode.OpCode.OP_MARK_CONST);
+            em.chunk.writeByte(@as(u8, slot));
+        }
+    } @else {
+        @if (type_name != null) {
+            $tn: string = @as(string, type_name);
+            @if (string.len(tn) > 0) {
+                map.set(em.var_types, decl.name, tn);
+            }
+        }
+        em.chunk.emitSetGlobal(decl.name);
+        em.chunk.writeOp(opcode.OpCode.OP_POP);
+        @if (decl.is_const) {
+            map.set(em.ready_global_consts, decl.name, true);
+        }
+    }
+
+    @if (em.scope_depth == 0 || is_module_export) {
+        em.alloc_immortal = prev_immortal;
+    }
+}
+
+@func inferDeclType(em: *state_mod.EmState, value: *nodes.Node) {
+    @if (value.kind == common.NodeKind.StructInit) {
+        $s: *nodes.StructInit = @as(*nodes.StructInit, value);
+        return typecheck.resolveStructName(em, s.type_expr);
+    }
+    @if (value.kind == common.NodeKind.ArrayLiteral) {
+        $a: *nodes.ArrayLiteral = @as(*nodes.ArrayLiteral, value);
+        @if (list.len(a.elements) == 0) {
+            return "[0]unknown";
+        }
+        $elem = inferDeclType(em, @as(*nodes.Node, list.get(a.elements, 0)));
+        @if (elem == null) {
+            elem = "unknown";
+        }
+        return string.concat("[", string.concat(typecheck.intToStr(list.len(a.elements)), string.concat("]", @as(string, elem))));
+    }
+    @if (value.kind == common.NodeKind.Literal) {
+        $lit: *nodes.Literal = @as(*nodes.Literal, value);
+        @switch (lit.literal_type) {
+            nodes.LiteralKind.String => {
+                return string.concat("[", string.concat(typecheck.intToStr(string.len(lit.value)), "]byte"));
+            }
+            nodes.LiteralKind.Boolean => {
+                return "u1";
+            }
+            nodes.LiteralKind.Null => {
+                return "null";
+            }
+            @else => {
+                @if (string.contains(lit.value, ".")) {
+                    return "float";
+                }
+                return "int";
+            }
+        }
+    }
+    @if (value.kind == common.NodeKind.Call) {
+        return typecheck.resolveType(em, value);
+    }
+    @if (value.kind == common.NodeKind.TryExpr) {
+        return typecheck.resolveType(em, value);
+    }
+    @if (value.kind == common.NodeKind.Index) {
+        return typecheck.resolveType(em, value);
+    }
+    @if (value.kind == common.NodeKind.Unary) {
+        $u: *nodes.Unary = @as(*nodes.Unary, value);
+        return inferDeclType(em, u.arg);
+    }
+    @if (value.kind == common.NodeKind.Binary) {
+        $b: *nodes.Binary = @as(*nodes.Binary, value);
+        $lt = inferDeclType(em, b.left);
+        $rt = inferDeclType(em, b.right);
+        @if (lt != null && rt != null) {
+            $l: string = @as(string, lt);
+            $r: string = @as(string, rt);
+            @if (string.eql(l, "float") || string.eql(r, "float")) {
+                return "float";
+            }
+            @if (string.eql(l, "int") && string.eql(r, "int")) {
+                return "int";
+            }
+        }
+        return typecheck.resolveType(em, value);
+    }
+    @if (value.kind == common.NodeKind.Primary) {
+        return typecheck.resolveType(em, value);
+    }
+    @if (value.kind == common.NodeKind.Member) {
+        return typecheck.resolveType(em, value);
+    }
+    return null;
+}
+
+@func checkLocalDup(em: *state_mod.EmState, name: string) {
+    # Newest-first scan over this scope's locals.
+    @for (0..list.len(em.locals)) |k| {
+        $i = list.len(em.locals) - 1 - k;
+        $local: *state_mod.EmLocal = @as(*state_mod.EmLocal, list.get(em.locals, i));
+        @if (local.depth < em.scope_depth) {
+            break;
+        }
+        @if (string.eql(local.name, name)) {
+            return error("CompileError", string.concat("Variable '", string.concat(name, "' already declared in this scope")));
+        }
+    }
+}
+
+pub @func compileExtern(em: *state_mod.EmState, ext: *nodes.Extern) {
+    map.set(em.native_globals, ext.name, true);
+}
+
+pub @func compileStruct(em: *state_mod.EmState, s: *nodes.StructDecl) {
+    $field_list = list.create(em.arena);
+    @for (0..list.len(s.fields)) |fi| {
+        $field: *nodes.StructField = @as(*nodes.StructField, list.get(s.fields, fi));
+        $disp: string = "int";
+        @if (field.type_annotation != null) {
+            $d = typecheck.typeAstToDisplay(em, @as(*nodes.Node, field.type_annotation));
+            @if (d != null) {
+                disp = @as(string, d);
+            } @else {
+                disp = "unknown";
+            }
+        }
+        list.push(field_list, @new(em.arena, layout.FieldSpec { name: field.name, type_name: disp }));
+    }
+    $laid = layout.layoutFields(field_list, em.arena);
+    $def = @new(em.arena, state_mod.EmStructDef {
+        name: s.name,
+        size: laid.size,
+        field_names: list.create(em.arena),
+        field_offsets: laid.offsets,
+        field_types: list.create(em.arena),
+        field_kinds: list.create(em.arena),
+    });
+    @for (0..list.len(field_list)) |gi| {
+        $fs: *layout.FieldSpec = @as(*layout.FieldSpec, list.get(field_list, gi));
+        list.push(def.field_names, fs.name);
+        list.push(def.field_types, fs.type_name);
+        list.push(def.field_kinds, layout.fieldKind(em, fs.type_name));
+    }
+    map.set(em.structs, s.name, def);
+
+    # Qualify method names to Struct::method for dispatch
+    @for (0..list.len(s.methods)) |mi| {
+        $m: *nodes.Node = @as(*nodes.Node, list.get(s.methods, mi));
+        @if (m.kind != common.NodeKind.FunctionDecl) {
+            continue;
+        }
+        $mf: *nodes.FunctionDecl = @as(*nodes.FunctionDecl, m);
+        @if (string.contains(mf.name, "::")) {
+            continue;
+        }
+        mf.name = string.concat(string.concat(s.name, "::"), mf.name);
+    }
+}
+
+pub @func compileEnum(em: *state_mod.EmState, e: *nodes.EnumDecl) {
+    $vNames = list.create(em.arena);
+    $vVals = list.create(em.arena);
+    @for (0..list.len(e.variants)) |i| {
+        $name = list.get(e.variants, i);
+        @for (0..list.len(vNames)) |j| {
+            @if (string.eql(list.get(vNames, j), name)) {
+                return error("CompileError", string.concat("Duplicate enum variant '", string.concat(@as(string, name), string.concat("' in '", string.concat(e.name, "'")))));
+            }
+        }
+        list.push(vNames, name);
+        list.push(vVals, i);
+    }
+    map.set(em.enums, e.name, @new(em.arena, state_mod.EmEnumDef {
+        name: e.name,
+        variant_names: vNames,
+        variant_vals: vVals,
+    }));
+}
+
+pub @func compileErrorDecl(em: *state_mod.EmState, e: *nodes.ErrorDecl) {
+    @if (state_mod.emHasStruct(em, e.name) || state_mod.emHasEnum(em, e.name) || state_mod.emHasTypedef(em, e.name)) {
+        return error("CompileError", "Type name already used");
+    }
+    $vNames = list.create(em.arena);
+    $origins = list.create(em.arena);
+    @for (0..list.len(e.variants)) |i| {
+        $name = list.get(e.variants, i);
+        @for (0..list.len(vNames)) |j| {
+            @if (string.eql(list.get(vNames, j), name)) {
+                return error("CompileError", string.concat("Duplicate error member '", string.concat(@as(string, name), string.concat("' in '", string.concat(e.name, "'")))));
+            }
+        }
+        list.push(vNames, name);
+        list.push(origins, e.name);
+    }
+    map.set(em.error_sets, e.name, @new(em.arena, state_mod.EmErrorSet {
+        name: e.name,
+        variant_names: vNames,
+        origins: origins,
+    }));
+}
+
+pub @func compileTypeDecl(em: *state_mod.EmState, td: *nodes.TypeDecl) {
+    @if (state_mod.emHasStruct(em, td.name) || state_mod.emHasEnum(em, td.name) || state_mod.emHasErrorSet(em, td.name)) {
+        return error("CompileError", "Type name already used by a struct, enum, or error set");
+    }
+    $existing = state_mod.emFindTypedef(em, td.name);
+    @if (existing != null) {
+        $ex: *state_mod.EmTypedef = @as(*state_mod.EmTypedef, existing);
+        @if (ex.stub == false) {
+            return error("CompileError", string.concat("Duplicate type '", string.concat(td.name, "'")));
+        }
+    }
+    @if (string.eql(td.name, "int") || string.eql(td.name, "string") || string.eql(td.name, "bool")) {
+        return error("CompileError", string.concat("Cannot redefine builtin type '", string.concat(td.name, "'")));
+    }
+    $disp_o = typecheck.typeAstToDisplay(em, td.type_expr);
+    @if (disp_o == null) {
+        return error("CompileError", string.concat("Invalid type expression for '", string.concat(td.name, "'")));
+    }
+    $disp: string = @as(string, disp_o);
+    map.set(em.typedefs, td.name, @new(em.arena, state_mod.EmTypedef {
+        name: td.name,
+        underlying: disp,
+        distinct: td.distinct,
+        stub: false,
+    }));
+    # Shape / merged-intersection RHS: layout under typedef name.
+    @if (string.len(disp) > 0 && string.eql(string.slice(disp, 0, 1), "{")) {
+        @if (td.type_expr.kind == common.NodeKind.ShapeType) {
+            registerShapeLayout(em, td.name, @as(*nodes.ShapeType, td.type_expr))?;
+            @if (string.eql(td.name, disp) == false) {
+                registerShapeLayout(em, disp, @as(*nodes.ShapeType, td.type_expr))?;
+            }
+        }
+    }
+}
+
+@func registerShapeLayout(em: *state_mod.EmState, key: string, shape: *nodes.ShapeType) {
+    @if (state_mod.emHasStruct(em, key)) {
+        return;
+    }
+    $field_list = list.create(em.arena);
+    @for (0..list.len(shape.fields)) |fi| {
+        $field: *nodes.ShapeField = @as(*nodes.ShapeField, list.get(shape.fields, fi));
+        $field_disp: string = "int";
+        @if (field.type_annotation != null) {
+            $d = typecheck.typeAstToDisplay(em, @as(*nodes.Node, field.type_annotation));
+            @if (d != null) {
+                field_disp = @as(string, d);
+            } @else {
+                field_disp = "unknown";
+            }
+        }
+        list.push(field_list, @new(em.arena, layout.FieldSpec { name: field.name, type_name: field_disp }));
+    }
+    $laid = layout.layoutFields(field_list, em.arena);
+    $def = @new(em.arena, state_mod.EmStructDef {
+        name: key,
+        size: laid.size,
+        field_names: list.create(em.arena),
+        field_offsets: laid.offsets,
+        field_types: list.create(em.arena),
+        field_kinds: list.create(em.arena),
+    });
+    @for (0..list.len(field_list)) |gi| {
+        $fs: *layout.FieldSpec = @as(*layout.FieldSpec, list.get(field_list, gi));
+        list.push(def.field_names, fs.name);
+        list.push(def.field_types, fs.type_name);
+        list.push(def.field_kinds, layout.fieldKind(em, fs.type_name));
+    }
+    map.set(em.structs, key, def);
+}
+
+@func widthCastKind(em: *state_mod.EmState, node: *nodes.Node) {
+    @if (node.kind != common.NodeKind.Primary) {
+        return null;
+    }
+    $p: *nodes.Primary = @as(*nodes.Primary, node);
+    @if (p.primary_kind != nodes.PrimaryKind.Identifier) {
+        return null;
+    }
+    return widths.fromName(p.name);
+}

@@ -37,6 +37,18 @@ pub @func size(w: Width) {
     }
 }
 
+# True for f32/f64 (Zig `Width.isFloat`).
+pub @func isFloat(w: Width): bool {
+    @switch (w) {
+        Width.f32, Width.f64 => {
+            return true;
+        }
+        @else => {
+            return false;
+        }
+    }
+}
+
 # Aliases: int/number→i64, byte→u8, float→f64, bool/boolean→u1.
 pub @func fromName(n: string) {
     @if (string.eql(n, "u1") || string.eql(n, "bool") || string.eql(n, "boolean")) {

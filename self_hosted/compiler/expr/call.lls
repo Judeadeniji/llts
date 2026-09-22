@@ -1,0 +1,268 @@
+# Port of src/compiler/expr/call.zig — call / method / pipe / intrinsic emit.
+
+@const $nodes = @import("../../ast/nodes.lls");
+@const $common = @import("../../ast/common.lls");
+@const $opcode = @import("../../bytecode/opcode.lls");
+@const $state_mod = @import("../state.lls");
+@const $typecheck = @import("../typecheck.lls");
+@const $intrinsics = @import("../intrinsics.lls");
+@const $path = @import("./path.lls");
+@const $expr = @import("./root.lls");
+@const $aggregate = @import("./aggregate.lls");
+@const $list = @import("std/list.lls");
+@const $string = @import("std/string.lls");
+@const $map = @import("std/map.lls");
+
+pub @func compileCall(em: *state_mod.EmState, c: *nodes.Call, node: *nodes.Node) {
+    @if (c.callee.kind == common.NodeKind.Primary) {
+        $cal: *nodes.Primary = @as(*nodes.Primary, c.callee);
+        @if (string.eql(cal.name, "print")) {
+            em.chunk.emitGetGlobal("print");
+            @for (0..list.len(c.args)) |i| {
+                expr.compileExpression(em, emArgNode(c.args, i))?;
+            }
+            em.chunk.writeOp(opcode.OpCode.OP_CALL);
+            em.chunk.writeByte(@as(u8, list.len(c.args)));
+            return;
+        }
+        @if (string.startsWith(cal.name, "@")) {
+            $intr = intrinsics.match(cal.name);
+            @if (intr == null) {
+                return error("CompileError", string.concat("unknown intrinsic '", string.concat(cal.name, "'")));
+            }
+            intrinsics.compile(em, intr, node, c)?;
+            return;
+        }
+    }
+
+    # `T(x)` cast sugar ≡ `@as(T, x)`.
+    $type_node = intrinsics.tryTypeCastCall(em, c);
+    @if (type_node != null) {
+        intrinsics.compileCast(em, @as(*nodes.Node, type_node), emArgNode(c.args, 0))?;
+        return;
+    }
+
+    # Method call: obj.method(args) → Type::method(obj, args...)
+    @if (c.callee.kind == common.NodeKind.Member) {
+        $mem: *nodes.Member = @as(*nodes.Member, c.callee);
+        @if (mem.property.kind == common.NodeKind.Primary) {
+            $prop: *nodes.Primary = @as(*nodes.Primary, mem.property);
+            $type_name = typecheck.resolveType(em, mem.object);
+            @if (type_name != null) {
+                $tn: string = @as(string, type_name);
+                $sd = typecheck.lookupStruct(em, tn);
+                @if (sd != null) {
+                    @if (state_mod.emFieldIndex(@as(*state_mod.EmStructDef, sd), prop.name) < 0) {
+                        $method_name = string.concat(string.concat(typecheck.unwrapOptionalDisplay(tn), "::"), prop.name);
+                        emitMethodCall(em, method_name, mem.object, c.args)?;
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
+    $name = resolveCalleeName(em, c.callee);
+    @if (name != null) {
+        $n: string = @as(string, name);
+        @if (string.contains(n, "::") && c.callee.kind == common.NodeKind.Member) {
+            # Module export access check: `mod.fn()` must name an export or re-export.
+            $mem2: *nodes.Member = @as(*nodes.Member, c.callee);
+            $re_key = string.concat("$", n);
+            $is_reexport = false;
+            @if (map.has(em.var_types, re_key)) {
+                $re = map.get(em.var_types, re_key);
+                is_reexport = string.startsWith(re, "module:");
+            }
+            @if (state_mod.emHasFunction(em, n) == false && is_reexport == false) {
+                $mod_name: string = "Module";
+                @if (mem2.object.kind == common.NodeKind.Primary) {
+                    $mo: *nodes.Primary = @as(*nodes.Primary, mem2.object);
+                    mod_name = mo.name;
+                }
+                $prop_name: string = "property";
+                @if (mem2.property.kind == common.NodeKind.Primary) {
+                    $pp: *nodes.Primary = @as(*nodes.Primary, mem2.property);
+                    prop_name = pp.name;
+                }
+                return error("CompileError", string.concat("'", string.concat(mod_name, string.concat("' has no export '", string.concat(prop_name, "'")))));
+            }
+        }
+        @if (emitNamedCall(em, n, c.args)) {
+            return;
+        }
+    }
+
+    expr.compileExpression(em, c.callee)?;
+    @for (0..list.len(c.args)) |i2| {
+        expr.compileExpression(em, emArgNode(c.args, i2))?;
+    }
+    em.chunk.writeOp(opcode.OpCode.OP_CALL);
+    em.chunk.writeByte(@as(u8, list.len(c.args)));
+}
+
+pub @func emitMethodCall(em: *state_mod.EmState, name: string, self_obj: *nodes.Node, args) {
+    $argc = list.len(args) + 1;
+    $fn_o = state_mod.emFindFunc(em, name);
+    @if (fn_o == null) {
+        return error("CompileError", string.concat("Unknown method ", name));
+    }
+    $fn: *state_mod.EmFunc = @as(*state_mod.EmFunc, fn_o);
+    $addr: i64 = fn.address;
+
+    # OP_CALL expects [callee, self, ...args]. GET_FUNCTION must precede args.
+    # CALL_STATIC only needs [self, ...args] (no callee value).
+    @if (needsDynamicCall(addr)) {
+        em.chunk.emitGetFunction(name);
+    }
+    # `self: T` (by value) must receive a shallow copy so field stores do not alias the caller.
+    @if (methodSelfIsByValue(em, name)) {
+        em.chunk.emitGetGlobal("__cloneBytes");
+        expr.compileExpression(em, self_obj)?;
+        em.chunk.writeOp(opcode.OpCode.OP_CALL);
+        em.chunk.writeByte(1);
+    } @else {
+        expr.compileExpression(em, self_obj)?;
+    }
+    @for (0..list.len(args)) |i| {
+        expr.compileExpression(em, emArgNode(args, i))?;
+    }
+    finishCall(em, addr, argc)?;
+}
+
+@func methodSelfIsByValue(em: *state_mod.EmState, name: string): bool {
+    $def_o = state_mod.emFindFunc(em, name);
+    @if (def_o == null) {
+        return false;
+    }
+    $def: *state_mod.EmFunc = @as(*state_mod.EmFunc, def_o);
+    @if (def.node.kind != common.NodeKind.FunctionDecl) {
+        return false;
+    }
+    $f: *nodes.FunctionDecl = @as(*nodes.FunctionDecl, def.node);
+    @if (f.params.kind != common.NodeKind.Params) {
+        return false;
+    }
+    $ps: *nodes.Params = @as(*nodes.Params, f.params);
+    @if (list.len(ps.params) == 0) {
+        return false;
+    }
+    $self_param: *nodes.Param = @as(*nodes.Param, list.get(ps.params, 0));
+    @if (string.eql(self_param.name, "self") == false) {
+        return false;
+    }
+    # Unannotated self defaults to *T.
+    @if (self_param.type_annotation == null) {
+        return false;
+    }
+    $disp_o = typecheck.typeAstToDisplay(em, @as(*nodes.Node, self_param.type_annotation));
+    @if (disp_o == null) {
+        return false;
+    }
+    $disp: string = @as(string, disp_o);
+    @if (string.len(disp) == 0) {
+        return true;
+    }
+    return string.eql(string.slice(disp, 0, 1), "*") == false;
+}
+
+@func emitNamedCall(em: *state_mod.EmState, name: string, args): bool {
+    $fn_o = state_mod.emFindFunc(em, name);
+    @if (fn_o == null) {
+        return false;
+    }
+    $fn: *state_mod.EmFunc = @as(*state_mod.EmFunc, fn_o);
+    $addr: i64 = fn.address;
+    $argc = list.len(args);
+
+    # OP_CALL stack: [callee, arg0, ...]. Emit GET_FUNCTION before args when
+    # the target is a forward ref or beyond CALL_STATIC's u16 address limit.
+    @if (needsDynamicCall(addr)) {
+        em.chunk.emitGetFunction(name);
+    }
+    @for (0..argc) |i| {
+        expr.compileExpression(em, emArgNode(args, i))?;
+    }
+    finishCall(em, addr, argc)?;
+    return true;
+}
+
+# True when we must use GET_FUNCTION+CALL instead of CALL_STATIC.
+@func needsDynamicCall(addr: i64): bool {
+    @if (addr < 0) {
+        return true;
+    }
+    return addr > 65535;
+}
+
+# After args (and optional callee) are on the stack: CALL_STATIC or CALL.
+@func finishCall(em: *state_mod.EmState, addr: i64, argc: i64) {
+    @if (addr >= 0 && addr <= 65535) {
+        em.chunk.emitCallStatic(addr, argc);
+        return;
+    }
+    em.chunk.writeOp(opcode.OpCode.OP_CALL);
+    em.chunk.writeByte(@as(u8, argc));
+}
+
+pub @func compilePipe(em: *state_mod.EmState, bin: *nodes.Binary) {
+    @if (bin.right.kind == common.NodeKind.Call) {
+        $c: *nodes.Call = @as(*nodes.Call, bin.right);
+        # Build a synthetic call: callee(left, ...args)
+        $name = resolveCalleeName(em, c.callee);
+        @if (name != null) {
+            $n: string = @as(string, name);
+            $fn_o = state_mod.emFindFunc(em, n);
+            @if (fn_o != null) {
+                $fn: *state_mod.EmFunc = @as(*state_mod.EmFunc, fn_o);
+                $argc = list.len(c.args) + 1;
+                @if (needsDynamicCall(fn.address)) {
+                    em.chunk.emitGetFunction(n);
+                }
+                expr.compileExpression(em, bin.left)?;
+                @for (0..list.len(c.args)) |i| {
+                    expr.compileExpression(em, emArgNode(c.args, i))?;
+                }
+                finishCall(em, fn.address, argc)?;
+                return;
+            }
+        }
+        expr.compileExpression(em, c.callee)?;
+        expr.compileExpression(em, bin.left)?;
+        @for (0..list.len(c.args)) |i2| {
+            expr.compileExpression(em, emArgNode(c.args, i2))?;
+        }
+        em.chunk.writeOp(opcode.OpCode.OP_CALL);
+        em.chunk.writeByte(@as(u8, list.len(c.args) + 1));
+        return;
+    }
+
+    expr.compileExpression(em, bin.right)?;
+    expr.compileExpression(em, bin.left)?;
+    em.chunk.writeOp(opcode.OpCode.OP_CALL);
+    em.chunk.writeByte(1);
+}
+
+@func resolveCalleeName(em: *state_mod.EmState, callee: *nodes.Node) {
+    $p = path.tryResolveStaticPath(em, callee);
+    @if (p != null) {
+        return p;
+    }
+    @if (callee.kind == common.NodeKind.Primary) {
+        $prim: *nodes.Primary = @as(*nodes.Primary, callee);
+        @if (prim.primary_kind == nodes.PrimaryKind.Identifier) {
+            return prim.name;
+        }
+    }
+    @if (callee.kind == common.NodeKind.Member) {
+        $p2 = path.tryResolveStaticPath(em, callee);
+        @if (p2 != null) {
+            return p2;
+        }
+    }
+    return null;
+}
+
+pub @func emArgNode(args, i: i64): *nodes.Node {
+    return @as(*nodes.Node, list.get(args, i));
+}

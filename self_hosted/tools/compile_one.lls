@@ -1,29 +1,32 @@
 # Compile one example. Path is read from /tmp/llts_smoke_path.txt
 # (os.args() + self-hosted compiler in one program panics the host).
+#
+# Note: locals must not be named `$path` / `$src` — the compiler module graph
+# already binds those aliases and root-level bare aliases are last-import-wins.
 
 @const $compiler = @import("../compiler/root.lls");
 @const $mem = @import("std/mem.lls");
 @const $debug = @import("std/debug.lls");
 @const $os = @import("std/os.lls");
 
-$path = __readFile("/tmp/llts_smoke_path.txt");
-@if (@isError(path)) {
-    print(path);
+$in_path = __readFile("/tmp/llts_smoke_path.txt");
+@if (@isError(in_path)) {
+    print(in_path);
     os.exit(1);
 }
-$src = __readFile(path);
-@if (@isError(src)) {
-    print(src);
+$in_src = __readFile(in_path);
+@if (@isError(in_src)) {
+    print(in_src);
     os.exit(1);
 }
-$out = "/tmp/llts_compile_one.llb";
+$out_path = "/tmp/llts_compile_one.llb";
 $arena = mem.create(0);
-$err = compiler.compileFile(arena, src, path, out);
+$err = compiler.compileFile(arena, in_src, in_path, out_path);
 @if (@isError(err)) {
     print(err);
     os.exit(1);
 }
-debug.printLn("{s}", out);
+debug.printLn("{s}", out_path);
 arena.deinit();
 
 pub @func main() {}
