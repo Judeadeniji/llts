@@ -15,3 +15,6 @@ bun.lock
 .idea/
 .env
 .env.*
+
+# Progress / TODO tracking
+.todos*

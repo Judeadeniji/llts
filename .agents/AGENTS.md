@@ -24,3 +24,7 @@ This is where language design gets tricky. Some features look like standard libr
 * Memory Management (malloc / free / new): The language needs a syntax hook or a runtime engine to request heap pages from the OS. In C, malloc is a library function calling an OS hook. In Go/Java, memory allocation is part of the core language runtime (Garbage Collector). [18, 19, 20, 21, 22]
 * Input/Output (print / read): In Python, print() is a core built-in function. In C, printf() is a library function wrapping a syscall. Deciding which path to take depends on how fundamental you want console I/O to be. [23, 24, 25, 26, 27]
 * Reflection / Type Inspection: If your language allows checking a type at runtime (e.g., typeof(x)), the compiler must inject metadata into the compiled binary. This requires a bridge where the library reads core compiler structures. [28, 29]
+
+## 4. Coding Guidelines
+
+* **Zig Imports:** NEVER inline Zig imports (e.g., do not write `@import("some/module.zig").func()`). Always declare imports as top-level constants at the beginning of the file (e.g., `const module = @import("some/module.zig");`) and use the constant.
