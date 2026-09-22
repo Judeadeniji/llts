@@ -1,4 +1,7 @@
 const std = @import("std");
+const typecheck = @import("typecheck/root.zig");
+pub const state_ext = @import("state.zig");
+pub const typecheck_ext = @import("typecheck/root.zig");
 const ast = @import("../ast/root.zig");
 const chunk_mod = @import("../bytecode/chunk.zig");
 const emit = @import("emit.zig");
@@ -6,7 +9,7 @@ const modules = @import("modules.zig");
 const scope = @import("scope.zig");
 pub const state_mod = @import("state.zig");
 const stmt = @import("stmt/root.zig");
-const typecheck = @import("typecheck/root.zig");
+
 const path_mod = @import("expr/path.zig");
 const reachability = @import("reachability.zig");
 const types = @import("typecheck/from_ast.zig");
@@ -52,6 +55,32 @@ pub fn analyze(
     try requireEntryMain(&state, doc);
     
     return state;
+}
+
+/// Registration passes needed before `typecheck` behaves like the full
+/// compiler pipeline: function registry, struct/enum/error tables, module
+/// decls, and top-level decl compilation. The CLI's `analyze` runs these
+/// implicitly; calling `typecheck` on a fresh state skips them and silently
+/// passes calls to unknown functions. Tooling (the LSP) uses this first.
+/// Entry-point validation is intentionally not run: scratch buffers without
+/// a `pub main` are normal in an editor.
+pub fn prepareForTypecheck(state: *state_mod.CompilerState, doc: *ast.Document) !void {
+    state.debug = false;
+    state.chunk.file = doc.path;
+    state.chunk.source = doc.source;
+    state.diag_path = doc.path;
+    _ = try state.chunk.addSource(doc.path, doc.source);
+
+    // Import resolution is best-effort for tooling: failures surface later
+    // through typecheck on the resolved decls.
+    modules.resolveImports(state, doc) catch {};
+    try registerStructNames(state, doc);
+    try registerFunctions(state, doc);
+    try registerModuleDecls(state, doc);
+
+    for (doc.statements) |s| {
+        if (s.* == .struct_decl or s.* == .enum_decl or s.* == .error_decl or s.* == .type_decl) try stmt.compileStatement(state, s);
+    }
 }
 
 pub fn emitBytecode(state: *state_mod.CompilerState, doc: *ast.Document) !chunk_mod.Chunk {
@@ -622,6 +651,9 @@ fn analyzeBody(
         .assignment => |a| {
             try analyzeBody(state, a.left, calls, has_loop, has_return, return_type, full_name);
             try analyzeBody(state, a.right, calls, has_loop, has_return, return_type, full_name);
+        },
+        .declaration => |d| {
+            try analyzeBody(state, d.value, calls, has_loop, has_return, return_type, full_name);
         },
         .for_expr => |f| {
             try analyzeBody(state, f.expr, calls, has_loop, has_return, return_type, full_name);

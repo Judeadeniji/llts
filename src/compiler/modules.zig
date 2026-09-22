@@ -379,7 +379,7 @@ fn loadModule(
     };
     defer scanner.deinitScanResult(&scan_result);
 
-    const mod_doc = parser.parse(state.allocator, scan_result.tokens.items, resolved, source) catch {
+    const mod_doc = parser.parse(state.allocator, scan_result.tokens.items, resolved, source, null) catch {
         reportImportStack(state);
         return error.CompileError;
     };

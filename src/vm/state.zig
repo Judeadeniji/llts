@@ -20,7 +20,9 @@ pub const CallFrame = struct {
     return_ip: usize = 0,
     base_slot: usize = 0,
     arg_count: u8 = 0,
-    const_slots: std.AutoHashMap(u8, void),
+    /// 256-bit bitset (4 × u64) — slot s is const iff bit s is set.
+    /// Zero-allocation replacement for the previous AutoHashMap(u8, void).
+    const_slots: [4]u64 = [_]u64{0} ** 4,
     func_name: []const u8 = "<anonymous>",
     /// Borrowed path from chunk.sources.
     file: []const u8 = "",
@@ -36,14 +38,18 @@ pub const CallFrame = struct {
     /// frame without clobbering immortal string/`[]byte` data.
     bytes_watermark: u32 = 0,
 
-    pub fn init(allocator: std.mem.Allocator) CallFrame {
-        return .{
-            .const_slots = std.AutoHashMap(u8, void).init(allocator),
-        };
+    pub fn init(_: std.mem.Allocator) CallFrame {
+        return .{};
     }
 
-    pub fn deinit(self: *CallFrame) void {
-        self.const_slots.deinit();
+    pub fn deinit(_: *CallFrame) void {}
+
+    pub inline fn markConst(self: *CallFrame, slot: u8) void {
+        self.const_slots[slot / 64] |= @as(u64, 1) << @intCast(slot % 64);
+    }
+
+    pub inline fn isConst(self: *const CallFrame, slot: u8) bool {
+        return self.const_slots[slot / 64] & (@as(u64, 1) << @intCast(slot % 64)) != 0;
     }
 };
 
@@ -56,7 +62,8 @@ pub const VMState = struct {
     global_name_to_slot: std.StringHashMap(u16),
     stack_buf: []Value = &.{},
     sp: usize = 0,
-    frames: std.ArrayList(CallFrame) = .empty,
+    frames: [MAX_FRAMES]CallFrame = undefined,
+    frame_count: usize = 0,
     /// Frame-local Value heap. Grows; rewind is `heap_ptr` (capacity retained).
     memory: std.ArrayList(Value) = .empty,
     heap_ptr: i32 = HEAP_START,
@@ -82,6 +89,9 @@ pub const VMState = struct {
     buffers: std.ArrayList(*value.BufferObject) = .empty,
     /// Cache: constant string index → heap data pointer, avoids re-allocating the same literal.
     string_cache: std.AutoHashMap(u32, i32),
+    /// Reverse map: bytecode address → function name. Built once at init; replaces
+    /// the O(n) functionNameAt linear scan that ran on every callStatic.
+    addr_to_func_name: std.AutoHashMap(u32, []const u8),
     /// Path of the running script (borrowed; used by os.args as argv[0]).
     script_path: []const u8 = "",
     /// Extra argv after the script path (borrowed; used by os.args as argv[1..]).
@@ -95,6 +105,7 @@ pub const VMState = struct {
             .allocator = allocator,
             .global_name_to_slot = std.StringHashMap(u16).init(allocator),
             .string_cache = std.AutoHashMap(u32, i32).init(allocator),
+            .addr_to_func_name = std.AutoHashMap(u32, []const u8).init(allocator),
             .chunk = chunk,
             .max_memory_slots = max_memory_slots,
             .stack_buf = try allocator.alloc(Value, STACK_MAX),
@@ -106,19 +117,29 @@ pub const VMState = struct {
             try state.global_name_to_slot.put(name, @intCast(i));
         }
         state.global_count = @intCast(chunk.global_names.items.len);
+        // Build reverse address→name map once; O(1) lookup replaces O(n) scan per call.
+        var fn_it = chunk.functions.iterator();
+        while (fn_it.next()) |entry| {
+            try state.addr_to_func_name.put(entry.value_ptr.address, entry.key_ptr.*);
+        }
         try state.memory.appendNTimes(allocator, .null, @intCast(HEAP_START));
         try state.memory.ensureTotalCapacity(allocator, 4096);
         try state.immortal.ensureTotalCapacity(allocator, 256);
         try state.bytes.ensureTotalCapacity(allocator, 4096);
-        var frame = CallFrame.init(allocator);
-        frame.func_name = "<anonymous>";
-        frame.file = if (chunk.file.len > 0) chunk.file else "<anonymous>";
-        frame.source_index = 0;
+        var init_frame = CallFrame.init(allocator);
+        init_frame.func_name = "<anonymous>";
+        init_frame.file = if (chunk.file.len > 0) chunk.file else "<anonymous>";
+        init_frame.source_index = 0;
         // Script frame lives until process end — watermarks track immortal growth.
-        frame.heap_watermark = HEAP_START;
-        frame.bytes_watermark = 0;
-        try state.frames.append(allocator, frame);
+        init_frame.heap_watermark = HEAP_START;
+        init_frame.bytes_watermark = 0;
+        state.frames[0] = init_frame;
+        state.frame_count = 1;
         return state;
+    }
+
+    pub inline fn frame(self: *VMState) *CallFrame {
+        return &self.frames[self.frame_count - 1];
     }
 
     pub fn sourceForFile(self: *const VMState, path: []const u8) []const u8 {
@@ -129,8 +150,7 @@ pub const VMState = struct {
     }
 
     pub fn deinit(self: *VMState) void {
-        for (self.frames.items) |*f| f.deinit();
-        self.frames.deinit(self.allocator);
+        for (self.frames[0..self.frame_count]) |*f| f.deinit();
         self.allocator.free(self.stack_buf);
         self.allocator.free(self.global_values);
         self.global_name_to_slot.deinit();
@@ -155,6 +175,7 @@ pub const VMState = struct {
         }
         self.buffers.deinit(self.allocator);
         self.string_cache.deinit();
+        self.addr_to_func_name.deinit();
         self.memory.deinit(self.allocator);
         self.immortal.deinit(self.allocator);
         self.bytes.deinit(self.allocator);

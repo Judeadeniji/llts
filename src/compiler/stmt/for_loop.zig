@@ -15,10 +15,10 @@ pub fn compileFor(state: *CompilerState, for_expr: *const ast.For) !void {
         .scope_depth = state.scope_depth,
     });
 
-    if (state.for_is_cond.contains(for_expr) or for_expr.captures.len == 0) {
-        try compileCondFor(state, for_expr);
-    } else if (for_expr.expr.* == .binary and std.mem.eql(u8, for_expr.expr.binary.operator, "..")) {
+    if (for_expr.expr.* == .binary and std.mem.eql(u8, for_expr.expr.binary.operator, "..")) {
         try compileRangeFor(state, for_expr);
+    } else if (state.for_is_cond.contains(for_expr) or for_expr.captures.len == 0) {
+        try compileCondFor(state, for_expr);
     } else {
         try compileIterFor(state, for_expr);
     }
@@ -77,11 +77,12 @@ fn compileRangeFor(state: *CompilerState, for_expr: *const ast.For) !void {
     }
     const start = for_expr.expr.binary.left;
     const end = for_expr.expr.binary.right;
-    if (for_expr.captures.len == 0) return fail(state, "Range loop missing capture");
+    // Captureless range loops are allowed: the counter slot exists but is unnamed.
+    const cap_name: []const u8 = if (for_expr.captures.len > 0) for_expr.captures[0].name else ".range_i";
 
     try expr.compileExpression(state, start);
     try state.locals.append(state.allocator, .{
-        .name = for_expr.captures[0].name,
+        .name = cap_name,
         .depth = state.scope_depth,
         .is_const = true,
         .type_name = "int",

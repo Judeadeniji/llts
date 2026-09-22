@@ -116,9 +116,16 @@ pub const StructDecl = struct {
     loc: Location,
 };
 
+pub const EnumVariant = struct {
+    name: []const u8,
+    /// Optional initializer: a string or integer literal node.
+    /// `null` means auto (numeric, auto-increment from previous).
+    value: ?*Node = null,
+};
+
 pub const EnumDecl = struct {
     name: []const u8,
-    variants: []const []const u8,
+    variants: []const EnumVariant,
     is_public: bool = false,
     loc: Location,
 };

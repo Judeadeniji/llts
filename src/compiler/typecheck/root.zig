@@ -672,6 +672,11 @@ pub fn recordExprType(state: *state_mod.CompilerState, node: *ast.Node, t: ir.Ty
         .str_lit => ir.TString,
         else => t,
     };
+    // Never poison `type_of_results` with `unknown`: emit-time resolveType runs
+    // after return-type refinement, so it can see through forward-referenced
+    // unannotated functions. Recording `unknown` here would shadow that better
+    // answer and degrade field access to dynamic GET_PROPERTY.
+    if (codegen_t == .unknown) return;
     const disp = try ownDisplay(state, codegen_t);
     if (!state.type_of_results.contains(node)) {
         try state.type_of_results.put(node, disp);
@@ -998,6 +1003,9 @@ fn inferExprInner(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, 
                         }
                     } else if (ir.structNameOf(obj)) |sname| {
                         const ft = try fieldTypeFromStruct(state, ta, sname, mem.property.primary.name);
+                        // Record the field type on the member node so editor
+                        // features (hover) can resolve assignment targets.
+                        try recordExprType(state, a.left, ft);
                         try requireAssignFrom(state, val, ft, "assignment to field", a.right);
                     }
                 }

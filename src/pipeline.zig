@@ -33,7 +33,7 @@ pub fn compileSource(
     var scan_result = try scanner.scan(allocator, source, path);
     defer scanner.deinitScanResult(&scan_result);
 
-    var doc = try parser.parse(allocator, scan_result.tokens.items, path, source);
+    var doc = try parser.parse(allocator, scan_result.tokens.items, path, source, null);
     defer doc.deinit();
 
     return try compiler.compile(allocator, &doc, .{ .debug = options.debug });
@@ -51,7 +51,22 @@ pub fn runChunk(
     state.script_path = script_path;
     state.script_args = script_args;
     try builtins.registerBuiltins(&state, chunk);
-    try execute.execute(&state, 0);
+    execute.execute(&state, 0) catch |err| {
+        if (err == error.TypeError) {
+            const f = if (state.frame_count > 0) state.frame() else null;
+            if (f) |frame| {
+                std.debug.print("runtime TypeError in {s} ({s}:{d}:{d})\n", .{
+                    frame.func_name,
+                    if (frame.file.len > 0) frame.file else script_path,
+                    frame.line,
+                    frame.column,
+                });
+            } else {
+                std.debug.print("runtime TypeError before first frame\n", .{});
+            }
+        }
+        return err;
+    };
 }
 
 pub fn runSource(
@@ -95,7 +110,7 @@ pub fn emitLlvmBitcode(
     var scan_result = try scanner.scan(allocator, source, path);
     defer scanner.deinitScanResult(&scan_result);
 
-    var doc = try parser.parse(allocator, scan_result.tokens.items, path, source);
+    var doc = try parser.parse(allocator, scan_result.tokens.items, path, source, null);
     defer doc.deinit();
 
     var state = try compiler.analyze(allocator, &doc, .{ .debug = options.debug });

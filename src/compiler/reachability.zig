@@ -187,6 +187,12 @@ fn collectRefs(
     result: *Result,
     work: *std.ArrayList([]const u8),
 ) !void {
+    // Alias→module bindings are scoped per importing module; resolution needs to
+    // know which file the referenced code lives in (same mechanism as `noteDiag`).
+    const loc = node.loc();
+    const prev_diag = state.diag_path;
+    if (loc.path.len > 0) state.diag_path = loc.path;
+    defer state.diag_path = prev_diag;
     switch (node.*) {
         .function_decl => |f| try collectRefs(state, func_name, f.body, result, work),
         .block => |b| {
@@ -292,9 +298,7 @@ fn noteGlobalRead(state: *CompilerState, name: []const u8, result: *Result) !voi
         try result.globals.put(name, {});
         return;
     }
-    var buf: [256]u8 = undefined;
-    const key = std.fmt.bufPrint(&buf, "${s}", .{name}) catch return;
-    if (state.global_types.get(key)) |ty| {
+    if (path.aliasModuleType(state, name)) |ty| {
         if (std.mem.startsWith(u8, ty, "module:")) {
             try result.globals.put(name, {});
         }
@@ -438,7 +442,7 @@ test "reachability keeps only called std/debug function" {
     var scan_result = try scanner.scan(allocator, source, "test.lls");
     defer scanner.deinitScanResult(&scan_result);
 
-    var doc = try parser.parse(allocator, scan_result.tokens.items, "test.lls", source);
+    var doc = try parser.parse(allocator, scan_result.tokens.items, "test.lls", source, null);
     defer doc.deinit();
 
     var chunk = try compiler.compile(allocator, &doc, .{ .debug = false });
@@ -464,7 +468,7 @@ test "native print does not pull in std/io print" {
     var scan_result = try scanner.scan(allocator, source, "test.lls");
     defer scanner.deinitScanResult(&scan_result);
 
-    var doc = try parser.parse(allocator, scan_result.tokens.items, "test.lls", source);
+    var doc = try parser.parse(allocator, scan_result.tokens.items, "test.lls", source, null);
     defer doc.deinit();
 
     var chunk = try compiler.compile(allocator, &doc, .{ .debug = false });

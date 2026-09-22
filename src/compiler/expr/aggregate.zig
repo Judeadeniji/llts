@@ -425,6 +425,14 @@ fn compileEnumVariant(state: *CompilerState, mem: *const ast.Member) !bool {
     const value = ed.variants.get(variant) orelse {
         return compiler_errors.compileFailFmt(state, "Unknown enum variant '{s}' on '{s}'", .{ variant, ename });
     };
+    // String-tagged enum (`Tag = "text"`): the variant's value is its string,
+    // not the internal ordinal.
+    if (ed.string_values) |*sv| {
+        if (sv.get(variant)) |str| {
+            try emit.emitString(state, str);
+            return true;
+        }
+    }
     try emit.emitConstant(state, .{ .i64 = value });
     return true;
 }

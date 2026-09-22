@@ -19,6 +19,7 @@ pub const Parser = struct {
     path: []const u8,
     source: []const u8,
     arena: std.mem.Allocator,
+    diagnostics: ?*std.ArrayList(ast.Diagnostic) = null,
 
     pub fn peek(self: *const Parser, step: usize) ?Token {
         const i = self.current + step;
@@ -91,10 +92,41 @@ pub const Parser = struct {
     pub fn failTok(self: *Parser, token: Token, comptime fmt: []const u8, args: anytype) ParseError {
         var msg_buf: [512]u8 = undefined;
         const message = std.fmt.bufPrint(&msg_buf, fmt, args) catch "parse error";
+        
+        if (self.diagnostics) |diags| {
+            diags.append(self.arena, .{
+                .line = token.line,
+                .column = token.column,
+                .message = self.arena.dupe(u8, message) catch "parse error",
+            }) catch {};
+            return error.ParseFailed;
+        }
+
         const report = @import("../errors/report.zig");
         report.reportSourceError(self.path, self.source, token.line, token.column, message);
         report.reportLocationFrameCol(self.path, token.line, token.column, "<parse>");
         return error.ParseFailed;
+    }
+
+    pub fn synchronize(self: *Parser) void {
+        _ = self.advance();
+        while (!self.isAtEnd()) {
+            const prev = self.previous().?;
+            if (prev.type == .delimiter and std.mem.eql(u8, prev.value, ";")) return;
+            const next = self.peek(0).?;
+            if (next.type == .compiler_keyword) {
+                if (std.mem.eql(u8, next.value, "@func") or
+                    std.mem.eql(u8, next.value, "@const") or
+                    std.mem.eql(u8, next.value, "@struct") or
+                    std.mem.eql(u8, next.value, "@enum") or
+                    std.mem.eql(u8, next.value, "@for") or
+                    std.mem.eql(u8, next.value, "@if") or
+                    std.mem.eql(u8, next.value, "@while") or
+                    std.mem.eql(u8, next.value, "@return")) return;
+            }
+            if (next.type == .keyword and std.mem.eql(u8, next.value, "return")) return;
+            _ = self.advance();
+        }
     }
 
     pub fn failMsg(self: *Parser, message: []const u8) ParseError {

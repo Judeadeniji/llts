@@ -1,0 +1,68 @@
+# @nameOf — return the declared name of any declaration as a string.
+#
+# Works on:
+#   - enum/error set type names          → compile-time fold
+#   - enum variant literals              → compile-time fold
+#   - runtime enum values                → runtime dispatch
+#   - error literal / runtime error      → compile-time fold / runtime
+#   - local variables, global variables  → compile-time fold
+#   - functions                          → compile-time fold
+#
+#   zig-out/bin/llts run examples/name_of.lls
+
+# --- Enum type and variant names -------------------------------------
+
+@enum Direction { North, South, East, West }
+
+print(@nameOf(Direction));        # "Direction"  (type name)
+print(@nameOf(Direction.North));  # "North"       (variant literal — folded)
+print(@nameOf(Direction.West));   # "West"        (variant literal — folded)
+
+# Runtime enum value: resolved via a dispatch table at runtime.
+$dir: Direction = Direction.East;
+print(@nameOf(dir));              # "East"
+
+# --- Error set type and member names ---------------------------------
+
+@error IoError { NotFound, PermissionDenied, Timeout }
+
+print(@nameOf(IoError));                   # "IoError"         (type name)
+print(@nameOf(IoError.NotFound));          # "NotFound"        (folded)
+print(@nameOf(IoError.PermissionDenied));  # "PermissionDenied" (folded)
+
+# Runtime error value.
+$err: IoError = IoError.Timeout;
+print(@nameOf(err));                       # "Timeout"
+
+# --- Local variables -------------------------------------------------
+
+$score: i64 = 100;
+$label: string = "player";
+
+print(@nameOf(score));   # "score"
+print(@nameOf(label));   # "label"
+
+# --- Global variables and functions ----------------------------------
+
+$maxRetries: i64 = 3;
+
+@func connect(host: string): string | IoError {
+    return IoError.Timeout;
+}
+
+print(@nameOf(maxRetries));  # "maxRetries"
+print(@nameOf(connect));     # "connect"
+
+# --- Practical use: self-describing field logger ---------------------
+
+@func logField(name: string, value: i64) {
+    print(name, "=", value);
+}
+
+$health: i64 = 80;
+$mana: i64   = 42;
+
+logField(@nameOf(health), health);  # "health = 80"
+logField(@nameOf(mana),   mana);    # "mana   = 42"
+
+pub @func main() {}

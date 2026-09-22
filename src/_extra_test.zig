@@ -13,7 +13,7 @@ test "assign member index pipe structinit for" {
     ;
     var scan_result = try scanner.scan(std.testing.allocator, src, "t.lls");
     defer scanner.deinitScanResult(&scan_result);
-    var doc = try parser.parse(std.testing.allocator, scan_result.tokens.items, "t.lls", src);
+    var doc = try parser.parse(std.testing.allocator, scan_result.tokens.items, "t.lls", src, null);
     defer doc.deinit();
     try std.testing.expect(doc.statements.len == 5);
     try std.testing.expect(doc.statements[2].declaration.value.* == .struct_init);
@@ -25,7 +25,7 @@ test "union type and fixed array" {
     const src = "$a: [2]int | error = 1;\n";
     var scan_result = try scanner.scan(std.testing.allocator, src, "t.lls");
     defer scanner.deinitScanResult(&scan_result);
-    var doc = try parser.parse(std.testing.allocator, scan_result.tokens.items, "t.lls", src);
+    var doc = try parser.parse(std.testing.allocator, scan_result.tokens.items, "t.lls", src, null);
     defer doc.deinit();
     try std.testing.expect(doc.statements[0].declaration.type_annotation.?.* == .array_type);
 }
@@ -34,7 +34,7 @@ test "optional type ?T desugars to T | null" {
     const src = "$h: ?Node = null;\n$p: Node | null = null;\n";
     var scan_result = try scanner.scan(std.testing.allocator, src, "t.lls");
     defer scanner.deinitScanResult(&scan_result);
-    var doc = try parser.parse(std.testing.allocator, scan_result.tokens.items, "t.lls", src);
+    var doc = try parser.parse(std.testing.allocator, scan_result.tokens.items, "t.lls", src, null);
     defer doc.deinit();
     try std.testing.expect(doc.statements[0].declaration.type_annotation.?.* == .union_type);
     try std.testing.expect(doc.statements[1].declaration.type_annotation.?.* == .union_type);
@@ -44,7 +44,7 @@ test "dotted type mem.Arena parses as member" {
     const src = "$a: mem.Arena = x;\n";
     var scan_result = try scanner.scan(std.testing.allocator, src, "t.lls");
     defer scanner.deinitScanResult(&scan_result);
-    var doc = try parser.parse(std.testing.allocator, scan_result.tokens.items, "t.lls", src);
+    var doc = try parser.parse(std.testing.allocator, scan_result.tokens.items, "t.lls", src, null);
     defer doc.deinit();
     try std.testing.expect(doc.statements[0].declaration.type_annotation.?.* == .member);
 }

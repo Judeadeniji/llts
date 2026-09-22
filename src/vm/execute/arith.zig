@@ -33,6 +33,26 @@ pub fn binArith(vm: *VMState, op: OpCode) ArithError!void {
         .OP_POW => .pow,
         else => return fail(vm, "Bad arith op"),
     };
+    if (vm.sp >= 2) {
+        const a_val = vm.stack_buf[vm.sp - 2];
+        const b_val = vm.stack_buf[vm.sp - 1];
+        if (a_val == .i64 and b_val == .i64) {
+            const ai = a_val.i64;
+            const bi = b_val.i64;
+            if (bi == 0 and (kind == .div or kind == .mod)) return fail(vm, "Division by zero");
+            const result: i64 = switch (kind) {
+                .add => ai +% bi,
+                .sub => ai -% bi,
+                .mul => ai *% bi,
+                .div => @divTrunc(ai, bi),
+                .mod => @rem(ai, bi),
+                .pow => powi(ai, bi),
+            };
+            vm.sp -= 1;
+            vm.stack_buf[vm.sp - 1] = .{ .i64 = result };
+            return;
+        }
+    }
     const b = stack.pop(vm);
     const a = stack.pop(vm);
     // Preserve f32 when both sides are f32; otherwise float math is f64.
@@ -86,8 +106,24 @@ pub fn binArith(vm: *VMState, op: OpCode) ArithError!void {
 
 pub const TypedOp = enum { add, sub, mul };
 
-pub fn binArithTyped(vm: *VMState, kind: TypedOp, width_byte: u8) ArithError!void {
+pub inline fn binArithTyped(vm: *VMState, kind: TypedOp, width_byte: u8) ArithError!void {
     const width: widths.Width = @enumFromInt(width_byte);
+    if (vm.sp >= 2) {
+        const a_val = vm.stack_buf[vm.sp - 2];
+        const b_val = vm.stack_buf[vm.sp - 1];
+        if (a_val == .i64 and b_val == .i64 and (width == .i64 or width == .isize)) {
+            const ai = a_val.i64;
+            const bi = b_val.i64;
+            const result: i64 = switch (kind) {
+                .add => ai +% bi,
+                .sub => ai -% bi,
+                .mul => ai *% bi,
+            };
+            vm.sp -= 1;
+            vm.stack_buf[vm.sp - 1] = .{ .i64 = result };
+            return;
+        }
+    }
     const b = stack.pop(vm);
     const a = stack.pop(vm);
     const bi = widths.valueAsI64(b) orelse return fail(vm, "Operands must be ints");

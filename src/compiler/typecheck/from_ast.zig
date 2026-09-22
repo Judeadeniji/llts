@@ -870,6 +870,33 @@ pub fn resolveType(state: *state_mod.CompilerState, node: *ast.Node) ?[]const u8
             break :blk struct_def.types.get(m.property.primary.name);
         },
         .call => |c| blk: {
+            // `@as(T, v)` / `T(v)` cast: the result's static type is T. Member access
+            // on the cast result needs this to emit typed field loads (otherwise the
+            // value stays `unknown` and falls back to dynamic GET_PROPERTY).
+            if (c.callee.* == .primary and std.mem.eql(u8, c.callee.primary.name, "@as") and c.args.len == 2) {
+                const ta_cast = ir.TypeAlloc{ .allocator = state.allocator };
+                if (typeFromAst(c.args[0], state, ta_cast)) |target| {
+                    if (ir.displayTypeAlloc(state.allocator, target)) |disp| {
+                        state.owned.append(state.allocator, disp) catch {};
+                        break :blk disp;
+                    } else |_| {}
+                } else |_| {}
+            }
+            if (c.callee.* == .primary and c.args.len == 1 and c.callee.primary.name.len > 0 and c.callee.primary.name[0] != '@') {
+                const name = c.callee.primary.name;
+                const is_callable = state.functions.contains(name) or
+                    state.chunk.functions.contains(name) or
+                    state.native_globals.contains(name);
+                if (!is_callable) {
+                    const ta_cast = ir.TypeAlloc{ .allocator = state.allocator };
+                    if (resolveNamedType(name, state, ta_cast)) |target| {
+                        if (ir.displayTypeAlloc(state.allocator, target)) |disp| {
+                            state.owned.append(state.allocator, disp) catch {};
+                            break :blk disp;
+                        } else |_| {}
+                    } else |_| {}
+                }
+            }
             if (c.callee.* == .primary) {
                 if (state.functions.get(c.callee.primary.name)) |def| break :blk def.return_type;
             }
@@ -1090,9 +1117,7 @@ pub fn resolveStructName(state: *state_mod.CompilerState, node: *ast.Node) ?[]co
         .primary => |p| {
             if (p.kind != .identifier) return null;
             if (state.structs.contains(p.name)) return p.name;
-            var buf: [256]u8 = undefined;
-            const re_key = std.fmt.bufPrint(&buf, "${s}", .{p.name}) catch return null;
-            if (state.global_types.get(re_key)) |rt| {
+            if (expr_path.aliasModuleType(state, p.name)) |rt| {
                 if (!std.mem.startsWith(u8, rt, "module:")) return rt;
             }
             return p.name; // unresolved base name

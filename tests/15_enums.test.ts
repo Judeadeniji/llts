@@ -176,7 +176,49 @@ test("@nameOf rejects non-enum non-error values", () => {
 		runSource(`
 print(@nameOf(42));
 `),
-		"@nameOf expects an enum or error value",
+		"@nameOf expects an enum, error, or named declaration",
+	);
+});
+
+test("@nameOf works on local variables", () => {
+	expectOutput(
+		runSource(`
+$x: i64 = 42;
+print(@nameOf(x));
+`),
+		["x"],
+	);
+});
+
+test("@nameOf works on global variables and functions", () => {
+	expectOutput(
+		runSource(`
+$counter: i64 = 0;
+@func add(a: i64, b: i64): i64 { return a + b; }
+print(@nameOf(counter));
+print(@nameOf(add));
+`),
+		["counter", "add"],
+	);
+});
+
+test("@nameOf works on enum variant via member syntax", () => {
+	expectOutput(
+		runSource(`
+@enum Color { Red, Green, Blue }
+print(@nameOf(Color.Red));
+print(@nameOf(Color.Green));
+`),
+		["Red", "Green"],
+	);
+});
+
+test("@nameOf still rejects bare arithmetic expressions", () => {
+	expectError(
+		runSource(`
+print(@nameOf(1 + 2));
+`),
+		"@nameOf expects an enum, error, or named declaration",
 	);
 });
 

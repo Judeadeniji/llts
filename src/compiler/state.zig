@@ -41,7 +41,15 @@ pub const StructDef = struct {
 
 pub const EnumDef = struct {
     name: []const u8,
+    /// Numeric enums: variant name → int value (auto-increment or explicit).
+    /// String enums: variant name → ordinal (0, 1, …) — used for membership tests only.
     variants: std.StringHashMap(i32),
+    /// Non-null for string enums: variant name → string value as declared.
+    string_values: ?std.StringHashMap([]const u8) = null,
+
+    pub fn isString(self: *const EnumDef) bool {
+        return self.string_values != null;
+    }
 };
 
 /// How to lower `@nameOf(x)` after typecheck.
@@ -52,6 +60,10 @@ pub const NameOfPlan = union(enum) {
     enum_type: []const u8,
     /// Runtime error object → code string.
     error_code,
+    /// Any statically-known declaration name (function, variable, struct, typedef, …).
+    /// The argument expression is evaluated for side-effects and discarded; the
+    /// declaration's spelled name is pushed as a string constant.
+    decl_name: []const u8,
 };
 
 /// `@error Name { A, B }` — closed error set. `origins` maps member → declaring set name
@@ -139,6 +151,12 @@ pub const CompilerState = struct {
     diag_path: []const u8 = "",
     diag_line: u32 = 0,
     diag_column: u32 = 0,
+    /// Message + location of the last compile failure (owned by the state).
+    /// Lets editors/LSP surface type errors without scraping stderr.
+    last_error_message: []const u8 = "",
+    last_error_path: []const u8 = "",
+    last_error_line: u32 = 0,
+    last_error_column: u32 = 0,
     /// Active `@import` chain (outermost first). Used while loading modules.
     import_stack: std.ArrayList(ImportFrame) = .empty,
     /// Resolved module path → import site that loaded it (survives after load for compile errors).
@@ -189,6 +207,26 @@ fn putStruct(state: *CompilerState, name: []const u8, fields: []const struct { [
     try state.structs.put(name, .{ .name = name, .size = laid.size, .offsets = laid.offsets, .types = types });
 }
 
+/// Record a compile failure for later inspection (LSP/editors). The message
+/// and path are duped into the state's allocator.
+pub fn setLastError(self: *CompilerState, message: []const u8, path: []const u8, line: u32, column: u32) void {
+    if (self.last_error_message.len > 0) self.allocator.free(self.last_error_message);
+    if (self.last_error_path.len > 0) self.allocator.free(self.last_error_path);
+    self.last_error_message = self.allocator.dupe(u8, message) catch "";
+    self.last_error_path = self.allocator.dupe(u8, path) catch "";
+    self.last_error_line = line;
+    self.last_error_column = column;
+}
+
+pub fn clearLastError(self: *CompilerState) void {
+    if (self.last_error_message.len > 0) self.allocator.free(self.last_error_message);
+    if (self.last_error_path.len > 0) self.allocator.free(self.last_error_path);
+    self.last_error_message = "";
+    self.last_error_path = "";
+    self.last_error_line = 0;
+    self.last_error_column = 0;
+}
+
 /// Free compiler tables. Does **not** free `chunk` — caller owns it after `compile`.
 pub fn deinit(self: *CompilerState) void {
     for (self.module_docs.items) |mod_doc| {
@@ -223,6 +261,7 @@ pub fn deinit(self: *CompilerState) void {
     var eit = self.enums.iterator();
     while (eit.next()) |e| {
         e.value_ptr.variants.deinit();
+        if (e.value_ptr.string_values) |*sv| sv.deinit();
     }
     self.enums.deinit();
     var esit = self.error_sets.iterator();
@@ -247,6 +286,8 @@ pub fn deinit(self: *CompilerState) void {
     self.for_is_cond.deinit();
     self.import_stack.deinit(self.allocator);
     self.import_from.deinit();
+    if (self.last_error_message.len > 0) self.allocator.free(self.last_error_message);
+    if (self.last_error_path.len > 0) self.allocator.free(self.last_error_path);
 }
 
 pub fn currentChunk(state: *CompilerState) *chunk_mod.Chunk {

@@ -52,6 +52,7 @@ fn compileFailFromState(state: *CompilerState, message: []const u8) error{Compil
     const path = if (state.diag_path.len > 0) state.diag_path else state.chunk.file;
     const line = if (state.diag_line > 0) state.diag_line else 1;
     const column = if (state.diag_column > 0) state.diag_column else 1;
+    state_mod.setLastError(state, message, path, line, column);
     report.reportSourceErrorWithFrame(path, sourceFor(state, path), line, column, message, "<compile>");
     reportImportChain(state, path);
     return error.CompileError;
@@ -69,6 +70,7 @@ pub fn compileFailAt(
 ) error{CompileError} {
     var buf: [1024]u8 = undefined;
     const msg = std.fmt.bufPrint(&buf, fmt, args) catch fmt;
+    state_mod.setLastError(state, msg, path, line, column);
     report.reportSourceErrorWithFrame(path, source, line, column, msg, "<compile>");
     reportImportChain(state, path);
     return error.CompileError;

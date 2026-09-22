@@ -17,7 +17,7 @@ pub fn loop(ip: *usize, offset: u16) void {
 }
 
 fn frame(vm: *VMState) *state_mod.CallFrame {
-    return &vm.frames.items[vm.frames.items.len - 1];
+    return vm.frame();
 }
 
 fn localInt(vm: *VMState, slot: u8) !i64 {
@@ -38,14 +38,38 @@ fn setLocalInt(vm: *VMState, slot: u8, n: i64) !void {
 }
 
 /// If local[i] >= local[end], jump forward by `skip` (to after FOR_LOOP); else fall into body.
-pub fn forPrep(vm: *VMState, ip: *usize, i_slot: u8, end_slot: u8, skip: u16) !void {
+pub inline fn forPrep(vm: *VMState, ip: *usize, i_slot: u8, end_slot: u8, skip: u16) !void {
+    const f = vm.frame();
+    const i_idx = f.base_slot + i_slot;
+    const end_idx = f.base_slot + end_slot;
+    if (i_idx < vm.sp and end_idx < vm.sp) {
+        const i_val = vm.stack_buf[i_idx];
+        const end_val = vm.stack_buf[end_idx];
+        if (i_val == .i64 and end_val == .i64) {
+            if (i_val.i64 >= end_val.i64) ip.* += skip;
+            return;
+        }
+    }
     const i = try localInt(vm, i_slot);
     const end = try localInt(vm, end_slot);
     if (i >= end) ip.* += skip;
 }
 
 /// local[i] += 1; if local[i] < local[end], jump back by `back`; else fall through.
-pub fn forLoop(vm: *VMState, ip: *usize, i_slot: u8, end_slot: u8, back: u16) !void {
+pub inline fn forLoop(vm: *VMState, ip: *usize, i_slot: u8, end_slot: u8, back: u16) !void {
+    const f = vm.frame();
+    const i_idx = f.base_slot + i_slot;
+    const end_idx = f.base_slot + end_slot;
+    if (i_idx < vm.sp and end_idx < vm.sp) {
+        const i_val = vm.stack_buf[i_idx];
+        const end_val = vm.stack_buf[end_idx];
+        if (i_val == .i64 and end_val == .i64) {
+            const next = i_val.i64 +% 1;
+            vm.stack_buf[i_idx] = .{ .i64 = next };
+            if (next < end_val.i64) ip.* -= back;
+            return;
+        }
+    }
     const i = try localInt(vm, i_slot);
     const end = try localInt(vm, end_slot);
     const next = i +% 1;

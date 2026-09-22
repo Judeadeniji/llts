@@ -99,7 +99,7 @@ pub const Value = union(enum) {
     /// Pointer into the Value-slot heap (errors, arena control).
     ptr: i32,
     native: *const NativeFunction,
-    function: LltsFunction,
+    function: *const LltsFunction,
     /// Interned name index into the chunk string table (for globals/properties).
     name: u32,
     /// String view pointing into the VM's unified packed byte heap (`VMState.bytes`).

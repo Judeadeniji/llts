@@ -8,6 +8,9 @@ const from_ast = @import("../typecheck/from_ast.zig");
 const ir = @import("../typecheck/ir.zig");
 const types = @import("../typecheck/from_ast.zig");
 const const_expr = @import("../const_expr.zig");
+const compile_errors = @import("../../errors/compile.zig");
+const layout = @import("../layout.zig");
+const widths = @import("../widths.zig");
 
 const CompilerState = state_mod.CompilerState;
 
@@ -22,7 +25,7 @@ pub fn compileDeclaration(state: *CompilerState, decl: *const ast.Declaration) !
             if (local.is_const) try cenv.const_names.put(local.name, {});
         }
         if (!const_expr.isConstantExpr(state, &cenv, decl.value)) {
-            return @import("../../errors/compile.zig").compileFailFmt(
+            return compile_errors.compileFailFmt(
                 state,
                 "'{s}' is @const but initializer is not a compile-time constant",
                 .{decl.name},
@@ -57,7 +60,7 @@ pub fn compileDeclaration(state: *CompilerState, decl: *const ast.Declaration) !
         if (types.resolveType(state, decl.value)) |got| {
             if (type_name) |expected| {
                 if (!typesAssignable(state, got, expected)) {
-                    return @import("../../errors/compile.zig").compileFailFmt(
+                    return compile_errors.compileFailFmt(
                         state,
                         "declaration of '{s}': type '{s}' is not assignable to '{s}'",
                         .{ decl.name, got, expected },
@@ -249,7 +252,7 @@ fn checkLocalDup(state: *CompilerState, name: []const u8) !void {
         const local = state.locals.items[i];
         if (local.depth < state.scope_depth) break;
         if (std.mem.eql(u8, local.name, name)) {
-            return @import("../../errors/compile.zig").compileFailFmt(state, "Variable '{s}' already declared in this scope", .{name});
+            return compile_errors.compileFailFmt(state, "Variable '{s}' already declared in this scope", .{name});
         }
     }
 }
@@ -259,7 +262,6 @@ pub fn compileExtern(state: *CompilerState, ext: *const ast.Extern) !void {
 }
 
 pub fn compileStruct(state: *CompilerState, s: *const ast.StructDecl) !void {
-    const layout = @import("../layout.zig");
     var type_map = std.StringHashMap([]const u8).init(state.allocator);
     var field_list: std.ArrayList(layout.FieldSpec) = .empty;
     defer field_list.deinit(state.allocator);
@@ -305,32 +307,64 @@ pub fn compileStruct(state: *CompilerState, s: *const ast.StructDecl) !void {
 
 pub fn compileEnum(state: *CompilerState, e: *const ast.EnumDecl) !void {
     var variants = std.StringHashMap(i32).init(state.allocator);
-    for (e.variants, 0..) |name, i| {
-        if (variants.contains(name)) {
+    var string_values: ?std.StringHashMap([]const u8) = null;
+    errdefer if (string_values) |*sv| sv.deinit();
+    var next: i32 = 0;
+    for (e.variants) |variant| {
+        if (variants.contains(variant.name)) {
             variants.deinit();
-            return @import("../../errors/compile.zig").compileFailFmt(state, "Duplicate enum variant '{s}' in '{s}'", .{ name, e.name });
+            return compile_errors.compileFailFmt(state, "Duplicate enum variant '{s}' in '{s}'", .{ variant.name, e.name });
         }
-        try variants.put(name, @intCast(i));
+        // Explicit initializer: `Red = 3` / `Red = "crimson"`. A string value
+        // marks the whole enum as a string enum (stored verbatim; numeric
+        // enums keep the auto-increment ordinal).
+        if (variant.value) |val_node| switch (val_node.*) {
+            .literal => |lit| switch (lit.literal_type) {
+                .number, .hex, .octal, .binary => {
+                    const parsed = std.fmt.parseInt(i32, lit.value, 0) catch
+                        return compile_errors.compileFailFmt(state, "Invalid enum variant value '{s}' for '{s}.{s}'", .{ lit.value, e.name, variant.name });
+                    try variants.put(variant.name, parsed);
+                    next = parsed + 1;
+                },
+                .string => {
+                    if (string_values == null) string_values = std.StringHashMap([]const u8).init(state.allocator);
+                    try string_values.?.put(variant.name, lit.value);
+                    try variants.put(variant.name, @intCast(next));
+                    next += 1;
+                },
+                else => {
+                    return compile_errors.compileFailFmt(state, "Enum variant value for '{s}.{s}' must be an integer or string literal", .{ e.name, variant.name });
+                },
+            },
+            else => {
+                return compile_errors.compileFailFmt(state, "Enum variant value for '{s}.{s}' must be a literal", .{ e.name, variant.name });
+            },
+        } else {
+            try variants.put(variant.name, next);
+            next += 1;
+        }
     }
     if (state.enums.fetchRemove(e.name)) |kv| {
         var old = kv.value;
         old.variants.deinit();
+        if (old.string_values) |*sv| sv.deinit();
     }
     try state.enums.put(e.name, .{
         .name = e.name,
         .variants = variants,
+        .string_values = string_values,
     });
 }
 
 pub fn compileErrorDecl(state: *CompilerState, e: *const ast.ErrorDecl) !void {
     if (state.structs.contains(e.name) or state.enums.contains(e.name) or state.typedefs.contains(e.name)) {
-        return @import("../../errors/compile.zig").compileFailFmt(state, "Type name '{s}' already used", .{e.name});
+        return compile_errors.compileFailFmt(state, "Type name '{s}' already used", .{e.name});
     }
     var variants = std.StringHashMap([]const u8).init(state.allocator);
     for (e.variants) |name| {
         if (variants.contains(name)) {
             variants.deinit();
-            return @import("../../errors/compile.zig").compileFailFmt(state, "Duplicate error member '{s}' in '{s}'", .{ name, e.name });
+            return compile_errors.compileFailFmt(state, "Duplicate error member '{s}' in '{s}'", .{ name, e.name });
         }
         try variants.put(name, e.name);
     }
@@ -346,18 +380,18 @@ pub fn compileErrorDecl(state: *CompilerState, e: *const ast.ErrorDecl) !void {
 
 pub fn compileTypeDecl(state: *CompilerState, td: *const ast.TypeDecl) !void {
     if (state.structs.contains(td.name) or state.enums.contains(td.name) or state.error_sets.contains(td.name)) {
-        return @import("../../errors/compile.zig").compileFailFmt(state, "Type name '{s}' already used by a struct, enum, or error set", .{td.name});
+        return compile_errors.compileFailFmt(state, "Type name '{s}' already used by a struct, enum, or error set", .{td.name});
     }
     if (state.typedefs.get(td.name)) |existing| {
         if (!existing.stub) {
-            return @import("../../errors/compile.zig").compileFailFmt(state, "Duplicate type '{s}'", .{td.name});
+            return compile_errors.compileFailFmt(state, "Duplicate type '{s}'", .{td.name});
         }
     }
     if (ir.isBuiltinTypeName(td.name)) {
-        return @import("../../errors/compile.zig").compileFailFmt(state, "Cannot redefine builtin type '{s}'", .{td.name});
+        return compile_errors.compileFailFmt(state, "Cannot redefine builtin type '{s}'", .{td.name});
     }
     const disp = (try from_ast.typeAstToDisplay(td.type_expr, state)) orelse {
-        return @import("../../errors/compile.zig").compileFailFmt(state, "Invalid type expression for '{s}'", .{td.name});
+        return compile_errors.compileFailFmt(state, "Invalid type expression for '{s}'", .{td.name});
     };
     try state.typedefs.put(td.name, .{
         .name = td.name,
@@ -383,7 +417,6 @@ pub fn compileTypeDecl(state: *CompilerState, td: *const ast.TypeDecl) !void {
 
 fn registerShapeLayout(state: *CompilerState, key: []const u8, shape: *const ast.ShapeType) !void {
     if (state.structs.contains(key)) return;
-    const layout = @import("../layout.zig");
     var type_map = std.StringHashMap([]const u8).init(state.allocator);
     var field_list: std.ArrayList(layout.FieldSpec) = .empty;
     defer field_list.deinit(state.allocator);
@@ -407,7 +440,6 @@ fn registerShapeLayout(state: *CompilerState, key: []const u8, shape: *const ast
 
 fn widthCastKind(node: *ast.Node) ?u8 {
     if (node.* != .primary or node.primary.kind != .identifier) return null;
-    const widths = @import("../widths.zig");
     if (widths.fromName(node.primary.name)) |w| return @intFromEnum(w);
     return null;
 }

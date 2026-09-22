@@ -13,6 +13,7 @@ const aggregate = @import("expr/aggregate.zig");
 const path = @import("expr/path.zig");
 const modules = @import("modules.zig");
 const compile_errors = @import("../errors/compile.zig");
+const scope = @import("scope.zig");
 
 pub const Intrinsic = enum {
     import,
@@ -104,12 +105,28 @@ pub fn typecheck(state: *CompilerState, env: *typecheck_root.Env, ta: ir.TypeAll
             const peeled = ir.peelDefined(arg_type);
             const plan: state_mod.NameOfPlan = switch (peeled) {
                 .enum_lit => |e| .{ .fold = e.variant },
-                .enum_ => |ename| .{ .enum_type = ename },
+                .enum_ => |ename| blk: {
+                    // `@nameOf(Color)` — bare enum type used as argument: fold to its name.
+                    // `@nameOf(someVar)` — runtime enum value: emit a dispatch table.
+                    if (isBareName(c.args[0], ename)) break :blk .{ .decl_name = ename };
+                    break :blk .{ .enum_type = ename };
+                },
                 .error_lit => |e| .{ .fold = e.variant },
-                .error_set, .error_ => .error_code,
-                else => {
+                .error_set => |ename| blk: {
+                    // `@nameOf(IoError)` — bare error set type: fold to its name.
+                    // `@nameOf(err)` — runtime error value: emit OP_ERROR_NAME.
+                    if (isBareName(c.args[0], ename)) break :blk .{ .decl_name = ename };
+                    break :blk .error_code;
+                },
+                .error_ => .error_code,
+                else => blk: {
+                    // For any other type, try to extract a static declaration name
+                    // from the argument AST node itself.
+                    if (tryResolveNameOfDecl(state, c.args[0])) |decl_name| {
+                        break :blk .{ .decl_name = decl_name };
+                    }
                     const disp = try typecheck_root.ownDisplay(state, arg_type);
-                    return compile_errors.compileFailFmt(state, "@nameOf expects an enum or error value, got '{s}'", .{disp});
+                    return compile_errors.compileFailFmt(state, "@nameOf expects an enum, error, or named declaration, got '{s}'", .{disp});
                 },
             };
             try state.name_of_plans.put(call_node, plan);
@@ -254,6 +271,24 @@ pub fn compile(state: *CompilerState, intr: Intrinsic, node: *ast.Node, c: *cons
                     try expr.compileExpression(state, c.args[0]);
                     try emit.emitOp(state, .OP_ERROR_NAME);
                 },
+                .decl_name => |spelling| {
+                    // Pure type names (enum, struct, typedef, error_set) have no runtime
+                    // representation — skip evaluation and emit the name directly.
+                    // For actual runtime declarations (vars, functions) evaluate-and-pop
+                    // to preserve any side-effects in the expression.
+                    const arg = c.args[0];
+                    const is_type_name = arg.* == .primary and
+                        arg.primary.kind == .identifier and
+                        (state.enums.contains(arg.primary.name) or
+                        state.structs.contains(arg.primary.name) or
+                        state.typedefs.contains(arg.primary.name) or
+                        state.error_sets.contains(arg.primary.name));
+                    if (!is_type_name) {
+                        try expr.compileExpression(state, arg);
+                        try emit.emitOp(state, .OP_POP);
+                    }
+                    try emit.emitString(state, spelling);
+                },
             }
         },
         .as => {
@@ -262,6 +297,70 @@ pub fn compile(state: *CompilerState, intr: Intrinsic, node: *ast.Node, c: *cons
         .new => {
             try aggregate.compileNew(state, c);
         },
+    }
+}
+
+/// Returns true when `node` is a bare primary identifier whose text equals `name`.
+/// Used to distinguish `@nameOf(Direction)` (the *type* — fold) from
+/// `@nameOf(dir)` (a *variable* of enum type — runtime dispatch).
+fn isBareName(node: *ast.Node, name: []const u8) bool {
+    return node.* == .primary and
+        node.primary.kind == .identifier and
+        std.mem.eql(u8, node.primary.name, name);
+}
+
+/// Try to extract a static declaration name from an AST node for `@nameOf`.
+///
+/// Returns the *spelled* name (as declared in source) when the argument is:
+///   - A local variable / parameter identifier
+///   - A global variable, constant, or function identifier
+///   - A struct, enum, error-set, or typedef identifier used as a value
+///   - An enum variant accessed as `Enum.Variant` (returns `"Variant"`)
+///   - A module-qualified name `mod.thing` (returns `"thing"`)
+///
+/// Returns `null` when the argument has no static declaration identity
+/// (e.g. a numeric literal, arbitrary sub-expression, etc.).
+fn tryResolveNameOfDecl(state: *CompilerState, node: *ast.Node) ?[]const u8 {
+    switch (node.*) {
+        .primary => |p| {
+            if (p.kind != .identifier and p.kind != .register) return null;
+            const name = p.name;
+            // Local variable or parameter.
+            if (scope.resolveLocal(state, name) != -1) return name;
+            // Global variable, constant, or function.
+            if (state.global_vars.contains(name)) return name;
+            if (state.global_consts.contains(name)) return name;
+            if (state.functions.contains(name)) return name;
+            if (state.native_globals.contains(name)) return name;
+            // Type declarations used as expressions.
+            if (state.structs.contains(name)) return name;
+            if (state.enums.contains(name)) return name;
+            if (state.error_sets.contains(name)) return name;
+            if (state.typedefs.contains(name)) return name;
+            return null;
+        },
+        .member => |m| {
+            if (m.property.* != .primary) return null;
+            const prop = m.property.primary.name;
+            // `Enum.Variant` — return the variant spelling.
+            if (m.object.* == .primary) {
+                const obj_name = m.object.primary.name;
+                if (state.enums.get(obj_name)) |ed| {
+                    if (ed.variants.contains(prop)) return prop;
+                }
+                // `ErrorSet.Member` — return the member spelling.
+                if (state.error_sets.get(obj_name)) |esd| {
+                    if (esd.variants.contains(prop)) return prop;
+                }
+            }
+            // Module-qualified `mod.thing` — return the last segment.
+            if (path.tryResolveStaticPath(state, m.object) catch null) |obj_path| {
+                _ = obj_path;
+                return prop;
+            }
+            return null;
+        },
+        else => return null,
     }
 }
 

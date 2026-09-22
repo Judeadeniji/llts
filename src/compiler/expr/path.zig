@@ -5,14 +5,50 @@ const modules = @import("../modules.zig");
 const scope = @import("../scope.zig");
 const CompilerState = state_mod.CompilerState;
 
+/// Path of the module whose code is currently being compiled.
+/// `diag_path` is maintained per-node during typecheck (`noteDiag`) and emit
+/// (`noteLoc`); the root document has no scoped alias context.
+pub fn currentModulePath(state: *CompilerState) []const u8 {
+    if (state.diag_path.len > 0) return state.diag_path;
+    return state.chunk.file;
+}
+
+/// `global_types` key for an alias binding, scoped to the importing module when
+/// the code being compiled belongs to one (`$mod::alias`), else the bare key
+/// (`$alias`) used by root-document imports.
+pub fn moduleAliasMapKey(
+    state: *CompilerState,
+    buf: []u8,
+    alias: []const u8,
+) []const u8 {
+    const mod = currentModulePath(state);
+    if (std.mem.indexOfScalar(u8, mod, ':') == null and mod.len > 0 and state.chunk.file.len > 0 and !std.mem.eql(u8, mod, state.chunk.file)) {
+        const scoped = std.fmt.bufPrint(buf, "${s}::{s}", .{ mod, alias }) catch return bareAliasKey(buf, alias);
+        if (state.global_types.contains(scoped)) return scoped;
+    }
+    return bareAliasKey(buf, alias);
+}
+
+fn bareAliasKey(buf: []u8, alias: []const u8) []const u8 {
+    return std.fmt.bufPrint(buf, "${s}", .{alias}) catch "";
+}
+
+/// Alias → `module:…` value from `global_types`, preferring the scoped binding of
+/// the module being compiled over the bare (last-import-wins) binding.
+/// Nested modules bind aliases under bare keys too, so two modules may share one
+/// bare key; without scoping the last import silently wins.
+pub fn aliasModuleType(state: *CompilerState, alias: []const u8) ?[]const u8 {
+    var buf: [512]u8 = undefined;
+    const key = moduleAliasMapKey(state, &buf, alias);
+    return state.global_types.get(key);
+}
+
 /// Resolve `lib.Vector3` → `examples/import_test_lib::Vector3` via `$lib` → `module:…`.
 pub fn resolveModuleType(state: *CompilerState, type_name: []const u8) ![]const u8 {
     if (std.mem.indexOfScalar(u8, type_name, '.')) |dot| {
         const mod_alias = type_name[0..dot];
         const short = type_name[dot + 1 ..];
-        var buf: [256]u8 = undefined;
-        const key = try std.fmt.bufPrint(&buf, "${s}", .{mod_alias});
-        if (state.global_types.get(key)) |mod| {
+        if (aliasModuleType(state, mod_alias)) |mod| {
             if (std.mem.startsWith(u8, mod, "module:")) {
                 const mod_path = mod["module:".len..];
                 const qualified = try std.fmt.allocPrint(state.allocator, "{s}::{s}", .{ mod_path, short });
@@ -29,9 +65,7 @@ pub fn tryResolveStaticPath(state: *CompilerState, node: *ast.Node) !?[]const u8
         .primary => |p| {
             if (p.kind != .identifier) return null;
             if (scope.resolveLocal(state, p.name) != -1) return null;
-            var buf: [256]u8 = undefined;
-            const key = try std.fmt.bufPrint(&buf, "${s}", .{p.name});
-            if (state.global_types.get(key)) |mod| {
+            if (aliasModuleType(state, p.name)) |mod| {
                 if (std.mem.startsWith(u8, mod, "module:")) return mod["module:".len..];
             }
             return null;

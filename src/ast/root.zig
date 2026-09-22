@@ -45,6 +45,15 @@ pub const Extern = stmt.Extern;
 pub const StructField = stmt.StructField;
 pub const StructDecl = stmt.StructDecl;
 pub const EnumDecl = stmt.EnumDecl;
+pub const EnumVariant = stmt.EnumVariant;
+
+/// A parse-error record collected into a parser-provided list when the
+/// caller wants diagnostics rather than hard failure (used by tooling).
+pub const Diagnostic = struct {
+    line: u32,
+    column: u32,
+    message: []const u8,
+};
 pub const TypeDecl = stmt.TypeDecl;
 pub const ErrorDecl = stmt.ErrorDecl;
 
@@ -108,6 +117,9 @@ pub const Document = struct {
     source: []const u8,
     statements: []*Node,
     arena: std.heap.ArenaAllocator,
+    /// Parse diagnostics when the caller passed a diagnostics array (tooling
+    /// mode); empty slice otherwise. Borrowed from the parser's arena.
+    diagnostics: []const Diagnostic = &.{},
 
     pub fn deinit(self: *Document) void {
         self.arena.deinit();

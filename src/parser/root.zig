@@ -19,6 +19,7 @@ pub fn parse(
     tokens: []const ctx.Token,
     path: []const u8,
     source: []const u8,
+    diagnostics_array: ?*std.ArrayList(ast.Diagnostic),
 ) ParseError!Document {
     var doc: Document = .{
         .path = path,
@@ -33,16 +34,26 @@ pub fn parse(
         .path = path,
         .source = source,
         .arena = doc.arena.allocator(),
+        .diagnostics = diagnostics_array,
     };
 
     doc.statements = try buildAst(&p);
+    if (diagnostics_array) |diags| {
+        doc.diagnostics = diags.toOwnedSlice(allocator) catch &.{};
+    }
     return doc;
 }
 
 fn buildAst(self: *Parser) ParseError![]*ast.Node {
     var list: std.ArrayList(*ast.Node) = .empty;
     while (!self.isAtEnd()) {
-        const s = try stmt.parseStatement(self);
+        const s = stmt.parseStatement(self) catch |err| {
+            if (err == error.ParseFailed and self.diagnostics != null) {
+                self.synchronize();
+                continue;
+            }
+            return err;
+        };
         try list.append(self.arena, s);
     }
     return list.toOwnedSlice(self.arena) catch return error.OutOfMemory;
@@ -62,7 +73,7 @@ test "parse simple declaration" {
     const src = "$x = 1;\n";
     var scan_result = try scanner.scan(std.testing.allocator, src, "t.lls");
     defer scanner.deinitScanResult(&scan_result);
-    var doc = try parse(std.testing.allocator, scan_result.tokens.items, "t.lls", src);
+    var doc = try parse(std.testing.allocator, scan_result.tokens.items, "t.lls", src, null);
     defer doc.deinit();
     try std.testing.expect(doc.statements.len == 1);
     try std.testing.expect(doc.statements[0].* == .declaration);
@@ -79,14 +90,14 @@ test "parse func if for and reject dollar" {
     ;
     var scan_result = try scanner.scan(std.testing.allocator, src, "t.lls");
     defer scanner.deinitScanResult(&scan_result);
-    var doc = try parse(std.testing.allocator, scan_result.tokens.items, "t.lls", src);
+    var doc = try parse(std.testing.allocator, scan_result.tokens.items, "t.lls", src, null);
     defer doc.deinit();
     try std.testing.expect(doc.statements[0].* == .function_decl);
 
     const bad = "$y;\n";
     var bad_scan = try scanner.scan(std.testing.allocator, bad, "t.lls");
     defer scanner.deinitScanResult(&bad_scan);
-    try std.testing.expectError(error.ParseFailed, parse(std.testing.allocator, bad_scan.tokens.items, "t.lls", bad));
+    try std.testing.expectError(error.ParseFailed, parse(std.testing.allocator, bad_scan.tokens.items, "t.lls", bad, null));
 }
 
 test "parse enum declaration" {
@@ -94,10 +105,11 @@ test "parse enum declaration" {
     const src = "@enum Color { Red, Green, Blue }\n";
     var scan_result = try scanner.scan(std.testing.allocator, src, "t.lls");
     defer scanner.deinitScanResult(&scan_result);
-    var doc = try parse(std.testing.allocator, scan_result.tokens.items, "t.lls", src);
+    var doc = try parse(std.testing.allocator, scan_result.tokens.items, "t.lls", src, null);
     defer doc.deinit();
     try std.testing.expect(doc.statements.len == 1);
     try std.testing.expect(doc.statements[0].* == .enum_decl);
     try std.testing.expectEqual(@as(usize, 3), doc.statements[0].enum_decl.variants.len);
-    try std.testing.expectEqualStrings("Red", doc.statements[0].enum_decl.variants[0]);
+    try std.testing.expectEqualStrings("Red", doc.statements[0].enum_decl.variants[0].name);
+    try std.testing.expect(doc.statements[0].enum_decl.variants[0].value == null);
 }
