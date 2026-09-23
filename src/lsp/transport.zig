@@ -41,15 +41,11 @@ pub fn writeAll(fd: std.posix.fd_t, buf: []const u8) !void {
     }
 }
 
-pub fn sendResponse(allocator: std.mem.Allocator, stdout: std.posix.fd_t, id: std.json.Value, result: anytype) !void {
+pub fn writeMessage(allocator: std.mem.Allocator, stdout: std.posix.fd_t, value: anytype) !void {
     var string_buf = std.ArrayList(u8).empty;
     defer string_buf.deinit(allocator);
 
-    try std.fmt.format(string_buf.writer(allocator), "{f}", .{std.json.fmt(.{
-        .jsonrpc = "2.0",
-        .id = id,
-        .result = result,
-    }, .{})});
+    try std.fmt.format(string_buf.writer(allocator), "{f}", .{std.json.fmt(value, .{})});
 
     var header_buf = std.ArrayList(u8).empty;
     defer header_buf.deinit(allocator);
@@ -57,4 +53,31 @@ pub fn sendResponse(allocator: std.mem.Allocator, stdout: std.posix.fd_t, id: st
 
     try writeAll(stdout, header_buf.items);
     try writeAll(stdout, string_buf.items);
+}
+
+pub fn sendResponse(allocator: std.mem.Allocator, stdout: std.posix.fd_t, id: std.json.Value, result: anytype) !void {
+    try writeMessage(allocator, stdout, .{
+        .jsonrpc = "2.0",
+        .id = id,
+        .result = result,
+    });
+}
+
+pub fn sendError(allocator: std.mem.Allocator, stdout: std.posix.fd_t, id: std.json.Value, code: i32, message: []const u8) !void {
+    try writeMessage(allocator, stdout, .{
+        .jsonrpc = "2.0",
+        .id = id,
+        .@"error" = .{
+            .code = code,
+            .message = message,
+        },
+    });
+}
+
+pub fn sendNotification(allocator: std.mem.Allocator, stdout: std.posix.fd_t, method: []const u8, params: anytype) !void {
+    try writeMessage(allocator, stdout, .{
+        .jsonrpc = "2.0",
+        .method = method,
+        .params = params,
+    });
 }
