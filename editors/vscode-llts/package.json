@@ -1,7 +1,7 @@
 {
   "name": "llts",
   "displayName": "LLTS",
-  "description": "LLTS language support (.lls) via Tree-sitter",
+  "description": "LLTS language support (.lls): tree-sitter highlighting plus diagnostics, hover, and go-to-definition via the Zig language server",
   "version": "0.0.0",
   "publisher": "llts",
   "repository": {
@@ -38,6 +38,17 @@
       "[llts]": {
         "editor.semanticHighlighting.enabled": false
       }
+    },
+    "configuration": {
+      "title": "LLTS",
+      "properties": {
+        "llts.serverPath": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Path to the `llts-lsp` server binary. Relative paths resolve against the workspace root; `~` is expanded. Defaults to `<workspace>/zig-out/bin/llts-lsp`, falling back to the bundled binary.",
+          "scope": "resource"
+        }
+      }
     }
   },
   "scripts": {
@@ -56,6 +67,7 @@
   "devDependencies": {
     "@types/node": "^22.10.0",
     "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.9.2",
     "typescript": "^5.9.3"
   }
 }

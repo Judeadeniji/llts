@@ -1,15 +1,103 @@
 {
   "scopeName": "source.lls",
+  "name": "LLTS",
   "patterns": [
-    {
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#compiler_keywords" },
+    { "include": "#declarations" },
+    { "include": "#builtins" },
+    { "include": "#types" },
+    { "include": "#constants" },
+    { "include": "#registers" },
+    { "include": "#properties" },
+    { "include": "#field_names" },
+    { "include": "#numbers" },
+    { "include": "#operators" }
+  ],
+  "repository": {
+    "comments": {
       "match": "#.*$",
       "name": "comment.line.number-sign.lls"
     },
-    {
+    "strings": {
       "name": "string.quoted.double.lls",
       "begin": "\"",
       "end": "\"",
-      "patterns": [{ "match": "\\\\.", "name": "constant.character.escape.lls" }]
+      "patterns": [
+        { "match": "\\\\.", "name": "constant.character.escape.lls" },
+        { "match": "\\{[A-Za-z_][A-Za-z0-9_]*\\}", "name": "meta.format-placeholder.lls" }
+      ]
+    },
+    "compiler_keywords": {
+      "patterns": [
+        {
+          "match": "@(if|else|for|switch)\\b",
+          "name": "keyword.control.llts"
+        },
+        {
+          "match": "@(as|new|isError|typeOf|sizeOf|nameOf)\\b",
+          "name": "support.function.builtin.llts"
+        }
+      ]
+    },
+    "declarations": {
+      "patterns": [
+        {
+          "match": "(@func)\\s+([A-Za-z_][A-Za-z0-9_:]*)",
+          "captures": {
+            "1": { "name": "keyword.declaration.llts" },
+            "2": { "name": "entity.name.function.llts" }
+          }
+        },
+        {
+          "match": "(@struct|@enum|@error|@type|@alias)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.declaration.llts" },
+            "2": { "name": "entity.name.type.llts" }
+          }
+        },
+        {
+          "match": "@(const|import|extern)\\b",
+          "name": "keyword.declaration.llts"
+        }
+      ]
+    },
+    "builtins": {
+      "match": "\\b(print|len|__printLn|__hostLog)\\b",
+      "name": "support.function.builtin.llts"
+    },
+    "types": {
+      "match": "\\b(u1|bool|boolean|i8|i16|i32|i64|int|u8|byte|u16|u32|u64|f32|f64|float|number|string|isize|usize|fsize)\\b",
+      "name": "support.type.llts"
+    },
+    "constants": {
+      "patterns": [
+        { "match": "\\b(true|false)\\b", "name": "constant.language.boolean.llts" },
+        { "match": "\\bnull\\b", "name": "constant.language.null.llts" }
+      ]
+    },
+    "registers": {
+      "match": "\\$[A-Za-z_][A-Za-z0-9_]*",
+      "name": "variable.other.llts"
+    },
+    "properties": {
+      "match": "(?<=\\.)[A-Za-z_][A-Za-z0-9_]*",
+      "name": "variable.other.property.llts"
+    },
+    "field_names": {
+      "match": "[A-Za-z_][A-Za-z0-9_]*(?=\\s*:)",
+      "name": "variable.other.property.llts"
+    },
+    "numbers": {
+      "match": "\\b(\\d+\\.\\d+([eE][+-]?\\d+)?|\\d+[eE][+-]?\\d+|0[xX][0-9a-fA-F]+|\\d+)\\b",
+      "name": "constant.numeric.llts"
+    },
+    "operators": {
+      "patterns": [
+        { "match": "=>|->|==|!=|<=|>=|&&|\\|\\||[+\\-*/%<>=!&|]", "name": "keyword.operator.llts" },
+        { "match": "[,;:(){}\\[\\]?.]", "name": "punctuation.separator.llts" }
+      ]
     }
-  ]
+  }
 }
