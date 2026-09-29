@@ -16,22 +16,23 @@ fn fail(vm: *VMState, msg: []const u8) CallError {
 
 pub fn callStatic(vm: *VMState, ip: *usize, addr: u32, argc: u8) CallError!void {
     if (vm.frame_count >= state_mod.MAX_FRAMES) return error.TooManyFrames;
-    var frame = state_mod.CallFrame.init(vm.allocator);
-    frame.return_ip = ip.*;
-    frame.base_slot = stack.depth(vm) - argc;
-    frame.arg_count = argc;
-    frame.func_name = functionNameAt(vm, addr);
-    frame.line = vm.current_line;
-    frame.column = vm.current_column;
-    frame.source_index = vm.current_source_index;
-    frame.file = vm.chunk.sourceAt(vm.current_source_index).path;
-    if (vm.chunk.functions.get(frame.func_name)) |fn_info| {
-        frame.source_index = fn_info.source_index;
-        frame.file = vm.chunk.sourceAt(fn_info.source_index).path;
+    const frame = &vm.frames[vm.frame_count];
+    frame.* = .{
+        .return_ip = ip.*,
+        .base_slot = vm.sp - argc,
+        .arg_count = argc,
+        .line = vm.current_line,
+        .column = vm.current_column,
+        .source_index = vm.current_source_index,
+        .file = if (vm.current_source_index < vm.chunk.sources.items.len) vm.chunk.sources.items[vm.current_source_index].path else "",
+        .heap_watermark = vm.heap_ptr,
+        .bytes_watermark = vm.bytes_ptr,
+    };
+    if (vm.addr_to_func_info.get(addr)) |meta| {
+        frame.func_name = meta.name;
+        frame.file = meta.file;
+        frame.source_index = meta.source_index;
     }
-    frame.heap_watermark = vm.heap_ptr;
-    frame.bytes_watermark = vm.bytes_ptr;
-    vm.frames[vm.frame_count] = frame;
     vm.frame_count += 1;
     ip.* = addr;
 }
@@ -68,22 +69,22 @@ pub fn callDynamic(vm: *VMState, ip: *usize, argc: u8) CallError!void {
 }
 
 pub fn doReturn(vm: *VMState, ip: *usize) CallError!bool {
-    const result = if (stack.depth(vm) > 0) stack.pop(vm) else Value.null;
+    const result = if (vm.sp > 0) vm.stack_buf[vm.sp - 1] else Value.null;
     if (vm.frame_count == 0) return fail(vm, "Return with no frame");
     vm.frame_count -= 1;
-    var frame = &vm.frames[vm.frame_count];
+    const frame = &vm.frames[vm.frame_count];
     const ret_ip = frame.return_ip;
     const base = frame.base_slot;
-    vm.heap_ptr = frame.heap_watermark;
-    vm.rewindPacked(frame.bytes_watermark);
+    if (vm.heap_ptr != frame.heap_watermark) vm.heap_ptr = frame.heap_watermark;
+    if (frame.bytes_watermark < vm.bytes_ptr) vm.rewindPacked(frame.bytes_watermark);
     frame.deinit();
     if (vm.frame_count == 0) {
-        stack.setTop(vm, 0);
-        try stack.push(vm, result);
+        vm.sp = 1;
+        vm.stack_buf[0] = result;
         return true;
     }
-    stack.setTop(vm, base);
-    try stack.push(vm, result);
+    vm.stack_buf[base] = result;
+    vm.sp = base + 1;
     ip.* = ret_ip;
     return false;
 }
@@ -104,5 +105,6 @@ pub fn packRest(vm: *VMState, named: u8) CallError!void {
 }
 
 fn functionNameAt(vm: *VMState, address: u32) []const u8 {
+    if (vm.addr_to_func_info.get(address)) |info| return info.name;
     return vm.addr_to_func_name.get(address) orelse "<anonymous>";
 }

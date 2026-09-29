@@ -818,7 +818,9 @@ fn inferExprInner(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, 
             if (isCmpOrLogic(op)) {
                 if (std.mem.eql(u8, op, "<") or std.mem.eql(u8, op, "<=") or std.mem.eql(u8, op, ">") or std.mem.eql(u8, op, ">=")) {
                     if (!ir.involvesUnknown(l) and !ir.involvesUnknown(r)) {
-                        _ = try coerceNumericPair(state, l, r, b.left, b.right, "comparison");
+                        // Ordered comparisons allow mixed numeric widths with a
+                        // warning (runtime widens via f64). Arithmetic stays strict.
+                        _ = try requireNumericPair(state, l, r, "comparison");
                     }
                 }
                 break :blk ir.TBool;
@@ -1586,17 +1588,21 @@ fn checkFunction(state: *state_mod.CompilerState, ta: ir.TypeAlloc, f: *ast.Func
     while (nit.next()) |n| try env.globals.put(n.*, ir.TUnknown);
 
     const annotated: ?ir.Type = if (f.return_type) |rt| try from_ast.typeFromAst(rt, state, ta) else null;
-    // Prefer the refined `def.return_type` when it includes `error` (e.g. annotation
-    // was `T` but the body returns `error(...)` / `fail()` — see refineErrorReturns).
+    // Two different contracts:
+    // • `expected_return` (body return checks) uses the refined display from
+    //   refineErrorReturns when it widened the annotation — so an annotated `: Box`
+    //   function may `return error(...)` and the caller sees `Box | error`.
+    // • `annotated_return` (the `?` policy check) uses the raw annotation —
+    //   `?` inside `: i64` is rejected even if refinement ran.
     var expected = annotated;
     if (state.functions.get(f.name)) |def| {
         if (def.return_type) |rt| {
-            if (from_ast.typeAllowsError(rt)) {
+            if (from_ast.typeAllowsError(rt) and (annotated == null or !ir.allowsError(annotated.?))) {
                 expected = try from_ast.parseDisplayType(state, ta, rt, null);
             }
         }
     }
-    env.annotated_return = expected;
+    env.annotated_return = annotated;
     env.expected_return = expected;
     env.in_function = true;
 

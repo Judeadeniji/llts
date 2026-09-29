@@ -1,6 +1,26 @@
-@const $std = @import("std/index.lls");
+@const $list = @import("std/list");
+@const $mem = @import("std/mem");
+$arena = mem.create(0);
+$state = list.create(arena);
 
-@const $err_msg = error("this is an error", "hello");
-std.debug.err(err_msg);
+@func f(fail) {
+    defer list.push(state, 1);
+    errdefer list.push(state, 10);
+    @if (fail) {
+        return error("Failed");
+    }
+    return true;
+}
 
-pub @func main() {}
+pub @func main() {
+    # f(true)?; -- why is this failing silently?
+    f(false)?;
+    print(list.len(state));
+    print(list.get(state, 0));
+
+    $err = f(true);
+    print(@isError(err));
+    print(list.len(state));
+    print(list.get(state, 1));
+    print(list.get(state, 2));
+}

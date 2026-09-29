@@ -34,6 +34,11 @@ fn operandBytes(op: OpCode) usize {
         .OP_PACK_REST,
         .OP_MARK_CONST,
         .OP_ASSERT_TYPE,
+        .OP_AS,
+        .OP_ADD_TYPED,
+        .OP_SUB_TYPED,
+        .OP_MUL_TYPED,
+        .OP_LT_TYPED,
         => 1,
         else => 0,
     };
@@ -213,6 +218,10 @@ fn formatOperands(
         .OP_MARK_CONST,
         .OP_ASSERT_TYPE,
         .OP_AS,
+        .OP_ADD_TYPED,
+        .OP_SUB_TYPED,
+        .OP_MUL_TYPED,
+        .OP_LT_TYPED,
         => {
             const b = readByte(code, ip) orelse return false;
             try w.print("{d}", .{b});

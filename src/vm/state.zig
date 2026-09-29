@@ -92,11 +92,18 @@ pub const VMState = struct {
     /// Reverse map: bytecode address → function name. Built once at init; replaces
     /// the O(n) functionNameAt linear scan that ran on every callStatic.
     addr_to_func_name: std.AutoHashMap(u32, []const u8),
+    addr_to_func_info: std.AutoHashMap(u32, CachedFuncInfo),
     /// Path of the running script (borrowed; used by os.args as argv[0]).
     script_path: []const u8 = "",
     /// Extra argv after the script path (borrowed; used by os.args as argv[1..]).
     script_args: []const []const u8 = &.{},
     max_memory_slots: usize = 1048576,
+
+    pub const CachedFuncInfo = struct {
+        name: []const u8,
+        file: []const u8,
+        source_index: u16,
+    };
 
     pub fn init(allocator: std.mem.Allocator, chunk: *Chunk, max_memory_slots: usize) !VMState {
         const headroom: usize = 512;
@@ -106,6 +113,7 @@ pub const VMState = struct {
             .global_name_to_slot = std.StringHashMap(u16).init(allocator),
             .string_cache = std.AutoHashMap(u32, i32).init(allocator),
             .addr_to_func_name = std.AutoHashMap(u32, []const u8).init(allocator),
+            .addr_to_func_info = std.AutoHashMap(u32, CachedFuncInfo).init(allocator),
             .chunk = chunk,
             .max_memory_slots = max_memory_slots,
             .stack_buf = try allocator.alloc(Value, STACK_MAX),
@@ -120,7 +128,14 @@ pub const VMState = struct {
         // Build reverse address→name map once; O(1) lookup replaces O(n) scan per call.
         var fn_it = chunk.functions.iterator();
         while (fn_it.next()) |entry| {
-            try state.addr_to_func_name.put(entry.value_ptr.address, entry.key_ptr.*);
+            const f = entry.value_ptr.*;
+            const file_path = if (f.source_index < chunk.sources.items.len) chunk.sources.items[f.source_index].path else "";
+            try state.addr_to_func_name.put(f.address, entry.key_ptr.*);
+            try state.addr_to_func_info.put(f.address, .{
+                .name = entry.key_ptr.*,
+                .file = file_path,
+                .source_index = f.source_index,
+            });
         }
         try state.memory.appendNTimes(allocator, .null, @intCast(HEAP_START));
         try state.memory.ensureTotalCapacity(allocator, 4096);
@@ -176,6 +191,7 @@ pub const VMState = struct {
         self.buffers.deinit(self.allocator);
         self.string_cache.deinit();
         self.addr_to_func_name.deinit();
+        self.addr_to_func_info.deinit();
         self.memory.deinit(self.allocator);
         self.immortal.deinit(self.allocator);
         self.bytes.deinit(self.allocator);

@@ -156,7 +156,7 @@ print(s.len(res.body) > 0);
 `),
 		["200", "true", "true"],
 	);
-});
+}, 30_000); // external network — generous timeout
 
 test("http.fetch: invalid URL returns an error value", () => {
 	expectOutput(
@@ -190,4 +190,4 @@ print(res.status);
 `),
 		["200"],
 	);
-});
+}, 30_000); // external network — generous timeout

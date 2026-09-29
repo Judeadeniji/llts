@@ -175,6 +175,9 @@ fn failConst(state: *CompilerState, name: []const u8) error{CompileError} {
 }
 
 fn widthCastKindName(tn: []const u8) ?u8 {
-    if (widths.fromName(tn)) |w| return @intFromEnum(w);
+    if (widths.fromName(tn)) |w| {
+        if (w == .i64 or w == .isize or w == .f64 or w == .fsize) return null;
+        return @intFromEnum(w);
+    }
     return null;
 }

@@ -440,6 +440,9 @@ fn registerShapeLayout(state: *CompilerState, key: []const u8, shape: *const ast
 
 fn widthCastKind(node: *ast.Node) ?u8 {
     if (node.* != .primary or node.primary.kind != .identifier) return null;
-    if (widths.fromName(node.primary.name)) |w| return @intFromEnum(w);
+    if (widths.fromName(node.primary.name)) |w| {
+        if (w == .i64 or w == .isize or w == .f64 or w == .fsize) return null;
+        return @intFromEnum(w);
+    }
     return null;
 }

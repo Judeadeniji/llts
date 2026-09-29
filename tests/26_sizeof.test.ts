@@ -39,5 +39,5 @@ print(@sizeOf(s));
 
 $arr = [1, 2, 3, 4];
 print(@sizeOf(arr));
-`), ["8", "1", "4", "128"]);
+`), ["8", "1", "4", "64"]); // runtime arrays: count * @sizeOf(Value) (16-byte slot → 4×16 = 64)
 });

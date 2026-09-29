@@ -29,7 +29,6 @@ pub @func main() {
     print(list.get(state, 1));
     print(list.get(state, 2));
 }
-main();
 `),
 		["1", "1", "true", "3", "10", "1"],
 	);
@@ -57,7 +56,6 @@ pub @func main() {
     print(list.get(l, 0));
     print(list.get(l, 1));
 }
-main();
 `),
 		["2", "3", "1"],
 	);
@@ -88,7 +86,6 @@ pub @func main() {
     print(list.get(l, 2));
     print(list.get(l, 3));
 }
-main();
 `),
 		["true", "4", "4", "3", "2", "1"],
 	);
@@ -119,7 +116,6 @@ pub @func main() {
     print(list.get(state, 0));
     print(list.get(state, 1));
 }
-main();
 `),
 		["true", "2", "1"],
 	);
@@ -137,7 +133,6 @@ pub @func main() {
     }
     print(x);
 }
-main();
 `),
 		["1"],
 	);
@@ -155,7 +150,6 @@ pub @func main() {
     }
     print(x);
 }
-main();
 `),
 		["3"],
 	);
@@ -192,7 +186,6 @@ pub @func main() {
     print(list.get(state, 1));
     print(list.get(state, 2));
 }
-main();
 `),
 		["true", "3", "2", "20", "1"],
 	);
@@ -218,7 +211,6 @@ pub @func main() {
     print(list.len(state));
     print(list.get(state, 0));
 }
-main();
 `),
 		["0", "1", "1"],
 	);

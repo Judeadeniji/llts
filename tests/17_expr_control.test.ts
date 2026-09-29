@@ -220,7 +220,6 @@ test("break with value outside value context errors", () => {
 pub @func main() {
     break 1;
 }
-main();
 `),
 		"break with value",
 	);

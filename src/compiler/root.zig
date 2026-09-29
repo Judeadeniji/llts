@@ -457,6 +457,12 @@ fn refineErrorReturns(state: *state_mod.CompilerState) !void {
             var carries = false;
             scanReturnsForError(state, def.node.function_decl.body, e.key_ptr.*, &carries);
             if (!carries) continue;
+            // A typed error set (`: IoError`) is a closed contract — widening it to
+            // `IoError | error` would let any open error leak through. Only bare
+            // `error`-allowing unions participate in refinement.
+            if (def.return_type) |rt| {
+                if (!types.typeAllowsError(rt) and state.error_sets.contains(rt)) continue;
+            }
             const before = def.return_type;
             if (def.return_type == null) {
                 // Always keep a success arm when unannotated — pure `error` breaks

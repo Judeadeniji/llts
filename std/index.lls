@@ -1,16 +1,16 @@
 # Main entry point for the standard library
 
-pub @const $math = @import("std/math.lls");
+pub @const $buffer = @import("std/buffer.lls");
 pub @const $debug = @import("std/debug.lls");
-pub @const $io = @import("std/io.lls");
 pub @const $fs = @import("std/fs.lls");
-pub @const $mem = @import("std/mem.lls");
-pub @const $time = @import("std/time.lls");
-pub @const $os = @import("std/os.lls");
-pub @const $syscall = @import("std/syscall.lls");
 pub @const $http = @import("std/http.lls");
+pub @const $io = @import("std/io.lls");
 pub @const $json = @import("std/json.lls");
 pub @const $list = @import("std/list.lls");
 pub @const $map = @import("std/map.lls");
-pub @const $buffer = @import("std/buffer.lls");
+pub @const $math = @import("std/math.lls");
+pub @const $mem = @import("std/mem.lls");
+pub @const $os = @import("std/os.lls");
 pub @const $string = @import("std/string.lls");
+pub @const $syscall = @import("std/syscall.lls");
+pub @const $time = @import("std/time.lls");
