@@ -489,16 +489,7 @@ pub fn makeErrorPayload(vm: *VMState) HeapError!void {
 
 pub fn isError(vm: *VMState) HeapError!void {
     const val = stack.pop(vm);
-    const p: ?i32 = switch (val) {
-        .ptr => |x| x,
-        .i64 => |x| if (vm.isValidHeapPtr(x)) @intCast(x) else null,
-        else => null,
-    };
-    const ok = if (p) |ptr|
-        ptr >= state_mod.HEAP_START and vm.isValidHeapPtr(ptr - 1) and vm.slot(ptr - 1).* == .i64 and vm.slot(ptr - 1).*.i64 == ERROR_TAG
-    else
-        false;
-    try stack.push(vm, Value.fromBool(ok ));
+    try stack.push(vm, Value.fromBool(vm.isErrorValue(val)));
 }
 
 /// `@nameOf` on errors: push the code string (declared member / open message).

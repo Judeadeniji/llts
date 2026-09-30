@@ -13,7 +13,7 @@ $state = list.create(arena);
 }
 
 pub @func main() {
-    # f(true)?; -- why is this failing silently?
+    # f(true)?; # uncomment to test unhandled error return from main (exits with code 1)
     f(false)?;
     print(list.len(state));
     print(list.get(state, 0));

@@ -83,6 +83,20 @@ pub fn doReturn(vm: *VMState, ip: *usize) CallError!bool {
         vm.stack_buf[0] = result;
         return true;
     }
+    if (vm.frame_count > 1) {
+        const caller = &vm.frames[vm.frame_count - 1];
+        if (caller.line > 0) {
+            vm.current_line = caller.line;
+            vm.current_column = caller.column;
+            vm.current_source_index = caller.source_index;
+        }
+    } else {
+        if (frame.line > 0) {
+            vm.current_line = frame.line;
+            vm.current_column = frame.column;
+            vm.current_source_index = frame.source_index;
+        }
+    }
     vm.stack_buf[base] = result;
     vm.sp = base + 1;
     ip.* = ret_ip;

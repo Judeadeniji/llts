@@ -16,11 +16,7 @@ fn parseLevel(s: []const u8) io_log.Level {
 }
 
 fn isErrorValue(vm: *VMState, v: Value) bool {
-    if (v != .ptr) return false;
-    const p = v.ptr;
-    if (p < 1 or !vm.isValidHeapPtr(p - 1)) return false;
-    const tag = vm.slot(p - 1).*;
-    return tag == .i64 and tag.i64 == ERROR_TAG;
+    return vm.isErrorValue(v);
 }
 
 /// Format an LLTS error for host logs (no redundant `Error:` prefix).

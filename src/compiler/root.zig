@@ -155,9 +155,7 @@ pub fn emitBytecode(state: *state_mod.CompilerState, doc: *ast.Document) !chunk_
         try emit.emitOp(state, .OP_CALL);
         try emit.emitByte(state, 0);
     }
-    try emit.emitOp(state, .OP_POP); // discard main's return value
-
-    try emit.emitOp(state, .OP_NULL);
+    // Return main's result directly from the root chunk.
     try emit.emitOp(state, .OP_RETURN);
 
     // Export keys borrow compiler-owned strings; intern them into the chunk before teardown.
@@ -748,7 +746,7 @@ fn registerModuleDecls(state: *state_mod.CompilerState, doc: *ast.Document) !voi
         if (s.* == .declaration) {
             const decl_node = &s.declaration;
             if (state.global_vars.contains(decl_node.name)) {
-                                return @import("../errors/compile.zig").compileFailFmt(state, "Variable '{s}' already declared in this scope", .{decl_node.name});
+                return compile_errors.compileFailFmt(state, "Variable '{s}' already declared in this scope", .{decl_node.name});
             }
             try state.global_vars.put(decl_node.name, {});
             if (decl_node.is_const) try state.global_consts.put(decl_node.name, {});

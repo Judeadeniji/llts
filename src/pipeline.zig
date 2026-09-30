@@ -8,6 +8,8 @@ const vm_state = @import("vm/state.zig");
 const execute = @import("vm/execute/root.zig");
 const builtins = @import("vm/builtins/root.zig");
 const llvm_backend = @import("compiler/llvm/root.zig");
+const print_fmt = @import("vm/builtins/print.zig");
+const report = @import("errors/report.zig");
 
 pub const RunOptions = struct {
     debug: bool = true,
@@ -67,6 +69,38 @@ pub fn runChunk(
         }
         return err;
     };
+
+    if (state.sp > 0 and state.isErrorValue(state.stack_buf[0])) {
+        const err_val = state.stack_buf[0];
+        const p: i32 = switch (err_val) {
+            .ptr => |x| x,
+            .i64 => |x| @intCast(x),
+            else => unreachable,
+        };
+        var msg_buf: std.ArrayList(u8) = .empty;
+        defer msg_buf.deinit(state.allocator);
+        try print_fmt.writeValue(&state, &msg_buf, state.slot(p).*);
+        const payload = state.slot(p + 1).*;
+        if (payload != .null) {
+            try msg_buf.appendSlice(state.allocator, " — ");
+            try print_fmt.writeValue(&state, &msg_buf, payload);
+        }
+
+        const file = if (state.current_source_index < state.chunk.sources.items.len)
+            state.chunk.sources.items[state.current_source_index].path
+        else if (state.chunk.file.len > 0)
+            state.chunk.file
+        else
+            script_path;
+        const source = state.sourceForFile(file);
+        if (state.current_line > 0 and source.len > 0) {
+            report.reportSourceErrorWithFrame(file, source, state.current_line, state.current_column, msg_buf.items, "main");
+        } else {
+            report.reportRuntimeError(msg_buf.items);
+            report.reportLocationFrameCol(file, 1, 1, "main");
+        }
+        return error.RuntimeError;
+    }
 }
 
 pub fn runSource(

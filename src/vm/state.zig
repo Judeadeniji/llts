@@ -246,6 +246,25 @@ pub const VMState = struct {
         return &self.memory.items[@intCast(ptr)];
     }
 
+    pub fn slotConst(self: *const VMState, ptr: i32) *const Value {
+        if (ptr >= IMMORTAL_BASE) {
+            return &self.immortal.items[@intCast(ptr - IMMORTAL_BASE)];
+        }
+        return &self.memory.items[@intCast(ptr)];
+    }
+
+    pub fn isErrorValue(self: *const VMState, val: Value) bool {
+        const p: ?i32 = switch (val) {
+            .ptr => |x| x,
+            .i64 => |x| if (self.isValidHeapPtr(x)) @intCast(x) else null,
+            else => null,
+        };
+        const ptr = p orelse return false;
+        if (ptr < HEAP_START or !self.isValidHeapPtr(ptr - 1)) return false;
+        const tag = self.slotConst(ptr - 1).*;
+        return tag == .i64 and tag.i64 == ERROR_TAG;
+    }
+
     fn maxPackedBytes(self: *const VMState) usize {
         return self.max_memory_slots * 16;
     }

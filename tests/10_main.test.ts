@@ -71,3 +71,45 @@ pub @func main() {
 		["30"],
 	);
 });
+
+test("main returning an error fails with non-zero exit and prints error diagnostic", () => {
+	const res = runSource(`
+pub @func main() {
+    return error("MainError", 500);
+}
+`);
+	expectError(res, "MainError — 500");
+	if (res.exitCode === 0) {
+		throw new Error("expected non-zero exit code");
+	}
+	if (!res.stderr.includes("at main (")) {
+		throw new Error(`expected main frame in stderr, got:\n${res.stderr}`);
+	}
+});
+
+test("main propagating an error via ? fails with non-zero exit", () => {
+	const res = runSource(`
+@func f(fail) {
+    @if (fail) {
+        return error("TaskFailed");
+    }
+    return true;
+}
+
+pub @func main() {
+    f(true)?;
+    print("unreachable");
+}
+`);
+	expectError(res, "TaskFailed");
+	if (res.exitCode === 0) {
+		throw new Error("expected non-zero exit code");
+	}
+	if (res.stdout.includes("unreachable")) {
+		throw new Error(`printed unreachable code:\n${res.stdout}`);
+	}
+	if (!res.stderr.includes("at main (")) {
+		throw new Error(`expected main frame in stderr, got:\n${res.stderr}`);
+	}
+});
+
