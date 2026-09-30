@@ -1,37 +1,129 @@
-pub @func printLn(msg, a, b, c, d) {
-    __printLn(msg, a, b, c, d);
+# Debug module for LLTS — based on the Go fmt printing system.
+#
+# Provides formatted printing, assertions, panic handling, value inspection,
+# and leveled diagnostic logging.
+
+@const $fmt = @import("std/fmt.lls");
+
+# --- Formatted Printing ---
+
+# Formatted print with newline to stdout.
+# Supports all Go fmt verbs (%v, %+v, %#v, %T, %t, %d, %x, %s, %q, %f, etc.)
+# as well as legacy placeholders ({s}, {i}, {c}).
+pub @func printLn(format, ...args) {
+    return __printLn(format, args);
 }
 
-pub @func log(msg) {
-    info(msg);
+# Alias for printLn (matching Zig std.debug.print / Go Printf conventions).
+pub @func print(format, ...args) {
+    return __printLn(format, args);
 }
 
-pub @func trace(msg) {
-    __hostLog("trace", msg);
+# Formatted print without newline to stdout.
+pub @func printf(format, ...args) {
+    return __printf(format, args);
 }
 
-pub @func debug(msg) {
-    __hostLog("debug", msg);
+# Print values with default %v format followed by a newline.
+pub @func println(...args) {
+    return __sprintln(args);
 }
 
-pub @func info(msg) {
-    __hostLog("info", msg);
+# --- Value Inspection ---
+
+# Dumps a value in detailed syntax representation (%#v).
+pub @func dump(val) {
+    __printf("%#v\n", [val]);
 }
 
-pub @func warn(msg) {
-    __hostLog("warn", msg);
+# Inspects a value with its type (%T) and detailed structure (%+v).
+pub @func inspect(val) {
+    __printf("(%T) %+v\n", [val, val]);
 }
 
-pub @func err(msg) {
-    # Auto-detects LLTS error values: logs code (+ payload) without a redundant
-    # "Error:" prefix under the ERROR level.
-    __hostLog("error", msg);
-}
+# --- Assertions ---
 
+# Assert that a condition is true.
+# Returns null on success, or an error("AssertFailed", condition) value on failure.
 pub @func assert(condition) {
     @if (condition) {
         return null;
     } @else {
         return error("AssertFailed", condition);
+    }
+}
+
+# Assert with a custom failure message.
+pub @func assertMsg(condition, msg) {
+    @if (condition) {
+        return null;
+    } @else {
+        return error("AssertFailed", msg);
+    }
+}
+
+# Assert that panics immediately if the condition is false.
+pub @func assertOrPanic(condition, msg) {
+    @if (!condition) {
+        panic(msg);
+    }
+}
+
+# --- Panics ---
+
+# Abort execution immediately with a formatted error message.
+pub @func panic(...args) {
+    $msg = __sprint(args);
+    __hostLog("error", "panic: " + msg);
+    __exit(1);
+}
+
+# Formatted panic using Go fmt format string and arguments.
+pub @func panicf(format, ...args) {
+    $msg = __sprintf(format, args);
+    __hostLog("error", "panic: " + msg);
+    __exit(1);
+}
+
+# Unimplemented placeholder that panics with a TODO notice.
+pub @func todo(msg) {
+    panic("TODO: " + msg);
+}
+
+# --- Leveled Diagnostic Logging ---
+
+pub @func log(msg) {
+    info(msg);
+}
+
+pub @func trace(...args) {
+    $msg = __sprint(args);
+    __hostLog("trace", msg);
+}
+
+pub @func debug(...args) {
+    $msg = __sprint(args);
+    __hostLog("debug", msg);
+}
+
+pub @func info(...args) {
+    $msg = __sprint(args);
+    __hostLog("info", msg);
+}
+
+pub @func warn(...args) {
+    $msg = __sprint(args);
+    __hostLog("warn", msg);
+}
+
+pub @func err(...args) {
+    # Auto-detects LLTS error values: logs code (+ payload) without a redundant
+    # "Error:" prefix under the ERROR level.
+    $n = len(args);
+    @if (n == 1) {
+        __hostLog("error", args[0]);
+    } @else {
+        $msg = __sprint(args);
+        __hostLog("error", msg);
     }
 }

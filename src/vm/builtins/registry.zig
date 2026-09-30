@@ -18,6 +18,7 @@ const list_mod = @import("list.zig");
 const map_mod = @import("map.zig");
 const buffer_mod = @import("buffer.zig");
 const log_mod = @import("log.zig");
+const fmt_mod = @import("fmt.zig");
 
 const VMState = state_mod.VMState;
 const Chunk = chunk_mod.Chunk;
@@ -39,6 +40,7 @@ const Module = enum {
     list,
     map,
     buffer,
+    fmt,
 };
 
 fn wants(needed: *const std.StringHashMap(void), comptime prefixes: []const []const u8, comptime exact: []const []const u8) bool {
@@ -65,6 +67,10 @@ fn isMathGlobal(name: []const u8) bool {
     }
     if (std.mem.startsWith(u8, name, "__host")) return false;
     if (std.mem.startsWith(u8, name, "__print")) return false;
+    if (std.mem.startsWith(u8, name, "__sprint")) return false;
+    if (std.mem.startsWith(u8, name, "__printf")) return false;
+    if (std.mem.startsWith(u8, name, "__fprintf")) return false;
+    if (std.mem.startsWith(u8, name, "__fprint")) return false;
     if (std.mem.startsWith(u8, name, "__sys")) return false;
     if (std.mem.startsWith(u8, name, "__SYS_")) return false;
     if (std.mem.eql(u8, name, "__syscall")) return false;
@@ -161,6 +167,7 @@ fn moduleNeeded(needed: *const std.StringHashMap(void), module: Module) bool {
         .list => wants(needed, &.{ "__list" }, &.{}),
         .map => wants(needed, &.{ "__map" }, &.{}),
         .buffer => wants(needed, &.{ "__buffer" }, &.{}),
+        .fmt => wants(needed, &.{ "__sprint", "__printf", "__fprintf", "__fprint" }, &.{ "__sprintf", "__printf", "__fprintf", "__sprint", "__sprintln", "__fprint", "__fprintln" }),
         .math => blk: {
             var it = needed.keyIterator();
             while (it.next()) |name| {
@@ -177,6 +184,7 @@ pub fn registerBuiltins(vm: *VMState, chunk: *const Chunk) !void {
 
     if (moduleNeeded(&needed, .print)) try print_mod.register(vm);
     if (moduleNeeded(&needed, .print_ln)) try print_ln_mod.register(vm);
+    if (moduleNeeded(&needed, .fmt)) try fmt_mod.register(vm);
     if (moduleNeeded(&needed, .log)) try log_mod.register(vm);
     if (moduleNeeded(&needed, .len)) try len_mod.register(vm);
     if (moduleNeeded(&needed, .mem)) try mem_mod.register(vm);

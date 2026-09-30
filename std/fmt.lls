@@ -1,0 +1,106 @@
+# Package fmt implements formatted I/O with functions analogous to Go's fmt.
+#
+# Formatting Verbs:
+#   General:
+#     %v   Default format for the value
+#     %+v  Struct with field names / detailed error payload
+#     %#v  Go/LLTS syntax representation
+#     %T   Type of the value (e.g. int, string, bool, []byte)
+#     %%   Literal percent sign
+#
+#   Boolean:
+#     %t   The word true or false
+#
+#   Integer:
+#     %d   Base 10
+#     %b   Base 2 (binary)
+#     %o   Base 8 (octal)
+#     %O   Base 8 with 0o prefix
+#     %x   Base 16 lowercase (hex)
+#     %X   Base 16 uppercase (HEX)
+#     %c   Character represented by the code point
+#     %q   Single-quoted character literal or double-quoted string
+#     %U   Unicode format: U+1234 (or with # flag: U+1234 'c')
+#
+#   Floating-point:
+#     %f   Decimal point, e.g. 123.456
+#     %F   Synonym for %f
+#     %e   Scientific notation, e.g. 1.234560e+02
+#     %E   Scientific notation uppercase, e.g. 1.234560E+02
+#     %g   Compact float (%e for large/small, %f otherwise)
+#     %G   Compact float with %E
+#
+#   String and slice of bytes:
+#     %s   Uninterpreted bytes or string
+#     %q   Double-quoted string safely escaped
+#     %x   Hex bytes lowercase
+#     %X   Hex bytes uppercase
+#
+#   Pointer:
+#     %p   Pointer in base 16 with leading 0x
+#
+#   Flags:
+#     +    Always print a sign for numbers (%+d); struct fields in %+v
+#     -    Pad on the right instead of left (left-justify)
+#     #    Alternate format: 0b for %b, 0x for %x, 0 for %o, quotes for %#v
+#     ' '  (space) Leave space for elided sign in numbers (% d)
+#     0    Pad with leading zeros instead of spaces
+#
+#   Width and Precision:
+#     %10d, %-10s, %.2f, %10.2f, %*d, %.*f
+#
+#   Argument Indexing:
+#     %[2]d %[1]s
+
+pub @func sprintf(format, ...args) {
+    return __sprintf(format, args);
+}
+
+pub @func printf(format, ...args) {
+    return __printf(format, args);
+}
+
+pub @func fprintf(file, format, ...args) {
+    $fd = file;
+    @if (@typeOf(file) == "struct") {
+        $fd = file.fd;
+    }
+    return __fprintf(fd, format, args);
+}
+
+pub @func sprint(...args) {
+    return __sprint(args);
+}
+
+pub @func sprintln(...args) {
+    return __sprintln(args);
+}
+
+pub @func print(...args) {
+    return __fprint(1, args);
+}
+
+pub @func println(...args) {
+    return __fprintln(1, args);
+}
+
+pub @func fprint(file, ...args) {
+    $fd = file;
+    @if (@typeOf(file) == "struct") {
+        $fd = file.fd;
+    }
+    return __fprint(fd, args);
+}
+
+pub @func fprintln(file, ...args) {
+    $fd = file;
+    @if (@typeOf(file) == "struct") {
+        $fd = file.fd;
+    }
+    return __fprintln(fd, args);
+}
+
+pub @func errorf(format, ...args) {
+    $msg = __sprintf(format, args);
+    return error("Error", msg);
+}
