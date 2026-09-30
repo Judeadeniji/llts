@@ -1,6 +1,7 @@
 const std = @import("std");
 const llts = @import("llts");
 const ast = llts.ast;
+const ir = llts.compiler.ir;
 
 const ConstantValue = union(enum) {
     int: i64,
@@ -151,23 +152,23 @@ pub fn formatType(allocator: std.mem.Allocator, node: *const ast.Node, is_const:
                 }
             }
             if (fields_str.items.len > 0) {
-                return std.fmt.allocPrint(allocator, "@struct {s} {{ {s} }}", .{s.name, fields_str.items}) catch null;
+                return std.fmt.allocPrint(allocator, "@struct {s} {{ {s} }}", .{ir.cleanTypeName(s.name), fields_str.items}) catch null;
             }
-            return std.fmt.allocPrint(allocator, "@struct {s} {{}}", .{s.name}) catch null;
+            return std.fmt.allocPrint(allocator, "@struct {s} {{}}", .{ir.cleanTypeName(s.name)}) catch null;
         },
         .enum_decl => |e| {
-            return std.fmt.allocPrint(allocator, "@enum {s}", .{e.name}) catch null;
+            return std.fmt.allocPrint(allocator, "@enum {s}", .{ir.cleanTypeName(e.name)}) catch null;
         },
         .error_decl => |e| {
             if (e.variants.len == 0) {
-                return std.fmt.allocPrint(allocator, "@error {s} {{}}", .{e.name}) catch null;
+                return std.fmt.allocPrint(allocator, "@error {s} {{}}", .{ir.cleanTypeName(e.name)}) catch null;
             }
             var members_str = std.ArrayList(u8).empty;
             for (e.variants, 0..) |v, i| {
                 if (i > 0) members_str.appendSlice(allocator, ", ") catch {};
                 members_str.appendSlice(allocator, v) catch {};
             }
-            return std.fmt.allocPrint(allocator, "@error {s} {{ {s} }}", .{ e.name, members_str.items }) catch null;
+            return std.fmt.allocPrint(allocator, "@error {s} {{ {s} }}", .{ ir.cleanTypeName(e.name), members_str.items }) catch null;
         },
         .function_decl => |f| {
             var params_str = std.ArrayList(u8).empty;
@@ -194,13 +195,13 @@ pub fn formatType(allocator: std.mem.Allocator, node: *const ast.Node, is_const:
                     ret_str = std.fmt.allocPrint(allocator, ": {s}", .{r_str}) catch "";
                 }
             }
-            return std.fmt.allocPrint(allocator, "@func {s}({s}){s}", .{f.name, params_str.items, ret_str}) catch null;
+            return std.fmt.allocPrint(allocator, "@func {s}({s}){s}", .{ir.cleanTypeName(f.name), params_str.items, ret_str}) catch null;
         },
         .type_decl => |t| {
             if (formatType(allocator, t.type_expr, false, doc)) |te_str| {
-                return std.fmt.allocPrint(allocator, "@type {s} = {s}", .{t.name, te_str}) catch null;
+                return std.fmt.allocPrint(allocator, "@type {s} = {s}", .{ir.cleanTypeName(t.name), te_str}) catch null;
             }
-            return std.fmt.allocPrint(allocator, "@type {s}", .{t.name}) catch null;
+            return std.fmt.allocPrint(allocator, "@type {s}", .{ir.cleanTypeName(t.name)}) catch null;
         },
         .declaration => |d| {
             if (d.is_const) {
@@ -235,7 +236,7 @@ pub fn formatType(allocator: std.mem.Allocator, node: *const ast.Node, is_const:
         },
         .primary => |p| {
             return switch (p.kind) {
-                .identifier => std.fmt.allocPrint(allocator, "{s}", .{p.name}) catch null,
+                .identifier => std.fmt.allocPrint(allocator, "{s}", .{ir.cleanTypeName(p.name)}) catch null,
                 .register => std.fmt.allocPrint(allocator, "${s}", .{p.name}) catch null,
                 else => null,
             };

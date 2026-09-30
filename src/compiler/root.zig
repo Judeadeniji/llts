@@ -12,7 +12,9 @@ const stmt = @import("stmt/root.zig");
 
 const path_mod = @import("expr/path.zig");
 const reachability = @import("reachability.zig");
-const types = @import("typecheck/from_ast.zig");
+pub const types = @import("typecheck/from_ast.zig");
+pub const from_ast = @import("typecheck/from_ast.zig");
+pub const ir = @import("typecheck/ir.zig");
 const compile_errors = @import("../errors/compile.zig");
 
 pub const CompileOptions = struct {
@@ -363,13 +365,15 @@ fn calleeReturnType(state: *state_mod.CompilerState, callee: *ast.Node, full_nam
                 break :blk null;
             };
             if (type_name) |tn| {
+                const canon = if (types.lookupStruct(state, tn)) |sd| sd.name else types.unwrapOptionalDisplay(tn);
                 var buf: [256]u8 = undefined;
-                const method_name = std.fmt.bufPrint(&buf, "{s}::{s}", .{ types.unwrapOptionalDisplay(tn), prop }) catch return null;
+                const method_name = std.fmt.bufPrint(&buf, "{s}::{s}", .{ canon, prop }) catch return null;
                 if (state.functions.get(method_name)) |def| return def.return_type;
             }
         } else if (types.resolveType(state, object)) |obj_type| {
+            const canon = if (types.lookupStruct(state, obj_type)) |sd| sd.name else types.unwrapOptionalDisplay(obj_type);
             var buf: [256]u8 = undefined;
-            const method_name = std.fmt.bufPrint(&buf, "{s}::{s}", .{ types.unwrapOptionalDisplay(obj_type), prop }) catch return null;
+            const method_name = std.fmt.bufPrint(&buf, "{s}::{s}", .{ canon, prop }) catch return null;
             if (state.functions.get(method_name)) |def| return def.return_type;
         }
     }

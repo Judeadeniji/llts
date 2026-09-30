@@ -4,6 +4,8 @@ const state = @import("state.zig");
 const transport = @import("transport.zig");
 const infer = @import("infer.zig");
 const resolve = @import("resolve.zig");
+const from_ast = llts.compiler.from_ast;
+const ir = llts.compiler.ir;
 
 const MethodNotFound: i32 = -32601;
 const InternalError: i32 = -32603;
@@ -356,7 +358,7 @@ fn computeHover(ra: std.mem.Allocator, analysis: anytype, target_line: u32, targ
                         type_str = fmt_type.?;
                     } else if (cs) |state_ptr| {
                         if (state_ptr.global_types.get(t.value)) |gt| {
-                            type_str = ra.dupe(u8, gt) catch "unknown";
+                            type_str = ra.dupe(u8, ir.cleanTypeName(gt)) catch "unknown";
                         } else if (fmt_type) |ft| {
                             type_str = ft;
                         }
@@ -372,7 +374,8 @@ fn computeHover(ra: std.mem.Allocator, analysis: anytype, target_line: u32, targ
                             var val: i32 = 0;
                             var str_val: ?[]const u8 = null;
                             if (cs) |state_ptr| {
-                                if (state_ptr.enums.get(site.type_name)) |ed| {
+                                const canon_name = from_ast.findEnumKey(state_ptr, site.type_name) orelse site.type_name;
+                                if (state_ptr.enums.get(canon_name)) |ed| {
                                     if (ed.variants.get(site.variant)) |v| val = v;
                                     if (ed.string_values) |*sv| {
                                         if (sv.get(site.variant)) |s| str_val = s;
@@ -380,13 +383,13 @@ fn computeHover(ra: std.mem.Allocator, analysis: anytype, target_line: u32, targ
                                 }
                             }
                             if (str_val) |s| {
-                                type_str = std.fmt.allocPrint(ra, "(@enum {s}) {s} = \"{s}\"", .{ site.type_name, site.variant, s }) catch "unknown";
+                                type_str = std.fmt.allocPrint(ra, "(@enum {s}) {s} = \"{s}\"", .{ ir.cleanTypeName(site.type_name), site.variant, s }) catch "unknown";
                             } else {
-                                type_str = std.fmt.allocPrint(ra, "(@enum {s}) {s} = {d}", .{ site.type_name, site.variant, val }) catch "unknown";
+                                type_str = std.fmt.allocPrint(ra, "(@enum {s}) {s} = {d}", .{ ir.cleanTypeName(site.type_name), site.variant, val }) catch "unknown";
                             }
                         },
                         .error_decl => {
-                            type_str = std.fmt.allocPrint(ra, "(@error {s}) {s}", .{ site.type_name, site.variant }) catch "unknown";
+                            type_str = std.fmt.allocPrint(ra, "(@error {s}) {s}", .{ ir.cleanTypeName(site.type_name), site.variant }) catch "unknown";
                         },
                     }
                 } else if (cs) |state_ptr| {
@@ -414,7 +417,7 @@ fn computeHover(ra: std.mem.Allocator, analysis: anytype, target_line: u32, targ
                                 } else |_| {}
                             }
                             if (obj_type) |ot| {
-                                if (state_ptr.structs.get(ot)) |sd| {
+                                if (from_ast.lookupStruct(state_ptr, ot)) |sd| {
                                     if (sd.types.get(primary_node.member.property.primary.name)) |ft| {
                                         resolved = ft;
                                     }
@@ -422,27 +425,28 @@ fn computeHover(ra: std.mem.Allocator, analysis: anytype, target_line: u32, targ
                             }
                         }
                         if (resolved) |resolved_type| {
-                            if (primary_node.* == .member and state_ptr.enums.contains(resolved_type) and primary_node.member.property.* == .primary) {
-                                const enum_name = resolved_type;
+                            const clean_rt = ir.cleanTypeName(resolved_type);
+                            if (primary_node.* == .member and (state_ptr.enums.contains(resolved_type) or from_ast.findEnumKey(state_ptr, resolved_type) != null) and primary_node.member.property.* == .primary) {
+                                const canon_name = from_ast.findEnumKey(state_ptr, resolved_type) orelse resolved_type;
                                 const variant_name = primary_node.member.property.primary.name;
                                 var val: i32 = 0;
                                 var str_val: ?[]const u8 = null;
-                                if (state_ptr.enums.get(enum_name)) |ed| {
+                                if (state_ptr.enums.get(canon_name)) |ed| {
                                     if (ed.variants.get(variant_name)) |v| val = v;
                                     if (ed.string_values) |*sv| {
                                         if (sv.get(variant_name)) |s| str_val = s;
                                     }
                                 }
                                 if (str_val) |s| {
-                                    type_str = std.fmt.allocPrint(ra, "(@enum {s}) {s} = \"{s}\"", .{ enum_name, variant_name, s }) catch "unknown";
+                                    type_str = std.fmt.allocPrint(ra, "(@enum {s}) {s} = \"{s}\"", .{ clean_rt, variant_name, s }) catch "unknown";
                                 } else {
-                                    type_str = std.fmt.allocPrint(ra, "(@enum {s}) {s} = {d}", .{ enum_name, variant_name, val }) catch "unknown";
+                                    type_str = std.fmt.allocPrint(ra, "(@enum {s}) {s} = {d}", .{ clean_rt, variant_name, val }) catch "unknown";
                                 }
-                            } else if (primary_node.* == .member and state_ptr.error_sets.contains(resolved_type) and primary_node.member.property.* == .primary) {
+                            } else if (primary_node.* == .member and (state_ptr.error_sets.contains(resolved_type) or from_ast.findErrorSetKey(state_ptr, resolved_type) != null) and primary_node.member.property.* == .primary) {
                                 const member_name = primary_node.member.property.primary.name;
-                                type_str = std.fmt.allocPrint(ra, "(@error {s}) {s}", .{ resolved_type, member_name }) catch "unknown";
+                                type_str = std.fmt.allocPrint(ra, "(@error {s}) {s}", .{ clean_rt, member_name }) catch "unknown";
                             } else {
-                                type_str = ra.dupe(u8, resolved_type) catch "unknown";
+                                type_str = ra.dupe(u8, clean_rt) catch "unknown";
                             }
                         }
                     }

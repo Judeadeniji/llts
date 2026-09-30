@@ -153,7 +153,7 @@ pub fn compileNew(state: *CompilerState, c: *const ast.Call) !void {
             if (std.mem.indexOfScalar(u8, struct_name, '.') != null) {
                 struct_name = try path.resolveModuleType(state, struct_name);
             }
-            const struct_def = state.structs.get(struct_name) orelse {
+            const struct_def = types.lookupStruct(state, struct_name) orelse {
                 return compiler_errors.compileFailFmt(state, "@new unknown type '{s}'", .{p.name});
             };
             try emitArenaAllocBytes(state, c.args[0], null, struct_def.size);
@@ -278,7 +278,7 @@ fn resolveStructDef(state: *CompilerState, init: *const ast.StructInit) !state_m
         struct_name = try path.resolveModuleType(state, struct_name);
     }
     try types.checkStructInitExport(state, init.type_expr, struct_name);
-    return state.structs.get(struct_name) orelse {
+    return types.lookupStruct(state, struct_name) orelse {
         return compiler_errors.compileFailFmt(state, "Unknown struct: {s}", .{sn});
     };
 }

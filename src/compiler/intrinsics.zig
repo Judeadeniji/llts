@@ -15,6 +15,9 @@ const modules = @import("modules.zig");
 const compile_errors = @import("../errors/compile.zig");
 const scope = @import("scope.zig");
 
+const layout = @import("layout.zig");
+const widths = @import("widths.zig");
+
 pub const Intrinsic = enum {
     import,
     typeOf,
@@ -25,15 +28,18 @@ pub const Intrinsic = enum {
     new,
 };
 
+const intrinsics = std.StaticStringMap(Intrinsic).initComptime(.{
+    .{ "@import", .import },
+    .{ "@typeOf", .typeOf },
+    .{ "@isError", .isError },
+    .{ "@sizeOf", .sizeOf },
+    .{ "@nameOf", .nameOf },
+    .{ "@as", .as },
+    .{ "@new", .new },
+});
+
 pub fn match(callee: []const u8) ?Intrinsic {
-    if (std.mem.eql(u8, callee, "@import")) return .import;
-    if (std.mem.eql(u8, callee, "@typeOf")) return .typeOf;
-    if (std.mem.eql(u8, callee, "@isError")) return .isError;
-    if (std.mem.eql(u8, callee, "@sizeOf")) return .sizeOf;
-    if (std.mem.eql(u8, callee, "@nameOf")) return .nameOf;
-    if (std.mem.eql(u8, callee, "@as")) return .as;
-    if (std.mem.eql(u8, callee, "@new")) return .new;
-    return null;
+    return intrinsics.get(callee);
 }
 
 pub const Arity = union(enum) {
@@ -70,7 +76,6 @@ pub fn checkArity(state: *CompilerState, intr: Intrinsic, name: []const u8, got:
 }
 
 pub fn typecheck(state: *CompilerState, env: *typecheck_root.Env, ta: ir.TypeAlloc, intr: Intrinsic, call_node: *ast.Node, c: *const ast.Call) !ir.Type {
-
     const name = c.callee.primary.name;
     try checkArity(state, intr, name, c.args.len);
 
@@ -165,7 +170,6 @@ pub fn typecheck(state: *CompilerState, env: *typecheck_root.Env, ta: ir.TypeAll
 }
 
 pub fn compile(state: *CompilerState, intr: Intrinsic, node: *ast.Node, c: *const ast.Call) !void {
-
     const name = c.callee.primary.name;
     // We assume arity was checked in typecheck, but we can assert or just check again.
     // In debug builds we could assert. For now let's just do it.
@@ -203,8 +207,6 @@ pub fn compile(state: *CompilerState, intr: Intrinsic, node: *ast.Node, c: *cons
             if (static_type) |st| {
                 var is_type = false;
                 var size: i32 = 0;
-                const layout = @import("layout.zig");
-                const widths = @import("widths.zig");
                 if (st.len > 0 and (st[0] == '*' or st[0] == '?')) {
                     is_type = true;
                     size = layout.sizeOfTypeName(st);
@@ -243,7 +245,7 @@ pub fn compile(state: *CompilerState, intr: Intrinsic, node: *ast.Node, c: *cons
                     return;
                 }
             }
-            
+
             if (from_ast.resolveType(state, c.args[0])) |type_name| {
                 if (from_ast.lookupStruct(state, type_name)) |sd| {
                     try expr.compileExpression(state, c.args[0]);
@@ -280,9 +282,9 @@ pub fn compile(state: *CompilerState, intr: Intrinsic, node: *ast.Node, c: *cons
                     const is_type_name = arg.* == .primary and
                         arg.primary.kind == .identifier and
                         (state.enums.contains(arg.primary.name) or
-                        state.structs.contains(arg.primary.name) or
-                        state.typedefs.contains(arg.primary.name) or
-                        state.error_sets.contains(arg.primary.name));
+                            state.structs.contains(arg.primary.name) or
+                            state.typedefs.contains(arg.primary.name) or
+                            state.error_sets.contains(arg.primary.name));
                     if (!is_type_name) {
                         try expr.compileExpression(state, arg);
                         try emit.emitOp(state, .OP_POP);
@@ -478,7 +480,6 @@ pub fn compileCast(state: *CompilerState, type_node: *ast.Node, value: *ast.Node
 
 /// Operand for `OP_AS`: `widths.Width` discriminant, or null when no runtime cast needed.
 pub fn asCastKind(state: *CompilerState, type_node: *ast.Node) !?u8 {
-    const widths = @import("widths.zig");
     var arena = std.heap.ArenaAllocator.init(state.allocator);
     defer arena.deinit();
     const ta = ir.TypeAlloc{ .allocator = arena.allocator() };

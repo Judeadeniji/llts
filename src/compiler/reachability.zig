@@ -350,7 +350,8 @@ fn noteCall(
                         break :blk null;
                     };
                     if (type_name) |tn| {
-                        const method_name = try std.fmt.allocPrint(state.allocator, "{s}::{s}", .{ tn, prop });
+                        const canon = if (types.lookupStruct(state, tn)) |sd| sd.name else tn;
+                        const method_name = try std.fmt.allocPrint(state.allocator, "{s}::{s}", .{ canon, prop });
                         defer state.allocator.free(method_name);
                         var targets = try expandCallTargets(state, method_name);
                         defer targets.deinit(state.allocator);
@@ -377,7 +378,8 @@ fn noteCall(
                                 const field_name = inner_mem.property.primary.name;
                                 if (sd.types.get(field_name)) |field_ty| {
                                     const inner_type = types.unwrapOptionalDisplay(field_ty);
-                                    const method_name = try std.fmt.allocPrint(state.allocator, "{s}::{s}", .{ inner_type, prop });
+                                    const canon = if (types.lookupStruct(state, inner_type)) |isd| isd.name else inner_type;
+                                    const method_name = try std.fmt.allocPrint(state.allocator, "{s}::{s}", .{ canon, prop });
                                     defer state.allocator.free(method_name);
                                     var targets = try expandCallTargets(state, method_name);
                                     defer targets.deinit(state.allocator);
@@ -392,7 +394,7 @@ fn noteCall(
             if (types.resolveType(state, mem.object)) |type_name| {
                 if (types.lookupStruct(state, type_name)) |sd| {
                     if (sd.offsets.get(prop) == null) {
-                        const method_name = try std.fmt.allocPrint(state.allocator, "{s}::{s}", .{ types.unwrapOptionalDisplay(type_name), prop });
+                        const method_name = try std.fmt.allocPrint(state.allocator, "{s}::{s}", .{ sd.name, prop });
                         defer state.allocator.free(method_name);
                         var targets = try expandCallTargets(state, method_name);
                         defer targets.deinit(state.allocator);

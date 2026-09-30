@@ -2,7 +2,7 @@
  * User-module `pub` visibility: private helpers stay in-module;
  * only pub decls are visible to importers.
  */
-import { test } from "bun:test";
+import { expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -267,4 +267,50 @@ pub @func main() {}
 		"main.lls",
 	);
 	expectOutput(runFile(entry), ["eof"]);
+});
+
+test("imported type display strips module path prefixes", () => {
+	const { entry } = withTempModules(
+		{
+			"decl.lls": `
+pub @struct ParamsResult {
+    pos: i32;
+}
+
+pub @func makeParams(): ParamsResult {
+    return ParamsResult { pos: 0 };
+}
+`,
+			"main.lls": `
+@const $decl = @import("./decl.lls");
+$res = decl.makeParams();
+print(@typeOf(res));
+pub @func main() {}
+`,
+		},
+		"main.lls",
+	);
+	expectOutput(runFile(entry), ["ParamsResult"]);
+});
+
+test("imported type error message strips module path prefixes", () => {
+	const { entry } = withTempModules(
+		{
+			"decl.lls": `
+pub @struct ParamsResult {
+    pos: i32;
+}
+`,
+			"main.lls": `
+@const $decl = @import("./decl.lls");
+$p: decl.ParamsResult = 123;
+pub @func main() {}
+`,
+		},
+		"main.lls",
+	);
+	const res = runFile(entry);
+	expect(res.exitCode).not.toBe(0);
+	expect(res.stderr).toContain("ParamsResult");
+	expect(res.stderr).not.toContain("decl.lls::ParamsResult");
 });

@@ -255,6 +255,13 @@ fn displayWidth(t: Type) []const u8 {
     return widthOf(t).?.name();
 }
 
+pub fn cleanTypeName(name: []const u8) []const u8 {
+    if (std.mem.lastIndexOf(u8, name, "::")) |idx| {
+        return name[idx + 2 ..];
+    }
+    return name;
+}
+
 pub fn displayTypeAlloc(allocator: std.mem.Allocator, t: Type) ![]const u8 {
     return switch (t) {
         .u1, .i8, .i16, .i32, .i64, .u8, .u16, .u32, .u64, .f32, .f64, .isize, .usize, .fsize => try allocator.dupe(u8, displayWidth(t)),
@@ -262,9 +269,9 @@ pub fn displayTypeAlloc(allocator: std.mem.Allocator, t: Type) ![]const u8 {
         .error_ => try allocator.dupe(u8, "error"),
         .unknown => try allocator.dupe(u8, "unknown"),
         .never => try allocator.dupe(u8, "never"),
-        .struct_ => |n| try allocator.dupe(u8, n),
-        .enum_ => |n| try allocator.dupe(u8, n),
-        .enum_lit => |e| try std.fmt.allocPrint(allocator, "{s}.{s}", .{ e.enum_name, e.variant }),
+        .struct_ => |n| try allocator.dupe(u8, cleanTypeName(n)),
+        .enum_ => |n| try allocator.dupe(u8, cleanTypeName(n)),
+        .enum_lit => |e| try std.fmt.allocPrint(allocator, "{s}.{s}", .{ cleanTypeName(e.enum_name), e.variant }),
         .str_lit => |s| try std.fmt.allocPrint(allocator, "\"{s}\"", .{s}),
         .int_lit => |n| try std.fmt.allocPrint(allocator, "{d}", .{n}),
         .bool_lit => |b| try allocator.dupe(u8, if (b) "true" else "false"),
@@ -375,9 +382,9 @@ pub fn displayTypeAlloc(allocator: std.mem.Allocator, t: Type) ![]const u8 {
             out[offset] = '}';
             break :blk out;
         },
-        .error_set => |n| try allocator.dupe(u8, n),
-        .error_lit => |e| try std.fmt.allocPrint(allocator, "{s}.{s}", .{ e.set_name, e.variant }),
-        .defined => |d| try allocator.dupe(u8, d.name),
+        .error_set => |n| try allocator.dupe(u8, cleanTypeName(n)),
+        .error_lit => |e| try std.fmt.allocPrint(allocator, "{s}.{s}", .{ cleanTypeName(e.set_name), e.variant }),
+        .defined => |d| try allocator.dupe(u8, cleanTypeName(d.name)),
         .union_ => |arms| blk: {
             if (optionalPayload(t)) |payload| {
                 const inner = try displayTypeAlloc(allocator, payload);
@@ -417,15 +424,15 @@ pub fn displayTypeSimple(t: Type) ?[]const u8 {
         .error_ => "error",
         .unknown => "unknown",
         .never => "never",
-        .struct_ => |n| n,
-        .enum_ => |n| n,
+        .struct_ => |n| cleanTypeName(n),
+        .enum_ => |n| cleanTypeName(n),
         .enum_lit => null,
         .str_lit, .int_lit, .bool_lit => null,
         .array => |a| if (a.elem.* == .u8 and a.length == null) "[]byte" else null,
         .ptr, .union_, .func, .tuple, .shape => null,
-        .error_set => |n| n,
+        .error_set => |n| cleanTypeName(n),
         .error_lit => null,
-        .defined => |d| d.name,
+        .defined => |d| cleanTypeName(d.name),
     };
 }
 

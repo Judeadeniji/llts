@@ -9,6 +9,7 @@ const for_loop = @import("for_loop.zig");
 
 const CompilerState = state_mod.CompilerState;
 const from_ast = @import("../typecheck/from_ast.zig");
+const compile_errors = @import("../../errors/compile.zig");
 
 pub fn compileIf(state: *CompilerState, if_expr: *const ast.If) !void {
     try expr.compileExpression(state, if_expr.condition);
@@ -112,10 +113,12 @@ fn hasElseProng(sw: *const ast.Switch) bool {
 
 fn enumNameFromTypeDisplay(state: *CompilerState, display: []const u8) ?[]const u8 {
     if (state.enums.contains(display)) return display;
+    if (from_ast.findEnumKey(state, display)) |k| return k;
     // `ExprKind.Literal` → parent enum for exhaustiveness.
     if (std.mem.lastIndexOfScalar(u8, display, '.')) |dot| {
         const ename = display[0..dot];
         if (state.enums.contains(ename)) return ename;
+        if (from_ast.findEnumKey(state, ename)) |k| return k;
     }
     return null;
 }
@@ -123,14 +126,13 @@ fn enumNameFromTypeDisplay(state: *CompilerState, display: []const u8) ?[]const 
 /// Returns true when scrutinee is an enum and every variant is covered (or `@else` present).
 fn checkEnumExhaustiveness(state: *CompilerState, sw: *const ast.Switch) !bool {
     if (hasElseProng(sw)) return true;
-    const types = @import("../typecheck/from_ast.zig");
 
     // `@switch (e.kind)` on discrim union `Literal | Add` — cover union arms, not full enum.
     if (sw.condition.* == .member and sw.condition.member.property.* == .primary and
         std.mem.eql(u8, sw.condition.member.property.primary.name, "kind"))
     {
-        if (types.resolveType(state, sw.condition.member.object)) |obj_disp| {
-            if (try types.discrimVariantMap(state, state.allocator, obj_disp)) |info_owned| {
+        if (from_ast.resolveType(state, sw.condition.member.object)) |obj_disp| {
+            if (try from_ast.discrimVariantMap(state, state.allocator, obj_disp)) |info_owned| {
                 var info = info_owned;
                 defer info.map.deinit();
                 var covered = std.StringHashMap(void).init(state.allocator);
@@ -155,18 +157,19 @@ fn checkEnumExhaustiveness(state: *CompilerState, sw: *const ast.Switch) !bool {
         }
     }
 
-    const raw = types.resolveType(state, sw.condition) orelse return false;
+    const raw = from_ast.resolveType(state, sw.condition) orelse return false;
 
     // Singleton `ExprKind.Literal` — only that variant must be covered.
     if (std.mem.lastIndexOfScalar(u8, raw, '.')) |dot| {
         const ename = raw[0..dot];
         const vname = raw[dot + 1 ..];
-        if (state.enums.get(ename)) |ed| {
+        const canon = from_ast.findEnumKey(state, ename) orelse ename;
+        if (state.enums.get(canon)) |ed| {
             if (ed.variants.contains(vname)) {
                 for (sw.prongs) |prong| {
                     if (prong.is_else) return true;
                     for (prong.patterns) |pat| {
-                        if (resolveEnumVariantPattern(state, pat, ename)) |pv| {
+                        if (resolveEnumVariantPattern(state, pat, canon)) |pv| {
                             if (std.mem.eql(u8, pv, vname)) return true;
                         }
                     }
@@ -218,13 +221,14 @@ fn failMissingVariants(state: *CompilerState, missing: []const []const u8) error
 }
 
 fn resolveEnumVariantPattern(state: *CompilerState, pat: *ast.Node, expected_enum: []const u8) ?[]const u8 {
-    const types = @import("../typecheck/from_ast.zig");
     if (pat.* != .member) return null;
     const mem = &pat.member;
     if (mem.property.* != .primary) return null;
-    const ename = types.resolveEnumName(state, mem.object) orelse return null;
-    if (!std.mem.eql(u8, ename, expected_enum)) return null;
-    const ed = state.enums.get(ename) orelse return null;
+    const ename = from_ast.resolveEnumName(state, mem.object) orelse return null;
+    const canon_ename = from_ast.findEnumKey(state, ename) orelse ename;
+    const canon_expected = from_ast.findEnumKey(state, expected_enum) orelse expected_enum;
+    if (!std.mem.eql(u8, canon_ename, canon_expected)) return null;
+    const ed = state.enums.get(canon_ename) orelse return null;
     if (!ed.variants.contains(mem.property.primary.name)) return null;
     return mem.property.primary.name;
 }
@@ -232,9 +236,9 @@ fn resolveEnumVariantPattern(state: *CompilerState, pat: *ast.Node, expected_enu
 /// Collect required error patterns as `"Origin.Member"` strings from a type display
 /// (single set, `|` of sets, `&` merge name, or singleton lit).
 fn collectErrorMembers(state: *CompilerState, display: []const u8, out: *std.StringHashMap(void)) !bool {
-    const types = @import("../typecheck/from_ast.zig");
-    const bare = types.peelTypedefDisplay(state, display);
-    if (state.error_sets.get(bare)) |es| {
+    const bare = from_ast.peelTypedefDisplay(state, display);
+    const canon_bare = from_ast.findErrorSetKey(state, bare) orelse bare;
+    if (state.error_sets.get(canon_bare)) |es| {
         var it = es.variants.iterator();
         while (it.next()) |e| {
             const origin = e.value_ptr.*;
@@ -249,9 +253,10 @@ fn collectErrorMembers(state: *CompilerState, display: []const u8, out: *std.Str
     if (std.mem.lastIndexOfScalar(u8, bare, '.')) |dot| {
         const esname = bare[0..dot];
         const vname = bare[dot + 1 ..];
-        if (state.error_sets.get(esname)) |es| {
+        const canon_es = from_ast.findErrorSetKey(state, esname) orelse esname;
+        if (state.error_sets.get(canon_es)) |es| {
             if (es.variants.contains(vname)) {
-                const key = try std.fmt.allocPrint(state.allocator, "{s}.{s}", .{ esname, vname });
+                const key = try std.fmt.allocPrint(state.allocator, "{s}.{s}", .{ canon_es, vname });
                 try state.owned.append(state.allocator, key);
                 try out.put(key, {});
                 return true;
@@ -259,7 +264,7 @@ fn collectErrorMembers(state: *CompilerState, display: []const u8, out: *std.Str
         }
     }
     if (std.mem.indexOf(u8, bare, " | ") == null) return false;
-    const parts = types.splitUnionDisplay(state.allocator, bare) catch return false;
+    const parts = from_ast.splitUnionDisplay(state.allocator, bare) catch return false;
     defer state.allocator.free(parts);
     var any = false;
     for (parts) |part| {
@@ -272,8 +277,7 @@ fn collectErrorMembers(state: *CompilerState, display: []const u8, out: *std.Str
 /// Strict exhaustiveness for closed error sets / unions / merges (or `@else`).
 fn checkErrorExhaustiveness(state: *CompilerState, sw: *const ast.Switch) !bool {
     if (hasElseProng(sw)) return true;
-    const types = @import("../typecheck/from_ast.zig");
-    const raw = types.resolveType(state, sw.condition) orelse return false;
+    const raw = from_ast.resolveType(state, sw.condition) orelse return false;
 
     var required = std.StringHashMap(void).init(state.allocator);
     defer required.deinit();
@@ -316,22 +320,21 @@ fn failMissingErrorMembers(state: *CompilerState, missing: []const []const u8) e
 }
 
 fn resolveErrorMemberPattern(state: *CompilerState, pat: *ast.Node) ?[]const u8 {
-    const types = @import("../typecheck/from_ast.zig");
     if (pat.* != .member) return null;
     const mem = &pat.member;
     if (mem.property.* != .primary) return null;
-    const esname = types.resolveErrorSetName(state, mem.object) orelse return null;
-    const ed = state.error_sets.get(esname) orelse return null;
+    const esname = from_ast.resolveErrorSetName(state, mem.object) orelse return null;
+    const canon_esname = from_ast.findErrorSetKey(state, esname) orelse esname;
+    const ed = state.error_sets.get(canon_esname) orelse return null;
     if (!ed.variants.contains(mem.property.primary.name)) return null;
     // Prefer origin from the set def (merged sets map member → component origin).
-    const origin = ed.variants.get(mem.property.primary.name) orelse esname;
+    const origin = ed.variants.get(mem.property.primary.name) orelse canon_esname;
     const key = std.fmt.allocPrint(state.allocator, "{s}.{s}", .{ origin, mem.property.primary.name }) catch return null;
     state.owned.append(state.allocator, key) catch {};
     return key;
 }
 
 fn compileSwitchInner(state: *CompilerState, sw: *const ast.Switch, value_mode: bool) !void {
-    const types = @import("../typecheck/from_ast.zig");
 
     try scope.beginScope(state);
     try expr.compileExpression(state, sw.condition);
@@ -347,8 +350,8 @@ fn compileSwitchInner(state: *CompilerState, sw: *const ast.Switch, value_mode: 
         sw.condition.member.object.* == .primary)
     {
         const subject = sw.condition.member.object.primary.name;
-        if (types.resolveType(state, sw.condition.member.object)) |disp| {
-            if (try types.discrimVariantMap(state, state.allocator, disp)) |info| {
+        if (from_ast.resolveType(state, sw.condition.member.object)) |disp| {
+            if (try from_ast.discrimVariantMap(state, state.allocator, disp)) |info| {
                 narrow_subject = subject;
                 narrow_map = info.map;
                 narrow_enum = info.enum_name;
@@ -540,7 +543,7 @@ fn compileValueArmCapture(state: *CompilerState, body: *ast.Node, arm_name: []co
     }
     try scope.endScope(state);
     if (state.exprs.items[state.exprs.items.len - 1].break_jumps.items.len == jumps_before) {
-        return @import("../../errors/compile.zig").compileFailFmt(state, "{s} arm of value expression must `break` a value", .{arm_name});
+        return compile_errors.compileFailFmt(state, "{s} arm of value expression must `break` a value", .{arm_name});
     }
 }
 
@@ -633,7 +636,7 @@ fn finishExprFrame(state: *CompilerState) !void {
 fn findExpr(state: *CompilerState, label: ?[]const u8) !*state_mod.ExprTracker {
     if (label) |lab| {
         if (findExprLabel(state, lab)) |t| return t;
-                return @import("../../errors/compile.zig").compileFailFmt(state, "Cannot find value expression with label '{s}'", .{lab});
+        return compile_errors.compileFailFmt(state, "Cannot find value expression with label '{s}'", .{lab});
     }
     if (state.exprs.items.len == 0) {
         return fail(state, "break with value requires a value-producing @if, @switch, or labeled block");
@@ -660,11 +663,11 @@ fn findLoop(state: *CompilerState, label: ?[]const u8) !*state_mod.LoopTracker {
                 if (std.mem.eql(u8, ll, lab)) return loop;
             }
         }
-                return @import("../../errors/compile.zig").compileFailFmt(state, "Cannot find loop with label '{s}'", .{lab});
+        return compile_errors.compileFailFmt(state, "Cannot find loop with label '{s}'", .{lab});
     }
     return &state.loops.items[state.loops.items.len - 1];
 }
 
 fn fail(state: *CompilerState, msg: []const u8) error{CompileError} {
-    return @import("../../errors/compile.zig").compileFailFmt(state, "{s}", .{msg});
+    return compile_errors.compileFailFmt(state, "{s}", .{msg});
 }

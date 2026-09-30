@@ -406,7 +406,7 @@ fn inferLiteral(ta: ir.TypeAlloc, lit: ast.Literal, prefer_literals: bool) !ir.T
 }
 
 fn fieldTypeFromStruct(state: *state_mod.CompilerState, ta: ir.TypeAlloc, struct_name: []const u8, field: []const u8) !ir.Type {
-    const def = state.structs.get(struct_name) orelse return ir.TUnknown;
+    const def = from_ast.lookupStruct(state, struct_name) orelse return ir.TUnknown;
     const raw = def.types.get(field) orelse return ir.TUnknown;
     return try from_ast.parseDisplayType(state, ta, raw, null);
 }
@@ -421,7 +421,7 @@ fn fieldTypeFromUnion(state: *state_mod.CompilerState, ta: ir.TypeAlloc, union_t
 
     for (union_t.union_) |arm| {
         const sname = ir.structNameOf(arm) orelse return ir.TUnknown;
-        const def = state.structs.get(sname) orelse return ir.TUnknown;
+        const def = from_ast.lookupStruct(state, sname) orelse return ir.TUnknown;
         if (def.types.get(field) == null) return ir.TUnknown;
         const ft = try fieldTypeFromStruct(state, ta, sname, field);
         if (ft == .unknown) return ir.TUnknown;
@@ -592,10 +592,9 @@ fn resolveMethodCallee(
     const prop = mem.property.primary.name;
     const obj_ty = try inferExpr(state, env, ta, mem.object);
     const sname = ir.structNameOf(obj_ty) orelse return null;
-    if (state.structs.get(sname)) |sd| {
-        if (sd.offsets.contains(prop)) return null; // field, not method
-    }
-    const method_name = try std.fmt.allocPrint(state.allocator, "{s}::{s}", .{ sname, prop });
+    const sd = from_ast.lookupStruct(state, sname) orelse return null;
+    if (sd.offsets.contains(prop)) return null; // field, not method
+    const method_name = try std.fmt.allocPrint(state.allocator, "{s}::{s}", .{ sd.name, prop });
     try state.owned.append(state.allocator, method_name);
     if (!state.functions.contains(method_name)) return null;
     return .{ .name = method_name, .receiver = mem.object };
@@ -866,9 +865,9 @@ fn inferExprInner(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, 
             if (m.property.* == .primary) {
                 // Layout key first — `@type Name = {…}` registers under Name.
                 if (ir.structNameOf(obj)) |sname| {
-                    if (state.structs.get(sname)) |def| {
+                    if (from_ast.lookupStruct(state, sname)) |def| {
                         if (def.types.get(m.property.primary.name) == null) {
-                            return compiler_errors.compileFailFmt(state, "Field '{s}' does not exist on '{s}'", .{ m.property.primary.name, sname });
+                            return compiler_errors.compileFailFmt(state, "Field '{s}' does not exist on '{s}'", .{ m.property.primary.name, ir.cleanTypeName(sname) });
                         }
                     }
                     break :blk try fieldTypeFromStruct(state, ta, sname, m.property.primary.name);
@@ -1423,15 +1422,15 @@ fn inferStructInit(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc,
     for (init.fields) |field| {
         const expected = try fieldTypeFromStruct(state, ta, struct_name, field.name);
         if (expected == .unknown) {
-            if (state.structs.get(struct_name)) |def| {
+            if (from_ast.lookupStruct(state, struct_name)) |def| {
                 if (def.types.get(field.name) == null) {
-                    return compiler_errors.compileFailFmt(state, "Unknown field '{s}' on '{s}'", .{ field.name, struct_name });
+                    return compiler_errors.compileFailFmt(state, "Unknown field '{s}' on '{s}'", .{ field.name, ir.cleanTypeName(struct_name) });
                 }
             }
         }
         const got = try inferExpr(state, env, ta, field.value);
         var ctx_buf: [128]u8 = undefined;
-        const ctx = std.fmt.bufPrint(&ctx_buf, "field '{s}' of '{s}'", .{ field.name, struct_name }) catch "field";
+        const ctx = std.fmt.bufPrint(&ctx_buf, "field '{s}' of '{s}'", .{ field.name, ir.cleanTypeName(struct_name) }) catch "field";
         try requireAssignFrom(state, got, expected, ctx, field.value);
     }
     if (is_typedef) {
@@ -1487,7 +1486,10 @@ fn checkStmt(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node:
                 }
             } else if (value_type == .struct_) {
                 try env.define(d.name, value_type);
-                if (persist_global) try state.global_types.put(d.name, value_type.struct_);
+                if (persist_global) {
+                    const disp = try ownDisplay(state, value_type);
+                    try state.global_types.put(d.name, disp);
+                }
             } else if (value_type == .enum_ or value_type == .enum_lit or
                 value_type == .error_set or value_type == .error_lit or
                 value_type == .str_lit or value_type == .int_lit or value_type == .bool_lit or

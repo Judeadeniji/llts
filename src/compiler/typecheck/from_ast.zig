@@ -259,6 +259,62 @@ fn resolveTypedef(
     return try ta.definedType(td.name, under);
 }
 
+pub fn findStructKey(state: *const state_mod.CompilerState, name: []const u8) ?[]const u8 {
+    if (state.structs.contains(name)) return name;
+    var kit = state.structs.keyIterator();
+    while (kit.next()) |k| {
+        if (std.mem.endsWith(u8, k.*, name)) {
+            const prefix_len = k.*.len - name.len;
+            if (prefix_len >= 2 and std.mem.eql(u8, k.*[prefix_len - 2 .. prefix_len], "::")) {
+                return k.*;
+            }
+        }
+    }
+    return null;
+}
+
+pub fn findEnumKey(state: *const state_mod.CompilerState, name: []const u8) ?[]const u8 {
+    if (state.enums.contains(name)) return name;
+    var kit = state.enums.keyIterator();
+    while (kit.next()) |k| {
+        if (std.mem.endsWith(u8, k.*, name)) {
+            const prefix_len = k.*.len - name.len;
+            if (prefix_len >= 2 and std.mem.eql(u8, k.*[prefix_len - 2 .. prefix_len], "::")) {
+                return k.*;
+            }
+        }
+    }
+    return null;
+}
+
+pub fn findErrorSetKey(state: *const state_mod.CompilerState, name: []const u8) ?[]const u8 {
+    if (state.error_sets.contains(name)) return name;
+    var kit = state.error_sets.keyIterator();
+    while (kit.next()) |k| {
+        if (std.mem.endsWith(u8, k.*, name)) {
+            const prefix_len = k.*.len - name.len;
+            if (prefix_len >= 2 and std.mem.eql(u8, k.*[prefix_len - 2 .. prefix_len], "::")) {
+                return k.*;
+            }
+        }
+    }
+    return null;
+}
+
+pub fn findTypedefKey(state: *const state_mod.CompilerState, name: []const u8) ?[]const u8 {
+    if (state.typedefs.contains(name)) return name;
+    var kit = state.typedefs.keyIterator();
+    while (kit.next()) |k| {
+        if (std.mem.endsWith(u8, k.*, name)) {
+            const prefix_len = k.*.len - name.len;
+            if (prefix_len >= 2 and std.mem.eql(u8, k.*[prefix_len - 2 .. prefix_len], "::")) {
+                return k.*;
+            }
+        }
+    }
+    return null;
+}
+
 /// Like `ir.parseDisplayType` but resolves `@type` / `@alias` / structs / enums via `state`.
 pub fn parseDisplayType(
     state: ?*state_mod.CompilerState,
@@ -367,9 +423,10 @@ pub fn parseDisplayType(
             } else |_| {}
         }
     }
+
     if (state) |st| {
-        if (st.typedefs.contains(s)) {
-            return try resolveTypedef(st, ta, s, cycle);
+        if (findTypedefKey(st, s)) |k| {
+            return try resolveTypedef(st, ta, k, cycle);
         }
         // Builtins / widths before struct table (`string` is also a layout struct).
         const builtin = ir.namedType(s);
@@ -377,20 +434,24 @@ pub fn parseDisplayType(
         if (std.mem.lastIndexOfScalar(u8, s, '.')) |dot| {
             const ename = s[0..dot];
             const vname = s[dot + 1 ..];
-            if (st.enums.get(ename)) |ed| {
-                if (ed.variants.contains(vname)) {
-                    return .{ .enum_lit = .{ .enum_name = ename, .variant = vname } };
+            if (findEnumKey(st, ename)) |re| {
+                if (st.enums.get(re)) |ed| {
+                    if (ed.variants.contains(vname)) {
+                        return .{ .enum_lit = .{ .enum_name = re, .variant = vname } };
+                    }
                 }
             }
-            if (st.error_sets.get(ename)) |es| {
-                if (es.variants.contains(vname)) {
-                    return .{ .error_lit = .{ .set_name = ename, .variant = vname } };
+            if (findErrorSetKey(st, ename)) |re| {
+                if (st.error_sets.get(re)) |es| {
+                    if (es.variants.contains(vname)) {
+                        return .{ .error_lit = .{ .set_name = re, .variant = vname } };
+                    }
                 }
             }
         }
-        if (st.error_sets.contains(s)) return .{ .error_set = s };
-        if (st.enums.contains(s)) return .{ .enum_ = s };
-        if (st.structs.contains(s)) return .{ .struct_ = s };
+        if (findErrorSetKey(st, s)) |k| return .{ .error_set = k };
+        if (findEnumKey(st, s)) |k| return .{ .enum_ = k };
+        if (findStructKey(st, s)) |k| return .{ .struct_ = k };
         return compile_error.compileFailFmt(st, "Unknown type '{s}'", .{s});
     }
     return try ir.parseDisplayType(ta, s);
@@ -498,18 +559,21 @@ pub fn peelTypedefDisplay(state: *state_mod.CompilerState, display: []const u8) 
     var cur = unwrapOptionalDisplay(display);
     var guard: usize = 0;
     while (guard < 32) : (guard += 1) {
-        const td = state.typedefs.get(cur) orelse return cur;
-        cur = unwrapOptionalDisplay(td.underlying);
-        if (td.distinct) return cur; // one step for distinct (keep nominal elsewhere)
+        const td = if (findTypedefKey(state, cur)) |k| state.typedefs.get(k) else state.typedefs.get(cur);
+        const td_val = td orelse return cur;
+        cur = unwrapOptionalDisplay(td_val.underlying);
+        if (td_val.distinct) return cur; // one step for distinct (keep nominal elsewhere)
     }
     return cur;
 }
 
 pub fn lookupStruct(state: *state_mod.CompilerState, display: []const u8) ?state_mod.StructDef {
     if (state.structs.get(display)) |sd| return sd;
+    if (findStructKey(state, display)) |k| return state.structs.get(k);
     const peeled = peelTypedefDisplay(state, display);
     if (!std.mem.eql(u8, peeled, display)) {
         if (state.structs.get(peeled)) |sd| return sd;
+        if (findStructKey(state, peeled)) |k| return state.structs.get(k);
     }
     // Lazy-layout anonymous shape displays `{ field: T; … }`.
     if (peeled.len > 0 and peeled[0] == '{') {
@@ -653,7 +717,7 @@ pub fn discrimVariantMap(
 
     for (parts) |part| {
         const sname = std.mem.trim(u8, part, " \t");
-        const sd = state.structs.get(sname) orelse {
+        const sd = lookupStruct(state, sname) orelse {
             map.deinit();
             return null;
         };
@@ -668,17 +732,17 @@ pub fn discrimVariantMap(
         };
         const ename = kind_ty[0..dot];
         const vname = kind_ty[dot + 1 ..];
-        if (!state.enums.contains(ename)) {
+        const canon_ename = findEnumKey(state, ename) orelse {
             map.deinit();
             return null;
-        }
+        };
         if (enum_name) |en| {
-            if (!std.mem.eql(u8, en, ename)) {
+            if (!std.mem.eql(u8, en, canon_ename)) {
                 map.deinit();
                 return null;
             }
         } else {
-            enum_name = ename;
+            enum_name = canon_ename;
         }
         try map.put(vname, sname);
     }
@@ -909,9 +973,9 @@ pub fn resolveType(state: *state_mod.CompilerState, node: *ast.Node) ?[]const u8
                 if (mem.property.* == .primary) {
                     const prop = mem.property.primary.name;
                     if (resolveType(state, mem.object)) |obj_type| {
-                        const struct_name = unwrapOptionalDisplay(obj_type);
+                        const canon = if (lookupStruct(state, obj_type)) |sd| sd.name else unwrapOptionalDisplay(obj_type);
                         var buf: [256]u8 = undefined;
-                        const method_name = std.fmt.bufPrint(&buf, "{s}::{s}", .{ struct_name, prop }) catch break :blk null;
+                        const method_name = std.fmt.bufPrint(&buf, "{s}::{s}", .{ canon, prop }) catch break :blk null;
                         if (state.functions.get(method_name)) |def| break :blk def.return_type;
                     }
                 }
