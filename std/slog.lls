@@ -1,0 +1,159 @@
+# Package slog implements structured logging with severity levels and key-value attributes,
+# analogous to Go's log/slog package.
+
+@const $fmt = @import("std/fmt.lls");
+
+# --- Severity Levels ---
+pub @const $LevelDebug = -4;
+pub @const $LevelInfo = 0;
+pub @const $LevelWarn = 4;
+pub @const $LevelError = 8;
+
+pub @func formatAttrs(args) {
+    $n = len(args);
+    @if (n == 0) {
+        return "";
+    }
+    $buf: string = "";
+    $i = 0;
+    @for (i < n) {
+        $k = args[i];
+        @if (i + 1 < n) {
+            $next_i = i + 1;
+            $v = args[next_i];
+            i = i + 2;
+            buf = buf + " " + fmt.sprintf("%s=%v", k, v);
+        } @else {
+            i = i + 1;
+            buf = buf + " " + fmt.sprintf("%s=!BADKEY", k);
+        }
+    }
+    return buf;
+}
+
+pub @struct Logger {
+    min_level: int;
+    handler_kind: string; # "host", "text", "json"
+    attrs_prefix: string;
+
+    @func with(self: *Logger, ...args): Logger {
+        $extra = formatAttrs(args);
+        return Logger {
+            min_level: self.min_level,
+            handler_kind: self.handler_kind,
+            attrs_prefix: self.attrs_prefix + extra,
+        };
+    }
+
+    @func log(self: *Logger, level: int, msg, ...args) {
+        @if (level < self.min_level) {
+            return null;
+        }
+        $extra = self.attrs_prefix + formatAttrs(args);
+        $lvl_str = "info";
+        @if (level <= LevelDebug) {
+            $lvl_str = "debug";
+        } @else @if (level >= LevelError) {
+            $lvl_str = "error";
+        } @else @if (level >= LevelWarn) {
+            $lvl_str = "warn";
+        }
+
+        @if (self.handler_kind == "text") {
+            $line = fmt.sprintf("level=%s msg=%v%s\n", lvl_str, msg, extra);
+            __fprint(2, [line]);
+            return null;
+        }
+        @if (self.handler_kind == "json") {
+            $line = fmt.sprintf("{\"level\":%q,\"msg\":%q}\n", lvl_str, fmt.sprint(msg));
+            __fprint(2, [line]);
+            return null;
+        }
+
+        # Default host handler
+        @if (len(extra) > 0) {
+            __hostLog(lvl_str, fmt.sprint(msg) + extra);
+        } @else {
+            __hostLog(lvl_str, msg);
+        }
+    }
+
+    @func debug(self: *Logger, msg, ...args) {
+        self.log(LevelDebug, msg, args);
+    }
+
+    @func info(self: *Logger, msg, ...args) {
+        self.log(LevelInfo, msg, args);
+    }
+
+    @func warn(self: *Logger, msg, ...args) {
+        self.log(LevelWarn, msg, args);
+    }
+
+    @func err(self: *Logger, msg, ...args) {
+        self.log(LevelError, msg, args);
+    }
+}
+
+pub $defaultLogger = Logger {
+    min_level: LevelDebug,
+    handler_kind: "host",
+    attrs_prefix: "",
+};
+
+pub @func default(): *Logger {
+    return &defaultLogger;
+}
+
+pub @func setDefault(l: Logger) {
+    defaultLogger = l;
+}
+
+pub @func with(...args): Logger {
+    return defaultLogger.with(args);
+}
+
+pub @func debug(msg, ...args) {
+    @if (len(args) == 0) {
+        __hostLog("debug", msg);
+        return null;
+    }
+    defaultLogger.log(LevelDebug, msg, args);
+}
+
+pub @func info(msg, ...args) {
+    @if (len(args) == 0) {
+        __hostLog("info", msg);
+        return null;
+    }
+    defaultLogger.log(LevelInfo, msg, args);
+}
+
+pub @func warn(msg, ...args) {
+    @if (len(args) == 0) {
+        __hostLog("warn", msg);
+        return null;
+    }
+    defaultLogger.log(LevelWarn, msg, args);
+}
+
+pub @func err(msg, ...args) {
+    @if (len(args) == 0) {
+        __hostLog("error", msg);
+        return null;
+    }
+    defaultLogger.log(LevelError, msg, args);
+}
+
+pub @func log(level: int, msg, ...args) {
+    defaultLogger.log(level, msg, args);
+}
+
+# Top-level assertion helper
+pub @func assert(condition) {
+    @if (condition) {
+        return null;
+    } @else {
+        return error("AssertFailed", condition);
+    }
+}

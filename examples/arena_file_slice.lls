@@ -8,7 +8,7 @@
 @const $mem = @import("std/mem");
 @const $string = @import("std/string");
 @const $buffer = @import("std/buffer");
-@const $debug = @import("std/debug");
+@const $fmt = @import("std/fmt");
 @const $io = @import("std/io");
 
 @func copyStringToSlice(src, dst) {
@@ -72,9 +72,9 @@ pub @func main() {
     $slice = @new(a, []byte, n);
     copyStringToSlice(text, slice);
 
-    debug.printLn("path={s} bytes={i}", path, n, null, null);
-    debug.printLn("newlines={i}", countNewlines(slice), null, null, null);
+    fmt.printf("path=%s bytes=%d\n", path, n);
+    fmt.printf("newlines=%d\n", countNewlines(slice));
 
     uppercaseAscii(slice);
-    debug.printLn("preview={s}", preview(a, slice, 60), null, null, null);
+    fmt.printf("preview=%s\n", preview(a, slice, 60));
 }

@@ -52,25 +52,25 @@ Covered by `tests/37_error_sets.test.ts`.
 
 ## Logging
 
-LLTS provides a robust leveled logging subsystem via the standard library (`std/debug`), which outputs to `stderr`.
+LLTS provides structured and leveled logging subsystems via the standard library packages (`std/slog` and `std/log`), which output to `stderr`.
 
 ```llts
-@const $debug = @import("std/debug");
+@const $slog = @import("std/slog");
 
 pub @func main() {
-    debug.info("Application starting");
-    debug.warn("Disk space low");
+    slog.info("Application starting");
+    slog.warn("Disk space low");
     
     @const $err = error("FileNotFound", "missing.txt");
-    debug.err(err);
+    slog.err(err);
 }
 ```
-- **Levels**: `debug.info()`, `debug.warn()`, `debug.err()`.
+- **Levels**: `slog.debug()`, `slog.info()`, `slog.warn()`, `slog.err()`.
 - **Environment Controls**:
-  - `LLTS_LOG_LEVEL`: Set the minimum log level (e.g., `info`, `warn`, `error`).
+  - `LLTS_LOG_LEVEL`: Set the minimum log level (e.g., `trace`, `debug`, `info`, `warn`, `error`).
   - `NO_COLOR` / `FORCE_COLOR`: Control ANSI color output.
-- **Error Formatting**: Passing an `error()` object to `debug.err()` automatically formats it as a structured log without redundant `Error:` prefixes, displaying both the error code and its payload.
-- **Assertions**: `debug.assert(condition)` is available and returns an `AssertFailed` error value if the condition is false.
+- **Error Formatting**: Passing an `error()` object to `slog.err()` automatically formats it as a structured log without redundant `Error:` prefixes, displaying both the error code and its payload.
+- **Assertions**: `slog.assert(condition)` is available and returns an `AssertFailed` error value if the condition is false.
 
 ## Diagnostics and Stack Traces
 

@@ -36,12 +36,12 @@ Struct instances are created without the `new` keyword, using curly braces for i
 
 **Example:**
 ```llts
-@const $debug = @import("std/debug");
+@const $slog = @import("std/slog");
 
 $p = Point { x: 10, y: 20 };
 
 # Access
-$ok = debug.assert(p.x == 10);
+$ok = slog.assert(p.x == 10);
 
 # Mutation
 p.x = 42;
@@ -57,7 +57,7 @@ Struct fields can be of another struct type, allowing deep composition.
 
 **Example:**
 ```llts
-@const $debug = @import("std/debug");
+@const $slog = @import("std/slog");
 
 @struct Rect {
     point: Point;
@@ -75,7 +75,7 @@ $r = Rect {
 
 # Nested access and mutation
 r.point.x = 99;
-$ok = debug.assert(r.point.x == 99);
+$ok = slog.assert(r.point.x == 99);
 ```
 
 ## 5. Methods
@@ -93,7 +93,7 @@ Methods are functions bound to a specific struct, enabling behavior encapsulatio
 
 **Example:**
 ```llts
-@const $debug = @import("std/debug");
+@const $slog = @import("std/slog");
 
 @struct Vector3 {
     x: i64;
@@ -104,12 +104,12 @@ Methods are functions bound to a specific struct, enabling behavior encapsulatio
         self.x = self.x + dx;
         self.y = self.y + dy;
         self.z = self.z + dz;
-        debug.info("Vector3 translated");
+        slog.info("Vector3 translated");
     }
 
     @func scale(self, factor) {
         self.x = self.x * factor;
-        debug.info("Vector3 scaled");
+        slog.info("Vector3 scaled");
     }
 }
 

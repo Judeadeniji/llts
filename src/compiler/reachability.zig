@@ -427,12 +427,12 @@ fn resolveCallTarget(state: *CompilerState, callee: *ast.Node) !?[]const u8 {
     return null;
 }
 
-test "reachability keeps only called std/debug function" {
+test "reachability keeps only called std/slog function" {
     const allocator = std.testing.allocator;
     const source =
         \\@const $std = @import("std/index.lls");
         \\@const $err_msg = error("this is an error", "hello");
-        \\std.debug.err(err_msg);
+        \\std.slog.err(err_msg);
         \\pub @func main() {}
         \\
     ;

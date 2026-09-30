@@ -12,14 +12,20 @@ Use `@import("path")` to include modules, binding them to constants via `@const`
 ```lls
 // Import a whole index or specific module
 @const $std = @import("std/index");
-@const $debug = @import("std/debug");
+@const $fmt = @import("std/fmt");
+@const $slog = @import("std/slog");
 ```
 
 ### Core `std` Modules
-*   **`std.debug`**: For logging, formatted printing, and testing logic.
-    *   **Logging Methods**: `trace(msg)`, `debug(msg)`, `info(msg)`, `warn(msg)`, `err(msg)`, and `log(msg)` (alias for `info`). Output levels can be configured via the `--log-level <LEVEL>` CLI flag or `LLTS_LOG_LEVEL` environment variable.
-    *   `std.debug.printLn("Result: {i}", val)`: Formatted string printing. Use `{s}` for strings and `{i}` for integers.
-    *   `std.debug.assert(condition)`: Validates state during execution (e.g., `std.debug.assert(sum == 8);`). If the condition is false, it returns an error `error("AssertFailed", condition)`.
+*   **`std.fmt`**: Go-compatible formatted I/O and string templating.
+    *   `std.fmt.printf(format, ...args)` / `std.fmt.println(...args)`: Formatted and line-spaced printing to stdout.
+    *   `std.fmt.sprintf(format, ...args)` / `std.fmt.sprint(...args)`: Formatted string construction.
+    *   Supported format verbs: `%v`, `%+v`, `%#v`, `%T`, `%t`, `%d`, `%b`, `%o`, `%x`, `%X`, `%c`, `%q`, `%f`, `%s`, `%p`, etc.
+*   **`std.slog` & `std.log`**: Structured and leveled logging.
+    *   **Leveled Logging**: `slog.debug(msg, ...attrs)`, `slog.info(msg, ...attrs)`, `slog.warn(msg, ...attrs)`, `slog.err(msg, ...attrs)`.
+    *   `slog.with(...attrs)`: Create a child logger with contextual key-value attributes.
+    *   `slog.assert(condition)`: Validates state during execution. If condition is false, returns `error("AssertFailed", condition)`.
+    *   Output levels can be configured via the `--log-level <LEVEL>` CLI flag or `LLTS_LOG_LEVEL` environment variable.
 *   **`std.io`**: System input/output.
     *   `std.io.readLine()`: Synchronous terminal input capture.
 *   **`std.math`**: Mathematical utilities.

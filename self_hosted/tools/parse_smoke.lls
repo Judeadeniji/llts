@@ -5,7 +5,8 @@
 @const $nodes = @import("../ast/nodes.lls");
 @const $common = @import("../ast/common.lls");
 @const $mem = @import("std/mem.lls");
-@const $debug = @import("std/debug.lls");
+@const $fmt = @import("std/fmt.lls");
+@const $slog = @import("std/slog.lls");
 @const $os = @import("std/os.lls");
 @const $list = @import("std/list.lls");
 @const $string = @import("std/string.lls");
@@ -17,19 +18,19 @@ $arena = mem.create(0);
 $path = "self_hosted/tools/parse_smoke_fixture.lls";
 $src = fs.readFile(path);
 @if (@isError(src)) {
-    debug.err("failed to read fixture");
+    slog.err("failed to read fixture");
     os.exit(1);
 }
 
 $doc = parser.parse(arena, src, path);
 @if (@isError(doc)) {
-    debug.err("parse failed");
+    slog.err("parse failed");
     os.exit(1);
 }
 
-debug.printLn("{i}", list.len(doc.statements));
+fmt.printf("%d\n", list.len(doc.statements));
 @if (list.len(doc.statements) != 5) {
-    debug.err("expected 5 top-level statements");
+    slog.err("expected 5 top-level statements");
     os.exit(1);
 }
 
@@ -39,27 +40,27 @@ $s2: *nodes.Node = @as(*nodes.Node, list.get(doc.statements, 2));
 $s3: *nodes.Node = @as(*nodes.Node, list.get(doc.statements, 3));
 $s4: *nodes.Node = @as(*nodes.Node, list.get(doc.statements, 4));
 
-@if (s0.kind != common.NodeKind.Declaration) { debug.err("0"); os.exit(1); }
-@if (s1.kind != common.NodeKind.Declaration) { debug.err("1"); os.exit(1); }
-@if (s2.kind != common.NodeKind.EnumDecl) { debug.err("2"); os.exit(1); }
-@if (s3.kind != common.NodeKind.StructDecl) { debug.err("3"); os.exit(1); }
-@if (s4.kind != common.NodeKind.FunctionDecl) { debug.err("4"); os.exit(1); }
+@if (s0.kind != common.NodeKind.Declaration) { slog.err("0"); os.exit(1); }
+@if (s1.kind != common.NodeKind.Declaration) { slog.err("1"); os.exit(1); }
+@if (s2.kind != common.NodeKind.EnumDecl) { slog.err("2"); os.exit(1); }
+@if (s3.kind != common.NodeKind.StructDecl) { slog.err("3"); os.exit(1); }
+@if (s4.kind != common.NodeKind.FunctionDecl) { slog.err("4"); os.exit(1); }
 
 $en: *nodes.EnumDecl = @as(*nodes.EnumDecl, s2);
-debug.printLn("{s}", en.name);
-debug.printLn("{i}", list.len(en.variants));
+fmt.printf("%s\n", en.name);
+fmt.printf("%d\n", list.len(en.variants));
 
 $st: *nodes.StructDecl = @as(*nodes.StructDecl, s3);
-debug.printLn("{s}", st.name);
-debug.printLn("{i}", list.len(st.fields));
+fmt.printf("%s\n", st.name);
+fmt.printf("%d\n", list.len(st.fields));
 
 $fn: *nodes.FunctionDecl = @as(*nodes.FunctionDecl, s4);
-debug.printLn("{s}", fn.name);
+fmt.printf("%s\n", fn.name);
 @if (!fn.is_public) {
-    debug.err("expected pub");
+    slog.err("expected pub");
     os.exit(1);
 }
-debug.printLn("ok");
+fmt.println("ok");
 
 arena.deinit();
 

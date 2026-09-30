@@ -6,7 +6,7 @@
 
 @const $compiler = @import("../compiler/root.lls");
 @const $mem = @import("std/mem.lls");
-@const $debug = @import("std/debug.lls");
+@const $fmt = @import("std/fmt.lls");
 @const $os = @import("std/os.lls");
 
 $in_path = __readFile("/tmp/llts_smoke_path.txt");
@@ -26,7 +26,7 @@ $err = compiler.compileFile(arena, in_src, in_path, out_path);
     print(err);
     os.exit(1);
 }
-debug.printLn("{s}", out_path);
+fmt.printf("%s\n", out_path);
 arena.deinit();
 
 pub @func main() {}

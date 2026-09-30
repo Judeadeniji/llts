@@ -4,7 +4,7 @@
 @const $tokens = @import("./tokens.lls");
 @const $string = @import("std/string.lls");
 @const $buffer = @import("std/buffer.lls");
-@const $debug = @import("std/debug.lls");
+@const $slog = @import("std/slog.lls");
 
 pub @func scanString(self: *ctx.Scanner) {
     $quote = self.advance();
@@ -17,7 +17,7 @@ pub @func scanString(self: *ctx.Scanner) {
             break;
         }
         @if (string.eql(c, "\n")) {
-            debug.err("Multiline string literal");
+            slog.err("Multiline string literal");
             return error("MultilineString", "Multiline string literal");
         }
         @if (string.eql(c, "\\")) {
@@ -43,7 +43,7 @@ pub @func scanString(self: *ctx.Scanner) {
                 _ = self.advance();
                 continue;
             } @else {
-                debug.err("Unterminated string");
+                slog.err("Unterminated string");
                 return error("UnterminatedString", "Unterminated string");
             }
         }
@@ -51,7 +51,7 @@ pub @func scanString(self: *ctx.Scanner) {
         _ = self.advance();
     }
     @if (self.peek(0) == null) {
-        debug.err("Unterminated string");
+        slog.err("Unterminated string");
         return error("UnterminatedString", "Unterminated string");
     }
     _ = self.advance();

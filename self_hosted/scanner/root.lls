@@ -8,14 +8,14 @@
 @const $ops = @import("../shared/ops.lls");
 @const $string = @import("std/string.lls");
 @const $list = @import("std/list.lls");
-@const $debug = @import("std/debug.lls");
+@const $slog = @import("std/slog.lls");
 @const $mem = @import("std/mem.lls");
 
 pub @const $Token = tokens.Token;
 pub @const $TokenType = tokens.TokenType;
 
 @func failScan(self: *ctx.Scanner, code: string, message: string) {
-    debug.err(message);
+    slog.err(message);
     return error(code, message);
 }
 

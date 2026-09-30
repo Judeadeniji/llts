@@ -4,7 +4,8 @@
 @const $common = @import("../ast/common.lls");
 @const $list = @import("std/list.lls");
 @const $string = @import("std/string.lls");
-@const $debug = @import("std/debug.lls");
+@const $fmt = @import("std/fmt.lls");
+@const $slog = @import("std/slog.lls");
 
 pub @struct Parser {
     kinds: unknown;
@@ -158,8 +159,8 @@ pub @struct Parser {
     }
 
     @func fail(self: *Parser, message: string) {
-        debug.err(message);
-        debug.printLn("  --> {s}:{i}:{i}", self.path, self.line(), self.column());
+        slog.err(message);
+        fmt.printf("  --> %s:%d:%d\n", self.path, self.line(), self.column());
         return error("ParseFailed", message);
     }
 }

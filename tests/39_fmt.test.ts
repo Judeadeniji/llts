@@ -146,27 +146,15 @@ pub @func main() {
 	);
 });
 
-test("debug.printLn and debug.print support Go fmt verbs", () => {
+test("fmt.printf and fmt.println write to stdout", () => {
 	expectOutput(
 		runSource(`
-@const $debug = @import("std/debug");
+@const $fmt = @import("std/fmt");
 pub @func main() {
-    debug.printLn("count: %d, name: %s", 5, "items");
-    debug.print("hex: 0x%x", 171);
+    fmt.printf("count: %d, name: %s\\n", 5, "items");
+    fmt.println("done", 100);
 }
 `),
-		["count: 5, name: items", "hex: 0xab"],
-	);
-});
-
-test("debug.printLn preserves legacy {s} {i} placeholders", () => {
-	expectOutput(
-		runSource(`
-@const $debug = @import("std/debug");
-pub @func main() {
-    debug.printLn("legacy: {s} {i}", "test", 42);
-}
-`),
-		["legacy: test 42"],
+		["count: 5, name: items", "done 100"],
 	);
 });

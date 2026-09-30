@@ -1,11 +1,11 @@
-@const $debug = @import("std/debug");
+@const $fmt = @import("std/fmt");
 
 @func sqr(a) {
- return a**2;
+	return a**2;
 }
 
 $a = 2 |> sqr;
 
-debug.printLn("a: {i}", a);
+fmt.printf("a: %d\n", a);
 
 pub @func main() {}

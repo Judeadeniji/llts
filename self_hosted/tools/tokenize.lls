@@ -5,7 +5,7 @@
 @const $fs = @import("std/fs.lls");
 @const $os = @import("std/os.lls");
 @const $list = @import("std/list.lls");
-@const $debug = @import("std/debug.lls");
+@const $fmt = @import("std/fmt.lls");
 @const $io = @import("std/io.lls");
 @const $mem = @import("std/mem.lls");
 
@@ -41,7 +41,7 @@ $result = scanner.scan(arena, source, path);
     io.stdout.writeAll("\t");
     io.stdout.writeAll(val);
     io.stdout.writeAll("\t");
-    debug.printLn("{i}:{i}", line, col);
+    fmt.printf("%d:%d\n", line, col);
 }
 
 pub @func main() {}

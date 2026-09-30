@@ -6,7 +6,8 @@
 @const $opcode = @import("../bytecode/opcode.lls");
 @const $serialize = @import("../bytecode/serialize.lls");
 @const $mem = @import("std/mem.lls");
-@const $debug = @import("std/debug.lls");
+@const $fmt = @import("std/fmt.lls");
+@const $slog = @import("std/slog.lls");
 @const $os = @import("std/os.lls");
 
 $arena = mem.create(0);
@@ -22,10 +23,10 @@ c.writeByte(1);
 $path = "/tmp/llts_smoke.llb";
 $err = serialize.writeFile(c, path);
 @if (@isError(err)) {
-    debug.err("write failed");
+    slog.err("write failed");
     os.exit(1);
 }
-debug.printLn("wrote {s}", path);
+fmt.printf("wrote %s\n", path);
 
 arena.deinit();
 

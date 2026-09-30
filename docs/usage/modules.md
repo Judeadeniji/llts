@@ -34,7 +34,7 @@ $lib = @import("examples/import_test_lib.lls");
 $vec = lib.Vector3 { x: 10, y: 20, z: 30 };
 
 # Accessing a function from the standard library `std`
-std.debug.printLn("Vector3: {i}, {i}, {i}", vec.x, vec.y, vec.z);
+std.fmt.printf("Vector3: %d, %d, %d\n", vec.x, vec.y, vec.z);
 ```
 
 ## Exporting Members
@@ -73,7 +73,7 @@ A module can act as an `index` or facade by importing other files and exporting 
 # std/index.lls
 # Exporting submodules to create a hierarchical structure
 pub @const $math = @import("std/math.lls");
-pub @const $debug = @import("std/debug.lls");
+pub @const $fmt = @import("std/fmt.lls");
 pub @const $io = @import("std/io.lls");
 ```
 

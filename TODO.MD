@@ -41,7 +41,9 @@ Zig implementation. The TypeScript prototype/reference is [`llts-js`](../llts-js
 - Imports use explicit paths (e.g. `@import("std/math")`); no short-name aliases in the compiler.
 - [x] `std/math`: `add`, `sub`, `mul`, `div`, `mod`, `pow`, `sqr`, `min`, `max`, `abs`, `floor`, `ceil`, …
 - [x] `std/string`: `len`, `concat`, `substr`, `indexOf`, `split`, case/trim/replace/…
-- [x] `std/debug`: `printLn`, `log`, `assert`.
+- [x] `std/fmt`: Go-compatible formatted I/O (`printf`, `sprintf`, `println`, `errorf`, verbs `%v`, `%+v`, `%#v`, `%T`, `%t`, `%d`, `%b`, `%o`, `%x`, `%X`, `%c`, `%q`, `%f`, `%s`, `%p`).
+- [x] `std/log`: Go-compatible leveled/prefixed standard logging (`Logger`, flags, `print`, `printf`, `println`, `fatal`, `panic`).
+- [x] `std/slog`: Go-compatible structured logging (`LevelDebug`..`LevelError`, `debug`, `info`, `warn`, `err`, `with`, structured key-value attributes).
 - [x] `std/mem`: `alloc` / Arena helpers.
 - [x] `std/io`: `readLine`, `readFile`, `writeFile`, `appendFile`, `deleteFile`, `exists` via host `__*` bindings.
 - [x] `std/syscall`: raw `call` + typed POSIX wrappers (`read`/`write`/`open`/…) and host `SYS_*` / `O_*` constants.

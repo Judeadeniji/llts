@@ -4,10 +4,10 @@
 #   ./self_hosted/tools/examples_smoke.sh
 #   ./self_hosted/tools/examples_smoke.sh all
 
-@const $debug = @import("std/debug.lls");
+@const $slog = @import("std/slog.lls");
 @const $os = @import("std/os.lls");
 
-debug.err("Use ./self_hosted/tools/examples_smoke.sh instead of this .lls entry");
+slog.err("Use ./self_hosted/tools/examples_smoke.sh instead of this .lls entry");
 os.exit(1);
 
 pub @func main() {}

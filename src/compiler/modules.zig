@@ -11,10 +11,24 @@ const report = @import("../errors/report.zig");
 fn reportImportStack(state: *CompilerState) void {
     // Print outermost → innermost so the `@import` chain reads like a call stack
     // after the faulting scan/parse frame (already printed).
+    var visited: [64][]const u8 = undefined;
+    var count: usize = 0;
     var i: isize = @intCast(state.import_stack.items.len);
     i -= 1;
     while (i >= 0) : (i -= 1) {
         const f = state.import_stack.items[@intCast(i)];
+        var seen = false;
+        for (visited[0..count]) |v| {
+            if (std.mem.eql(u8, v, f.path)) {
+                seen = true;
+                break;
+            }
+        }
+        if (seen) continue;
+        if (count < 64) {
+            visited[count] = f.path;
+            count += 1;
+        }
         var name_buf: [256]u8 = undefined;
         const name = std.fmt.bufPrint(&name_buf, "@import(\"{s}\")", .{f.import_path}) catch "@import";
         report.reportLocationFrameCol(f.path, f.line, f.column, name);
@@ -25,6 +39,14 @@ fn reportImportStack(state: *CompilerState) void {
 pub fn resolveImports(state: *CompilerState, doc: *ast.Document) ModuleError!void {
     var visited = std.StringHashMap(void).init(state.allocator);
     defer visited.deinit();
+    if (doc.path.len > 0) {
+        const root_norm = std.fs.path.resolve(state.allocator, &.{doc.path}) catch null;
+        if (root_norm) |rn| {
+            try state.owned.append(state.allocator, rn);
+            try visited.put(rn, {});
+        }
+        try visited.put(doc.path, {});
+    }
     try resolveImportsInner(state, doc, null, &visited);
 }
 
@@ -358,7 +380,9 @@ fn loadModule(
     defer _ = state.import_stack.pop();
 
     // Persist edge so later compile failures in this file can still print the import chain.
-    try state.import_from.put(resolved, state.import_stack.items[state.import_stack.items.len - 1]);
+    if (!state.import_from.contains(resolved)) {
+        try state.import_from.put(resolved, state.import_stack.items[state.import_stack.items.len - 1]);
+    }
 
     const source = std.fs.cwd().readFileAlloc(state.allocator, resolved, 16 * 1024 * 1024) catch {
         var buf: [512]u8 = undefined;

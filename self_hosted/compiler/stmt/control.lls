@@ -10,7 +10,6 @@
 @const $stmt = @import("./root.lls");
 @const $expr = @import("../expr/root.lls");
 @const $list = @import("std/list.lls");
-@const $debug = @import("std/debug.lls");
 @const $string = @import("std/string.lls");
 @const $map = @import("std/map.lls");
 

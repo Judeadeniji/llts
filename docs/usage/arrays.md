@@ -70,20 +70,20 @@ a.reset(); # reclaim list storage
   arr[0] = 42;
   arr[1] = 1337;
 
-  std.debug.printLn("arr[0] = {i}", arr[0]);
+  std.fmt.printf("arr[0] = %d\n", arr[0]);
   ```
 
 ## 4. Built-in Functions
 - **`len()`**: Retrieves the length (bounds) of an array literal.
   ```llts
-  $ok = std.debug.assert(len(arr) == 5);
+  $ok = std.slog.assert(len(arr) == 5);
   ```
-  *(Note: `std.debug.assert` returns `null` on success and an error value on failure.)*
+  *(Note: `std.slog.assert` returns `null` on success and an error value on failure.)*
 
 ## 5. Advanced / Low-Level Allocation
 - **Raw Heap Allocation**: If you need raw heap memory without length-prefixing overhead, use `std.mem.alloc`.
   ```llts
   $raw = std.mem.alloc(3);
-  std.debug.printLn("raw ptr = {i}", raw);
+  std.fmt.printf("raw ptr = %p\n", raw);
   ```
   *Note: `std.mem.alloc` returns a raw pointer rather than a standard array literal.*

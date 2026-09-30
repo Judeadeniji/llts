@@ -1,0 +1,197 @@
+# Package log implements a simple logging package analogous to Go's log package.
+# It defines a Logger struct with methods for formatting output, along with
+# package-level helper functions (print, printf, println, fatal, fatalf, panic, panicf)
+# that write to standard error.
+
+@const $fmt = @import("std/fmt.lls");
+
+# --- Log flags ---
+pub @const $Ldate = 1;
+pub @const $Ltime = 2;
+pub @const $Lmicroseconds = 4;
+pub @const $Llongfile = 8;
+pub @const $Lshortfile = 16;
+pub @const $LUTC = 32;
+pub @const $Lmsgprefix = 64;
+pub @const $LstdFlags = 3; # Ldate | Ltime
+
+pub @struct Logger {
+    out: int;
+    prefix: string;
+    flag: int;
+
+    @func setOutput(self: *Logger, fd) {
+        self.out = fd;
+    }
+
+    @func setPrefix(self: *Logger, p) {
+        self.prefix = p;
+    }
+
+    @func getPrefix(self: *Logger) {
+        return self.prefix;
+    }
+
+    @func setFlags(self: *Logger, f) {
+        self.flag = f;
+    }
+
+    @func getFlags(self: *Logger) {
+        return self.flag;
+    }
+
+    @func output(self: *Logger, msg) {
+        $header: string = "";
+        @if ((self.flag & Lmsgprefix) == 0 && len(self.prefix) > 0) {
+            header = self.prefix;
+        }
+        @if ((self.flag & Lmsgprefix) != 0 && len(self.prefix) > 0) {
+            header = header + self.prefix;
+        }
+        $line: string = header + msg;
+        @if (!__endsWith(line, "\n")) {
+            line = line + "\n";
+        }
+        __fprint(self.out, [line]);
+    }
+
+    @func print(self: *Logger, ...args) {
+        $msg = __sprint(args);
+        self.output(msg);
+    }
+
+    @func printf(self: *Logger, format, ...args) {
+        $msg = __sprintf(format, args);
+        self.output(msg);
+    }
+
+    @func println(self: *Logger, ...args) {
+        $msg = __sprintln(args);
+        self.output(msg);
+    }
+
+    @func fatal(self: *Logger, ...args) {
+        $msg = __sprint(args);
+        self.output(msg);
+        __exit(1);
+    }
+
+    @func fatalf(self: *Logger, format, ...args) {
+        $msg = __sprintf(format, args);
+        self.output(msg);
+        __exit(1);
+    }
+
+    @func fatalln(self: *Logger, ...args) {
+        $msg = __sprintln(args);
+        self.output(msg);
+        __exit(1);
+    }
+
+    @func panic(self: *Logger, ...args) {
+        $msg = __sprint(args);
+        self.output(msg);
+        __exit(1);
+    }
+
+    @func panicf(self: *Logger, format, ...args) {
+        $msg = __sprintf(format, args);
+        self.output(msg);
+        __exit(1);
+    }
+
+    @func panicln(self: *Logger, ...args) {
+        $msg = __sprintln(args);
+        self.output(msg);
+        __exit(1);
+    }
+}
+
+pub $std = Logger {
+    out: 2, # stderr
+    prefix: "",
+    flag: LstdFlags,
+};
+
+pub @func new(out, prefix, flag): Logger {
+    return Logger {
+        out: out,
+        prefix: prefix,
+        flag: flag,
+    };
+}
+
+pub @func default(): *Logger {
+    return &std;
+}
+
+pub @func setOutput(fd) {
+    std.out = fd;
+}
+
+pub @func setPrefix(p) {
+    std.prefix = p;
+}
+
+pub @func prefix() {
+    return std.prefix;
+}
+
+pub @func setFlags(f) {
+    std.flag = f;
+}
+
+pub @func flags() {
+    return std.flag;
+}
+
+pub @func print(...args) {
+    $msg = __sprint(args);
+    std.output(msg);
+}
+
+pub @func printf(format, ...args) {
+    $msg = __sprintf(format, args);
+    std.output(msg);
+}
+
+pub @func println(...args) {
+    $msg = __sprintln(args);
+    std.output(msg);
+}
+
+pub @func fatal(...args) {
+    $msg = __sprint(args);
+    std.output(msg);
+    __exit(1);
+}
+
+pub @func fatalf(format, ...args) {
+    $msg = __sprintf(format, args);
+    std.output(msg);
+    __exit(1);
+}
+
+pub @func fatalln(...args) {
+    $msg = __sprintln(args);
+    std.output(msg);
+    __exit(1);
+}
+
+pub @func panic(...args) {
+    $msg = __sprint(args);
+    std.output(msg);
+    __exit(1);
+}
+
+pub @func panicf(format, ...args) {
+    $msg = __sprintf(format, args);
+    std.output(msg);
+    __exit(1);
+}
+
+pub @func panicln(...args) {
+    $msg = __sprintln(args);
+    std.output(msg);
+    __exit(1);
+}

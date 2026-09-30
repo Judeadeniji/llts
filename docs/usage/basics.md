@@ -87,25 +87,25 @@ For detailed information on struct methods, see [Structs and Methods](structs_an
 Errors are first-class values created via `error(code, payload)`. They carry a `.code` string and an optional `.payload`.
 ```llts
 $err = error("FileNotFound", "missing.txt");
-std.debug.printLn("Error: {s}", err.code);
+std.fmt.printf("Error: %s\n", err.code);
 ```
 
 ### 6.2 Error-Path Cleanup (errdefer)
 The `errdefer` statement runs cleanup code only if the current scope exits via an error return or an unwind. It is skipped on normal exits, `break`, or `continue`.
 ```llts
-errdefer std.debug.info("An error occurred!");
+errdefer std.slog.info("An error occurred!");
 ```
 
 ### 6.3 Logging
-The `std/debug` module provides leveled logging backed by a robust IO subsystem. Log output is written to stderr, optionally colored, and respects the `LLTS_LOG_LEVEL` environment variable (`trace`, `debug`, `info`, `warn`, `error`).
+The `std/slog` and `std/log` modules provide structured and leveled logging backed by a robust IO subsystem. Log output is written to stderr, optionally colored, and respects the `LLTS_LOG_LEVEL` environment variable (`trace`, `debug`, `info`, `warn`, `error`).
 ```llts
-@const $debug = @import("std/debug");
-debug.info("System initialized");
-debug.err(error("FailCode", "Details")); # Auto-formats error objects
+@const $slog = @import("std/slog");
+slog.info("System initialized");
+slog.err(error("FailCode", "Details")); # Auto-formats error objects
 ```
 
 ### 6.4 Assertions
-The `std.debug.assert(condition)` function ensures invariants. It returns `null` on success and `error("AssertFailed", condition)` on failure.
+The `std.slog.assert(condition)` function ensures invariants. It returns `null` on success and `error("AssertFailed", condition)` on failure.
 
 ## 7. Example: Hello World Program
 
@@ -141,16 +141,16 @@ $offset = 5;
 $sum = add(start, offset);
 
 # Print simple strings and formatted strings
-std.debug.printLn("Message: {s}", msg);
-std.debug.printLn("Initial sum: {i}", sum);
+std.fmt.printf("Message: %s\n", msg);
+std.fmt.printf("Initial sum: %d\n", sum);
 
-std.debug.info("Performing heap allocation...");
+std.slog.info("Performing heap allocation...");
 
 # Heap allocation and method chaining
 $counter = @new(heap, Counter { value: sum });
 $final_val = counter.increment().increment().value;
 
-std.debug.printLn("Final counter value: {i}", final_val);
+std.fmt.printf("Final counter value: %d\n", final_val);
 ```
 
 ## 8. Key Rules & Constraints for AI Agents
@@ -158,5 +158,5 @@ std.debug.printLn("Final counter value: {i}", final_val);
 2. **Scoping & Mutability:** Use `@const $name` for imports and immutable values. Use `$name` for standard variable declaration.
 3. **Escaping Local Scope:** Returning a bare `Foo{…}` / `[…]` literal immortalizes it (process-lifetime). Returning a frame-local *variable* (or embedding one) is a compile error — use `@new(arena, …)` when the value should live in a reclaimable arena.
 4. **Method Receivers:** Struct methods MUST explicitly declare `self` as their first parameter.
-5. **Formatting:** `std.debug.printLn` supports format strings (e.g., `{i}` for integers, `{s}` for strings).
-6. **Error Handling & Logging:** Use `error(code, payload)` for structured error objects. Use `std.debug.info()`, `warn()`, and `err()` instead of `printLn` for diagnostic logging.
+5. **Formatting:** `std.fmt` supports Go-compatible format verbs (e.g. `%d` for integers, `%s` for strings, `%v` for default representation).
+6. **Error Handling & Logging:** Use `error(code, payload)` for structured error objects. Use `std.slog.info()`, `warn()`, and `err()` (or `std.log`) for diagnostic logging.

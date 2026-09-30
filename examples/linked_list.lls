@@ -6,7 +6,7 @@
 #   zig-out/bin/llts run examples/linked_list.lls
 
 @const $mem = @import("std/mem");
-@const $debug = @import("std/debug");
+@const $fmt = @import("std/fmt");
 
 @struct Node {
     value: i64;
@@ -80,7 +80,7 @@
     @func print(self: *LinkedList) {
         $curr = self.head;
         @for (curr != null) {
-            debug.printLn("  {i}", curr.value);
+            fmt.printf("  %d\n", curr.value);
             curr = curr.next;
         }
     }
@@ -100,19 +100,19 @@ pub @func main() {
         list.pushFront(i);
     }
 
-    debug.printLn("after pushFront 1..5 (head is 5):");
+    fmt.println("after pushFront 1..5 (head is 5):");
     list.print();
-    debug.printLn("len = {i}", list.len());
-    debug.printLn("sum = {i}", list.sum());
-    debug.printLn("contains 3 = {i}", list.contains(3));
-    debug.printLn("contains 9 = {i}", list.contains(9));
+    fmt.printf("len = %d\n", list.len());
+    fmt.printf("sum = %d\n", list.sum());
+    fmt.printf("contains 3 = %v\n", list.contains(3));
+    fmt.printf("contains 9 = %v\n", list.contains(9));
 
     list.reverse();
-    debug.printLn("after reverse (head is 1):");
+    fmt.println("after reverse (head is 1):");
     list.print();
 
     list.pushBack(6);
-    debug.printLn("after pushBack 6:");
+    fmt.println("after pushBack 6:");
     list.print();
-    debug.printLn("sum = {i}", list.sum());
+    fmt.printf("sum = %d\n", list.sum());
 }

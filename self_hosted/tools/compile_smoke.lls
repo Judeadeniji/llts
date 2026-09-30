@@ -8,16 +8,17 @@
 
 @const $compiler = @import("../compiler/root.lls");
 @const $mem = @import("std/mem.lls");
-@const $debug = @import("std/debug.lls");
+@const $fmt = @import("std/fmt.lls");
+@const $slog = @import("std/slog.lls");
 @const $os = @import("std/os.lls");
 
 $arena = mem.create(0);
 $out_path = "/tmp/llts_compile_smoke.llb";
 $err = compiler.compileFile(arena, "print(1 + 2);\npub @func main() {}\n", "smoke.lls", out_path);
 @if (@isError(err)) {
-    debug.err("compile failed");
+    slog.err("compile failed");
     os.exit(1);
 }
-debug.printLn("wrote {s}", out_path);
+fmt.printf("wrote %s\n", out_path);
 
 pub @func main() {}

@@ -14,9 +14,16 @@ fn sourceFor(state: *CompilerState, file_path: []const u8) []const u8 {
 /// Walk persisted import edges from the faulting file outward to the entrypoint.
 pub fn reportImportChain(state: *CompilerState, leaf_path: []const u8) void {
     var path = leaf_path;
-    var guard: usize = 0;
-    while (guard < 64) : (guard += 1) {
+    var visited: [64][]const u8 = undefined;
+    var count: usize = 0;
+    while (count < 64) {
         const frame = state.import_from.get(path) orelse break;
+        for (visited[0..count]) |v| {
+            if (std.mem.eql(u8, v, path) or std.mem.eql(u8, v, frame.path)) return;
+        }
+        visited[count] = path;
+        count += 1;
+
         var name_buf: [256]u8 = undefined;
         const name = std.fmt.bufPrint(&name_buf, "@import(\"{s}\")", .{frame.import_path}) catch "@import";
         report.reportLocationFrameCol(frame.path, frame.line, frame.column, name);

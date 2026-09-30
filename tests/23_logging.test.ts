@@ -1,5 +1,5 @@
 /**
- * Host + LLTS leveled logging via stderr (posix sink).
+ * Host + LLTS leveled logging via stderr (posix sink), tested through std/slog and std/log.
  */
 import { test } from "bun:test";
 import { expectOutput, runSource } from "./helpers";
@@ -40,14 +40,14 @@ function runWithEnv(source: string, env: Record<string, string | undefined>) {
 	}
 }
 
-test("debug.info / warn / err appear on stderr with level prefix", () => {
+test("slog.info / warn / err appear on stderr with level prefix", () => {
 	const res = runWithEnv(
 		`
-@const $debug = @import("std/debug");
+@const $slog = @import("std/slog");
 pub @func main() {
-    debug.info("hello-info");
-    debug.warn("hello-warn");
-    debug.err("hello-err");
+    slog.info("hello-info");
+    slog.warn("hello-warn");
+    slog.err("hello-err");
 }
 `,
 		{ LLTS_LOG_LEVEL: "info", NO_COLOR: "1" },
@@ -69,10 +69,10 @@ pub @func main() {
 test("LLTS_LOG_LEVEL=warn suppresses info", () => {
 	const res = runWithEnv(
 		`
-@const $debug = @import("std/debug");
+@const $slog = @import("std/slog");
 pub @func main() {
-    debug.info("should-hide");
-    debug.warn("should-show");
+    slog.info("should-hide");
+    slog.warn("should-show");
 }
 `,
 		{ LLTS_LOG_LEVEL: "warn", NO_COLOR: "1" },
@@ -88,14 +88,14 @@ pub @func main() {
 	}
 });
 
-test("debug.assert returns AssertFailed error value", () => {
+test("slog.assert returns AssertFailed error value", () => {
 	expectOutput(
 		runSource(`
-@const $debug = @import("std/debug");
+@const $slog = @import("std/slog");
 pub @func main() {
-    $ok = debug.assert(true);
+    $ok = slog.assert(true);
     print(@isError(ok));
-    $bad = debug.assert(false);
+    $bad = slog.assert(false);
     print(@isError(bad));
     print(bad.code);
 }
@@ -123,14 +123,14 @@ pub @func main() {
 	}
 });
 
-test("debug.err auto-detects error values", () => {
+test("slog.err auto-detects error values", () => {
 	const res = runWithEnv(
 		`
-@const $debug = @import("std/debug");
+@const $slog = @import("std/slog");
 pub @func main() {
-    debug.err(error("boom"));
-    debug.err(error("FileNotFound", "missing.txt"));
-    debug.err("plain string");
+    slog.err(error("boom"));
+    slog.err(error("FileNotFound", "missing.txt"));
+    slog.err("plain string");
 }
 `,
 		{ LLTS_LOG_LEVEL: "error", NO_COLOR: "1" },
@@ -149,5 +149,24 @@ pub @func main() {
 	}
 	if (!res.stderr.includes("ERROR: plain string")) {
 		throw new Error(`expected plain string path:\n${res.stderr}`);
+	}
+});
+
+test("std/log outputs to stderr", () => {
+	const res = runWithEnv(
+		`
+@const $log = @import("std/log");
+pub @func main() {
+    log.setPrefix("[MYAPP] ");
+    log.printf("server listening on port %d", 8080);
+}
+`,
+		{ NO_COLOR: "1" },
+	);
+	if (res.exitCode !== 0) {
+		throw new Error(`exit ${res.exitCode}\nstderr: ${res.stderr}`);
+	}
+	if (!res.stderr.includes("[MYAPP] server listening on port 8080")) {
+		throw new Error(`expected prefix and formatted output:\n${res.stderr}`);
 	}
 });

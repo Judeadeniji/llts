@@ -3,6 +3,6 @@ print("Hello!");
 $lib = @import("examples/import_test_lib.lls");
 
 $vec = lib.Vector3 { x: 10, y: 20, z: 30 };
-std.debug.printLn("Vector3: {i}, {i}, {i}", vec.x, vec.y, vec.z);
+std.fmt.printf("Vector3: %d, %d, %d\n", vec.x, vec.y, vec.z);
 
 pub @func main() {}
