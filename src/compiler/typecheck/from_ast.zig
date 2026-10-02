@@ -66,6 +66,22 @@ pub fn typeFromAst(node: ?*ast.Node, state: ?*state_mod.CompilerState, ta: ir.Ty
             const right = try typeFromAst(ix.right, state, ta);
             break :blk try intersectTypes(state, ta, left, right);
         },
+        .binary => |b| blk: {
+            if (std.mem.eql(u8, b.operator, "|")) {
+                const left = try typeFromAst(b.left, state, ta);
+                const right = try typeFromAst(b.right, state, ta);
+                if (left != .unknown and right != .unknown) {
+                    break :blk try ta.unionType(&.{ left, right });
+                }
+            } else if (std.mem.eql(u8, b.operator, "&")) {
+                const left = try typeFromAst(b.left, state, ta);
+                const right = try typeFromAst(b.right, state, ta);
+                if (left != .unknown and right != .unknown) {
+                    break :blk try intersectTypes(state, ta, left, right);
+                }
+            }
+            break :blk ir.TUnknown;
+        },
         .member => try resolveImportedType(n, state, ta),
         else => ir.TUnknown,
     };

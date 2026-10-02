@@ -101,9 +101,10 @@ For details on type enforcement, initialization constraints, and compile errors 
 
 ### `@typeOf`
 
-To programmatically check types, use the `@typeOf()` builtin. Useful for assertions and debugging mismatches.
+To programmatically check types, use the `@typeOf()` builtin. Useful for assertions and debugging mismatches. `@typeOf(T_or_expr)` accepts either an expression (evaluating its type) or a bare static type name (e.g. `i64`, `*Point`, `[]byte`).
 
 ```llts
+print(@typeOf(i64));   # i64
 print(@typeOf(p));     # Point
 print(@typeOf(n));     # i32
 print(@typeOf(msg));   # []byte

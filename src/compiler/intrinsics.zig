@@ -96,13 +96,22 @@ pub fn typecheck(state: *CompilerState, env: *typecheck_root.Env, ta: ir.TypeAll
             return ir.TBool;
         },
         .typeOf => {
+            if (isBareTypeNode(state, env, c.args[0])) {
+                const arg_type = try from_ast.typeFromAst(c.args[0], state, ta);
+                const disp = try typecheck_root.ownDisplay(state, arg_type);
+                try state.type_of_results.put(call_node, disp);
+                try state.type_of_is_type.put(call_node, {});
+                return ir.TString;
+            }
             const arg_type = try typecheck_root.inferExpr(state, env, ta, c.args[0]);
             const disp = try typecheck_root.ownDisplay(state, arg_type);
             try state.type_of_results.put(call_node, disp);
             return ir.TString;
         },
         .sizeOf => {
-            _ = try typecheck_root.inferExpr(state, env, ta, c.args[0]);
+            if (!isBareTypeNode(state, env, c.args[0])) {
+                _ = try typecheck_root.inferExpr(state, env, ta, c.args[0]);
+            }
             return ir.TInt;
         },
         .nameOf => {
@@ -190,6 +199,10 @@ pub fn compile(state: *CompilerState, intr: Intrinsic, node: *ast.Node, c: *cons
         .typeOf => {
             const disp = state.type_of_results.get(node) orelse
                 from_ast.resolveType(state, c.args[0]) orelse "unknown";
+            if (state.type_of_is_type.contains(node)) {
+                try emit.emitString(state, disp);
+                return;
+            }
             try expr.compileExpression(state, c.args[0]);
             try emit.emitOp(state, .OP_POP);
             try emit.emitString(state, disp);
@@ -217,8 +230,8 @@ pub fn compile(state: *CompilerState, intr: Intrinsic, node: *ast.Node, c: *cons
                     is_type = true;
                     _ = from_ast.lookupStruct(state, st);
                     size = layout.sizeOfNamedType(state, st);
-                } else if (st.len > 0 and st[0] == '[' and std.mem.indexOfScalar(u8, st, ',') != null) {
-                    // Tuple type display `[T, U]` — handle-sized like arrays
+                } else if (st.len > 0 and st[0] == '[') {
+                    // Array / tuple type display `[T, U]`, `[]T`, `[N]T` — handle-sized like arrays
                     is_type = true;
                     size = 8;
                 } else if (widths.fromName(st)) |w| {
@@ -299,6 +312,44 @@ pub fn compile(state: *CompilerState, intr: Intrinsic, node: *ast.Node, c: *cons
         .new => {
             try aggregate.compileNew(state, c);
         },
+    }
+}
+
+fn isBareTypeNode(state: *CompilerState, env: *typecheck_root.Env, node: *ast.Node) bool {
+    switch (node.*) {
+        .pointer_type, .array_type, .union_type, .intersection_type, .func_type, .tuple_type, .shape_type => return true,
+        .primary => |p| {
+            if (p.kind != .identifier) return false;
+            const name = p.name;
+            if (env.lookup(name) != null) return false;
+            if (state.global_vars.contains(name)) return false;
+            if (state.global_consts.contains(name)) return false;
+            if (state.functions.contains(name)) return false;
+            if (state.native_globals.contains(name)) return false;
+
+            if (widths.fromName(name) != null) return true;
+            if (std.mem.eql(u8, name, "string") or std.mem.eql(u8, name, "[]byte") or
+                std.mem.eql(u8, name, "null") or std.mem.eql(u8, name, "error")) return true;
+            if (state.structs.contains(name) or state.enums.contains(name) or
+                state.typedefs.contains(name) or state.error_sets.contains(name)) return true;
+            return false;
+        },
+        .member => |m| {
+            if (m.object.* == .primary and env.lookup(m.object.primary.name) != null) return false;
+            if (m.object.* == .primary and (state.global_vars.contains(m.object.primary.name) or state.global_consts.contains(m.object.primary.name))) return false;
+            var arena = std.heap.ArenaAllocator.init(state.allocator);
+            defer arena.deinit();
+            const ta = ir.TypeAlloc{ .allocator = arena.allocator() };
+            const t = from_ast.typeFromAst(node, state, ta) catch return false;
+            return t != .unknown;
+        },
+        .binary => |b| {
+            if (std.mem.eql(u8, b.operator, "|") or std.mem.eql(u8, b.operator, "&")) {
+                return isBareTypeNode(state, env, b.left) and isBareTypeNode(state, env, b.right);
+            }
+            return false;
+        },
+        else => return false,
     }
 }
 

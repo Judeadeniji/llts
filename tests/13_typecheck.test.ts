@@ -324,3 +324,55 @@ pub @func main() {
 		["?*Node", "*Node", "2", "1", "null"],
 	);
 });
+
+test("@typeOf supports bare types statically", () => {
+	expectOutput(
+		runSource(`
+@struct Point { x: i64; y: i64; }
+$p: Point = { x: 1, y: 2 };
+$x: i64 = 42;
+
+print(@typeOf(i64));
+print(@typeOf(u8));
+print(@typeOf(int));
+print(@typeOf(string));
+print(@typeOf(Point));
+print(@typeOf(*Point));
+print(@typeOf(?Point));
+print(@typeOf([]byte));
+print(@typeOf([10]i64));
+print(@typeOf(i64 | string));
+print(@typeOf(x));
+print(@typeOf(p));
+print(@typeOf(@typeOf(i64)));
+print(@sizeOf([]i64));
+print(@sizeOf([10]i64));
+`),
+		[
+			"i64",
+			"u8",
+			"i64",
+			"[]byte",
+			"Point",
+			"*Point",
+			"?Point",
+			"[]byte",
+			"[10]i64",
+			"i64 | []byte",
+			"i64",
+			"Point",
+			"[]byte",
+			"8",
+			"8",
+		],
+	);
+});
+
+test("@typeOf rejects unknown identifier", () => {
+	expectError(
+		runSource(`
+print(@typeOf(UnknownType));
+`),
+		"Unknown identifier 'UnknownType'",
+	);
+});

@@ -50,7 +50,7 @@ pub const Env = struct {
         m.deinit();
     }
 
-    fn define(self: *Env, name: []const u8, t: ir.Type) !void {
+    pub fn define(self: *Env, name: []const u8, t: ir.Type) !void {
         if (self.locals.items.len > 0) {
             try self.locals.items[self.locals.items.len - 1].put(name, t);
         } else {
@@ -58,7 +58,7 @@ pub const Env = struct {
         }
     }
 
-    fn lookup(self: *Env, name: []const u8) ?ir.Type {
+    pub fn lookup(self: *Env, name: []const u8) ?ir.Type {
         var i = self.locals.items.len;
         while (i > 0) {
             i -= 1;
