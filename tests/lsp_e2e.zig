@@ -231,13 +231,14 @@ test "didOpen publishes parse diagnostics" {
 
 test "didOpen of valid source publishes empty diagnostics" {
     const allocator = std.testing.allocator;
-    var session = try startSession(allocator, valid_source);
+    const clean_source = "pub @func extra() {}\n";
+    var session = try startSession(allocator, clean_source);
     defer session.deinit();
 
     const params = try std.fmt.allocPrint(
         session.arena_state.allocator(),
         "{{\"textDocument\":{{\"uri\":\"file:///llts-e2e-clean.lls\",\"languageId\":\"llts\",\"version\":1,\"text\":{f}}}}}",
-        .{std.json.fmt(valid_source, .{})},
+        .{std.json.fmt(clean_source, .{})},
     );
     try session.notify("textDocument/didOpen", params);
     const diag = try session.waitForDiagnostics();
@@ -311,7 +312,7 @@ test "didChange applies all contentChanges" {
     // Two full-document changes: the first is broken, the second valid.
     // If the server applied only contentChanges[0], we would see an error.
     try session.notify("textDocument/didChange",
-        \\{"textDocument":{"uri":"file:///llts-e2e-doc.lls","version":2},"contentChanges":[{"text":"@func oops( {\n"},{"text":"@func fixed() {\n  print(1);\n}\n"}]}
+        \\{"textDocument":{"uri":"file:///llts-e2e-doc.lls","version":2},"contentChanges":[{"text":"@func oops( {\n"},{"text":"pub @func fixed() {\n  print(1);\n}\n"}]}
     );
     const diag = try session.waitForDiagnostics();
     const diags = try Session.getDiagnostics(diag);
@@ -477,3 +478,63 @@ test "didChange diagnostics are debounced" {
     const term = try session.child.wait();
     try std.testing.expectEqual(std.process.Child.Term{ .Exited = 0 }, term);
 }
+
+test "unused declarations publish warning diagnostics with Unnecessary tag" {
+    const allocator = std.testing.allocator;
+    var session = try Session.init(allocator);
+    defer session.deinit();
+
+    _ = try session.request(1, "initialize", "{\"capabilities\":{}}");
+    try session.notify("initialized", "{}");
+    const unused_source =
+        \\pub @func main() {
+        \\    $unused_var = 10;
+        \\}
+    ;
+    const params = try std.fmt.allocPrint(
+        session.arena_state.allocator(),
+        "{{\"textDocument\":{{\"uri\":\"{s}\",\"languageId\":\"llts\",\"version\":1,\"text\":{f}}}}}",
+        .{ URI, std.json.fmt(unused_source, .{}) },
+    );
+    try session.notify("textDocument/didOpen", params);
+
+    const diag = try session.waitForDiagnostics();
+    const diags = try Session.getDiagnostics(diag);
+    try std.testing.expectEqual(@as(usize, 1), diags.array.items.len);
+    const item = diags.array.items[0];
+
+    try std.testing.expectEqual(@as(i64, 2), item.object.get("severity").?.integer);
+    const msg = item.object.get("message").?.string;
+    try std.testing.expect(std.mem.indexOf(u8, msg, "unused variable 'unused_var'") != null);
+
+    const tags = item.object.get("tags").?.array;
+    try std.testing.expectEqual(@as(usize, 1), tags.items.len);
+    try std.testing.expectEqual(@as(i64, 1), tags.items[0].integer);
+}
+
+test "underscore-prefixed declarations are not flagged as unused" {
+    const allocator = std.testing.allocator;
+    var session = try Session.init(allocator);
+    defer session.deinit();
+
+    _ = try session.request(1, "initialize", "{\"capabilities\":{}}");
+    try session.notify("initialized", "{}");
+    const ignored_source =
+        \\@func _private_helper(_arg: int) {
+        \\    $_ignored = 10;
+        \\}
+        \\pub @func main() {
+        \\}
+    ;
+    const params = try std.fmt.allocPrint(
+        session.arena_state.allocator(),
+        "{{\"textDocument\":{{\"uri\":\"{s}\",\"languageId\":\"llts\",\"version\":1,\"text\":{f}}}}}",
+        .{ URI, std.json.fmt(ignored_source, .{}) },
+    );
+    try session.notify("textDocument/didOpen", params);
+
+    const diag = try session.waitForDiagnostics();
+    const diags = try Session.getDiagnostics(diag);
+    try std.testing.expectEqual(@as(usize, 0), diags.array.items.len);
+}
+

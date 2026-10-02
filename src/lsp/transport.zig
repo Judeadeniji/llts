@@ -45,7 +45,7 @@ pub fn writeMessage(allocator: std.mem.Allocator, stdout: std.posix.fd_t, value:
     var string_buf = std.ArrayList(u8).empty;
     defer string_buf.deinit(allocator);
 
-    try std.fmt.format(string_buf.writer(allocator), "{f}", .{std.json.fmt(value, .{})});
+    try std.fmt.format(string_buf.writer(allocator), "{f}", .{std.json.fmt(value, .{ .emit_null_optional_fields = false })});
 
     var header_buf = std.ArrayList(u8).empty;
     defer header_buf.deinit(allocator);

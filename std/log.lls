@@ -5,15 +5,17 @@
 
 @const $fmt = @import("std/fmt.lls");
 
+@const $iota = 0;
+
 # --- Log flags ---
-pub @const $Ldate = 1;
-pub @const $Ltime = 2;
-pub @const $Lmicroseconds = 4;
-pub @const $Llongfile = 8;
-pub @const $Lshortfile = 16;
-pub @const $LUTC = 32;
-pub @const $Lmsgprefix = 64;
-pub @const $LstdFlags = 3; # Ldate | Ltime
+pub @const $Ldate = 1 << iota;
+pub @const $Ltime = 1 << iota + 1;
+pub @const $Lmicroseconds = 1 << iota + 2;
+pub @const $Llongfile = 1 << iota + 3;
+pub @const $Lshortfile = 1 << iota + 4;
+pub @const $LUTC = 1 << iota + 5;
+pub @const $Lmsgprefix = 1 << iota + 6;
+pub @const $LstdFlags = Ldate | Ltime;
 
 pub @struct Logger {
     out: int;

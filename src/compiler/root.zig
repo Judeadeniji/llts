@@ -16,6 +16,7 @@ pub const types = @import("typecheck/from_ast.zig");
 pub const from_ast = @import("typecheck/from_ast.zig");
 pub const ir = @import("typecheck/ir.zig");
 const compile_errors = @import("../errors/compile.zig");
+pub const unused = @import("unused.zig");
 
 pub const CompileOptions = struct {
     debug: bool = true,
@@ -55,7 +56,8 @@ pub fn analyze(
 
     try typecheck.typecheck(&state, doc);
     try requireEntryMain(&state, doc);
-    
+    unused.detectAndWarn(&state, doc);
+
     return state;
 }
 
@@ -582,7 +584,9 @@ fn analyzeBody(
             if (try path_mod.tryResolveStaticPath(state, c.callee)) |name| {
                 try calls.put(name, {});
             } else if (c.callee.* == .primary and c.callee.primary.kind == .identifier) {
-                try calls.put(c.callee.primary.name, {});
+                if (!state.native_globals.contains(c.callee.primary.name)) {
+                    try calls.put(c.callee.primary.name, {});
+                }
             } else if (c.callee.* == .member) {
                 if (c.callee.member.property.* == .primary) {
                     const prop = c.callee.member.property.primary.name;

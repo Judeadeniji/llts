@@ -86,6 +86,24 @@ fn buildDiagnostics(server: *state.ServerState, ra: std.mem.Allocator, uri: []co
             }
         }
 
+        if (json_diags.items.len < MAX_DIAGNOSTICS and analysis.doc.diagnostics.len == 0 and analysis.tc_diagnostic == null) {
+            const unused_list = llts.compiler.unused.detect(ra, &analysis.doc) catch &.{};
+            for (unused_list) |u| {
+                if (json_diags.items.len >= MAX_DIAGNOSTICS) break;
+                var msg_buf: [256]u8 = undefined;
+                const msg = u.formatMessage(&msg_buf);
+                const msg_duped = ra.dupe(u8, msg) catch msg;
+                const tags = ra.alloc(u32, 1) catch null;
+                if (tags) |t| t[0] = 1; // DiagnosticTag.Unnecessary
+                json_diags.append(ra, .{
+                    .range = diagRangeAt(analysis, u.loc.line, u.loc.column),
+                    .severity = 2, // Warning
+                    .message = msg_duped,
+                    .tags = tags,
+                }) catch break;
+            }
+        }
+
         if (total > MAX_DIAGNOSTICS) {
             const notice = std.fmt.allocPrint(ra, "Further errors truncated ({d} shown).", .{MAX_DIAGNOSTICS}) catch null;
             if (notice) |n| {
@@ -137,6 +155,7 @@ const DiagObj = struct {
     range: DiagRange,
     severity: u32,
     message: []const u8,
+    tags: ?[]const u32 = null,
 };
 
 pub fn handleMessage(server: *state.ServerState, stdout: std.posix.fd_t, body: []const u8) !void {

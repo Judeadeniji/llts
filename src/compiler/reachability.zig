@@ -139,9 +139,7 @@ fn enqueueFunction(result: *Result, work: *std.ArrayList([]const u8), name: []co
 fn expandCallTargets(state: *CompilerState, call_name: []const u8) !std.ArrayList([]const u8) {
     var targets: std.ArrayList([]const u8) = .empty;
 
-    if (state.native_globals.contains(call_name)) return targets;
-
-    {
+    if (!state.native_globals.contains(call_name)) {
         var kit = state.functions.keyIterator();
         while (kit.next()) |k| {
             if (std.mem.eql(u8, k.*, call_name)) {
@@ -401,6 +399,10 @@ fn noteCall(
                         for (targets.items) |target| try enqueueFunction(result, work, target);
                     }
                 }
+            } else {
+                var targets = try expandCallTargets(state, prop);
+                defer targets.deinit(state.allocator);
+                for (targets.items) |target| try enqueueFunction(result, work, target);
             }
         }
     }
