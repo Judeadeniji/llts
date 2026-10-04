@@ -1,6 +1,8 @@
 const std = @import("std");
 const ast = @import("../ast/root.zig");
 const state_mod = @import("state.zig");
+const path = @import("expr/path.zig");
+const from_ast = @import("typecheck/from_ast.zig");
 
 const CompilerState = state_mod.CompilerState;
 
@@ -68,10 +70,14 @@ pub fn isConstantExpr(state: *CompilerState, env: *const ConstEnv, node: ?*ast.N
         .member => |m| blk: {
             if (m.property.* != .primary) break :blk false;
             // Enum.Variant is a compile-time int constant.
-            const from_ast = @import("typecheck/from_ast.zig");
             if (from_ast.resolveEnumName(state, m.object)) |ename| {
                 if (state.enums.get(ename)) |ed| {
-                    break :blk ed.variants.contains(m.property.primary.name);
+                    if (ed.variants.contains(m.property.primary.name)) break :blk true;
+                }
+            }
+            if (path.tryResolveStaticPath(state, n) catch null) |static_path| {
+                if (env.const_names.contains(static_path) or state.ready_global_consts.contains(static_path)) {
+                    break :blk true;
                 }
             }
             break :blk false;

@@ -166,7 +166,7 @@ pub @func main() {
 	if (res.exitCode !== 0) {
 		throw new Error(`exit ${res.exitCode}\nstderr: ${res.stderr}`);
 	}
-	if (!res.stderr.includes("[MYAPP] server listening on port 8080")) {
+	if (!res.stderr.includes("[MYAPP] ") || !res.stderr.includes("server listening on port 8080")) {
 		throw new Error(`expected prefix and formatted output:\n${res.stderr}`);
 	}
 });

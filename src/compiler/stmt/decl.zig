@@ -217,11 +217,7 @@ fn inferDeclType(state: *CompilerState, value: *ast.Node) ?[]const u8 {
             break :blk s;
         },
         .literal => |lit| switch (lit.literal_type) {
-            .string => blk: {
-                const s = std.fmt.allocPrint(state.allocator, "[{d}]byte", .{lit.value.len}) catch break :blk null;
-                state.owned.append(state.allocator, s) catch {};
-                break :blk s;
-            },
+            .string => "[]byte",
             .boolean => "u1",
             .null => "null",
             .number, .hex, .octal, .binary => if (std.mem.indexOfScalar(u8, lit.value, '.') != null) "float" else "int",

@@ -1,159 +1,93 @@
-# Package slog implements structured logging with severity levels and key-value attributes,
-# analogous to Go's log/slog package.
+# Package slog provides structured logging with levels and attributes.
+# This module re-exports the full 1:1 Go slog implementation from std/log/slog.lls.
 
-@const $fmt = @import("std/fmt.lls");
+@const $slog = @import("std/log/slog.lls");
 
-# --- Severity Levels ---
-pub @const $LevelDebug = -4;
-pub @const $LevelInfo = 0;
-pub @const $LevelWarn = 4;
-pub @const $LevelError = 8;
+# --- Levels ---
+pub @const $levelDebug = slog.levelDebug;
+pub @const $LevelDebug = slog.LevelDebug;
+pub @const $levelInfo = slog.levelInfo;
+pub @const $LevelInfo = slog.LevelInfo;
+pub @const $levelWarn = slog.levelWarn;
+pub @const $LevelWarn = slog.LevelWarn;
+pub @const $levelError = slog.levelError;
+pub @const $LevelError = slog.LevelError;
+pub @const $levelString = slog.levelString;
 
-pub @func formatAttrs(args) {
-    $n = len(args);
-    @if (n == 0) {
-        return "";
-    }
-    $buf: string = "";
-    $i = 0;
-    @for (i < n) {
-        $k = args[i];
-        @if (i + 1 < n) {
-            $next_i = i + 1;
-            $v = args[next_i];
-            i = i + 2;
-            buf = buf + " " + fmt.sprintf("%s=%v", k, v);
-        } @else {
-            i = i + 1;
-            buf = buf + " " + fmt.sprintf("%s=!BADKEY", k);
-        }
-    }
-    return buf;
-}
+# --- LevelVar ---
+pub @const $LevelVar = slog.LevelVar;
+pub @const $newLevelVar = slog.newLevelVar;
 
-pub @struct Logger {
-    min_level: int;
-    handler_kind: string; # "host", "text", "json"
-    attrs_prefix: string;
+# --- Kinds ---
+pub @const $kindAny = slog.kindAny;
+pub @const $KindAny = slog.KindAny;
+pub @const $kindBool = slog.kindBool;
+pub @const $KindBool = slog.KindBool;
+pub @const $kindDuration = slog.kindDuration;
+pub @const $KindDuration = slog.KindDuration;
+pub @const $kindFloat64 = slog.kindFloat64;
+pub @const $KindFloat64 = slog.KindFloat64;
+pub @const $kindInt64 = slog.kindInt64;
+pub @const $KindInt64 = slog.KindInt64;
+pub @const $kindString = slog.kindString;
+pub @const $KindString = slog.KindString;
+pub @const $kindTime = slog.kindTime;
+pub @const $KindTime = slog.KindTime;
+pub @const $kindUint64 = slog.kindUint64;
+pub @const $KindUint64 = slog.KindUint64;
+pub @const $kindGroup = slog.kindGroup;
+pub @const $KindGroup = slog.KindGroup;
+pub @const $kindLogValuer = slog.kindLogValuer;
+pub @const $KindLogValuer = slog.KindLogValuer;
 
-    @func with(self: *Logger, ...args): Logger {
-        $extra = formatAttrs(args);
-        return Logger {
-            min_level: self.min_level,
-            handler_kind: self.handler_kind,
-            attrs_prefix: self.attrs_prefix + extra,
-        };
-    }
+# --- Values ---
+pub @const $Value = slog.Value;
+pub @const $stringValue = slog.stringValue;
+pub @const $intValue = slog.intValue;
+pub @const $int64Value = slog.int64Value;
+pub @const $uint64Value = slog.uint64Value;
+pub @const $float64Value = slog.float64Value;
+pub @const $boolValue = slog.boolValue;
+pub @const $durationValue = slog.durationValue;
+pub @const $timeValue = slog.timeValue;
+pub @const $groupValue = slog.groupValue;
+pub @const $anyValue = slog.anyValue;
 
-    @func log(self: *Logger, level: int, msg, ...args) {
-        @if (level < self.min_level) {
-            return null;
-        }
-        $extra = self.attrs_prefix + formatAttrs(args);
-        $lvl_str = "info";
-        @if (level <= LevelDebug) {
-            $lvl_str = "debug";
-        } @else @if (level >= LevelError) {
-            $lvl_str = "error";
-        } @else @if (level >= LevelWarn) {
-            $lvl_str = "warn";
-        }
+# --- Attrs ---
+pub @const $Attr = slog.Attr;
+pub @const $stringAttr = slog.stringAttr;
+pub @const $intAttr = slog.intAttr;
+pub @const $uint64Attr = slog.uint64Attr;
+pub @const $float64Attr = slog.float64Attr;
+pub @const $boolAttr = slog.boolAttr;
+pub @const $durationAttr = slog.durationAttr;
+pub @const $timeAttr = slog.timeAttr;
+pub @const $anyAttr = slog.anyAttr;
+pub @const $groupAttr = slog.groupAttr;
 
-        @if (self.handler_kind == "text") {
-            $line = fmt.sprintf("level=%s msg=%v%s\n", lvl_str, msg, extra);
-            __fprint(2, [line]);
-            return null;
-        }
-        @if (self.handler_kind == "json") {
-            $line = fmt.sprintf("{\"level\":%q,\"msg\":%q}\n", lvl_str, fmt.sprint(msg));
-            __fprint(2, [line]);
-            return null;
-        }
+# --- Record & Source ---
+pub @const $Source = slog.Source;
+pub @const $Record = slog.Record;
+pub @const $newRecord = slog.newRecord;
 
-        # Default host handler
-        @if (len(extra) > 0) {
-            __hostLog(lvl_str, fmt.sprint(msg) + extra);
-        } @else {
-            __hostLog(lvl_str, msg);
-        }
-    }
+# --- Handlers ---
+pub @const $HandlerOptions = slog.HandlerOptions;
+pub @const $Handler = slog.Handler;
+pub @const $newTextHandler = slog.newTextHandler;
+pub @const $newJSONHandler = slog.newJSONHandler;
+pub @const $discardHandler = slog.discardHandler;
 
-    @func debug(self: *Logger, msg, ...args) {
-        self.log(LevelDebug, msg, args);
-    }
-
-    @func info(self: *Logger, msg, ...args) {
-        self.log(LevelInfo, msg, args);
-    }
-
-    @func warn(self: *Logger, msg, ...args) {
-        self.log(LevelWarn, msg, args);
-    }
-
-    @func err(self: *Logger, msg, ...args) {
-        self.log(LevelError, msg, args);
-    }
-}
-
-pub $defaultLogger = Logger {
-    min_level: LevelDebug,
-    handler_kind: "host",
-    attrs_prefix: "",
-};
-
-pub @func default(): *Logger {
-    return &defaultLogger;
-}
-
-pub @func setDefault(l: Logger) {
-    defaultLogger = l;
-}
-
-pub @func with(...args): Logger {
-    return defaultLogger.with(args);
-}
-
-pub @func debug(msg, ...args) {
-    @if (len(args) == 0) {
-        __hostLog("debug", msg);
-        return null;
-    }
-    defaultLogger.log(LevelDebug, msg, args);
-}
-
-pub @func info(msg, ...args) {
-    @if (len(args) == 0) {
-        __hostLog("info", msg);
-        return null;
-    }
-    defaultLogger.log(LevelInfo, msg, args);
-}
-
-pub @func warn(msg, ...args) {
-    @if (len(args) == 0) {
-        __hostLog("warn", msg);
-        return null;
-    }
-    defaultLogger.log(LevelWarn, msg, args);
-}
-
-pub @func err(msg, ...args) {
-    @if (len(args) == 0) {
-        __hostLog("error", msg);
-        return null;
-    }
-    defaultLogger.log(LevelError, msg, args);
-}
-
-pub @func log(level: int, msg, ...args) {
-    defaultLogger.log(level, msg, args);
-}
-
-# Top-level assertion helper
-pub @func assert(condition) {
-    @if (condition) {
-        return null;
-    } @else {
-        return error("AssertFailed", condition);
-    }
-}
+# --- Logger & Global functions ---
+pub @const $Logger = slog.Logger;
+pub @const $new = slog.new;
+pub @const $defaultLogger = slog.defaultLogger;
+pub @const $default = slog.default;
+pub @const $setDefault = slog.setDefault;
+pub @const $with = slog.with;
+pub @const $log = slog.log;
+pub @const $logAttrs = slog.logAttrs;
+pub @const $debug = slog.debug;
+pub @const $info = slog.info;
+pub @const $warn = slog.warn;
+pub @const $err = slog.err;
+pub @const $assert = slog.assert;

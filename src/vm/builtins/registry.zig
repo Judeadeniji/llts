@@ -66,6 +66,11 @@ fn isMathGlobal(name: []const u8) bool {
             std.mem.eql(u8, name, "math_errhandling");
     }
     if (std.mem.startsWith(u8, name, "__host")) return false;
+    if (std.mem.startsWith(u8, name, "__caller")) return false;
+    if (std.mem.startsWith(u8, name, "__timeParts")) return false;
+    if (std.mem.startsWith(u8, name, "__type")) return false;
+    if (std.mem.startsWith(u8, name, "__syslog")) return false;
+    if (std.mem.startsWith(u8, name, "__hostname")) return false;
     if (std.mem.startsWith(u8, name, "__print")) return false;
     if (std.mem.startsWith(u8, name, "__sprint")) return false;
     if (std.mem.startsWith(u8, name, "__printf")) return false;
@@ -149,7 +154,7 @@ fn moduleNeeded(needed: *const std.StringHashMap(void), module: Module) bool {
     return switch (module) {
         .print => wants(needed, &.{}, &.{"print"}),
         .print_ln => wants(needed, &.{}, &.{ "__printLn" }),
-        .log => wants(needed, &.{}, &.{ "__hostLog" }),
+        .log => wants(needed, &.{}, &.{ "__hostLog", "__caller", "__callerPC", "__timeParts", "__type", "__syslogDial", "__hostname" }),
         .len => wants(needed, &.{}, &.{ "len" }),
         .mem => wants(needed, &.{ "__alloc", "__arena_" }, &.{ "__allocImmortal", "__allocBytes", "__allocImmortalBytes", "__allocArray", "__allocImmortalArray" }),
         .string => wants(needed, &.{

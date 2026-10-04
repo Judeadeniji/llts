@@ -30,14 +30,19 @@ fn parseAssignment(self: *Parser) ParseError!*Node {
 }
 
 fn parseBinary(self: *Parser, min_prec: i32) ParseError!*Node {
+    return parseBinaryInternal(self, min_prec, true);
+}
+
+fn parseBinaryInternal(self: *Parser, min_prec: i32, allow_range: bool) ParseError!*Node {
     var left = try parseUnary(self);
     while (true) {
         const tok = self.peek(0) orelse break;
         if (tok.type != .bin_op) break;
+        if (!allow_range and std.mem.eql(u8, tok.value, "..")) break;
         const prec = precedence.PRECEDENCE.of(tok.value);
         if (prec < 0 or prec < min_prec) break;
         _ = self.advance();
-        const right = try parseBinary(self, prec + 1);
+        const right = try parseBinaryInternal(self, prec + 1, allow_range);
         left = try self.create(.{ .binary = .{
             .left = left,
             .operator = try self.dupe(tok.value),
@@ -135,15 +140,15 @@ fn parsePostfix(self: *Parser) ParseError!*Node {
                 is_slice = true;
                 _ = self.advance(); // '..'
                 if (!(self.checkDelim("]"))) {
-                    end_expr = try parseBinary(self, 14);
+                    end_expr = try parseBinaryInternal(self, 0, false);
                 }
             } else {
-                start_expr = try parseBinary(self, 14);
+                start_expr = try parseBinaryInternal(self, 0, false);
                 if (self.check(.bin_op) and self.peek(0) != null and std.mem.eql(u8, self.peek(0).?.value, "..")) {
                     is_slice = true;
                     _ = self.advance(); // '..'
                     if (!(self.checkDelim("]"))) {
-                        end_expr = try parseBinary(self, 14);
+                        end_expr = try parseBinaryInternal(self, 0, false);
                     }
                 }
             }

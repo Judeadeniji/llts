@@ -8,6 +8,8 @@ const expr = @import("root.zig");
 const types = @import("../typecheck/from_ast.zig");
 const widths = @import("../widths.zig");
 const compile_errors = @import("../../errors/compile.zig");
+const path = @import("path.zig");
+const layout = @import("../layout.zig");
 
 const OpCode = opcode.OpCode;
 const CompilerState = state_mod.CompilerState;
@@ -17,7 +19,7 @@ pub fn compileAssignment(state: *CompilerState, assign: *const ast.Assignment) !
     if (assign.left.* == .index) {
         try assignIndex(state, &assign.left.index, assign.right, arith);
     } else if (assign.left.* == .member) {
-        try assignMember(state, &assign.left.member, assign.right, arith);
+        try assignMember(state, &assign.left.member, assign.left, assign.right, arith);
     } else if (assign.left.* == .primary) {
         try assignPrimary(state, &assign.left.primary, assign.right, arith);
     }
@@ -66,7 +68,22 @@ fn assignIndex(state: *CompilerState, idx: *const ast.Index, right: *ast.Node, a
     try emit.emitOp(state, .OP_SET_ARRAY);
 }
 
-fn assignMember(state: *CompilerState, mem: *const ast.Member, right: *ast.Node, arith: ?OpCode) !void {
+fn assignMember(state: *CompilerState, mem: *const ast.Member, node: *ast.Node, right: *ast.Node, arith: ?OpCode) !void {
+    if (try path.tryResolveStaticPath(state, node)) |static_path| {
+        if (state.global_consts.contains(static_path)) {
+            return compile_errors.compileFailFmt(state, "Cannot assign to constant '{s}'", .{static_path});
+        }
+        if (arith) |op| {
+            try emit.emitNameGet(state, .OP_GET_GLOBAL, static_path);
+            try expr.compileExpression(state, right);
+            try emit.emitOp(state, op);
+        } else {
+            try expr.compileExpression(state, right);
+        }
+        try emit.emitNameGet(state, .OP_SET_GLOBAL, static_path);
+        return;
+    }
+
     // Tuple field `.0` / `.1`
     if (mem.property.* == .primary) {
         if (std.fmt.parseInt(i64, mem.property.primary.name, 10)) |idx| {
@@ -91,7 +108,6 @@ fn assignMember(state: *CompilerState, mem: *const ast.Member, right: *ast.Node,
     if (types.resolveType(state, mem.object)) |type_name| {
         if (mem.property.* == .primary) {
             if (types.lookupStructField(state, type_name, mem.property.primary.name)) |info| {
-                const layout = @import("../layout.zig");
                 const kind: u8 = @intFromEnum(layout.fieldKind(state, info.field_ty));
                 if (arith) |op| {
                     try expr.compileExpression(state, mem.object);

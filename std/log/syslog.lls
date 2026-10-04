@@ -1,0 +1,254 @@
+# Package syslog provides a simple interface to the system log service.
+# It can send messages to the syslog daemon using UNIX domain sockets, UDP, or TCP.
+
+@const $fmt = @import("std/fmt.lls");
+@const $log = @import("std/log.lls");
+
+# Severity
+pub @const $LOG_EMERG = 0;
+pub @const $LOG_ALERT = 1;
+pub @const $LOG_CRIT = 2;
+pub @const $LOG_ERR = 3;
+pub @const $LOG_WARNING = 4;
+pub @const $LOG_NOTICE = 5;
+pub @const $LOG_INFO = 6;
+pub @const $LOG_DEBUG = 7;
+
+pub @const $severityMask = 0x07;
+pub @const $facilityMask = 0xf8;
+
+# Facility
+pub @const $LOG_KERN = 0 << 3;
+pub @const $LOG_USER = 1 << 3;
+pub @const $LOG_MAIL = 2 << 3;
+pub @const $LOG_DAEMON = 3 << 3;
+pub @const $LOG_AUTH = 4 << 3;
+pub @const $LOG_SYSLOG = 5 << 3;
+pub @const $LOG_LPR = 6 << 3;
+pub @const $LOG_NEWS = 7 << 3;
+pub @const $LOG_UUCP = 8 << 3;
+pub @const $LOG_CRON = 9 << 3;
+pub @const $LOG_AUTHPRIV = 10 << 3;
+pub @const $LOG_FTP = 11 << 3;
+pub @const $LOG_LOCAL0 = 16 << 3;
+pub @const $LOG_LOCAL1 = 17 << 3;
+pub @const $LOG_LOCAL2 = 18 << 3;
+pub @const $LOG_LOCAL3 = 19 << 3;
+pub @const $LOG_LOCAL4 = 20 << 3;
+pub @const $LOG_LOCAL5 = 21 << 3;
+pub @const $LOG_LOCAL6 = 22 << 3;
+pub @const $LOG_LOCAL7 = 23 << 3;
+
+$monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+pub @struct Writer {
+    priority: int;
+    tag: string;
+    hostname: string;
+    network: string;
+    raddr: string;
+    fd: int;
+    isLocal: bool;
+
+    @func connect(self: *Writer) {
+        @if (self.fd >= 0) {
+            __sys_close(self.fd);
+            self.fd = -1;
+        }
+        $fd = __syslogDial(self.network, self.raddr);
+        @if (@isError(fd)) {
+            return fd;
+        }
+        self.fd = fd;
+        @if (len(self.network) == 0) {
+            self.isLocal = true;
+            @if (len(self.hostname) == 0) {
+                self.hostname = "localhost";
+            }
+        } @else {
+            self.isLocal = (self.network == "unix" || self.network == "unixgram");
+            @if (len(self.hostname) == 0) {
+                self.hostname = __hostname();
+            }
+        }
+        return null;
+    }
+
+    @func close(self: *Writer) {
+        @if (self.fd >= 0) {
+            __sys_close(self.fd);
+            self.fd = -1;
+        }
+        return null;
+    }
+
+    @func Close(self: *Writer) {
+        return self.close();
+    }
+
+    @func write(self: *Writer, b) {
+        return self.writeAndRetry(self.priority, fmt.sprint(b));
+    }
+
+    @func Write(self: *Writer, b) {
+        return self.write(b);
+    }
+
+    @func writeString(self: *Writer, s: string) {
+        return self.writeAndRetry(self.priority, s);
+    }
+
+    @func WriteString(self: *Writer, s: string) {
+        return self.writeString(s);
+    }
+
+    @func emerg(self: *Writer, m) {
+        return self.writeAndRetry(LOG_EMERG, fmt.sprint(m));
+    }
+
+    @func Emerg(self: *Writer, m) {
+        return self.emerg(m);
+    }
+
+    @func alert(self: *Writer, m) {
+        return self.writeAndRetry(LOG_ALERT, fmt.sprint(m));
+    }
+
+    @func Alert(self: *Writer, m) {
+        return self.alert(m);
+    }
+
+    @func crit(self: *Writer, m) {
+        return self.writeAndRetry(LOG_CRIT, fmt.sprint(m));
+    }
+
+    @func Crit(self: *Writer, m) {
+        return self.crit(m);
+    }
+
+    @func err(self: *Writer, m) {
+        return self.writeAndRetry(LOG_ERR, fmt.sprint(m));
+    }
+
+    @func Err(self: *Writer, m) {
+        return self.err(m);
+    }
+
+    @func warning(self: *Writer, m) {
+        return self.writeAndRetry(LOG_WARNING, fmt.sprint(m));
+    }
+
+    @func Warning(self: *Writer, m) {
+        return self.warning(m);
+    }
+
+    @func notice(self: *Writer, m) {
+        return self.writeAndRetry(LOG_NOTICE, fmt.sprint(m));
+    }
+
+    @func Notice(self: *Writer, m) {
+        return self.notice(m);
+    }
+
+    @func info(self: *Writer, m) {
+        return self.writeAndRetry(LOG_INFO, fmt.sprint(m));
+    }
+
+    @func Info(self: *Writer, m) {
+        return self.info(m);
+    }
+
+    @func debug(self: *Writer, m) {
+        return self.writeAndRetry(LOG_DEBUG, fmt.sprint(m));
+    }
+
+    @func Debug(self: *Writer, m) {
+        return self.debug(m);
+    }
+
+    @func writeAndRetry(self: *Writer, p: int, s: string) {
+        $pr = (self.priority & facilityMask) | (p & severityMask);
+        @if (self.fd >= 0) {
+            $err = self.writeMsg(pr, s);
+            @if (!@isError(err)) {
+                return len(s);
+            }
+        }
+        $err = self.connect();
+        @if (@isError(err)) {
+            return err;
+        }
+        $werr = self.writeMsg(pr, s);
+        @if (@isError(werr)) {
+            return werr;
+        }
+        return len(s);
+    }
+
+    @func writeMsg(self: *Writer, p: int, msg: string) {
+        $nl: string = "";
+        @if (!__endsWith(msg, "\n")) {
+            nl = "\n";
+        }
+        $tp = __timeParts(__now(), !self.isLocal);
+        $pid = __pid();
+        $formatted: string = "";
+        @if (self.isLocal) {
+            $mon = monthNames[tp[1] - 1];
+            $dayStr = fmt.sprintf("%2d", tp[2]);
+            $timeStr = fmt.sprintf("%02d:%02d:%02d", tp[3], tp[4], tp[5]);
+            $timestamp = mon + " " + dayStr + " " + timeStr;
+            $formatted = fmt.sprintf("<%d>%s %s[%d]: %s%s", p, timestamp, self.tag, pid, msg, nl);
+        } @else {
+            $timestamp = fmt.sprintf("%04d-%02d-%02dT%02d:%02d:%02dZ", tp[0], tp[1], tp[2], tp[3], tp[4], tp[5]);
+            $formatted = fmt.sprintf("<%d>%s %s %s[%d]: %s%s", p, timestamp, self.hostname, self.tag, pid, msg, nl);
+        }
+        $res = __fprint(self.fd, [formatted]);
+        @if (@isError(res)) {
+            return res;
+        }
+        return null;
+    }
+}
+
+pub @func dial(network: string, raddr: string, priority: int, tag: string) {
+    @if (priority < 0 || priority > (LOG_LOCAL7 | LOG_DEBUG)) {
+        return error("SyslogError", "log/syslog: invalid priority");
+    }
+    $t = tag;
+    @if (len(t) == 0) {
+        $args = __args();
+        @if (len(args) > 0) {
+            t = args[0];
+        } @else {
+            t = "llts";
+        }
+    }
+    $w = Writer {
+        priority: priority,
+        tag: t,
+        hostname: __hostname(),
+        network: network,
+        raddr: raddr,
+        fd: -1,
+        isLocal: false,
+    };
+    $err = w.connect();
+    @if (@isError(err)) {
+        return err;
+    }
+    return w;
+}
+
+pub @func new(priority: int, tag: string) {
+    return dial("", "", priority, tag);
+}
+
+pub @func newLogger(priority: int, logFlag: int) {
+    $s = new(priority, "");
+    @if (@isError(s)) {
+        return s;
+    }
+    return log.new(s, "", logFlag);
+}
+

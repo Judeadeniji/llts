@@ -1,0 +1,3 @@
+# Package internal contains definitions shared between log and log/slog.
+
+pub $defaultOutput = null;

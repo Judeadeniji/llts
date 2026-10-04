@@ -191,6 +191,12 @@ pub fn create(allocator: std.mem.Allocator) !CompilerState {
     try state.native_globals.put("len", {});
     try state.native_globals.put("__printLn", {});
     try state.native_globals.put("__hostLog", {});
+    try state.native_globals.put("__caller", {});
+    try state.native_globals.put("__callerPC", {});
+    try state.native_globals.put("__timeParts", {});
+    try state.native_globals.put("__type", {});
+    try state.native_globals.put("__syslogDial", {});
+    try state.native_globals.put("__hostname", {});
     try state.native_globals.put("__sprintf", {});
     try state.native_globals.put("__printf", {});
     try state.native_globals.put("__fprintf", {});

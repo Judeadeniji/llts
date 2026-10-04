@@ -1,199 +1,449 @@
 # Package log implements a simple logging package analogous to Go's log package.
-# It defines a Logger struct with methods for formatting output, along with
-# package-level helper functions (print, printf, println, fatal, fatalf, panic, panicf)
-# that write to standard error.
+# LLTS standard library is pro-camelCase.
 
 @const $fmt = @import("std/fmt.lls");
+@const $internal = @import("std/log/internal.lls");
 
-@const $iota = 0;
+# --- Submodules ---
+pub @const $slog = @import("std/log/slog.lls");
+pub @const $syslog = @import("std/log/syslog.lls");
 
-# --- Log flags ---
-pub @const $Ldate = 1 << iota;
-pub @const $Ltime = 1 << iota + 1;
-pub @const $Lmicroseconds = 1 << iota + 2;
-pub @const $Llongfile = 1 << iota + 3;
-pub @const $Lshortfile = 1 << iota + 4;
-pub @const $LUTC = 1 << iota + 5;
-pub @const $Lmsgprefix = 1 << iota + 6;
-pub @const $LstdFlags = Ldate | Ltime;
+# --- Log flags (camelCase) ---
+pub @const $ldate = 1;         # 1 << 0: the date in the local time zone: 2009/01/23
+pub @const $ltime = 2;         # 1 << 1: the time in the local time zone: 01:23:23
+pub @const $lmicroseconds = 4; # 1 << 2: microsecond resolution: 01:23:23.123123. assumes ltime.
+pub @const $llongfile = 8;     # 1 << 3: full file name and line number: /a/b/c/d.lls:23
+pub @const $lshortfile = 16;   # 1 << 4: final file name element and line number: d.lls:23. overrides llongfile
+pub @const $lutc = 32;         # 1 << 5: if ldate or ltime is set, use UTC rather than the local time zone
+pub @const $lmsgprefix = 64;   # 1 << 6: move the "prefix" from the beginning of the line to before the message
+pub @const $lstdFlags = ldate | ltime;
+pub @const $discard = "discard";
 
+# --- In-memory Buffer (compatible with bytes.Buffer / strings.Builder) ---
+pub @struct Buffer {
+    str: string;
+
+    @func write(self: *Buffer, s: string) {
+        self.str = self.str + s;
+    }
+
+    @func writeString(self: *Buffer, s: string) {
+        self.str = self.str + s;
+    }
+
+    @func string(self: *Buffer): string {
+        return self.str;
+    }
+
+    @func bytes(self: *Buffer): string {
+        return self.str;
+    }
+
+    @func reset(self: *Buffer) {
+        self.str = "";
+    }
+}
+
+pub @func newBuffer(): Buffer {
+    return Buffer { str: "" };
+}
+
+# --- LogWriter abstraction ---
+pub @struct LogWriter {
+    kind: string; # "fd", "buffer", "func", "discard"
+    fd: int;
+    buf: ?*Buffer;
+    write_fn: unknown;
+
+    @func write(self: *LogWriter, s: string) {
+        @if (self.kind == "discard") {
+            return null;
+        }
+        @if (self.kind == "fd") {
+            __fprint(self.fd, [s]);
+            return null;
+        }
+        @if (self.kind == "buffer") {
+            @if (self.buf != null) {
+                self.buf.writeString(s);
+            }
+            return null;
+        }
+        @if (self.kind == "func") {
+            @if (self.write_fn != null) {
+                self.write_fn(s);
+            }
+            return null;
+        }
+        __fprint(2, [s]);
+        return null;
+    }
+
+    @func writeString(self: *LogWriter, s: string) {
+        self.write(s);
+    }
+}
+
+pub @func toWriter(w): LogWriter {
+    @if (w == null || w == "discard") {
+        return LogWriter { kind: "discard", fd: 0, buf: null, write_fn: null };
+    }
+    $t = __type(w);
+    @if (t == "int") {
+        return LogWriter { kind: "fd", fd: w, buf: null, write_fn: null };
+    }
+    @if (t == "func") {
+        return LogWriter { kind: "func", fd: 0, buf: null, write_fn: w };
+    }
+    @if (t == "pointer" || t == "struct" || t == "bytes") {
+        return LogWriter { kind: "buffer", fd: 0, buf: w, write_fn: null };
+    }
+    return LogWriter { kind: "fd", fd: 2, buf: null, write_fn: null };
+}
+
+# --- Logger ---
 pub @struct Logger {
-    out: int;
-    prefix: string;
-    flag: int;
+    writer_obj: LogWriter;
+    raw_out: unknown;
+    prefix_str: string;
+    flag_val: int;
+    is_discard: bool;
 
-    @func setOutput(self: *Logger, fd) {
-        self.out = fd;
+    @func setOutput(self: *Logger, out) {
+        self.raw_out = out;
+        self.writer_obj = toWriter(out);
+        self.is_discard = self.writer_obj.kind == "discard";
     }
 
-    @func setPrefix(self: *Logger, p) {
-        self.prefix = p;
+    @func flags(self: *Logger): int {
+        return self.flag_val;
     }
 
-    @func getPrefix(self: *Logger) {
-        return self.prefix;
+    @func setFlags(self: *Logger, flag: int) {
+        self.flag_val = flag;
     }
 
-    @func setFlags(self: *Logger, f) {
-        self.flag = f;
+    @func prefix(self: *Logger): string {
+        return self.prefix_str;
     }
 
-    @func getFlags(self: *Logger) {
-        return self.flag;
+    @func setPrefix(self: *Logger, prefix: string) {
+        self.prefix_str = prefix;
     }
 
-    @func output(self: *Logger, msg) {
+    @func writer(self: *Logger) {
+        return self.raw_out;
+    }
+
+    @func outputAt(self: *Logger, pc: int, calldepth: int, msg: string) {
+        @if (self.is_discard) {
+            return null;
+        }
+
+        $now = __now();
+        $prefix = self.prefix_str;
+        $flag = self.flag_val;
+
+        $file: string = "";
+        $line: int = 0;
+
+        @if ((flag & (lshortfile | llongfile)) != 0) {
+            @if (pc == 0) {
+                $c = __caller(calldepth);
+                @if (c[3]) {
+                    file = c[1];
+                    line = c[2];
+                } @else {
+                    file = "???";
+                    line = 0;
+                }
+            } @else {
+                $info = __callerPC(pc);
+                file = info[0];
+                line = info[1];
+                @if (len(file) == 0) {
+                    file = "???";
+                }
+            }
+
+            @if ((flag & lshortfile) != 0) {
+                $short = file;
+                $idx = __lastIndexOf(file, "/");
+                @if (idx >= 0) {
+                    short = __slice(file, idx + 1, len(file));
+                }
+                file = short;
+            }
+        }
+
         $header: string = "";
-        @if ((self.flag & Lmsgprefix) == 0 && len(self.prefix) > 0) {
-            header = self.prefix;
+        @if ((flag & lmsgprefix) == 0 && len(prefix) > 0) {
+            header = prefix;
         }
-        @if ((self.flag & Lmsgprefix) != 0 && len(self.prefix) > 0) {
-            header = header + self.prefix;
+
+        @if ((flag & (ldate | ltime | lmicroseconds)) != 0) {
+            $isUTC = (flag & lutc) != 0;
+            $tp = __timeParts(now, isUTC);
+            @if ((flag & ldate) != 0) {
+                header = header + fmt.sprintf("%04d/%02d/%02d ", tp[0], tp[1], tp[2]);
+            }
+            @if ((flag & (ltime | lmicroseconds)) != 0) {
+                header = header + fmt.sprintf("%02d:%02d:%02d", tp[3], tp[4], tp[5]);
+                @if ((flag & lmicroseconds) != 0) {
+                    header = header + fmt.sprintf(".%06d", tp[6] / 1000);
+                }
+                header = header + " ";
+            }
         }
-        $line: string = header + msg;
-        @if (!__endsWith(line, "\n")) {
-            line = line + "\n";
+
+        @if ((flag & (lshortfile | llongfile)) != 0) {
+            header = header + file + ":" + fmt.sprintf("%d", line) + ": ";
         }
-        __fprint(self.out, [line]);
+
+        @if ((flag & lmsgprefix) != 0 && len(prefix) > 0) {
+            header = header + prefix;
+        }
+
+        $line_str: string = header + msg;
+        @if (len(line_str) == 0 || !__endsWith(line_str, "\n")) {
+            line_str = line_str + "\n";
+        }
+
+        self.writer_obj.writeString(line_str);
+        return null;
+    }
+
+    @func output(self: *Logger, calldepth: int, s: string) {
+        return self.outputAt(0, calldepth + 1, s);
     }
 
     @func print(self: *Logger, ...args) {
-        $msg = __sprint(args);
-        self.output(msg);
+        $attrs = args;
+        @for (len(attrs) == 1 && __type(attrs[0]) == "array") {
+            attrs = attrs[0];
+        }
+        $msg = __sprint(attrs);
+        return self.outputAt(0, 2, msg);
     }
 
-    @func printf(self: *Logger, format, ...args) {
-        $msg = __sprintf(format, args);
-        self.output(msg);
+    @func printf(self: *Logger, format: string, ...args) {
+        $attrs = args;
+        @for (len(attrs) == 1 && __type(attrs[0]) == "array") {
+            attrs = attrs[0];
+        }
+        $msg = __sprintf(format, attrs);
+        return self.outputAt(0, 2, msg);
     }
 
     @func println(self: *Logger, ...args) {
-        $msg = __sprintln(args);
-        self.output(msg);
+        $attrs = args;
+        @for (len(attrs) == 1 && __type(attrs[0]) == "array") {
+            attrs = attrs[0];
+        }
+        $msg = __sprintln(attrs);
+        return self.outputAt(0, 2, msg);
     }
 
     @func fatal(self: *Logger, ...args) {
-        $msg = __sprint(args);
-        self.output(msg);
+        $attrs = args;
+        @for (len(attrs) == 1 && __type(attrs[0]) == "array") {
+            attrs = attrs[0];
+        }
+        $msg = __sprint(attrs);
+        self.outputAt(0, 2, msg);
         __exit(1);
     }
 
-    @func fatalf(self: *Logger, format, ...args) {
-        $msg = __sprintf(format, args);
-        self.output(msg);
+    @func fatalf(self: *Logger, format: string, ...args) {
+        $attrs = args;
+        @for (len(attrs) == 1 && __type(attrs[0]) == "array") {
+            attrs = attrs[0];
+        }
+        $msg = __sprintf(format, attrs);
+        self.outputAt(0, 2, msg);
         __exit(1);
     }
 
     @func fatalln(self: *Logger, ...args) {
-        $msg = __sprintln(args);
-        self.output(msg);
+        $attrs = args;
+        @for (len(attrs) == 1 && __type(attrs[0]) == "array") {
+            attrs = attrs[0];
+        }
+        $msg = __sprintln(attrs);
+        self.outputAt(0, 2, msg);
         __exit(1);
     }
 
     @func panic(self: *Logger, ...args) {
-        $msg = __sprint(args);
-        self.output(msg);
+        $attrs = args;
+        @for (len(attrs) == 1 && __type(attrs[0]) == "array") {
+            attrs = attrs[0];
+        }
+        $msg = __sprint(attrs);
+        self.outputAt(0, 2, msg);
         __exit(1);
     }
 
-    @func panicf(self: *Logger, format, ...args) {
-        $msg = __sprintf(format, args);
-        self.output(msg);
+    @func panicf(self: *Logger, format: string, ...args) {
+        $attrs = args;
+        @for (len(attrs) == 1 && __type(attrs[0]) == "array") {
+            attrs = attrs[0];
+        }
+        $msg = __sprintf(format, attrs);
+        self.outputAt(0, 2, msg);
         __exit(1);
     }
 
     @func panicln(self: *Logger, ...args) {
-        $msg = __sprintln(args);
-        self.output(msg);
+        $attrs = args;
+        @for (len(attrs) == 1 && __type(attrs[0]) == "array") {
+            attrs = attrs[0];
+        }
+        $msg = __sprintln(attrs);
+        self.outputAt(0, 2, msg);
         __exit(1);
     }
 }
 
-pub $std = Logger {
-    out: 2, # stderr
-    prefix: "",
-    flag: LstdFlags,
-};
-
-pub @func new(out, prefix, flag): Logger {
+pub @func new(out, prefix: string, flag: int): Logger {
+    $wr = toWriter(out);
     return Logger {
-        out: out,
-        prefix: prefix,
-        flag: flag,
+        writer_obj: wr,
+        raw_out: out,
+        prefix_str: prefix,
+        flag_val: flag,
+        is_discard: wr.kind == "discard",
     };
 }
+
+pub $std = Logger {
+    writer_obj: LogWriter { kind: "fd", fd: 2, buf: null, write_fn: null },
+    raw_out: 2,
+    prefix_str: "",
+    flag_val: lstdFlags,
+    is_discard: false,
+};
 
 pub @func default(): *Logger {
     return &std;
 }
 
-pub @func setOutput(fd) {
-    std.out = fd;
+pub @func setOutput(out) {
+    std.setOutput(out);
 }
 
-pub @func setPrefix(p) {
-    std.prefix = p;
+pub @func flags(): int {
+    return std.flags();
 }
 
-pub @func prefix() {
-    return std.prefix;
+pub @func setFlags(flag: int) {
+    std.setFlags(flag);
 }
 
-pub @func setFlags(f) {
-    std.flag = f;
+pub @func prefix(): string {
+    return std.prefix();
 }
 
-pub @func flags() {
-    return std.flag;
+pub @func setPrefix(prefix: string) {
+    std.setPrefix(prefix);
+}
+
+pub @func writer() {
+    return std.writer();
+}
+
+pub @func output(calldepth: int, s: string) {
+    return std.outputAt(0, calldepth + 1, s);
 }
 
 pub @func print(...args) {
-    $msg = __sprint(args);
-    std.output(msg);
+    $attrs = args;
+    @for (len(attrs) == 1 && __type(attrs[0]) == "array") {
+        attrs = attrs[0];
+    }
+    $msg = __sprint(attrs);
+    return std.outputAt(0, 2, msg);
 }
 
-pub @func printf(format, ...args) {
-    $msg = __sprintf(format, args);
-    std.output(msg);
+pub @func printf(format: string, ...args) {
+    $attrs = args;
+    @for (len(attrs) == 1 && __type(attrs[0]) == "array") {
+        attrs = attrs[0];
+    }
+    $msg = __sprintf(format, attrs);
+    return std.outputAt(0, 2, msg);
 }
 
 pub @func println(...args) {
-    $msg = __sprintln(args);
-    std.output(msg);
+    $attrs = args;
+    @for (len(attrs) == 1 && __type(attrs[0]) == "array") {
+        attrs = attrs[0];
+    }
+    $msg = __sprintln(attrs);
+    return std.outputAt(0, 2, msg);
 }
 
 pub @func fatal(...args) {
-    $msg = __sprint(args);
-    std.output(msg);
+    $attrs = args;
+    @for (len(attrs) == 1 && __type(attrs[0]) == "array") {
+        attrs = attrs[0];
+    }
+    $msg = __sprint(attrs);
+    std.outputAt(0, 2, msg);
     __exit(1);
 }
 
-pub @func fatalf(format, ...args) {
-    $msg = __sprintf(format, args);
-    std.output(msg);
+pub @func fatalf(format: string, ...args) {
+    $attrs = args;
+    @for (len(attrs) == 1 && __type(attrs[0]) == "array") {
+        attrs = attrs[0];
+    }
+    $msg = __sprintf(format, attrs);
+    std.outputAt(0, 2, msg);
     __exit(1);
 }
 
 pub @func fatalln(...args) {
-    $msg = __sprintln(args);
-    std.output(msg);
+    $attrs = args;
+    @for (len(attrs) == 1 && __type(attrs[0]) == "array") {
+        attrs = attrs[0];
+    }
+    $msg = __sprintln(attrs);
+    std.outputAt(0, 2, msg);
     __exit(1);
 }
 
 pub @func panic(...args) {
-    $msg = __sprint(args);
-    std.output(msg);
+    $attrs = args;
+    @for (len(attrs) == 1 && __type(attrs[0]) == "array") {
+        attrs = attrs[0];
+    }
+    $msg = __sprint(attrs);
+    std.outputAt(0, 2, msg);
     __exit(1);
 }
 
-pub @func panicf(format, ...args) {
-    $msg = __sprintf(format, args);
-    std.output(msg);
+pub @func panicf(format: string, ...args) {
+    $attrs = args;
+    @for (len(attrs) == 1 && __type(attrs[0]) == "array") {
+        attrs = attrs[0];
+    }
+    $msg = __sprintf(format, attrs);
+    std.outputAt(0, 2, msg);
     __exit(1);
 }
 
 pub @func panicln(...args) {
-    $msg = __sprintln(args);
-    std.output(msg);
+    $attrs = args;
+    @for (len(attrs) == 1 && __type(attrs[0]) == "array") {
+        attrs = attrs[0];
+    }
+    $msg = __sprintln(attrs);
+    std.outputAt(0, 2, msg);
     __exit(1);
 }
+
+@func stdDefaultOutputBridge(pc: int, msg: string) {
+    return std.outputAt(pc, 0, msg);
+}
+pub $initDefaultOutput = (internal.defaultOutput = stdDefaultOutputBridge);

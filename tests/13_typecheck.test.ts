@@ -232,7 +232,23 @@ print(@typeOf(y));
 print(@typeOf(z));
 print(@typeOf(true));
 `),
-		["i64", "[2]byte", "[]i64", "u1"],
+		["i64", "[]byte", "[]i64", "u1"],
+	);
+});
+
+test("empty string $x = '' infers as []byte unless const or specified", () => {
+	expectOutput(
+		runSource(`
+$x = "";
+print(@typeOf(x));
+x = "hello";
+print(x);
+@const $c = "";
+print(@typeOf(c));
+$exact: [0]byte = "";
+print(@typeOf(exact));
+`),
+		["[]byte", "hello", '""', "[0]byte"],
 	);
 });
 

@@ -145,6 +145,18 @@ fn requireAssignAt(state: *state_mod.CompilerState, got: ir.Type, expected: ir.T
             }
         }
     }
+    // String literals infer as []byte unless const, but may coerce into fixed [N]byte when length matches.
+    if (from) |node| {
+        if (node.* == .literal and node.literal.literal_type == .string) {
+            const exp = ir.peelDefined(expected);
+            if (exp == .array and exp.array.elem.* == .u8) {
+                if (exp.array.length == null or exp.array.length.? == node.literal.value.len) {
+                    try recordExprType(state, node, expected);
+                    return;
+                }
+            }
+        }
+    }
     // Implicit numeric coercion: accept widening and narrowing within the
     // same signedness family, emitting a warning in both cases.
     // • Widening (i32→i64, u8→u32, f32→f64, int→float): lossless; soft warn.
@@ -370,7 +382,7 @@ fn inferLiteral(ta: ir.TypeAlloc, lit: ast.Literal, prefer_literals: bool) !ir.T
     return switch (lit.literal_type) {
         .string => blk: {
             if (prefer_literals) break :blk .{ .str_lit = lit.value };
-            break :blk try ta.arrayType(ir.TByte, lit.value.len);
+            break :blk try ta.arrayType(ir.TByte, null);
         },
         .boolean => blk: {
             if (prefer_literals) break :blk .{ .bool_lit = std.mem.eql(u8, lit.value, "true") };

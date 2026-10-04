@@ -4,7 +4,7 @@
 import { test } from "bun:test";
 import { expectOutput, runSource } from "./helpers";
 
-test('const "x" has type "x", not [1]byte', () => {
+test('const "x" has type "x", bare "x" has type []byte', () => {
 	expectOutput(
 		runSource(`
 print(@typeOf("x"));
@@ -12,7 +12,7 @@ print(@typeOf(const "x"));
 $a = const "x";
 print(@typeOf(a));
 `),
-		["[1]byte", '"x"', '"x"'],
+		["[]byte", '"x"', '"x"'],
 	);
 });
 

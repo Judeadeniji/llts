@@ -19,3 +19,4 @@ bun.lock
 # Progress / TODO tracking
 .todos*
 scraps
+scratch/

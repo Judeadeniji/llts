@@ -3,6 +3,7 @@ const state_mod = @import("../state.zig");
 const stack = @import("../stack.zig");
 const runtime = @import("../../errors/runtime.zig");
 const widths = @import("../../compiler/widths.zig");
+const heap = @import("heap.zig");
 const VMState = state_mod.VMState;
 const Value = state_mod.Value;
 const OpCode = @import("../../bytecode/opcode.zig").OpCode;
@@ -55,6 +56,15 @@ pub fn binArith(vm: *VMState, op: OpCode) ArithError!void {
     }
     const b = stack.pop(vm);
     const a = stack.pop(vm);
+    if (kind == .add and (a == .slice or a == .name or a == .bytes or b == .slice or b == .name or b == .bytes)) {
+        try stack.push(vm, a);
+        try stack.push(vm, b);
+        heap.stringAdd(vm) catch |err| switch (err) {
+            error.OutOfMemory, error.NoSpaceLeft => return error.OutOfMemory,
+            else => return fail(vm, "String concatenation failed"),
+        };
+        return;
+    }
     // Preserve f32 when both sides are f32; otherwise float math is f64.
     if (a == .f32 and b == .f32) {
         const af = a.f32;

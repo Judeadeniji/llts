@@ -1,0 +1,806 @@
+# Package slog implements structured logging with severity levels and key-value attributes,
+# analogous to Go's log/slog package.
+
+@const $fmt = @import("std/fmt.lls");
+@const $internal = @import("std/log/internal.lls");
+
+# --- Severity Levels ---
+pub @const $levelDebug = -4;
+pub @const $levelInfo = 0;
+pub @const $levelWarn = 4;
+pub @const $levelError = 8;
+
+pub @func levelString(l: int): string {
+    @if (l <= levelDebug) {
+        @if (l == levelDebug) { return "DEBUG"; }
+        return fmt.sprintf("DEBUG%+d", l - levelDebug);
+    }
+    @if (l >= levelError) {
+        @if (l == levelError) { return "ERROR"; }
+        return fmt.sprintf("ERROR%+d", l - levelError);
+    }
+    @if (l >= levelWarn) {
+        @if (l == levelWarn) { return "WARN"; }
+        return fmt.sprintf("WARN%+d", l - levelWarn);
+    }
+    @if (l == levelInfo) { return "INFO"; }
+    return fmt.sprintf("INFO%+d", l - levelInfo);
+}
+
+pub @struct LevelVar {
+    val: int;
+
+    @func level(self: *LevelVar): int {
+        return self.val;
+    }
+
+    @func set(self: *LevelVar, l: int) {
+        self.val = l;
+    }
+
+    @func string(self: *LevelVar): string {
+        return levelString(self.val);
+    }
+}
+
+# --- Value Kinds ---
+pub @const $kindAny = 0;
+pub @const $kindBool = 1;
+pub @const $kindDuration = 2;
+pub @const $kindFloat64 = 3;
+pub @const $kindInt64 = 4;
+pub @const $kindString = 5;
+pub @const $kindTime = 6;
+pub @const $kindUint64 = 7;
+pub @const $kindGroup = 8;
+pub @const $kindLogValuer = 9;
+
+# Go slog compatibility: re-export capitalized Kind* constants alongside internal kind* variants
+pub @const $KindAny = kindAny;
+pub @const $KindBool = kindBool;
+pub @const $KindDuration = kindDuration;
+pub @const $KindFloat64 = kindFloat64;
+pub @const $KindInt64 = kindInt64;
+pub @const $KindString = kindString;
+pub @const $KindTime = kindTime;
+pub @const $KindUint64 = kindUint64;
+pub @const $KindGroup = kindGroup;
+pub @const $KindLogValuer = kindLogValuer;
+
+pub @struct Value {
+    val_kind: int;
+    anyVal: unknown;
+    numVal: int;
+    floatVal: float;
+    strVal: string;
+    groupVal: unknown;
+
+    @func kind(self: *Value): int {
+        return self.val_kind;
+    }
+
+    @func any(self: *Value) {
+        @if (self.val_kind == kindString) { return self.strVal; }
+        @if (self.val_kind == kindInt64 || self.val_kind == kindUint64 || self.val_kind == kindDuration || self.val_kind == kindTime) { return self.numVal; }
+        @if (self.val_kind == kindFloat64) { return self.floatVal; }
+        @if (self.val_kind == kindBool) { return self.numVal != 0; }
+        @if (self.val_kind == kindGroup) { return self.groupVal; }
+        return self.anyVal;
+    }
+
+    @func string(self: *Value): string {
+        @if (self.val_kind == kindString) { return self.strVal; }
+        @if (self.val_kind == kindInt64 || self.val_kind == kindUint64 || self.val_kind == kindDuration || self.val_kind == kindTime) { return fmt.sprintf("%d", self.numVal); }
+        @if (self.val_kind == kindFloat64) { return fmt.sprintf("%g", self.floatVal); }
+        @if (self.val_kind == kindBool) {
+            @if (self.numVal != 0) { return "true"; }
+            return "false";
+        }
+        return fmt.sprint(self.anyVal);
+    }
+
+    @func int64(self: *Value): int {
+        return self.numVal;
+    }
+
+    @func uint64(self: *Value): int {
+        return self.numVal;
+    }
+
+    @func bool(self: *Value): bool {
+        return self.numVal != 0;
+    }
+
+    @func float64(self: *Value): float {
+        return self.floatVal;
+    }
+
+    @func duration(self: *Value): int {
+        return self.numVal;
+    }
+
+    @func time(self: *Value): int {
+        return self.numVal;
+    }
+
+    @func group(self: *Value) {
+        return self.groupVal;
+    }
+
+    @func resolve(self: *Value): Value {
+        return *self;
+    }
+
+    @func equal(self: *Value, other: Value): bool {
+        @if (self.val_kind != other.val_kind) { return false; }
+        @if (self.val_kind == kindString) { return self.strVal == other.strVal; }
+        @if (self.val_kind == kindFloat64) { return self.floatVal == other.floatVal; }
+        return self.numVal == other.numVal && self.anyVal == other.anyVal;
+    }
+}
+
+pub @func stringValue(value: string): Value {
+    return Value {
+        val_kind: kindString,
+        anyVal: null,
+        numVal: 0,
+        floatVal: 0.0,
+        strVal: value,
+        groupVal: null,
+    };
+}
+
+pub @func intValue(v: int): Value {
+    return Value {
+        val_kind: KindInt64,
+        anyVal: null,
+        numVal: v,
+        floatVal: 0.0,
+        strVal: "",
+        groupVal: null,
+    };
+}
+
+pub @func uint64Value(v: int): Value {
+    return Value {
+        val_kind: kindUint64,
+        anyVal: null,
+        numVal: v,
+        floatVal: 0.0,
+        strVal: "",
+        groupVal: null,
+    };
+}
+
+pub @func float64Value(v: float): Value {
+    return Value {
+        val_kind: kindFloat64,
+        anyVal: null,
+        numVal: 0,
+        floatVal: v,
+        strVal: "",
+        groupVal: null,
+    };
+}
+
+pub @func boolValue(v: bool): Value {
+    $n = 0;
+    @if (v) { n = 1; }
+    return Value {
+        val_kind: kindBool,
+        anyVal: null,
+        numVal: n,
+        floatVal: 0.0,
+        strVal: "",
+        groupVal: null,
+    };
+}
+
+pub @func durationValue(v: int): Value {
+    return Value {
+        val_kind: kindDuration,
+        anyVal: null,
+        numVal: v,
+        floatVal: 0.0,
+        strVal: "",
+        groupVal: null,
+    };
+}
+
+pub @func timeValue(v: int): Value {
+    return Value {
+        val_kind: kindTime,
+        anyVal: null,
+        numVal: v,
+        floatVal: 0.0,
+        strVal: "",
+        groupVal: null,
+    };
+}
+
+pub @func groupValue(...attrs): Value {
+    return Value {
+        val_kind: kindGroup,
+        anyVal: null,
+        numVal: 0,
+        floatVal: 0.0,
+        strVal: "",
+        groupVal: attrs,
+    };
+}
+
+pub @func anyValue(v): Value {
+    $t = __type(v);
+    @if (t == "string") { return stringValue(v); }
+    @if (t == "int") { return intValue(v); }
+    @if (t == "float") { return float64Value(v); }
+    @if (t == "bool") { return boolValue(v); }
+    return Value {
+        val_kind: kindAny,
+        anyVal: v,
+        numVal: 0,
+        floatVal: 0.0,
+        strVal: "",
+        groupVal: null,
+    };
+}
+
+# --- Attr ---
+pub @struct Attr {
+    key: string;
+    value: Value;
+
+    @func equal(self: *Attr, other: Attr): bool {
+        return self.key == other.key && self.value.equal(other.value);
+    }
+
+    @func string(self: *Attr): string {
+        return self.key + "=" + self.value.string();
+    }
+}
+
+pub @func stringAttr(key: string, val: string): Attr {
+    return Attr { key: key, value: stringValue(val) };
+}
+
+pub @func intAttr(key: string, val: int): Attr {
+    return Attr { key: key, value: intValue(val) };
+}
+
+pub @func uint64Attr(key: string, val: int): Attr {
+    return Attr { key: key, value: uint64Value(val) };
+}
+
+pub @func float64Attr(key: string, val: float): Attr {
+    return Attr { key: key, value: float64Value(val) };
+}
+
+pub @func boolAttr(key: string, val: bool): Attr {
+    return Attr { key: key, value: boolValue(val) };
+}
+
+pub @func durationAttr(key: string, val: int): Attr {
+    return Attr { key: key, value: durationValue(val) };
+}
+
+pub @func timeAttr(key: string, val: int): Attr {
+    return Attr { key: key, value: timeValue(val) };
+}
+
+pub @func anyAttr(key: string, val): Attr {
+    return Attr { key: key, value: anyValue(val) };
+}
+
+pub @func groupAttr(key: string, ...attrs): Attr {
+    return Attr { key: key, value: groupValue(attrs) };
+}
+
+# --- Source ---
+pub @struct Source {
+    function: string;
+    file: string;
+    line: int;
+}
+
+# --- Record ---
+pub @struct Record {
+    time: int;
+    message: string;
+    level: int;
+    pc: int;
+    attrs: unknown;
+
+    @func clone(self: *Record): Record {
+        return Record {
+            time: self.time,
+            message: self.message,
+            level: self.level,
+            pc: self.pc,
+            attrs: self.attrs,
+        };
+    }
+
+    @func numAttrs(self: *Record): int {
+        @if (self.attrs == null) { return 0; }
+        return len(self.attrs);
+    }
+}
+
+pub @func newRecord(t: int, level: int, msg: string, pc: int): Record {
+    return Record {
+        time: t,
+        message: msg,
+        level: level,
+        pc: pc,
+        attrs: null,
+    };
+}
+
+# --- Handler Options ---
+pub @struct HandlerOptions {
+    addSource: bool;
+    level: int; # minimum level
+}
+
+@func formatTimeRFC3339(ns: int): string {
+    $tp = __timeParts(ns, true);
+    return fmt.sprintf("%04d-%02d-%02dT%02d:%02d:%02d.%03dZ", tp[0], tp[1], tp[2], tp[3], tp[4], tp[5], tp[6] / 1000000);
+}
+
+@func needsQuoting(s: string): bool {
+    @if (len(s) == 0) { return true; }
+    $i = 0;
+    @for (i < len(s)) {
+        $c = __charCodeAt(s, i);
+        @if (c <= 32 || c == 61 || c == 34) {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+@func formatAttrsText(prefix: string, args): string {
+    @if (args == null) { return ""; }
+    $cur = args;
+    @for (len(cur) == 1 && __type(cur[0]) == "array") {
+        cur = cur[0];
+    }
+    $n = len(cur);
+    @if (n == 0) { return ""; }
+    $buf: string = "";
+    $i = 0;
+    @for (i < n) {
+        $item = cur[i];
+        $t = __type(item);
+        @if (t == "pointer" || t == "struct") {
+            # Attr
+            $valStr = item.value.string();
+            @if (needsQuoting(valStr)) { valStr = fmt.sprintf("%q", valStr); }
+            buf = buf + " " + prefix + item.key + "=" + valStr;
+            i = i + 1;
+        } @else @if (t == "string") {
+            $key: string = item;
+            @if (i + 1 < n) {
+                $next_i = i + 1;
+                $v = cur[next_i];
+                $valStr = fmt.sprint(v);
+                @if (needsQuoting(valStr)) { valStr = fmt.sprintf("%q", valStr); }
+                buf = buf + " " + prefix + key + "=" + valStr;
+                i = i + 2;
+            } @else {
+                buf = buf + " " + prefix + "!BADKEY=" + key;
+                i = i + 1;
+            }
+        } @else {
+            @if (i + 1 < n) {
+                $next_i2 = i + 1;
+                $v = cur[next_i2];
+                $valStr = fmt.sprint(v);
+                @if (needsQuoting(valStr)) { valStr = fmt.sprintf("%q", valStr); }
+                buf = buf + " " + prefix + fmt.sprint(item) + "=" + valStr;
+                i = i + 2;
+            } @else {
+                buf = buf + " " + prefix + "!BADKEY=" + fmt.sprint(item);
+                i = i + 1;
+            }
+        }
+    }
+    @if (len(buf) > 0 && __startsWith(buf, " ")) {
+        return __slice(buf, 1, len(buf));
+    }
+    return buf;
+}
+
+@func formatAttrsJSON(prefix: string, args): string {
+    @if (args == null) { return ""; }
+    $cur = args;
+    @for (len(cur) == 1 && __type(cur[0]) == "array") {
+        cur = cur[0];
+    }
+    $n = len(cur);
+    @if (n == 0) { return ""; }
+    $buf: string = "";
+    $i = 0;
+    @for (i < n) {
+        $item = cur[i];
+        $t = __type(item);
+        @if (t == "pointer" || t == "struct") {
+            $v = item.value;
+            $vk = v.kind();
+            @if (vk == kindInt64 || vk == kindUint64 || vk == kindDuration || vk == kindTime) {
+                buf = buf + fmt.sprintf(",%q:%d", prefix + item.key, v.int64());
+            } @else @if (vk == kindFloat64) {
+                buf = buf + fmt.sprintf(",%q:%g", prefix + item.key, v.float64());
+            } @else @if (vk == kindBool) {
+                $bStr: string = "false";
+                @if (v.bool()) { bStr = "true"; }
+                buf = buf + fmt.sprintf(",%q:%s", prefix + item.key, bStr);
+            } @else {
+                buf = buf + fmt.sprintf(",%q:%q", prefix + item.key, v.string());
+            }
+            i = i + 1;
+        } @else @if (t == "string") {
+            $key: string = item;
+            @if (i + 1 < n) {
+                $next_i = i + 1;
+                $v = cur[next_i];
+                $vt = __type(v);
+                @if (vt == "int") {
+                    buf = buf + fmt.sprintf(",%q:%d", prefix + key, v);
+                } @else @if (vt == "float") {
+                    buf = buf + fmt.sprintf(",%q:%g", prefix + key, v);
+                } @else @if (vt == "bool") {
+                    $bStr2: string = "false";
+                    @if (v) { bStr2 = "true"; }
+                    buf = buf + fmt.sprintf(",%q:%s", prefix + key, bStr2);
+                } @else {
+                    buf = buf + fmt.sprintf(",%q:%q", prefix + key, fmt.sprint(v));
+                }
+                i = i + 2;
+            } @else {
+                buf = buf + fmt.sprintf(",%q:%q", prefix + "!BADKEY", key);
+                i = i + 1;
+            }
+        } @else {
+            @if (i + 1 < n) {
+                $next_i2 = i + 1;
+                $v = cur[next_i2];
+                buf = buf + fmt.sprintf(",%q:%q", prefix + fmt.sprint(item), fmt.sprint(v));
+                i = i + 2;
+            } @else {
+                buf = buf + fmt.sprintf(",%q:%q", prefix + "!BADKEY", fmt.sprint(item));
+                i = i + 1;
+            }
+        }
+    }
+    return buf;
+}
+
+@func writeToDest(out, line: string) {
+    $t = __type(out);
+    @if (t == "int") {
+        __fprint(out, [line]);
+        return null;
+    }
+    @if (out != null) {
+        @if (t == "pointer" || t == "struct" || t == "bytes") {
+            out.writeString(line);
+            return null;
+        }
+    }
+    __fprint(2, [line]);
+    return null;
+}
+
+# --- Handler ---
+pub @struct Handler {
+    kind: string;
+    out: unknown;
+    min_level: int;
+    add_source: bool;
+    attrs_prefix: string;
+    grp_prefix: string;
+
+    @func enabled(self: *Handler, level: int): bool {
+        @if (self.kind == "discard") { return false; }
+        return level >= self.min_level;
+    }
+
+    @func withAttrs(self: *Handler, attrs): Handler {
+        @if (self.kind == "discard") { return *self; }
+        @if (self.kind == "json") {
+            $extra = formatAttrsJSON(self.grp_prefix, attrs);
+            return Handler {
+                kind: self.kind,
+                out: self.out,
+                min_level: self.min_level,
+                add_source: self.add_source,
+                attrs_prefix: self.attrs_prefix + extra,
+                grp_prefix: self.grp_prefix,
+            };
+        }
+        $extra = formatAttrsText(self.grp_prefix, attrs);
+        $newPrefix: string = self.attrs_prefix;
+        @if (len(extra) > 0) {
+            @if (len(newPrefix) > 0) {
+                newPrefix = newPrefix + " " + extra;
+            } @else {
+                newPrefix = extra;
+            }
+        }
+        return Handler {
+            kind: self.kind,
+            out: self.out,
+            min_level: self.min_level,
+            add_source: self.add_source,
+            attrs_prefix: newPrefix,
+            grp_prefix: self.grp_prefix,
+        };
+    }
+
+    @func withGroup(self: *Handler, name: string): Handler {
+        @if (len(name) == 0 || self.kind == "discard") { return *self; }
+        return Handler {
+            kind: self.kind,
+            out: self.out,
+            min_level: self.min_level,
+            add_source: self.add_source,
+            attrs_prefix: self.attrs_prefix,
+            grp_prefix: self.grp_prefix + name + ".",
+        };
+    }
+
+    @func handle(self: *Handler, r: Record) {
+        @if (self.kind == "discard") { return null; }
+
+        @if (self.kind == "default") {
+            $lvlStr = levelString(r.level);
+            $buf: string = lvlStr + " " + r.message;
+            @if (len(self.attrs_prefix) > 0) {
+                buf = buf + " " + self.attrs_prefix;
+            }
+            $extra = formatAttrsText(self.grp_prefix, r.attrs);
+            @if (len(extra) > 0) {
+                buf = buf + " " + extra;
+            }
+            @if (internal.defaultOutput != null) {
+                return internal.defaultOutput(r.pc, buf);
+            }
+            $lowLvl: string = "info";
+            @if (r.level <= levelDebug) { lowLvl = "debug"; }
+            @else @if (r.level >= levelError) { lowLvl = "error"; }
+            @else @if (r.level >= levelWarn) { lowLvl = "warn"; }
+            __hostLog(lowLvl, buf);
+            return null;
+        }
+
+        @if (self.kind == "json") {
+            $buf: string = "{";
+            $first = true;
+            @if (r.time > 0) {
+                buf = buf + fmt.sprintf("\"time\":%q", formatTimeRFC3339(r.time));
+                first = false;
+            }
+            @if (!first) { buf = buf + ","; }
+            buf = buf + fmt.sprintf("\"level\":%q", levelString(r.level));
+            first = false;
+            @if (self.add_source && r.pc > 0) {
+                $info = __callerPC(r.pc);
+                buf = buf + fmt.sprintf(",\"source\":{\"function\":%q,\"file\":%q,\"line\":%d}", info[2], info[0], info[1]);
+            }
+            buf = buf + fmt.sprintf(",\"msg\":%q", r.message);
+            @if (len(self.attrs_prefix) > 0) {
+                buf = buf + self.attrs_prefix;
+            }
+            $extra = formatAttrsJSON(self.grp_prefix, r.attrs);
+            @if (len(extra) > 0) {
+                buf = buf + extra;
+            }
+            buf = buf + "}\n";
+            return writeToDest(self.out, buf);
+        }
+
+        # Text handler
+        $buf: string = "";
+        @if (r.time > 0) {
+            buf = buf + "time=" + formatTimeRFC3339(r.time) + " ";
+        }
+        buf = buf + "level=" + levelString(r.level) + " ";
+        @if (self.add_source && r.pc > 0) {
+            $info = __callerPC(r.pc);
+            buf = buf + "source=" + info[0] + ":" + fmt.sprintf("%d", info[1]) + " ";
+        }
+        $msg = r.message;
+        @if (needsQuoting(msg)) {
+            buf = buf + "msg=" + fmt.sprintf("%q", msg);
+        } @else {
+            buf = buf + "msg=" + msg;
+        }
+        @if (len(self.attrs_prefix) > 0) {
+            buf = buf + " " + self.attrs_prefix;
+        }
+        $extra = formatAttrsText(self.grp_prefix, r.attrs);
+        @if (len(extra) > 0) {
+            buf = buf + " " + extra;
+        }
+        buf = buf + "\n";
+        return writeToDest(self.out, buf);
+    }
+}
+
+pub @func newTextHandler(w, opts: HandlerOptions): Handler {
+    return Handler {
+        kind: "text",
+        out: w,
+        min_level: opts.level,
+        add_source: opts.addSource,
+        attrs_prefix: "",
+        grp_prefix: "",
+    };
+}
+
+pub @func newJSONHandler(w, opts: HandlerOptions): Handler {
+    return Handler {
+        kind: "json",
+        out: w,
+        min_level: opts.level,
+        add_source: opts.addSource,
+        attrs_prefix: "",
+        grp_prefix: "",
+    };
+}
+
+pub $discardHandler = Handler {
+    kind: "discard",
+    out: null,
+    min_level: 99999,
+    add_source: false,
+    attrs_prefix: "",
+    grp_prefix: "",
+};
+
+# --- Logger ---
+pub @struct Logger {
+    handler_obj: Handler;
+
+    @func handler(self: *Logger): Handler {
+        return self.handler_obj;
+    }
+
+    @func with(self: *Logger, ...args): Logger {
+        return Logger {
+            handler_obj: self.handler_obj.withAttrs(args),
+        };
+    }
+
+    @func withGroup(self: *Logger, name: string): Logger {
+        return Logger {
+            handler_obj: self.handler_obj.withGroup(name),
+        };
+    }
+
+    @func enabled(self: *Logger, level: int): bool {
+        return self.handler_obj.enabled(level);
+    }
+
+    @func log(self: *Logger, level: int, msg, ...args) {
+        @if (!self.handler_obj.enabled(level)) {
+            return null;
+        }
+        $c = __caller(2);
+        $pc = c[0];
+        $r = newRecord(__now(), level, fmt.sprint(msg), pc);
+        r.attrs = args;
+        return self.handler_obj.handle(r);
+    }
+
+    @func logAttrs(self: *Logger, level: int, msg: string, ...attrs) {
+        @if (!self.handler_obj.enabled(level)) {
+            return null;
+        }
+        $c = __caller(2);
+        $pc = c[0];
+        $r = newRecord(__now(), level, msg, pc);
+        r.attrs = attrs;
+        return self.handler_obj.handle(r);
+    }
+
+    @func debug(self: *Logger, msg, ...args) {
+        self.log(levelDebug, msg, args);
+    }
+
+    @func info(self: *Logger, msg, ...args) {
+        self.log(levelInfo, msg, args);
+    }
+
+    @func warn(self: *Logger, msg, ...args) {
+        self.log(levelWarn, msg, args);
+    }
+
+    @func err(self: *Logger, msg, ...args) {
+        self.log(levelError, msg, args);
+    }
+}
+
+pub @func new(h: Handler): Logger {
+    return Logger {
+        handler_obj: h,
+    };
+}
+
+# Default Logger
+$defaultH = Handler {
+    kind: "default",
+    out: 2,
+    min_level: levelDebug,
+    add_source: false,
+    attrs_prefix: "",
+    grp_prefix: "",
+};
+pub $defaultLogger = Logger {
+    handler_obj: defaultH,
+};
+$isDefaultCustom = false;
+
+pub @func default(): *Logger {
+    return &defaultLogger;
+}
+
+pub @func setDefault(l: Logger) {
+    defaultLogger = l;
+    isDefaultCustom = true;
+}
+
+pub @func with(...args): Logger {
+    return defaultLogger.with(args);
+}
+
+pub @func log(level: int, msg, ...args) {
+    defaultLogger.log(level, msg, args);
+}
+
+pub @func logAttrs(level: int, msg: string, ...attrs) {
+    defaultLogger.logAttrs(level, msg, attrs);
+}
+
+pub @func debug(msg, ...args) {
+    @if (!isDefaultCustom && len(args) == 0 && internal.defaultOutput == null) {
+        __hostLog("debug", msg);
+        return null;
+    }
+    defaultLogger.log(levelDebug, msg, args);
+}
+
+pub @func info(msg, ...args) {
+    @if (!isDefaultCustom && len(args) == 0 && internal.defaultOutput == null) {
+        __hostLog("info", msg);
+        return null;
+    }
+    defaultLogger.log(levelInfo, msg, args);
+}
+
+pub @func warn(msg, ...args) {
+    @if (!isDefaultCustom && len(args) == 0 && internal.defaultOutput == null) {
+        __hostLog("warn", msg);
+        return null;
+    }
+    defaultLogger.log(levelWarn, msg, args);
+}
+
+pub @func err(msg, ...args) {
+    @if (!isDefaultCustom && len(args) == 0 && internal.defaultOutput == null) {
+        __hostLog("error", msg);
+        return null;
+    }
+    defaultLogger.log(levelError, msg, args);
+}
+
+# LLTS assertion helper (from existing slog module)
+pub @func assert(condition) {
+    @if (condition) {
+        return null;
+    } @else {
+        return error("AssertFailed", condition);
+    }
+}

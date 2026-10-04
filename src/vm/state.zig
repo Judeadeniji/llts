@@ -98,6 +98,13 @@ pub const VMState = struct {
     /// Extra argv after the script path (borrowed; used by os.args as argv[1..]).
     script_args: []const []const u8 = &.{},
     max_memory_slots: usize = 1048576,
+    pc_table: std.ArrayList(CallerPC) = .empty,
+
+    pub const CallerPC = struct {
+        file: []const u8,
+        line: u32,
+        func_name: []const u8,
+    };
 
     pub const CachedFuncInfo = struct {
         name: []const u8,
@@ -195,6 +202,7 @@ pub const VMState = struct {
         self.memory.deinit(self.allocator);
         self.immortal.deinit(self.allocator);
         self.bytes.deinit(self.allocator);
+        self.pc_table.deinit(self.allocator);
     }
 
     /// Frame-local bump. Rewound when the current call returns (see `doReturn`).
