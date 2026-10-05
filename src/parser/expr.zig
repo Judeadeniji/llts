@@ -171,6 +171,12 @@ fn parsePostfix(self: *Parser) ParseError!*Node {
                 continue;
             }
         }
+        // `.?` assertion-unwrap: panics if the value is null, otherwise unwraps.
+        if (tok.type == .delimiter and std.mem.eql(u8, tok.value, ".?")) {
+            _ = self.advance();
+            e = try self.create(.{ .unwrap_expr = .{ .expression = e, .loc = e.loc() } });
+            continue;
+        }
         if (tok.type == .delimiter and std.mem.eql(u8, tok.value, "?")) {
             _ = self.advance();
             e = try self.create(.{ .try_expr = .{ .expression = e, .loc = e.loc() } });
@@ -287,6 +293,19 @@ pub fn parsePrimary(self: *Parser) ParseError!*Node {
             if (std.mem.eql(u8, token.value, "for")) {
                 _ = self.advance();
                 return control.parseForExpression(self);
+            }
+            if (std.mem.eql(u8, token.value, "comptime")) {
+                const comptime_tok = token;
+                _ = self.advance();
+                const next = self.peek(0) orelse return self.failMsg("Expected block or expression after @comptime");
+                const inner = if (next.type == .delimiter and std.mem.eql(u8, next.value, "{"))
+                    try control.parseBlock(self)
+                else
+                    try parseExpression(self);
+                return self.create(.{ .comptime_expr = .{
+                    .expr = inner,
+                    .loc = self.locOf(comptime_tok),
+                } });
             }
             _ = self.advance();
             const name = try std.fmt.allocPrint(self.arena, "@{s}", .{token.value});

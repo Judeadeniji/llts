@@ -31,6 +31,22 @@ pub fn compileBinary(state: *CompilerState, bin: *const ast.Binary) !void {
         try call.compilePipe(state, bin);
         return;
     }
+    if (std.mem.eql(u8, bin.operator, "??")) {
+        // Null-coalescing: if left is non-null use it, else evaluate right.
+        // Stack effect: push one value regardless of which branch is taken.
+        try expr.compileExpression(state, bin.left);
+        try emit.emitOp(state, .OP_DUP);
+        // Jump past the POP+right-eval if the value is NOT null.
+        const not_null_jump = try emit.emitJump(state, .OP_JUMP_IF_NULL);
+        // Value is not null: jump over the right-side branch.
+        const end_jump = try emit.emitJump(state, .OP_JUMP);
+        emit.patchJump(state, not_null_jump);
+        // Value was null: discard the null duplicate and evaluate the right side.
+        try emit.emitOp(state, .OP_POP);
+        try expr.compileExpression(state, bin.right);
+        emit.patchJump(state, end_jump);
+        return;
+    }
     if (try foldStringConcat(state, bin)) {
         return;
     }

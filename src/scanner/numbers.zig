@@ -11,7 +11,7 @@ pub fn scanNumber(self: *ctx.Scanner) ctx.ScanError!void {
                 _ = self.advance();
                 _ = self.advance();
                 while (self.peek(0)) |c| {
-                    if (!isHex(c)) break;
+                    if (!isHex(c) and c != '_') break;
                     _ = self.advance();
                 }
                 try self.pushToken(.hex, self.source[start..self.pos], col, line);
@@ -21,7 +21,7 @@ pub fn scanNumber(self: *ctx.Scanner) ctx.ScanError!void {
                 _ = self.advance();
                 _ = self.advance();
                 while (self.peek(0)) |c| {
-                    if (c != '0' and c != '1') break;
+                    if (c != '0' and c != '1' and c != '_') break;
                     _ = self.advance();
                 }
                 try self.pushToken(.binary, self.source[start..self.pos], col, line);
@@ -31,7 +31,7 @@ pub fn scanNumber(self: *ctx.Scanner) ctx.ScanError!void {
                 _ = self.advance();
                 _ = self.advance();
                 while (self.peek(0)) |c| {
-                    if (c < '0' or c > '7') break;
+                    if ((c < '0' or c > '7') and c != '_') break;
                     _ = self.advance();
                 }
                 try self.pushToken(.octal, self.source[start..self.pos], col, line);
@@ -41,7 +41,7 @@ pub fn scanNumber(self: *ctx.Scanner) ctx.ScanError!void {
     }
 
     while (self.peek(0)) |c| {
-        if (!ctx.isDigit(c)) break;
+        if (!ctx.isDigit(c) and c != '_') break;
         _ = self.advance();
     }
     if (self.peek(0) == '.') {
@@ -49,7 +49,7 @@ pub fn scanNumber(self: *ctx.Scanner) ctx.ScanError!void {
             if (ctx.isDigit(d)) {
                 _ = self.advance();
                 while (self.peek(0)) |c| {
-                    if (!ctx.isDigit(c)) break;
+                    if (!ctx.isDigit(c) and c != '_') break;
                     _ = self.advance();
                 }
             }

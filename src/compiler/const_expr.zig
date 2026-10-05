@@ -63,6 +63,9 @@ pub fn isConstantExpr(state: *CompilerState, env: *const ConstEnv, node: ?*ast.N
                 if (std.mem.eql(u8, c.callee.primary.name, "@typeOf") or std.mem.eql(u8, c.callee.primary.name, "@import") or std.mem.eql(u8, c.callee.primary.name, "@nameOf")) {
                     break :blk true;
                 }
+                if (std.mem.eql(u8, c.callee.primary.name, "len") and c.args.len == 1) {
+                    break :blk isConstantExpr(state, env, c.args[0]);
+                }
             }
             break :blk false;
         },
@@ -80,8 +83,15 @@ pub fn isConstantExpr(state: *CompilerState, env: *const ConstEnv, node: ?*ast.N
                     break :blk true;
                 }
             }
+            if (isConstantExpr(state, env, m.object)) break :blk true;
             break :blk false;
         },
+        .index => |idx| blk: {
+            if (idx.is_slice) break :blk false;
+            const start = idx.index orelse break :blk false;
+            break :blk isConstantExpr(state, env, idx.object) and isConstantExpr(state, env, start);
+        },
+        .comptime_expr => true,
         else => false,
     };
 }

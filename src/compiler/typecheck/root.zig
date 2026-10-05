@@ -17,7 +17,11 @@ pub const Env = struct {
     globals: std.StringHashMap(ir.Type),
     expected_return: ?ir.Type = null,
     annotated_return: ?ir.Type = null,
+    /// Const names visible outside any pushed scope (module level / function-wide).
     const_names: std.StringHashMap(void),
+    /// Const names per lexical scope, parallel to `locals`. Block-local `@const`s
+    /// live here so they are forgotten when the block exits.
+    const_scopes: std.ArrayList(std.StringHashMap(void)),
     /// When set, literals keep singleton types (`"x"`, `0`, `true`) and arrays become deep tuples.
     prefer_literals: bool = false,
     /// True while typechecking a function body — locals must not overwrite `global_types`.
@@ -29,6 +33,7 @@ pub const Env = struct {
             .locals = .empty,
             .globals = std.StringHashMap(ir.Type).init(allocator),
             .const_names = std.StringHashMap(void).init(allocator),
+            .const_scopes = .empty,
             .allocator = allocator,
         };
     }
@@ -38,16 +43,42 @@ pub const Env = struct {
         self.locals.deinit(self.allocator);
         self.globals.deinit();
         self.const_names.deinit();
+        for (self.const_scopes.items) |*m| m.deinit();
+        self.const_scopes.deinit(self.allocator);
     }
 
     fn pushScope(self: *Env) !void {
         try self.locals.append(self.allocator, std.StringHashMap(ir.Type).init(self.allocator));
+        try self.const_scopes.append(self.allocator, std.StringHashMap(void).init(self.allocator));
     }
 
     fn popScope(self: *Env) void {
         if (self.locals.items.len == 0) return;
         var m = self.locals.pop().?;
         m.deinit();
+        if (self.const_scopes.items.len > 0) {
+            var c = self.const_scopes.pop().?;
+            c.deinit();
+        }
+    }
+
+    /// Record a `@const` name in the innermost scope (or the base set if none).
+    fn putConstName(self: *Env, name: []const u8) !void {
+        if (self.const_scopes.items.len > 0) {
+            try self.const_scopes.items[self.const_scopes.items.len - 1].put(name, {});
+        } else {
+            try self.const_names.put(name, {});
+        }
+    }
+
+    /// Whether `name` names a `@const` visible from the current scope.
+    fn hasConstName(self: *const Env, name: []const u8) bool {
+        var i = self.const_scopes.items.len;
+        while (i > 0) {
+            i -= 1;
+            if (self.const_scopes.items[i].contains(name)) return true;
+        }
+        return self.const_names.contains(name);
     }
 
     pub fn define(self: *Env, name: []const u8, t: ir.Type) !void {
@@ -91,7 +122,23 @@ pub fn requireAssignFrom(state: *state_mod.CompilerState, got: ir.Type, expected
 }
 
 fn requireAssignAt(state: *state_mod.CompilerState, got: ir.Type, expected: ir.Type, ctx: []const u8, loc: ast.Location, from: ?*ast.Node) TypecheckError!void {
-    if (ir.involvesUnknown(got) or ir.involvesUnknown(expected)) return;
+    if (!state.strict and (ir.involvesUnknown(got) or ir.involvesUnknown(expected))) return;
+    if (state.strict and ir.peelDefined(got) == .unknown and ir.peelDefined(expected) != .unknown) {
+        const g = try ownDisplay(state, got);
+        const e = try ownDisplay(state, expected);
+        const file_path = if (loc.path.len > 0) loc.path else state.chunk.file;
+        const line = if (loc.line > 0) loc.line else 1;
+        const col = if (loc.column > 0) loc.column else 1;
+        return compiler_errors.compileFailAt(
+            state,
+            file_path,
+            sourceFor(state, file_path),
+            line,
+            col,
+            "{s}: cannot assign opaque type '{s}' to '{s}'; explicit cast or narrowing required",
+            .{ ctx, g, e },
+        );
+    }
     if (ir.isSubtype(got, expected)) {
         // When an untyped integer (int_lit) passes into a concrete integer context,
         // record the target type on the expression node so codegen emits the right
@@ -128,11 +175,25 @@ fn requireAssignAt(state: *state_mod.CompilerState, got: ir.Type, expected: ir.T
         if (matchesValueLiteralToType(node, expected)) return;
     }
     // Zig-style: integer literals may coerce into any integer width that fits.
-    if (ir.isInteger(ir.peelDefined(expected)) and got == .i64) {
+    if (ir.isInteger(ir.peelDefined(expected)) and (got == .i64 or ir.peelDefined(got) == .int_lit)) {
         if (from) |node| {
             if (intLiteralFits(node, ir.widthOf(expected).?)) {
                 try recordExprType(state, node, expected);
                 return;
+            } else if (isIntegerLiteral(node)) {
+                const exp_name = try ownDisplay(state, expected);
+                const file_path = if (loc.path.len > 0) loc.path else state.chunk.file;
+                const line = if (loc.line > 0) loc.line else 1;
+                const col = if (loc.column > 0) loc.column else 1;
+                return compiler_errors.compileFailAt(
+                    state,
+                    file_path,
+                    sourceFor(state, file_path),
+                    line,
+                    col,
+                    "literal {s} overflows target type '{s}'",
+                    .{ node.literal.value, exp_name },
+                );
             }
         }
     }
@@ -151,6 +212,18 @@ fn requireAssignAt(state: *state_mod.CompilerState, got: ir.Type, expected: ir.T
             const exp = ir.peelDefined(expected);
             if (exp == .array and exp.array.elem.* == .u8) {
                 if (exp.array.length == null or exp.array.length.? == node.literal.value.len) {
+                    try recordExprType(state, node, expected);
+                    return;
+                }
+            }
+        }
+    }
+    // Empty array literal `[]` contextually typed by expected array type
+    if (from) |node| {
+        if (node.* == .array_literal and node.array_literal.elements.len == 0) {
+            const exp = ir.peelDefined(expected);
+            if (exp == .array) {
+                if (exp.array.length == null or exp.array.length.? == 0) {
                     try recordExprType(state, node, expected);
                     return;
                 }
@@ -185,6 +258,17 @@ fn requireAssignAt(state: *state_mod.CompilerState, got: ir.Type, expected: ir.T
                 return;
             }
             if (widths.isNarrowing(got_w.?, exp_w.?)) {
+                if (state.strict) {
+                    return compiler_errors.compileFailAt(
+                        state,
+                        file_path,
+                        sourceFor(state, file_path),
+                        line,
+                        col,
+                        "{s}: implicit narrowing from '{s}' to '{s}' rejected in strict mode (use @as to convert)",
+                        .{ ctx, g, e },
+                    );
+                }
                 compiler_errors.compileWarnAt(
                     state,
                     file_path,
@@ -237,14 +321,37 @@ fn matchesValueLiteral(node: *ast.Node, expected: ir.Type) bool {
         .bool_lit => lit.literal_type == .boolean and std.mem.eql(u8, lit.value, if (expected.bool_lit) "true" else "false"),
         .int_lit => blk: {
             const n: i64 = switch (lit.literal_type) {
-                .number => std.fmt.parseInt(i64, lit.value, 10) catch break :blk false,
-                .hex => std.fmt.parseInt(i64, lit.value[2..], 16) catch break :blk false,
-                .octal => std.fmt.parseInt(i64, lit.value[2..], 8) catch break :blk false,
-                .binary => std.fmt.parseInt(i64, lit.value[2..], 2) catch break :blk false,
+                .number => parseNumWithUnderscores(i64, lit.value, 10) orelse break :blk false,
+                .hex => parseNumWithUnderscores(i64, lit.value[2..], 16) orelse break :blk false,
+                .octal => parseNumWithUnderscores(i64, lit.value[2..], 8) orelse break :blk false,
+                .binary => parseNumWithUnderscores(i64, lit.value[2..], 2) orelse break :blk false,
                 else => break :blk false,
             };
             break :blk n == expected.int_lit;
         },
+        else => false,
+    };
+}
+
+fn parseNumWithUnderscores(comptime T: type, raw: []const u8, radix: u8) ?T {
+    var buf: [128]u8 = undefined;
+    var len: usize = 0;
+    for (raw) |c| {
+        if (c == '_') continue;
+        if (len >= buf.len) return null;
+        buf[len] = c;
+        len += 1;
+    }
+    return std.fmt.parseInt(T, buf[0..len], radix) catch null;
+}
+
+fn isIntegerLiteral(node: *ast.Node) bool {
+    if (node.* != .literal) return false;
+    return switch (node.literal.literal_type) {
+        .number => std.mem.indexOfScalar(u8, node.literal.value, '.') == null and
+            std.mem.indexOfScalar(u8, node.literal.value, 'e') == null and
+            std.mem.indexOfScalar(u8, node.literal.value, 'E') == null,
+        .hex, .octal, .binary => true,
         else => false,
     };
 }
@@ -255,11 +362,11 @@ fn intLiteralFits(node: *ast.Node, width: widths.Width) bool {
     const n: i64 = switch (lit.literal_type) {
         .number => blk: {
             if (std.mem.indexOfScalar(u8, lit.value, '.') != null) return false;
-            break :blk std.fmt.parseInt(i64, lit.value, 10) catch return false;
+            break :blk parseNumWithUnderscores(i64, lit.value, 10) orelse return false;
         },
-        .hex => std.fmt.parseInt(i64, lit.value[2..], 16) catch return false,
-        .octal => std.fmt.parseInt(i64, lit.value[2..], 8) catch return false,
-        .binary => std.fmt.parseInt(i64, lit.value[2..], 2) catch return false,
+        .hex => parseNumWithUnderscores(i64, lit.value[2..], 16) orelse return false,
+        .octal => parseNumWithUnderscores(i64, lit.value[2..], 8) orelse return false,
+        .binary => parseNumWithUnderscores(i64, lit.value[2..], 2) orelse return false,
         else => return false,
     };
     return widths.i64Fits(width, n);
@@ -637,6 +744,11 @@ fn fnParamTypes(state: *state_mod.CompilerState, ta: ir.TypeAlloc, func_name: []
         var t: ir.Type = ir.TUnknown;
         if (pnode.type_annotation) |ann| {
             t = try from_ast.typeFromAst(ann, state, ta);
+        } else if (state.strict) {
+            const is_method_self = (method_struct != null and i == 0 and std.mem.eql(u8, pnode.name, "self"));
+            if (!is_method_self) {
+                return compiler_errors.compileFailFmt(state, "parameter '{s}' of function '{s}' must have an explicit type annotation in strict mode", .{ pnode.name, f.name });
+            }
         }
         if (method_struct) |sname| {
             if (i == 0 and std.mem.eql(u8, pnode.name, "self")) {
@@ -874,6 +986,14 @@ fn inferExprInner(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, 
                 }
             }
             const obj = try inferExpr(state, env, ta, m.object);
+            if (state.strict and ir.optionalPayload(obj) != null) {
+                const d = try ownDisplay(state, obj);
+                return compiler_errors.compileFailFmt(
+                    state,
+                    "cannot access field '{s}' on optional type '{s}'; unwrap with '@if' or '.?'",
+                    .{ m.property.primary.name, d },
+                );
+            }
             if (m.property.* == .primary) {
                 // Layout key first — `@type Name = {…}` registers under Name.
                 if (ir.structNameOf(obj)) |sname| {
@@ -914,9 +1034,20 @@ fn inferExprInner(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, 
                             info.map.deinit();
                             return compiler_errors.compileFailFmt(state, "Field '{s}' is not available on all arms of '{s}' (narrow with @switch on .kind)", .{ m.property.primary.name, d });
                         }
+                        if (state.strict) {
+                            return compiler_errors.compileFailFmt(state, "Field '{s}' is not available on union type '{s}'", .{ m.property.primary.name, d });
+                        }
                     }
                     break :blk ft;
                 }
+                if (state.strict and field_obj != .unknown and ir.structNameOf(obj) == null and field_obj != .tuple and field_obj != .shape) {
+                    const d = try ownDisplay(state, obj);
+                    return compiler_errors.compileFailFmt(state, "cannot access field '{s}' on type '{s}'", .{ m.property.primary.name, d });
+                }
+            }
+            if (state.strict and obj != .unknown) {
+                const d = try ownDisplay(state, obj);
+                return compiler_errors.compileFailFmt(state, "cannot access property on type '{s}'", .{d});
             }
             break :blk ir.TUnknown;
         },
@@ -1001,6 +1132,12 @@ fn inferExprInner(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, 
                 }
             } else if (a.left.* == .member) {
                 const mem = a.left.member;
+                if (mem.object.* == .primary) {
+                    const obj_name = mem.object.primary.name;
+                    if (env.hasConstName(obj_name) or (obj_name.len > 0 and obj_name[0] == '$' and env.hasConstName(obj_name[1..]))) {
+                        return compiler_errors.compileFailFmt(state, "Cannot mutate field of constant '{s}'", .{obj_name});
+                    }
+                }
                 const obj = try inferExpr(state, env, ta, mem.object);
                 if (mem.property.* == .primary) {
                     var field_obj = obj;
@@ -1025,6 +1162,12 @@ fn inferExprInner(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, 
             } else if (a.left.* == .index) {
                 if (a.left.index.is_slice) {
                     return compiler_errors.compileFailFmt(state, "Cannot assign to a slice view", .{});
+                }
+                if (a.left.index.object.* == .primary) {
+                    const obj_name = a.left.index.object.primary.name;
+                    if (env.hasConstName(obj_name) or (obj_name.len > 0 and obj_name[0] == '$' and env.hasConstName(obj_name[1..]))) {
+                        return compiler_errors.compileFailFmt(state, "Cannot mutate elements of constant '{s}'", .{obj_name});
+                    }
                 }
                 const obj_t = try inferExpr(state, env, ta, a.left.index.object);
                 const start_node = a.left.index.index orelse {
@@ -1068,8 +1211,24 @@ fn inferExprInner(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, 
             }
             if (i.pipe_value) |pv| {
                 if (pv.* != .primary) return compiler_errors.compileFailFmt(state, "if capture must be identifier", .{});
-                const unwrapped = ir.optionalPayload(cond_t) orelse cond_t;
-                try env.define(pv.primary.name, unwrapped);
+                const peeled = ir.peelDefined(cond_t);
+                if (ir.optionalPayload(peeled)) |opt| {
+                    try env.define(pv.primary.name, opt);
+                } else if (ir.isErrorUnion(peeled)) {
+                    const unwrapped = try ir.unwrapError(ta, peeled);
+                    try env.define(pv.primary.name, unwrapped);
+                } else if (state.strict) {
+                    const disp = try ownDisplay(state, cond_t);
+                    return compiler_errors.compileFailFmt(state, "cannot capture from non-container type '{s}'; @if capture requires optional '?T' or error union", .{disp});
+                } else {
+                    const unwrapped = cond_t;
+                    try env.define(pv.primary.name, unwrapped);
+                }
+            } else if (state.strict) {
+                if (!ir.isSubtype(ir.peelDefined(cond_t), ir.TBool)) {
+                    const disp = try ownDisplay(state, cond_t);
+                    return compiler_errors.compileFailFmt(state, "condition of @if must be boolean ('bool' or 'u1'), got '{s}'", .{disp});
+                }
             }
             _ = try inferExpr(state, env, ta, i.body);
             if (i.else_body) |e| _ = try inferExpr(state, env, ta, e);
@@ -1157,6 +1316,23 @@ fn inferExprInner(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, 
         .break_expr => |br| blk: {
             if (br.value) |v| break :blk try inferExpr(state, env, ta, v);
             break :blk ir.TUnknown;
+        },
+        .comptime_expr => |ce| blk: {
+            // `@comptime` carries a real type: infer it structurally from the
+            // inner expression using the typechecker's own knowledge. Evaluation
+            // of the value itself happens once, in codegen (`compileComptime`), so
+            // const values need not be materialized during the typecheck pass and
+            // blocks may freely reference earlier `@const`s.
+            //
+            // A block is typed by running its local declarations through the
+            // checker in a fresh scope and joining the types of its `break` values.
+            if (ce.expr.* == .block) {
+                try env.pushScope();
+                defer env.popScope();
+                for (ce.expr.block.statements) |s| _ = try checkStmt(state, env, ta, s);
+                break :blk try joinBreakTypes(state, env, ta, ce.expr);
+            }
+            break :blk try inferExpr(state, env, ta, ce.expr);
         },
         else => ir.TUnknown,
     };
@@ -1250,6 +1426,14 @@ fn inferCall(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, call_
     // `T(x)` cast sugar ≡ `@as(T, x)` when T is a type and not a function.
     if (try intrinsics.tryTypeCastCall(state, c)) |type_node| {
         return try intrinsics.typecheckCast(state, env, ta, type_node, c.args[0]);
+    }
+
+    // Native `len(x)` (arrays / strings / tuples) always yields an integer.
+    if (c.callee.* == .primary and std.mem.eql(u8, c.callee.primary.name, "len") and
+        !state.functions.contains("len"))
+    {
+        for (c.args) |a| _ = try inferExpr(state, env, ta, a);
+        return ir.TInt;
     }
 
     const method = try resolveMethodCallee(state, env, ta, c);
@@ -1445,6 +1629,33 @@ fn inferStructInit(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc,
         const ctx = std.fmt.bufPrint(&ctx_buf, "field '{s}' of '{s}'", .{ field.name, ir.cleanTypeName(struct_name) }) catch "field";
         try requireAssignFrom(state, got, expected, ctx, field.value);
     }
+    if (state.strict) {
+        if (from_ast.lookupStruct(state, struct_name)) |def| {
+            var it = def.types.iterator();
+            while (it.next()) |entry| {
+                const required_name = entry.key_ptr.*;
+                const field_type_name = entry.value_ptr.*;
+                const is_optional = std.mem.startsWith(u8, field_type_name, "?") or
+                    std.mem.indexOf(u8, field_type_name, "| null") != null;
+                if (!is_optional) {
+                    var provided = false;
+                    for (init.fields) |f| {
+                        if (std.mem.eql(u8, f.name, required_name)) {
+                            provided = true;
+                            break;
+                        }
+                    }
+                    if (!provided) {
+                        return compiler_errors.compileFailFmt(
+                            state,
+                            "missing required field '{s}' in initialization of '{s}'",
+                            .{ required_name, ir.cleanTypeName(struct_name) },
+                        );
+                    }
+                }
+            }
+        }
+    }
     if (is_typedef) {
         return try from_ast.resolveNamedType(struct_name, state, ta);
     }
@@ -1467,10 +1678,10 @@ fn checkStmt(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node:
                 if (state.global_types.get(key)) |mod| {
                     if (std.mem.startsWith(u8, mod, "module:")) {
                         try env.define(d.name, .{ .struct_ = mod });
-                        try env.const_names.put(d.name, {});
+                        try env.putConstName(d.name);
                     }
                 }
-                if (d.is_const) try env.const_names.put(d.name, {});
+                if (d.is_const) try env.putConstName(d.name);
                 return null;
             }
             const prev_lit = env.prefer_literals;
@@ -1483,7 +1694,10 @@ fn checkStmt(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node:
             // must not clobber `global_types` (breaks multi-module compile / emit).
             // Module-qualified names (`path.lls::cwd`) ARE module globals and must persist
             // so method calls resolve before those decls are emitted.
-            const persist_global = !env.in_function;
+            // Only genuine module-level declarations persist into `global_types`;
+            // declarations inside a nested block (including a `@comptime` block)
+            // are scoped to that block and must not leak outward.
+            const persist_global = !env.in_function and env.locals.items.len <= 1;
             if (d.type_annotation) |ann| {
                 const annot = try from_ast.typeFromAst(ann, state, ta);
                 var ctx_buf: [160]u8 = undefined;
@@ -1496,41 +1710,51 @@ fn checkStmt(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node:
                     const disp = try ownDisplay(state, annot);
                     try state.global_types.put(d.name, disp);
                 }
-            } else if (value_type == .struct_) {
-                try env.define(d.name, value_type);
-                if (persist_global) {
-                    const disp = try ownDisplay(state, value_type);
-                    try state.global_types.put(d.name, disp);
-                }
-            } else if (value_type == .enum_ or value_type == .enum_lit or
-                value_type == .error_set or value_type == .error_lit or
-                value_type == .str_lit or value_type == .int_lit or value_type == .bool_lit or
-                value_type == .tuple or value_type == .defined or value_type == .shape)
-            {
-                try env.define(d.name, value_type);
-                // Non-const integer literals store "i64" in global_types so that
-                // cross-module lookups resolve to a parseable type name rather than
-                // the raw literal value ("10", etc.).  @const preserves the literal
-                // display for singleton type matching.
-                if (persist_global) {
-                    const disp = if (value_type == .int_lit and !d.is_const)
-                        "i64"
-                    else
-                        try ownDisplay(state, value_type);
-                    try state.global_types.put(d.name, disp);
-                }
             } else {
-                try env.define(d.name, value_type);
-                // Persist pointer / array / function displays so emit can resolve layout / types.
-                // Skip `error` — builtin `error` struct would steal LOAD_FIELD from runtime errors.
-                if (persist_global and
-                    (value_type == .ptr or value_type == .array or value_type == .func))
+                if (state.strict) {
+                    if (d.value.* == .array_literal and d.value.array_literal.elements.len == 0) {
+                        return compiler_errors.compileFailFmt(state, "cannot infer type for local '${s}' from empty array literal; explicit type annotation required", .{d.name});
+                    }
+                    if (value_type == .unknown) {
+                        return compiler_errors.compileFailFmt(state, "cannot infer type for local '${s}'; explicit type annotation required", .{d.name});
+                    }
+                }
+                if (value_type == .struct_) {
+                    try env.define(d.name, value_type);
+                    if (persist_global) {
+                        const disp = try ownDisplay(state, value_type);
+                        try state.global_types.put(d.name, disp);
+                    }
+                } else if (value_type == .enum_ or value_type == .enum_lit or
+                    value_type == .error_set or value_type == .error_lit or
+                    value_type == .str_lit or value_type == .int_lit or value_type == .bool_lit or
+                    value_type == .tuple or value_type == .defined or value_type == .shape)
                 {
-                    const disp = try ownDisplay(state, value_type);
-                    try state.global_types.put(d.name, disp);
+                    try env.define(d.name, value_type);
+                    // Non-const integer literals store "i64" in global_types so that
+                    // cross-module lookups resolve to a parseable type name rather than
+                    // the raw literal value ("10", etc.).  @const preserves the literal
+                    // display for singleton type matching.
+                    if (persist_global) {
+                        const disp = if (value_type == .int_lit and !d.is_const)
+                            "i64"
+                        else
+                            try ownDisplay(state, value_type);
+                        try state.global_types.put(d.name, disp);
+                    }
+                } else {
+                    try env.define(d.name, value_type);
+                    // Persist pointer / array / function displays so emit can resolve layout / types.
+                    // Skip `error` — builtin `error` struct would steal LOAD_FIELD from runtime errors.
+                    if (persist_global and
+                        (value_type == .ptr or value_type == .array or value_type == .func))
+                    {
+                        const disp = try ownDisplay(state, value_type);
+                        try state.global_types.put(d.name, disp);
+                    }
                 }
             }
-            if (d.is_const) try env.const_names.put(d.name, {});
+            if (d.is_const) try env.putConstName(d.name);
             return null;
         },
         .return_expr => |r| {
@@ -1585,7 +1809,7 @@ fn checkFunction(state: *state_mod.CompilerState, ta: ir.TypeAlloc, f: *ast.Func
     defer env.deinit();
 
     var cit = top_consts.keyIterator();
-    while (cit.next()) |n| try env.const_names.put(n.*, {});
+    while (cit.next()) |n| try env.putConstName(n.*);
 
     var git = state.global_types.iterator();
     while (git.next()) |e| {
@@ -1633,7 +1857,20 @@ fn checkFunction(state: *state_mod.CompilerState, ta: ir.TypeAlloc, f: *ast.Func
     };
     for (plist, 0..) |pnode, i| {
         var t: ir.Type = ir.TUnknown;
-        if (pnode.type_annotation) |ann| t = try from_ast.typeFromAst(ann, state, ta);
+        if (pnode.type_annotation) |ann| {
+            t = try from_ast.typeFromAst(ann, state, ta);
+        } else if (state.strict) {
+            var is_method_self = false;
+            if (std.mem.indexOf(u8, f.name, "::")) |idx| {
+                const sname = f.name[0..idx];
+                if (state.structs.contains(sname) and i == 0 and std.mem.eql(u8, pnode.name, "self")) {
+                    is_method_self = true;
+                }
+            }
+            if (!is_method_self) {
+                return compiler_errors.compileFailFmt(state, "parameter '{s}' of function '{s}' must have an explicit type annotation in strict mode", .{ pnode.name, f.name });
+            }
+        }
         if (std.mem.indexOf(u8, f.name, "::")) |idx| {
             const sname = f.name[0..idx];
             // Module-qualified free funcs use `path.lls::name`; only bare struct names are methods.
@@ -1710,6 +1947,47 @@ fn checkFunction(state: *state_mod.CompilerState, ta: ir.TypeAlloc, f: *ast.Func
             }
         }
     }
+
+    if (state.strict and !std.mem.eql(u8, f.name, "main")) {
+        const ret_disp = if (expected) |a| try ownDisplay(state, a) else if (state.functions.get(f.name)) |def| def.return_type else null;
+        if (ret_disp) |rd| {
+            if (!std.mem.eql(u8, rd, "void") and !nodeAlwaysReturns(f.body)) {
+                return compiler_errors.compileFailFmt(
+                    state,
+                    "function '{s}' must return a value on all control paths",
+                    .{f.name},
+                );
+            }
+        }
+    }
+}
+
+fn blockAlwaysReturns(block: ast.Block) bool {
+    for (block.statements) |s| {
+        if (nodeAlwaysReturns(s)) return true;
+    }
+    return false;
+}
+
+fn nodeAlwaysReturns(node: *ast.Node) bool {
+    return switch (node.*) {
+        .return_expr => true,
+        .block => |b| blockAlwaysReturns(b),
+        .if_expr => |ife| blk: {
+            if (ife.else_body) |eb| {
+                break :blk nodeAlwaysReturns(ife.body) and nodeAlwaysReturns(eb);
+            }
+            break :blk false;
+        },
+        .switch_expr => |sw| blk: {
+            if (sw.prongs.len == 0) break :blk false;
+            for (sw.prongs) |p| {
+                if (!nodeAlwaysReturns(p.body)) break :blk false;
+            }
+            break :blk true;
+        },
+        else => false,
+    };
 }
 
 /// Merge return-value displays from `type_of_results` into a function return display.
@@ -1840,6 +2118,8 @@ fn checkStructFieldTypes(state: *state_mod.CompilerState, ta: ir.TypeAlloc, s: *
             const t = try from_ast.typeFromAst(ann, state, ta);
             const disp = try ownDisplay(state, t);
             try def.types.put(field.name, disp);
+        } else if (state.strict) {
+            return compiler_errors.compileFailFmt(state, "field '{s}' of struct '{s}' must have an explicit type annotation in strict mode", .{ field.name, s.name });
         }
     }
 }
@@ -1891,7 +2171,7 @@ pub fn typecheck(state: *state_mod.CompilerState, doc: *ast.Document) TypecheckE
             if (std.mem.startsWith(u8, v, "module:")) try env.globals.put(n.*, .{ .struct_ = v });
         }
 
-        try env.const_names.put(n.*, {});
+        try env.putConstName(n.*);
     }
 
     var git = state.global_types.iterator();

@@ -8,6 +8,7 @@ const from_ast = @import("../typecheck/from_ast.zig");
 const ir = @import("../typecheck/ir.zig");
 const types = @import("../typecheck/from_ast.zig");
 const const_expr = @import("../const_expr.zig");
+const const_eval = @import("../const_eval.zig");
 const compile_errors = @import("../../errors/compile.zig");
 const layout = @import("../layout.zig");
 const widths = @import("../widths.zig");
@@ -17,6 +18,7 @@ const CompilerState = state_mod.CompilerState;
 pub fn compileDeclaration(state: *CompilerState, decl: *const ast.Declaration) !void {
     if (decl.value.* == .call and decl.value.call.callee.* == .primary and std.mem.eql(u8, decl.value.call.callee.primary.name, "@import")) return;
 
+    var comptime_value: ?const_eval.ConstValue = null;
     if (decl.is_const) {
         var cenv = try const_expr.createConstEnv(state);
         defer cenv.deinit();
@@ -31,6 +33,22 @@ pub fn compileDeclaration(state: *CompilerState, decl: *const ast.Declaration) !
                 .{decl.name},
             );
         }
+        // Evaluate the constant so static faults (division by zero, out-of-bounds
+        // indexing) surface here and so later constants can reference this value.
+        emit.noteLoc(state, decl.loc.line, decl.loc.column, decl.loc.path);
+        const evaluated = try const_eval.evalExpr(state, null, decl.value);
+        if (evaluated) |cval| {
+            comptime_value = cval;
+            // Store under the declared spelling only; `evalExpr` normalizes the
+            // leading `$` on lookup, so a single entry serves both forms.
+            try state.const_values.put(decl.name, cval);
+        } else if (decl.value.* == .comptime_expr) {
+            return compile_errors.compileFailFmt(
+                state,
+                "@comptime initializer of '{s}' could not be evaluated at compile time",
+                .{decl.name},
+            );
+        }
     }
 
     const is_module_export = std.mem.indexOf(u8, decl.name, "::") != null;
@@ -39,7 +57,11 @@ pub fn compileDeclaration(state: *CompilerState, decl: *const ast.Declaration) !
     if (state.scope_depth == 0 or is_module_export) state.alloc_immortal = true;
     defer state.alloc_immortal = prev_immortal;
 
-    try expr.compileExpression(state, decl.value);
+    if (comptime_value) |cval| {
+        try const_eval.emitConstValue(state, cval);
+    } else {
+        try expr.compileExpression(state, decl.value);
+    }
 
     if (decl.type_annotation) |ta| {
         if (widthCastKind(ta)) |kind| {

@@ -5,20 +5,23 @@ pub const PRECEDENCE = struct {
     pub fn of(op: []const u8) i32 {
         // C / Zig-ish: logical → bitwise → compare → shift → arith → power
         if (ops.isAssignOp(op)) return 1;
-        if (std.mem.eql(u8, op, "||")) return 2;
-        if (std.mem.eql(u8, op, "&&")) return 3;
-        if (std.mem.eql(u8, op, "|")) return 4;
-        if (std.mem.eql(u8, op, "~")) return 5; // binary XOR (`^` stays power)
-        if (std.mem.eql(u8, op, "&")) return 6;
-        if (std.mem.eql(u8, op, "==") or std.mem.eql(u8, op, "!=")) return 7;
+        // `??` has lower precedence than `||` so that `a || b ?? c` parses
+        // as `(a || b) ?? c` — matching C#, JavaScript, and Swift conventions.
+        if (std.mem.eql(u8, op, "??")) return 2;
+        if (std.mem.eql(u8, op, "||")) return 3;
+        if (std.mem.eql(u8, op, "&&")) return 4;
+        if (std.mem.eql(u8, op, "|")) return 5;
+        if (std.mem.eql(u8, op, "~")) return 6; // binary XOR (`^` stays power)
+        if (std.mem.eql(u8, op, "&")) return 7;
+        if (std.mem.eql(u8, op, "==") or std.mem.eql(u8, op, "!=")) return 8;
         if (std.mem.eql(u8, op, ">") or std.mem.eql(u8, op, ">=") or
-            std.mem.eql(u8, op, "<") or std.mem.eql(u8, op, "<=")) return 8;
-        if (std.mem.eql(u8, op, "<<") or std.mem.eql(u8, op, ">>")) return 9;
-        if (std.mem.eql(u8, op, "+") or std.mem.eql(u8, op, "-") or std.mem.eql(u8, op, "|>")) return 10;
+            std.mem.eql(u8, op, "<") or std.mem.eql(u8, op, "<=")) return 9;
+        if (std.mem.eql(u8, op, "<<") or std.mem.eql(u8, op, ">>")) return 10;
+        if (std.mem.eql(u8, op, "+") or std.mem.eql(u8, op, "-") or std.mem.eql(u8, op, "|>")) return 11;
         if (std.mem.eql(u8, op, "*") or std.mem.eql(u8, op, "/") or
-            std.mem.eql(u8, op, "%") or std.mem.eql(u8, op, "**")) return 11;
-        if (std.mem.eql(u8, op, "^")) return 12;
-        if (std.mem.eql(u8, op, "..")) return 13;
+            std.mem.eql(u8, op, "%") or std.mem.eql(u8, op, "**")) return 12;
+        if (std.mem.eql(u8, op, "^")) return 13;
+        if (std.mem.eql(u8, op, "..")) return 14;
         return -1;
     }
 };

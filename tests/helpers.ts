@@ -85,6 +85,56 @@ export function runFile(filePath: string, scriptArgs: string[] = []): RunResult 
 	};
 }
 
+/** Compile and run a .lls file with --strict. */
+export function runFileStrict(filePath: string, scriptArgs: string[] = []): RunResult {
+	requireBinary();
+	const result = spawnSync([ENTRY, "run", "-s", filePath, ...scriptArgs], {
+		cwd: ROOT,
+	});
+	const stdout = result.stdout.toString();
+	const stderr = result.stderr.toString();
+	const allLines = stdout.split(/\r?\n/);
+	while (allLines.length > 0 && allLines[allLines.length - 1] === "") {
+		allLines.pop();
+	}
+	return {
+		stdout,
+		stderr,
+		exitCode: result.exitCode ?? 1,
+		lines: allLines,
+	};
+}
+
+/** Compile and run an inline .lls source string with --strict. */
+export function runSourceStrict(source: string): RunResult {
+	requireBinary();
+	const tmp = path.join(
+		os.tmpdir(),
+		`llts_strict_test_${Date.now()}_${Math.random().toString(36).slice(2)}.lls`,
+	);
+	fs.writeFileSync(tmp, ensureMain(source), "utf-8");
+	try {
+		return runFileStrict(tmp);
+	} finally {
+		fs.unlinkSync(tmp);
+	}
+}
+
+/** Compile and run inline source exactly as written with --strict. */
+export function runSourceStrictAsWritten(source: string): RunResult {
+	requireBinary();
+	const tmp = path.join(
+		os.tmpdir(),
+		`llts_strict_test_${Date.now()}_${Math.random().toString(36).slice(2)}.lls`,
+	);
+	fs.writeFileSync(tmp, source, "utf-8");
+	try {
+		return runFileStrict(tmp);
+	} finally {
+		fs.unlinkSync(tmp);
+	}
+}
+
 /** Compile and run inline source with trailing script argv (`os.args()[1..]`). */
 export function runSourceWithArgs(source: string, scriptArgs: string[]): RunResult {
 	requireBinary();

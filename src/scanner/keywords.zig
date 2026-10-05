@@ -4,6 +4,7 @@ const compiler_map = std.StaticStringMap(void).initComptime(.{
     .{ "import", {} }, .{ "const", {} }, .{ "func", {} }, .{ "for", {} }, .{ "if", {} }, .{ "else", {} },
     .{ "switch", {} }, .{ "struct", {} }, .{ "enum", {} }, .{ "error", {} }, .{ "type", {} }, .{ "alias", {} },
     .{ "isError", {} }, .{ "typeOf", {} }, .{ "sizeOf", {} }, .{ "nameOf", {} }, .{ "as", {} }, .{ "extern", {} }, .{ "new", {} },
+    .{ "comptime", {} },
 });
 
 const keyword_map = std.StaticStringMap(void).initComptime(.{

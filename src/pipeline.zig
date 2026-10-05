@@ -13,6 +13,7 @@ const report = @import("errors/report.zig");
 
 pub const RunOptions = struct {
     debug: bool = true,
+    strict: bool = false,
     /// Extra argv forwarded to `os.args()` as argv[1..] (argv[0] is the script path).
     script_args: []const []const u8 = &.{},
     max_memory_slots: usize = 1048576,
@@ -38,7 +39,7 @@ pub fn compileSource(
     var doc = try parser.parse(allocator, scan_result.tokens.items, path, source, null);
     defer doc.deinit();
 
-    return try compiler.compile(allocator, &doc, .{ .debug = options.debug });
+    return try compiler.compile(allocator, &doc, .{ .debug = options.debug, .strict = options.strict });
 }
 
 pub fn runChunk(

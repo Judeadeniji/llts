@@ -16,6 +16,14 @@ pub const release = zli.Flag{
     .default_value = .{ .Bool = false },
 };
 
+pub const strict = zli.Flag{
+    .name = "strict",
+    .shortcut = "s",
+    .description = "Enforce sound type system (mandatory parameter types, strict null/union safety)",
+    .type = .Bool,
+    .default_value = .{ .Bool = false },
+};
+
 pub const max_memory = zli.Flag{
     .name = "max-memory",
     .shortcut = "m",
@@ -35,6 +43,7 @@ pub const version_flag = zli.Flag{
 pub fn addCompileFlags(cmd: *zli.Command) !void {
     try cmd.addFlag(log_level);
     try cmd.addFlag(release);
+    try cmd.addFlag(strict);
 }
 
 pub fn addRunFlags(cmd: *zli.Command) !void {

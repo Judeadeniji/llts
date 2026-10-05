@@ -1,6 +1,8 @@
 const std = @import("std");
 const chunk_mod = @import("../bytecode/chunk.zig");
 const ast = @import("../ast/root.zig");
+pub const const_eval = @import("const_eval.zig");
+pub const ConstValue = const_eval.ConstValue;
 
 pub const Local = struct {
     name: []const u8,
@@ -118,6 +120,7 @@ pub const CompilerState = struct {
     allocator: std.mem.Allocator,
     chunk: chunk_mod.Chunk,
     debug: bool = true,
+    strict: bool = false,
     locals: std.ArrayList(Local) = .empty,
     scope_depth: i32 = 0,
     functions: std.StringHashMap(FunctionDef),
@@ -132,6 +135,7 @@ pub const CompilerState = struct {
     global_types: std.StringHashMap([]const u8),
     global_consts: std.StringHashMap(void),
     ready_global_consts: std.StringHashMap(void),
+    const_values: std.StringHashMap(const_eval.ConstValue),
     native_globals: std.StringHashMap(void),
     /// Name → global slot for OP_GET/SET_GLOBAL emit.
     global_slots: std.StringHashMap(u16),
@@ -178,6 +182,7 @@ pub fn create(allocator: std.mem.Allocator) !CompilerState {
         .global_types = std.StringHashMap([]const u8).init(allocator),
         .global_consts = std.StringHashMap(void).init(allocator),
         .ready_global_consts = std.StringHashMap(void).init(allocator),
+        .const_values = std.StringHashMap(const_eval.ConstValue).init(allocator),
         .native_globals = std.StringHashMap(void).init(allocator),
         .global_slots = std.StringHashMap(u16).init(allocator),
         .type_of_results = std.AutoHashMap(*ast.Node, []const u8).init(allocator),
@@ -294,6 +299,9 @@ pub fn deinit(self: *CompilerState) void {
     self.global_types.deinit();
     self.global_consts.deinit();
     self.ready_global_consts.deinit();
+    var cv_it = self.const_values.valueIterator();
+    while (cv_it.next()) |vp| const_eval.deinitConstValue(vp.*, self.allocator);
+    self.const_values.deinit();
     self.native_globals.deinit();
     self.global_slots.deinit();
     self.type_of_results.deinit();

@@ -154,12 +154,12 @@ doWork();
 // Mutability of contents vs identity (arrays / objects)
 // ---------------------------------------------------------------------------
 
-test("@const array binding cannot be reassigned, but elements can be mutated", () => {
-  expectOutput(runSource(`
+test("@const array elements are readonly", () => {
+  expectError(runSource(`
 @const $arr = [1, 2, 3];
 arr[0] = 99;
 print(arr[0]);
-`), ["99"]);
+`), "Cannot mutate elements of constant 'arr'");
 });
 
 test("cannot reassign a @const array to a whole new array", () => {
@@ -170,13 +170,13 @@ print(arr);
 `), "Cannot reassign to constant variable 'arr'");
 });
 
-test("@const object binding cannot be reassigned, but fields can be mutated", () => {
-  expectOutput(runSource(`
+test("@const object fields are readonly", () => {
+  expectError(runSource(`
 @struct Obj { x: int; }
 @const $obj = Obj { x: 1 };
 obj.x = 2;
 print(obj.x);
-`), ["2"]);
+`), "Cannot mutate field of constant 'obj'");
 });
 
 // ---------------------------------------------------------------------------
@@ -338,20 +338,20 @@ print(c);
 `), "not a compile-time constant");
 });
 
-test("@const rejects index expression", () => {
-  expectError(runSource(`
+test("@const allows indexing into a const array", () => {
+  expectOutput(runSource(`
 @const $arr = [1, 2, 3];
 @const $c = arr[0];
 print(c);
-`), "not a compile-time constant");
+`), ["1"]);
 });
 
-test("@const rejects member access (function reference)", () => {
-  expectError(runSource(`
+test("@const allows member access yielding a function reference", () => {
+  expectOutput(runSource(`
 @const $math = @import("std/math");
 @const $add = math.add;
-print(1);
-`), "not a compile-time constant");
+print(add(2, 3));
+`), ["5"]);
 });
 
 test("@const rejects error(...) with a non-const message", () => {
@@ -405,10 +405,10 @@ print(b);
 `), "not a compile-time constant");
 });
 
-test("@const binding still allows mutating array elements", () => {
-  expectOutput(runSource(`
+test("@const array element assignment is rejected", () => {
+  expectError(runSource(`
 @const $arr = [1, 2, 3];
 arr[1] = 42;
 print(arr[1]);
-`), ["42"]);
+`), "Cannot mutate elements of constant 'arr'");
 });

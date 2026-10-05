@@ -91,7 +91,7 @@ An audit of the compiler reveals nine specific areas where dynamic fallbacks cur
 
 Replace heuristic `unknown` fallbacks with **sound bidirectional type inference** (synthesis bottom-up, checking top-down).
 
-* [ ] **1.1 Enforce Boundary Contracts on Declarations**
+* [x] **1.1 Enforce Boundary Contracts on Declarations**
   * Function parameters must have explicit type annotations:
     ```lls
     # REJECTED AT COMPILE TIME:
@@ -101,20 +101,20 @@ Replace heuristic `unknown` fallbacks with **sound bidirectional type inference*
     @func add(a: i64, b: i64) { return a + b; }
     ```
   * Struct fields must have explicit type annotations.
-* [ ] **1.2 Sound Local Variable Synthesis (`$x = expr`)**
+* [x] **1.2 Sound Local Variable Synthesis (`$x = expr`)**
   * Infer the concrete type strictly from `expr` (e.g. `$arena = Arena.init();` infers `Arena`).
   * **No Unsound Fallback**: If `expr` cannot be synthesized (e.g., bare unannotated `$x;` or empty array `$items = []`), halt compilation:
     `error: cannot infer type for local '$items' from empty array literal; explicit type annotation required.`
-* [ ] **1.3 Contextual Literal Inference (Top-Down Checking)**
+* [x] **1.3 Contextual Literal Inference (Top-Down Checking)**
   * Propagate expected types down to literal values:
     * In `$mask: u8 = 0b0000_1111;`, infer `u8` and verify statically it fits in `0..255`.
     * Reject overflow at compile time: `$b: u8 = 300;` → `error: literal 300 overflows target type 'u8'`.
-* [ ] **1.4 Sound Return-Type Deduction & Exhaustive Return Analysis**
+* [x] **1.4 Sound Return-Type Deduction & Exhaustive Return Analysis**
   * When `: ReturnType` is omitted, inspect **all** control flow paths.
   * Verify all branches return mutually compatible types, joining into a single concrete type or sealed union.
   * **Control Flow Check**: If any execution path can fall through without returning, fail compilation:
     `error: function 'find_id' must return a value on all control paths.`
-* [ ] **1.5 Reclassify `unknown` as an Opaque Sealed Type**
+* [x] **1.5 Reclassify `unknown` as an Opaque Sealed Type**
   * `unknown` ceases to act as an `any` pass-through.
   * In [`src/compiler/typecheck/root.zig`](file:///home/apex/Workspace/llts-zig/src/compiler/typecheck/root.zig), remove `if (ir.involvesUnknown(got) or ir.involvesUnknown(expected)) return;`.
   * Operations on `unknown` require explicit narrowing or `@as(T, val)`.
@@ -125,14 +125,14 @@ Replace heuristic `unknown` fallbacks with **sound bidirectional type inference*
 
 Ensure that null pointer dereferences and uninitialized memory are syntactically impossible.
 
-* [ ] **2.1 Disallow Member Access on Optional Types**
+* [x] **2.1 Disallow Member Access on Optional Types**
   * Remove `optionalPayload` auto-peeling from [`src/compiler/typecheck/ir.zig#L534`](file:///home/apex/Workspace/llts-zig/src/compiler/typecheck/ir.zig#L534) and [`#L542`](file:///home/apex/Workspace/llts-zig/src/compiler/typecheck/ir.zig#L542).
   * In member access checking, if the base expression has type `?T` or `?*T`, reject compilation:
     ```
     error: cannot access field 'name' on optional type '?User'
     note: unwrap with '@if (user) |u| ...' or 'user.?'
     ```
-* [ ] **2.2 Mandatory Struct Completeness (No Uninitialized Fields)**
+* [x] **2.2 Mandatory Struct Completeness (No Uninitialized Fields)**
   * Update [`inferStructInit`](file:///home/apex/Workspace/llts-zig/src/compiler/typecheck/root.zig#L1404):
     * Iterate through all fields declared on the target struct.
     * Every field that lacks a default value and is not optional (`?T`) **must be provided** in the initializer:
@@ -140,7 +140,7 @@ Ensure that null pointer dereferences and uninitialized memory are syntactically
       # COMPILE ERROR: missing required field 'name' in initialization of 'User'
       $u = User{ id: 1 };
       ```
-* [ ] **2.3 Strict Container Unwrapping (`@if (expr) |v|`)**
+* [x] **2.3 Strict Container Unwrapping (`@if (expr) |v|`)**
   * LLTS strictly separates **Boolean Branching** (`@if (cond)`) from **Container Unwrapping** (`@if (expr) |v|`), following the model used by Zig and Rust:
     * **Optional `?T`**: tests `expr != null`, binds non-null `v: T`.
     * **Error union `T | error`**: tests `!@isError(expr)`, binds success payload `v: T`.

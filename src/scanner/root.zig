@@ -203,6 +203,14 @@ fn scanMemberExpression(self: *ctx.Scanner) ScanError!void {
     while (self.peek(0) == '.') {
         const col = self.column;
         const line = self.line;
+        // `.?` is the assertion-unwrap postfix — emit it as a single ".?" delimiter
+        // rather than splitting into "." + "?" so the parser can pattern-match it.
+        if (self.peek(1) == '?') {
+            _ = self.advance(); // '.'
+            _ = self.advance(); // '?'
+            try self.pushToken(.delimiter, ".?", col, line);
+            return; // no further chaining after .?
+        }
         _ = self.advance();
         try self.pushToken(.delimiter, ".", col, line);
         const ch = self.peek(0) orelse return failScan(self, error.InvalidMember, "Expected property name after '.'");

@@ -77,4 +77,7 @@ pub const OpCode = enum(u8) {
     OP_SLICE,
     /// Pop error value; push its code string (member name / open `error("…")` message).
     OP_ERROR_NAME,
+    /// Like OP_JUMP_IF_FALSE but tests `value == .null` — used for `??` null-coalescing
+    /// and `.?` assertion unwrap. Does NOT consume the top-of-stack value.
+    OP_JUMP_IF_NULL,
 };

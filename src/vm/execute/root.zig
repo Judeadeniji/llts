@@ -236,6 +236,10 @@ pub fn execute(vm: *VMState, start_ip: usize) RuntimeError!void {
                 const off = readShort(code_ptr, &ip);
                 if (!stack_buf[sp - 1].isTruthy()) ip += off;
             },
+            .OP_JUMP_IF_NULL => {
+                const off = readShort(code_ptr, &ip);
+                if (stack_buf[sp - 1] == .null) ip += off;
+            },
             .OP_LOOP => {
                 const off = readShort(code_ptr, &ip);
                 ip -= off;

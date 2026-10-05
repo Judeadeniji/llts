@@ -86,6 +86,13 @@ pub const TryExpr = struct {
     loc: Location,
 };
 
+/// `.?` assertion-unwrap: panics (or returns error) if the value is null;
+/// otherwise produces the unwrapped non-optional value.
+pub const UnwrapExpr = struct {
+    expression: *Node,
+    loc: Location,
+};
+
 pub const ErrorExpr = struct {
     args: []*Node,
     loc: Location,
@@ -99,5 +106,10 @@ pub const StructFieldInit = struct {
 pub const StructInit = struct {
     type_expr: *Node,
     fields: []StructFieldInit,
+    loc: Location,
+};
+
+pub const ComptimeExpr = struct {
+    expr: *Node,
     loc: Location,
 };

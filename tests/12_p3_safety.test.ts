@@ -16,14 +16,14 @@ pub @func main() {
 	);
 });
 
-test("const array elements can still be mutated", () => {
-	expectOutput(
+test("const array elements cannot be mutated", () => {
+	expectError(
 		runSource(`
 @const $arr = [1, 2, 3];
 arr[0] = 99;
 print(arr[0]);
 `),
-		["99"],
+		"Cannot mutate elements of constant 'arr'",
 	);
 });
 

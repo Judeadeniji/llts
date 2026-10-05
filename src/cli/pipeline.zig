@@ -24,13 +24,14 @@ pub fn compileToFile(
     allocator: std.mem.Allocator,
     path: []const u8,
     release: bool,
+    strict: bool,
     out_path: []const u8,
 ) !void {
     llts.diag.reset();
     const source = common.readSourceOrExit(allocator, path);
     defer allocator.free(source);
 
-    var chunk = llts.compileSource(allocator, path, source, .{ .debug = !release }) catch |err| {
+    var chunk = llts.compileSource(allocator, path, source, .{ .debug = !release, .strict = strict }) catch |err| {
         if (!llts.diag.wasEmitted()) {
             io.printStderr("Error: {}\n", .{err});
         }
@@ -43,12 +44,12 @@ pub fn compileToFile(
     };
 }
 
-pub fn runFile(allocator: std.mem.Allocator, path: []const u8, release: bool, script_args: []const []const u8, max_memory: usize) !void {
+pub fn runFile(allocator: std.mem.Allocator, path: []const u8, release: bool, strict: bool, script_args: []const []const u8, max_memory: usize) !void {
     llts.diag.reset();
     const source = common.readSourceOrExit(allocator, path);
     defer allocator.free(source);
 
-    llts.runSource(allocator, path, source, .{ .debug = !release, .script_args = script_args, .max_memory_slots = max_memory }) catch |err| {
+    llts.runSource(allocator, path, source, .{ .debug = !release, .strict = strict, .script_args = script_args, .max_memory_slots = max_memory }) catch |err| {
         if (!llts.diag.wasEmitted()) {
             io.printStderr("Error: {}\n", .{err});
         }
@@ -60,13 +61,14 @@ pub fn dumpFile(
     allocator: std.mem.Allocator,
     path: []const u8,
     release: bool,
+    strict: bool,
     output_path: ?[]const u8,
 ) !void {
     llts.diag.reset();
     const source = common.readSourceOrExit(allocator, path);
     defer allocator.free(source);
 
-    var chunk = llts.compileSource(allocator, path, source, .{ .debug = !release }) catch |err| {
+    var chunk = llts.compileSource(allocator, path, source, .{ .debug = !release, .strict = strict }) catch |err| {
         if (!llts.diag.wasEmitted()) {
             io.printStderr("Error: {}\n", .{err});
         }

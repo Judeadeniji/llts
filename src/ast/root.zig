@@ -22,9 +22,11 @@ pub const Member = expr.Member;
 pub const Index = expr.Index;
 pub const ArrayLiteral = expr.ArrayLiteral;
 pub const TryExpr = expr.TryExpr;
+pub const UnwrapExpr = expr.UnwrapExpr;
 pub const ErrorExpr = expr.ErrorExpr;
 pub const StructFieldInit = expr.StructFieldInit;
 pub const StructInit = expr.StructInit;
+pub const ComptimeExpr = expr.ComptimeExpr;
 
 pub const Declaration = stmt.Declaration;
 pub const Params = stmt.Params;
@@ -94,7 +96,9 @@ pub const Node = union(enum) {
     type_decl: TypeDecl,
     struct_init: StructInit,
     try_expr: TryExpr,
+    unwrap_expr: UnwrapExpr,
     error_expr: ErrorExpr,
+    comptime_expr: ComptimeExpr,
     extern_decl: Extern,
     array_type: ArrayType,
     tuple_type: TupleType,

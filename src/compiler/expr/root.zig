@@ -10,6 +10,8 @@ const call = @import("call.zig");
 const aggregate = @import("aggregate.zig");
 const path = @import("path.zig");
 const control = @import("../stmt/control.zig");
+const const_eval = @import("../const_eval.zig");
+const compile_errors = @import("../../errors/compile.zig");
 
 const CompilerState = state_mod.CompilerState;
 
@@ -32,8 +34,23 @@ pub fn compileExpression(state: *CompilerState, node: *ast.Node) anyerror!void {
         .if_expr => |*i| try control.compileIfValue(state, i),
         .switch_expr => |*s| try control.compileSwitchValue(state, s),
         .block => |*b| try control.compileBlockValue(state, b),
+        .comptime_expr => |*ce| try compileComptime(state, ce),
         else => {},
     }
+}
+
+fn compileComptime(state: *CompilerState, ce: *const ast.ComptimeExpr) !void {
+    const cval = try const_eval.evalExpr(state, null, ce.expr);
+    if (cval) |v| {
+        try const_eval.emitConstValue(state, v);
+        return;
+    }
+    if (ce.expr.* != .block) {
+        // Not statically evaluable — fall back to ordinary runtime codegen.
+        try compileExpression(state, ce.expr);
+        return;
+    }
+    return compile_errors.compileFailFmt(state, "@comptime block could not be evaluated at compile time", .{});
 }
 
 fn compilePrimary(state: *CompilerState, prim: *const ast.Primary, node: *ast.Node) !void {

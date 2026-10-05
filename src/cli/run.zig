@@ -7,6 +7,7 @@ const pipeline = @import("pipeline.zig");
 pub fn execute(ctx: zli.CommandContext) !void {
     common.setLogLevel(ctx);
     const release = ctx.flag("release", bool);
+    const strict = ctx.flag("strict", bool);
     const file = ctx.getArg("file").?;
     const max_memory = common.getMaxMemory(ctx.allocator, ctx);
 
@@ -18,6 +19,6 @@ pub fn execute(ctx: zli.CommandContext) !void {
     if (llts.serialize.isBytecodePath(file)) {
         try pipeline.runBytecode(ctx.allocator, file, program_args, max_memory);
     } else {
-        try pipeline.runFile(ctx.allocator, file, release, program_args, max_memory);
+        try pipeline.runFile(ctx.allocator, file, release, strict, program_args, max_memory);
     }
 }

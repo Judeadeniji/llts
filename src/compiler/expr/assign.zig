@@ -39,9 +39,25 @@ fn compoundOp(op: []const u8) ?OpCode {
     return null;
 }
 
+fn isConstBinding(state: *CompilerState, name: []const u8) bool {
+    const local_arg = scope.resolveLocal(state, name);
+    if (local_arg != -1) {
+        return state.locals.items[@intCast(local_arg)].is_const;
+    }
+    if (state.global_consts.contains(name)) return true;
+    if (name.len > 0 and name[0] == '$' and state.global_consts.contains(name[1..])) return true;
+    return false;
+}
+
 fn assignIndex(state: *CompilerState, idx: *const ast.Index, right: *ast.Node, arith: ?OpCode) !void {
     if (idx.is_slice) {
         return compile_errors.compileFailFmt(state, "Cannot assign to a slice view", .{});
+    }
+    if (idx.object.* == .primary) {
+        const name = idx.object.primary.name;
+        if (isConstBinding(state, name)) {
+            return compile_errors.compileFailFmt(state, "Cannot mutate elements of constant '{s}'", .{name});
+        }
     }
     const start = idx.index orelse {
         return compile_errors.compileFailFmt(state, "Expected index expression", .{});
@@ -82,6 +98,13 @@ fn assignMember(state: *CompilerState, mem: *const ast.Member, node: *ast.Node, 
         }
         try emit.emitNameGet(state, .OP_SET_GLOBAL, static_path);
         return;
+    }
+
+    if (mem.object.* == .primary) {
+        const name = mem.object.primary.name;
+        if (isConstBinding(state, name)) {
+            return compile_errors.compileFailFmt(state, "Cannot mutate field of constant '{s}'", .{name});
+        }
     }
 
     // Tuple field `.0` / `.1`
