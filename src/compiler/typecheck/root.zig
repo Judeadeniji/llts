@@ -1277,7 +1277,7 @@ fn inferExprInner(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, 
                     }
                 }
                 _ = try inferExpr(state, env, ta, prong.body);
-                try walkBreakValues(state, env, ta, prong.body, &acc);
+                try walkBreakValues(state, env, ta, prong.body, &acc, false);
             }
             break :blk acc orelse ir.TUnknown;
         },
@@ -1330,7 +1330,7 @@ fn inferExprInner(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, 
                 try env.pushScope();
                 defer env.popScope();
                 for (ce.expr.block.statements) |s| _ = try checkStmt(state, env, ta, s);
-                break :blk try joinBreakTypes(state, env, ta, ce.expr);
+                break :blk try joinComptimeTypes(state, env, ta, ce.expr);
             }
             break :blk try inferExpr(state, env, ta, ce.expr);
         },
@@ -1340,50 +1340,69 @@ fn inferExprInner(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, 
 
 fn joinBreakTypes(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node: *ast.Node) TypecheckError!ir.Type {
     var acc: ?ir.Type = null;
-    try walkBreakValues(state, env, ta, node, &acc);
+    try walkBreakValues(state, env, ta, node, &acc, false);
     return acc orelse ir.TUnknown;
 }
 
-fn walkBreakValues(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node: *ast.Node, acc: *?ir.Type) TypecheckError!void {
+/// Like `joinBreakTypes`, but a `@comptime` block also yields its value via
+/// `return`, so those payloads participate in the join too.
+fn joinComptimeTypes(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node: *ast.Node) TypecheckError!ir.Type {
+    var acc: ?ir.Type = null;
+    try walkBreakValues(state, env, ta, node, &acc, true);
+    return acc orelse ir.TUnknown;
+}
+
+/// Merge a produced value type into the running `acc`, widening to `unknown` on
+/// an irreconcilable conflict and to a union when one side is `null`.
+fn mergeResultType(ta: ir.TypeAlloc, acc: *?ir.Type, t: ir.Type) !void {
+    if (acc.*) |cur| {
+        if (!ir.isSubtype(t, cur) and !ir.isSubtype(cur, t)) {
+            if (!ir.involvesUnknown(t) and !ir.involvesUnknown(cur) and !ir.typeEquals(t, cur)) {
+                if ((t == .null or cur == .null) and t != .union_ and cur != .union_) {
+                    const u_arms = try ta.allocator.alloc(ir.Type, 2);
+                    u_arms[0] = cur;
+                    u_arms[1] = t;
+                    acc.* = .{ .union_ = u_arms };
+                } else {
+                    acc.* = ir.TUnknown;
+                }
+            } else {
+                acc.* = ir.TUnknown;
+            }
+        } else if (ir.isSubtype(cur, t)) {
+            acc.* = t;
+        }
+    } else {
+        acc.* = t;
+    }
+}
+
+fn walkBreakValues(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node: *ast.Node, acc: *?ir.Type, include_returns: bool) TypecheckError!void {
     switch (node.*) {
         .break_expr => |br| {
             if (br.value) |v| {
-                const t = try inferExpr(state, env, ta, v);
-                if (acc.*) |cur| {
-                    if (!ir.isSubtype(t, cur) and !ir.isSubtype(cur, t)) {
-                        // Gradual: widen to unknown on conflict unless either side is unknown.
-                        if (!ir.involvesUnknown(t) and !ir.involvesUnknown(cur) and !ir.typeEquals(t, cur)) {
-                            if ((t == .null or cur == .null) and t != .union_ and cur != .union_) {
-                                const u_arms = try ta.allocator.alloc(ir.Type, 2);
-                                u_arms[0] = cur;
-                                u_arms[1] = t;
-                                acc.* = .{ .union_ = u_arms };
-                            } else {
-                                acc.* = ir.TUnknown;
-                            }
-                        } else {
-                            acc.* = ir.TUnknown;
-                        }
-                    } else if (ir.isSubtype(cur, t)) {
-                        acc.* = t;
-                    }
-                } else {
-                    acc.* = t;
+                try mergeResultType(ta, acc, try inferExpr(state, env, ta, v));
+            }
+        },
+        .return_expr => |r| {
+            if (include_returns) {
+                if (r.return_value) |v| {
+                    try mergeResultType(ta, acc, try inferExpr(state, env, ta, v));
                 }
             }
         },
         .block => |b| {
-            for (b.statements) |s| try walkBreakValues(state, env, ta, s, acc);
+            for (b.statements) |s| try walkBreakValues(state, env, ta, s, acc, include_returns);
         },
         .if_expr => |i| {
-            try walkBreakValues(state, env, ta, i.body, acc);
-            if (i.else_body) |e| try walkBreakValues(state, env, ta, e, acc);
+            try walkBreakValues(state, env, ta, i.body, acc, include_returns);
+            if (i.else_body) |e| try walkBreakValues(state, env, ta, e, acc, include_returns);
         },
         .switch_expr => |sw| {
-            for (sw.prongs) |p| try walkBreakValues(state, env, ta, p.body, acc);
+            for (sw.prongs) |p| try walkBreakValues(state, env, ta, p.body, acc, include_returns);
         },
-        .for_expr => |f| try walkBreakValues(state, env, ta, f.body, acc),
-        .declaration => |d| try walkBreakValues(state, env, ta, d.value, acc),
+        .for_expr => |f| try walkBreakValues(state, env, ta, f.body, acc, include_returns),
+        .declaration => |d| try walkBreakValues(state, env, ta, d.value, acc, include_returns),
         else => {},
     }
 }

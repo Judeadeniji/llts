@@ -282,3 +282,66 @@ test("strict: type mismatch against a @comptime result is rejected", () => {
 print(bad);
 `), "is not assignable to");
 });
+
+// ---------------------------------------------------------------------------
+// `return` inside a `@comptime` block yields the block's value, including from
+// nested `@if` / `@for` / `@switch` bodies, where it is a non-local exit.
+// ---------------------------------------------------------------------------
+
+test("@comptime block yields its value via return", () => {
+  expectOutput(runSource(`
+@const $R = @comptime { return 41; };
+print(R);
+`), ["41"]);
+});
+
+test("strict: @comptime block yielding via return infers a concrete type", () => {
+  expectOutput(runSourceStrict(`
+@const $R = @comptime { return 41; };
+@const $N: int = R + 1;
+print(N);
+`), ["42"]);
+});
+
+test("return inside @if / @for bodies propagates out of a @comptime block", () => {
+  expectOutput(runSource(`
+@const $B = @comptime {
+    $a = 3;
+    $b = 7;
+    @if (a > b) { return a; } @else { return b; }
+};
+print(B);
+@const $N = @comptime {
+    @for (0..5) |i| {
+        @if (i == 3) { return i * 10; }
+    }
+    return -1;
+};
+print(N);
+`), ["7", "30"]);
+});
+
+test("@comptime @switch selects a prong and propagates its return", () => {
+  expectOutput(runSource(`
+@const $S = @comptime {
+    $x = 2;
+    @switch (x) {
+        1 => { return 10; },
+        2 => { return 20; },
+        @else => { return 99; },
+    }
+    return -1;
+};
+print(S);
+@const $E = @comptime {
+    $x = 7;
+    @switch (x) {
+        1 => { return 10; },
+        2 => { return 20; },
+        @else => { return 99; },
+    }
+    return -1;
+};
+print(E);
+`), ["20", "99"]);
+});

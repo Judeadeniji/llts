@@ -46,6 +46,21 @@ pub const ConstStruct = struct {
     }
 };
 
+/// Structural equality for switch-pattern matching at compile time. Aggregates
+/// are never valid switch patterns, so they compare by identity (false).
+pub fn constValueEql(a: ConstValue, b: ConstValue) bool {
+    if (std.meta.activeTag(a) != std.meta.activeTag(b)) return false;
+    return switch (a) {
+        .null => true,
+        .bool => |x| x == b.bool,
+        .i64 => |x| x == b.i64,
+        .f64 => |x| x == b.f64,
+        .string => |x| std.mem.eql(u8, x, b.string),
+        .enum_variant => |e| e.tag == b.enum_variant.tag and std.mem.eql(u8, e.enum_name, b.enum_variant.enum_name),
+        .array, .tuple, .struct_val => false,
+    };
+}
+
 pub const ConstValue = union(enum) {
     null,
     bool: bool,
@@ -540,6 +555,16 @@ fn evalExprInner(state: *CompilerState, scope: ?*ComptimeScope, n: *ast.Node) an
 pub fn evalComptimeBlock(state: *CompilerState, parent_scope: ?*ComptimeScope, block: *const ast.Block) anyerror!?ConstValue {
     var bscope = ComptimeScope.init(state.allocator, parent_scope);
     defer bscope.deinit();
+    // `return` is non-local: propagate it out of nested blocks so a `return`
+    // inside an `@if` / `@for` / `@switch` body in a comptime block reaches the
+    // enclosing evaluation. Blocks that merely yield a value via `break` stay
+    // local, so only `has_returned` is forwarded here.
+    defer if (parent_scope) |parent| {
+        if (bscope.has_returned) {
+            parent.has_returned = true;
+            parent.returned_val = bscope.returned_val;
+        }
+    };
 
     var last_val: ConstValue = .null;
     for (block.statements) |stmt_node| {
@@ -634,6 +659,42 @@ pub fn evalComptimeBlock(state: *CompilerState, parent_scope: ?*ComptimeScope, b
                 }
                 if (bscope.has_broken) return bscope.broken_val orelse last_val;
                 if (bscope.has_returned) return bscope.returned_val orelse last_val;
+            },
+            .switch_expr => |sw| {
+                const cond_val = (try evalExpr(state, &bscope, sw.condition)) orelse
+                    return compile_errors.compileFailFmt(state, "switch condition must be constant in comptime", .{});
+                for (sw.prongs) |prong| {
+                    var is_match = prong.is_else;
+                    if (!is_match) {
+                        for (prong.patterns) |pat| {
+                            const pv = (try evalExpr(state, &bscope, pat)) orelse continue;
+                            if (constValueEql(cond_val, pv)) {
+                                is_match = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (!is_match) continue;
+
+                    var prong_scope = ComptimeScope.init(state.allocator, &bscope);
+                    defer prong_scope.deinit();
+                    const res: ?ConstValue = if (prong.body.* == .block)
+                        try evalComptimeBlock(state, &prong_scope, &prong.body.block)
+                    else
+                        try evalExpr(state, &prong_scope, prong.body);
+
+                    if (prong_scope.has_returned) {
+                        bscope.has_returned = true;
+                        bscope.returned_val = prong_scope.returned_val;
+                        return prong_scope.returned_val orelse .null;
+                    }
+                    if (prong_scope.has_broken) {
+                        last_val = prong_scope.broken_val orelse (res orelse last_val);
+                    } else if (res) |rv| {
+                        last_val = rv;
+                    }
+                    break;
+                }
             },
             .break_expr => |brk| {
                 if (brk.value) |bv| {
