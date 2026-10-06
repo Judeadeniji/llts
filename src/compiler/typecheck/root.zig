@@ -530,20 +530,28 @@ fn fieldTypeFromStruct(state: *state_mod.CompilerState, ta: ir.TypeAlloc, struct
     return try from_ast.parseDisplayType(state, ta, raw, null);
 }
 
+const UnionFieldInfo = struct {
+    /// Type of the field when it exists on every arm (a union when arms differ).
+    ty: ir.Type,
+    /// Set when the field is present on every arm but with *incompatible* types —
+    /// the Common Property Rule is violated (Phase 3.2).
+    conflict: bool,
+};
+
 /// Field type on a struct union. Discriminant `kind` with enum literals → parent enum.
-fn fieldTypeFromUnion(state: *state_mod.CompilerState, ta: ir.TypeAlloc, union_t: ir.Type, field: []const u8) !ir.Type {
-    if (union_t != .union_) return ir.TUnknown;
+fn fieldTypeFromUnion(state: *state_mod.CompilerState, ta: ir.TypeAlloc, union_t: ir.Type, field: []const u8) !UnionFieldInfo {
+    if (union_t != .union_) return .{ .ty = ir.TUnknown, .conflict = false };
     var field_types: std.ArrayList(ir.Type) = .empty;
     defer field_types.deinit(ta.allocator);
     var enum_parent: ?[]const u8 = null;
     var all_kind_lits = std.mem.eql(u8, field, "kind");
 
     for (union_t.union_) |arm| {
-        const sname = ir.structNameOf(arm) orelse return ir.TUnknown;
-        const def = from_ast.lookupStruct(state, sname) orelse return ir.TUnknown;
-        if (def.types.get(field) == null) return ir.TUnknown;
+        const sname = ir.structNameOf(arm) orelse return .{ .ty = ir.TUnknown, .conflict = false };
+        const def = from_ast.lookupStruct(state, sname) orelse return .{ .ty = ir.TUnknown, .conflict = false };
+        if (def.types.get(field) == null) return .{ .ty = ir.TUnknown, .conflict = false };
         const ft = try fieldTypeFromStruct(state, ta, sname, field);
-        if (ft == .unknown) return ir.TUnknown;
+        if (ft == .unknown) return .{ .ty = ir.TUnknown, .conflict = false };
         if (all_kind_lits) {
             if (ft == .enum_lit) {
                 if (enum_parent) |ep| {
@@ -557,18 +565,18 @@ fn fieldTypeFromUnion(state: *state_mod.CompilerState, ta: ir.TypeAlloc, union_t
         }
         try field_types.append(ta.allocator, ft);
     }
-    if (field_types.items.len == 0) return ir.TUnknown;
+    if (field_types.items.len == 0) return .{ .ty = ir.TUnknown, .conflict = false };
     if (all_kind_lits) {
-        if (enum_parent) |ep| return .{ .enum_ = ep };
+        if (enum_parent) |ep| return .{ .ty = .{ .enum_ = ep }, .conflict = false };
     }
-    // All equal → that type; else union of field types.
+    // All equal → that type; otherwise the arms disagree (conflict).
     const first = field_types.items[0];
     for (field_types.items[1..]) |ft| {
         if (!ir.typeEquals(first, ft)) {
-            return try ta.unionType(field_types.items);
+            return .{ .ty = try ta.unionType(field_types.items), .conflict = true };
         }
     }
-    return first;
+    return .{ .ty = first, .conflict = false };
 }
 
 const KindNarrow = struct {
@@ -1024,19 +1032,26 @@ fn inferExprInner(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, 
                     return compiler_errors.compileFailFmt(state, "Field '{s}' does not exist on '{s}'", .{ m.property.primary.name, d });
                 }
                 if (field_obj == .union_) {
-                    const ft = try fieldTypeFromUnion(state, ta, field_obj, m.property.primary.name);
+                    const info = try fieldTypeFromUnion(state, ta, field_obj, m.property.primary.name);
+                    const ft = info.ty;
                     // Hard reject only for discrim struct unions (`Literal | Add`).
                     // Error unions (`T | error`) still allow gradual field access.
                     if (ft == .unknown) {
                         const d = try ownDisplay(state, field_obj);
                         if (try from_ast.discrimVariantMap(state, state.allocator, d)) |info_owned| {
-                            var info = info_owned;
-                            info.map.deinit();
+                            var info2 = info_owned;
+                            info2.map.deinit();
                             return compiler_errors.compileFailFmt(state, "Field '{s}' is not available on all arms of '{s}' (narrow with @switch on .kind)", .{ m.property.primary.name, d });
                         }
                         if (state.strict) {
                             return compiler_errors.compileFailFmt(state, "Field '{s}' is not available on union type '{s}'", .{ m.property.primary.name, d });
                         }
+                    }
+                    // Common Property Rule (Phase 3.2): every arm defines the field,
+                    // but the types disagree — reject rather than silently union them.
+                    if (info.conflict and state.strict) {
+                        const d = try ownDisplay(state, field_obj);
+                        return compiler_errors.compileFailFmt(state, "Field '{s}' has incompatible types across arms of union '{s}'; narrow with @switch on .kind or use @as", .{ m.property.primary.name, d });
                     }
                     break :blk ft;
                 }
@@ -1308,6 +1323,13 @@ fn inferExprInner(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, 
                     try env.define(f.captures[0].name, payload);
                 } else {
                     return compiler_errors.compileFailFmt(state, "Cannot iterate over type '{any}'", .{ir.typeTag(expr_type).?});
+                }
+            } else if (!(f.expr.* == .binary and std.mem.eql(u8, f.expr.binary.operator, ".."))) {
+                // Condition loop `@for (cond) { … }` — same invariant as `@if`:
+                // the condition must be a real boolean, no truthiness coercion.
+                if (state.strict and !ir.isSubtype(ir.peelDefined(expr_type), ir.TBool)) {
+                    const disp = try ownDisplay(state, expr_type);
+                    return compiler_errors.compileFailFmt(state, "condition of @for must be boolean ('bool' or 'u1'), got '{s}'", .{disp});
                 }
             }
             _ = try inferExpr(state, env, ta, f.body);

@@ -169,7 +169,7 @@ Ensure that null pointer dereferences and uninitialized memory are syntactically
 
 Prevent truthiness bugs and "property `x` does not exist on `y`" runtime errors.
 
-* [ ] **3.1 Strict Boolean Condition Invariant (Eliminating Truthiness Coercion)**
+* [x] **3.1 Strict Boolean Condition Invariant (Eliminating Truthiness Coercion)**
   * When `@if (cond)` does **not** have a capture pipe `|v|`, `cond` **must** evaluate strictly to `u1` (`bool`).
   * Reject implicit truthiness coercion on numbers, strings, and collections:
     ```lls
@@ -182,14 +182,14 @@ Prevent truthiness bugs and "property `x` does not exist on `y`" runtime errors.
     @if (str.len > 0) { ... }
     ```
   * Same invariant applies to `@for (cond)` loop conditions.
-* [ ] **3.2 Common Property Rule for Unions**
+* [x] **3.2 Common Property Rule for Unions**
   * Accessing `obj.prop` on a union `A | B` is allowed only if both `A` and `B` define `prop` with compatible types.
   * Partial field access without prior narrowing is a hard compile error.
-* [ ] **3.3 Sound Union Arm Narrowing**
+* [x] **3.3 Sound Union Arm Narrowing**
   * Inside `@switch (u.kind)` branches, soundly narrow `u` to the specific variant arm without requiring manual `@as` casts.
-* [ ] **3.4 100% Exhaustive `@switch` Verification**
+* [x] **3.4 100% Exhaustive `@switch` Verification**
   * Require all variants of `@enum`, `@error`, and tagged unions to be covered, or caught by `@else`.
-* [ ] **3.5 Error Union Guarding (`T | error`)**
+* [x] **3.5 Error Union Guarding (`T | error`)**
   * Forbid member access on `T | error` directly; require handling via `?` (try-propagate), `@isError` narrowing, or `@catch`.
 
 ---

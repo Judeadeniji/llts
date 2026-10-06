@@ -292,3 +292,99 @@ pub @func main() {
 		["43"],
 	);
 });
+
+// =========================================================================
+// Phase 3.1: Strict Boolean Condition Invariant (no truthiness coercion)
+// =========================================================================
+
+test("strict: @for condition must be boolean (rejected on integer)", () => {
+	expectError(
+		runSourceStrict(`
+pub @func main() {
+    $n: int = 0;
+    @for (n) {
+        break;
+    }
+}
+`),
+		"condition of @for must be boolean ('bool' or 'u1'), got 'i64'",
+	);
+});
+
+test("legacy: @for condition truthiness still compiles without --strict", () => {
+	expectOutput(
+		runSource(`
+pub @func main() {
+    $n: int = 1;
+    @for (n) {
+        print("body");
+        n = 0;
+    }
+    print("done");
+}
+`),
+		["body", "done"],
+	);
+});
+
+test("strict: boolean @for condition is accepted", () => {
+	expectOutput(
+		runSourceStrict(`
+pub @func main() {
+    $i: int = 0;
+    $n: int = 3;
+    @for (i < n) {
+        print(i);
+        i = i + 1;
+    }
+}
+`),
+		["0", "1", "2"],
+	);
+});
+
+// =========================================================================
+// Phase 3.2: Common Property Rule for Unions
+// =========================================================================
+
+test("strict: union common field with incompatible types is rejected", () => {
+	expectError(
+		runSourceStrict(`
+@struct A { x: i64; }
+@struct B { x: string; }
+pub @func main() {
+    $u: A | B = A { x: 1 };
+    print(u.x);
+}
+`),
+		"has incompatible types across arms of union",
+	);
+});
+
+test("strict: union common field with matching types is accepted", () => {
+	expectOutput(
+		runSourceStrict(`
+@struct A { x: i64; }
+@struct B { x: i64; }
+pub @func main() {
+    $u: A | B = A { x: 1 };
+    print(u.x);
+}
+`),
+		["1"],
+	);
+});
+
+test("legacy: union field conflict still compiles without --strict", () => {
+	expectOutput(
+		runSource(`
+@struct A { x: i64; }
+@struct B { x: string; }
+pub @func main() {
+    $u: A | B = A { x: 1 };
+    print(u.x);
+}
+`),
+		["1"],
+	);
+});
