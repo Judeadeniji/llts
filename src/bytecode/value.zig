@@ -68,10 +68,19 @@ pub const BufferObject = struct {
 
 /// Handle for a packed value array living in `VMState.bytes`.
 /// `capacity` ≥ `count`; growable arena arrays may reallocate on push.
+///
+/// `arena_ctrl` / `arena_gen` encode the owning arena and the generation it had
+/// when the storage was handed out (Phase 4.1). A non-zero `arena_ctrl` makes
+/// every access validate that the arena is still alive and has not been reset,
+/// turning use-after-`deinit()` / use-after-`reset()` into a deterministic trap
+/// instead of silent reads of recycled memory. `0` means frame/immortal storage
+/// (no lifetime check).
 pub const ArrayRef = struct {
     offset: u32,
     count: u32,
     capacity: u32 = 0,
+    arena_ctrl: i32 = 0,
+    arena_gen: i32 = 0,
 };
 
 /// Packed byte buffer in `VMState.bytes` (growable when capacity > len).
@@ -79,6 +88,18 @@ pub const BytesRef = struct {
     offset: u32,
     len: u32,
     capacity: u32 = 0,
+};
+
+/// View into packed bytes (`.slice` / `.bytes`).
+///
+/// `arena_ctrl` / `arena_gen` mirror `ArrayRef`: when `arena_ctrl != 0` the view
+/// belongs to an arena, and access after that arena is deinitialized or reset is
+/// a deterministic runtime trap (Phase 4.1). Frame/immortal views use `0`.
+pub const SpanRef = struct {
+    offset: u32,
+    len: u32,
+    arena_ctrl: i32 = 0,
+    arena_gen: i32 = 0,
 };
 
 /// Tagged runtime value — numeric tags match Zig-like widths end-to-end.
@@ -103,9 +124,9 @@ pub const Value = union(enum) {
     /// Interned name index into the chunk string table (for globals/properties).
     name: u32,
     /// String view pointing into the VM's unified packed byte heap (`VMState.bytes`).
-    slice: struct { offset: u32, len: u32 },
+    slice: SpanRef,
     /// Packed mutable bytes in `VMState.bytes` (structs, `[]byte`).
-    bytes: struct { offset: u32, len: u32 },
+    bytes: SpanRef,
     /// Packed value array in `VMState.bytes`: `count` elements of `@sizeOf(Value)` at `offset`.
     array: ArrayRef,
     /// Module object from OP_GET_MODULE.

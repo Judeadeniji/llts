@@ -118,9 +118,33 @@ Key rules:
 4. **Literal promotion is unchanged.** `return Foo{ x: 1 };` with all-frame-free
    operands is compiled immortal (`.`pass`), same as module-level init.
 
-This is a purely static, intraprocedural analysis — no runtime handle tags yet.
-The matching **runtime** generational trap (arena id + generation in packed
-heap handles, trapping use-after-`deinit()`) is still open; see roadmap 4.1.
+This is a purely static, intraprocedural analysis.
+
+### Runtime generational trap (Phase 4.1 — done)
+
+The array/`[]byte` handles that live in `Value` carry the owning arena and the
+generation stamped when the storage was handed out:
+
+| Field | Type | Meaning |
+|-------|------|---------|
+| `arena_ctrl` | `i32` | Arena control block; `0` = frame/immortal (no lifetime check) |
+| `arena_gen` | `i32` | `ctrl[7]` at allocation time; a later `reset` bumps it |
+
+`ArrayRef` uses this for value arrays; `SpanRef` (`.bytes` / `.slice`) uses it for
+packed bytes and strings. Before any dereference — field load/store, index
+get/set, `arr.get`, slice, string concat — `checkArenaHandle` in
+[`src/vm/execute/heap.zig`](file:///home/apex/Workspace/llts-zig/src/vm/execute/heap.zig)
+validates the arena is alive and the generation is unchanged; otherwise the VM
+aborts with `arena memory access: arena is deinitialized` / `arena was reset`.
+
+Frame and immortal handles use `arena_ctrl == 0`, so the check is skipped on the
+common path. Arena-backed containers (`List` / `Map` / `Buffer`) already carried
+`arena_ctrl` / `arena_gen` and keep their own validation via
+`requireContainerArena`.
+
+Cost note: adding the two tags grows the `Value` slot from 16 to 24 bytes, which
+proportionally raises packed value-array storage (`@sizeOf(arr)` = `count ×
+@sizeOf(Value)`).
 
 ## Non-goals
 

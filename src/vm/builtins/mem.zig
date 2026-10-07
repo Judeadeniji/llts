@@ -98,6 +98,11 @@ fn arenaAlive(vm: *VMState, ctrl: i32, comptime op: []const u8) !void {
         return fail(vm, op, "arena is deinitialized");
 }
 
+/// Current generation of an arena control block (bumped on every reset).
+fn ctrlGeneration(vm: *VMState, ctrl: i32) i32 {
+    return @intCast(vm.slot(ctrl + 7).*.i64);
+}
+
 fn makeChunk(vm: *VMState, cap: i32) !i32 {
     // 1. Search free list for a chunk >= cap
     var prev: i32 = 0;
@@ -349,7 +354,14 @@ fn arenaAllocArray(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
         else => return fail(vm, "__arena_alloc_array", "invalid allocation"),
     };
     const aligned: u32 = @intCast(std.mem.alignForward(usize, b.offset, state_mod.VMState.value_align));
-    const arr: value.ArrayRef = .{ .offset = aligned, .count = len, .capacity = len };
+    const ctrl = try resolveArenaControl(vm, args[0]);
+    const arr: value.ArrayRef = .{
+        .offset = aligned,
+        .count = len,
+        .capacity = len,
+        .arena_ctrl = ctrl,
+        .arena_gen = ctrlGeneration(vm, ctrl),
+    };
     // Typed zero for numeric elems (raw memset → .null tag). Callers that need
     // float/bool zeros should still emit a typed fill for fixed lengths.
     var i: u32 = 0;
@@ -371,11 +383,12 @@ fn arenaAllocBytes(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     try arenaAlive(vm, ctrl, "__arena_alloc_bytes");
     if (n == 0) return .{ .bytes = .{ .offset = 0, .len = 0 } };
 
+    const gen = ctrlGeneration(vm, ctrl);
     const cur_val = vm.slot(ctrl + 5).*;
     const cur = try asHeapPtr(cur_val);
     if (bumpInByteChunk(vm, cur, @intCast(n))) |off| {
         @memset(vm.bytes.items[@intCast(off)..][0..@intCast(n)], 0);
-        return .{ .bytes = .{ .offset = @intCast(off), .len = @intCast(n) } };
+        return .{ .bytes = .{ .offset = @intCast(off), .len = @intCast(n), .arena_ctrl = ctrl, .arena_gen = gen } };
     }
 
     const last_cap = vm.slot(cur + 2).*.i64;
@@ -388,7 +401,7 @@ fn arenaAllocBytes(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
 
     const off = bumpInByteChunk(vm, new_chunk, @intCast(n)) orelse return error.OutOfMemory;
     @memset(vm.bytes.items[@intCast(off)..][0..@intCast(n)], 0);
-    return .{ .bytes = .{ .offset = @intCast(off), .len = @intCast(n) } };
+    return .{ .bytes = .{ .offset = @intCast(off), .len = @intCast(n), .arena_ctrl = ctrl, .arena_gen = gen } };
 }
 
 fn arenaReset(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
@@ -486,6 +499,15 @@ pub fn requireContainerArena(vm: *VMState, ctrl: i32, gen: i32, comptime op: []c
     try arenaAlive(vm, ctrl, op);
     if (arenaGeneration(vm, ctrl) != gen)
         return fail(vm, op, "arena was reset");
+}
+
+/// Validate an arena-owned handle (`.bytes` / `.slice` / `.array`) before it is
+/// dereferenced. Frame/immortal handles carry `ctrl == 0` and always pass;
+/// arena handles trap when the arena was deinitialized or reset since allocation
+/// (Phase 4.1).
+pub fn checkArenaHandle(vm: *VMState, ctrl: i32, gen: i32) error{RuntimeError}!void {
+    if (ctrl == 0) return;
+    try requireContainerArena(vm, ctrl, gen, "arena memory access");
 }
 
 fn growCap(old: u32, min: u32) u32 {

@@ -39,5 +39,5 @@ print(@sizeOf(s));
 
 $arr = [1, 2, 3, 4];
 print(@sizeOf(arr));
-`), ["8", "1", "4", "64"]); // runtime arrays: count * @sizeOf(Value) (16-byte slot → 4×16 = 64)
+`), ["8", "1", "4", "96"]); // runtime arrays: count * @sizeOf(Value) (24-byte slot → 4×24 = 96; the slot carries the Phase 4.1 arena lifetime tag)
 });

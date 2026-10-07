@@ -2,6 +2,7 @@ const std = @import("std");
 const state_mod = @import("../state.zig");
 const stack = @import("../stack.zig");
 const runtime = @import("../../errors/runtime.zig");
+const mem_mod = @import("../builtins/mem.zig");
 
 const VMState = state_mod.VMState;
 const Value = state_mod.Value;
@@ -13,9 +14,22 @@ fn fail(vm: *VMState, msg: []const u8) HeapError {
     return runtime.runtimeFail(vm, msg);
 }
 
+/// Validate the arena lifetime of a packed handle before dereferencing it.
+/// Frame/immortal handles (`arena_ctrl == 0`) are always valid; arena handles
+/// trap if the owning arena was deinitialized or reset since allocation (4.1).
+fn checkValueArena(vm: *VMState, v: Value) HeapError!void {
+    switch (v) {
+        .bytes => |b| try mem_mod.checkArenaHandle(vm, b.arena_ctrl, b.arena_gen),
+        .slice => |s| try mem_mod.checkArenaHandle(vm, s.arena_ctrl, s.arena_gen),
+        .array => |a| try mem_mod.checkArenaHandle(vm, a.arena_ctrl, a.arena_gen),
+        else => {},
+    }
+}
+
 pub fn getIndex(vm: *VMState) HeapError!void {
     const idx = stack.pop(vm);
     const ptr = stack.pop(vm);
+    try checkValueArena(vm, ptr);
     const i = switch (idx) {
         .i64 => |x| x,
         else => return fail(vm, "Index must be int"),
@@ -72,6 +86,7 @@ pub fn getIndex(vm: *VMState) HeapError!void {
 pub fn getIndexOrNull(vm: *VMState) HeapError!void {
     const idx = stack.pop(vm);
     const ptr = stack.pop(vm);
+    try checkValueArena(vm, ptr);
     const i = switch (idx) {
         .i64 => |x| x,
         else => return fail(vm, "Index must be int"),
@@ -105,6 +120,7 @@ pub fn setIndex(vm: *VMState) HeapError!void {
     const val = stack.pop(vm);
     const idx = stack.pop(vm);
     const ptr = stack.pop(vm);
+    try checkValueArena(vm, ptr);
     const i = switch (idx) {
         .i64 => |x| x,
         else => return fail(vm, "Index must be int"),
@@ -161,6 +177,7 @@ fn asArrayPtr(vm: *VMState, v: Value) ?i32 {
 pub fn getArray(vm: *VMState) HeapError!void {
     const idx = stack.pop(vm);
     const ptr = stack.pop(vm);
+    try checkValueArena(vm, ptr);
     const i = switch (idx) {
         .i64 => |x| x,
         else => return fail(vm, "Index must be int"),
@@ -202,6 +219,7 @@ pub fn sliceView(vm: *VMState) HeapError!void {
     const hi_v = stack.pop(vm);
     const lo_v = stack.pop(vm);
     const obj = stack.pop(vm);
+    try checkValueArena(vm, obj);
     const widths = @import("../../compiler/widths.zig");
     const lo = widths.valueAsI64(lo_v) orelse return fail(vm, "Slice start must be int");
 
@@ -222,9 +240,9 @@ pub fn sliceView(vm: *VMState) HeapError!void {
         return;
     }
 
-    const offset: u32, const len: u32, const as_bytes: bool = switch (obj) {
-        .bytes => |b| .{ b.offset, b.len, true },
-        .slice => |s| .{ s.offset, s.len, false },
+    const offset: u32, const len: u32, const as_bytes: bool, const actrl: i32, const agen: i32 = switch (obj) {
+        .bytes => |b| .{ b.offset, b.len, true, b.arena_ctrl, b.arena_gen },
+        .slice => |s| .{ s.offset, s.len, false, s.arena_ctrl, s.arena_gen },
         else => return fail(vm, "Slice requires []byte or string"),
     };
     const hi: i64 = switch (hi_v) {
@@ -239,9 +257,9 @@ pub fn sliceView(vm: *VMState) HeapError!void {
     const start: u32 = @intCast(lo);
     const n: u32 = @intCast(hi - lo);
     if (as_bytes) {
-        try stack.push(vm, .{ .bytes = .{ .offset = offset + start, .len = n } });
+        try stack.push(vm, .{ .bytes = .{ .offset = offset + start, .len = n, .arena_ctrl = actrl, .arena_gen = agen } });
     } else {
-        try stack.push(vm, .{ .slice = .{ .offset = offset + start, .len = n } });
+        try stack.push(vm, .{ .slice = .{ .offset = offset + start, .len = n, .arena_ctrl = actrl, .arena_gen = agen } });
     }
 }
 
@@ -249,6 +267,7 @@ pub fn setArray(vm: *VMState) HeapError!void {
     const val = stack.pop(vm);
     const idx = stack.pop(vm);
     const ptr = stack.pop(vm);
+    try checkValueArena(vm, ptr);
     const i = switch (idx) {
         .i64 => |x| x,
         else => return fail(vm, "Index must be int"),
@@ -385,6 +404,7 @@ fn readU64(vm: *const VMState, at: u32) u64 {
 /// Stack: [base] → [field value].
 pub fn loadField(vm: *VMState, byte_offset: u16, kind: u8) HeapError!void {
     const base = stack.pop(vm);
+    try checkValueArena(vm, base);
     const base_off = try baseBytesOffset(vm, base);
     const at = base_off + byte_offset;
     const val: Value = switch (kind) {
@@ -418,6 +438,7 @@ pub fn loadField(vm: *VMState, byte_offset: u16, kind: u8) HeapError!void {
 pub fn storeField(vm: *VMState, byte_offset: u16, kind: u8) HeapError!void {
     const val = stack.pop(vm);
     const base = stack.pop(vm);
+    try checkValueArena(vm, base);
     const base_off = try baseBytesOffset(vm, base);
     const at = base_off + byte_offset;
     const widths = @import("../../compiler/widths.zig");
@@ -550,6 +571,7 @@ pub fn stringAdd(vm: *VMState) HeapError!void {
 }
 
 fn appendStr(vm: *VMState, v: Value) !void {
+    try checkValueArena(vm, v);
     switch (v) {
         .name => |idx| _ = try vm.appendImmortal(vm.chunk.stringAt(idx)),
         .slice => |s| {

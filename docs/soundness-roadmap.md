@@ -199,7 +199,7 @@ Prevent truthiness bugs and "property `x` does not exist on `y`" runtime errors.
 
 Guarantee predictable execution and memory safety at the hardware and VM boundary.
 
-* [ ] **4.1 Memory Safety: Lexical Arena Lifetimes & Generational Traps**
+* [x] **4.1 Memory Safety: Lexical Arena Lifetimes & Generational Traps**
   * [x] **Compile-Time Lexical Arena Lifetimes**: Prevent pointers allocated via `@new(arena, ...)` from escaping outside the lexical scope of the owning `arena`.
     * `@new` inherits the lifetime of its allocator. An allocator that is a **body-local** of the current function (`$a = mem.create(0)` then `@new(a, …)`) makes the result frame-bound; returning that pointer is rejected:
       ```lls
@@ -209,9 +209,16 @@ Guarantee predictable execution and memory safety at the hardware and VM boundar
       }
       ```
     * Allocators that outlive the call stay valid: an **arena parameter** (`make(a: mem.Arena)`) or a **module-level** arena (`$heap = mem.create(0)`) may be returned from. See `AllocRegion.arena_local` in [`src/compiler/state.zig`](file:///home/apex/Workspace/llts-zig/src/compiler/state.zig) and `allocatorIsFunctionLocal` in [`src/compiler/escape.zig`](file:///home/apex/Workspace/llts-zig/src/compiler/escape.zig).
-  * [ ] **Runtime Zero-UB Trap**: Encode an `arena_id` and allocation generation into packed heap handles in `vm.bytes`.
-    * If a pointer is accessed after its arena is deinitialized or reset, the VM traps **deterministically with an informative panic and stack trace**, completely eliminating silent memory corruption.
-    * _Not yet implemented: use-after-`deinit()` currently reads stale bytes rather than trapping._
+  * [x] **Runtime Zero-UB Trap**: Arena-owned handles carry the owning arena and the generation stamped at allocation time (`ArrayRef.arena_ctrl` / `arena_gen`, `SpanRef` for `.bytes` / `.slice`).
+    * Dereferencing the handle (field load/store, index get/set, slice, string concat) validates the arena is still alive and the generation is unchanged; otherwise the VM traps **deterministically with an informative panic and stack trace**.
+    * ```lls
+      $a = mem.create(0);
+      $p = @new(a, Box { n: 1 });
+      a.deinit();
+      print(p.n);   # RUNTIME TRAP: arena memory access: arena is deinitialized
+      ```
+    * Reset is detected through the arena generation: `a.reset(); print(p.n);` → `arena was reset`.
+    * Frame/immortal handles carry `arena_ctrl == 0` and are skipped, so the check stays off the common path. Covered by [`tests/47_arena_lifetime.test.ts`](file:///home/apex/Workspace/llts-zig/tests/47_arena_lifetime.test.ts).
 * [x] **4.2 Compile-Time Arithmetic Fault Prevention**
   * Constant-evaluation pass checks all division and modulo operators (`/`, `%`):
     ```lls
