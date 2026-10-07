@@ -211,21 +211,30 @@ Guarantee predictable execution and memory safety at the hardware and VM boundar
   * [ ] **Runtime Zero-UB Trap**: Encode an `arena_id` and allocation generation into packed heap handles in `vm.bytes`.
     * If a pointer is accessed after its arena is deinitialized or reset, the VM traps **deterministically with an informative panic and stack trace**, completely eliminating silent memory corruption.
     * _Not yet implemented: use-after-`deinit()` currently reads stale bytes rather than trapping._
-* [ ] **4.2 Compile-Time Arithmetic Fault Prevention**
+* [x] **4.2 Compile-Time Arithmetic Fault Prevention**
   * Constant-evaluation pass checks all division and modulo operators (`/`, `%`):
     ```lls
     $bad = 42 / 0; # COMPILE ERROR: division by zero in constant expression
     ```
-* [ ] **4.3 Explicit Integer Overflow Semantics**
+* [x] **4.3 Explicit Integer Overflow Semantics**
   * Standardize numeric overflow behavior across debug and release builds:
-    * Explicit wrapping semantics (`+%`, `-%`, `*%`).
-    * Checked arithmetic for standard `+`, `-`, `*` with well-defined fatal diagnostic panics.
+    * Explicit wrapping semantics (`+%`, `-%`, `*%`) — two's-complement wrap, never traps.
+    * Checked arithmetic for standard `+`, `-`, `*` with well-defined fatal diagnostic panics:
+      ```lls
+      $b: u8 = 250;
+      print(b + 10);   # RUNTIME TRAP: integer overflow: addition exceeds 'u8'; use '+%' …
+      print(b +% 10);  # 4  (explicit wraparound)
+      ```
+    * Constant expressions are checked during `@const` evaluation: `@const $x = MAX + 1;` → `integer overflow in constant expression`.
+    * Division/modulo additionally trap on zero and on the `minInt / -1` overflow.
+    * Implemented in `src/vm/execute/arith.zig` (`checkedI64`, `overflowFail`), `src/compiler/widths.zig` (`i128Fits`), and `src/compiler/const_eval.zig`.
 * [ ] **4.4 Safe Array & Slice Indexing**
   * **Compile-Time Bounds**: For `[N]T` fixed arrays where the index is constant, verify `0 <= i < N` at compile time.
   * **Safe Indexing API**: Introduce `arr.get(i): ?T` returning `null` if out of bounds.
   * **Bounds-Checked Traps**: Retain runtime bounds checks on dynamic `arr[i]`, ensuring trapped failure with line/column context rather than memory corruption.
-* [ ] **4.5 Frame-Local Memory Invariant**
+* [x] **4.5 Frame-Local Memory Invariant**
   * Reinforce the boundary in [`src/compiler/escape.zig`](file:///home/apex/Workspace/llts-zig/src/compiler/escape.zig): frame-allocated instances (`Foo{}`) can never escape the stack frame.
+  * Enforced for `return <local>` and `return &<local>`, including struct literals that embed a frame-local operand. Bare `return Foo{…}` with frame-free operands is promoted to immortal (module-init lifetime).
 
 ---
 

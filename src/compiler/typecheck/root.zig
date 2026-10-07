@@ -1452,7 +1452,9 @@ fn isErrorNarrowName(cond: *ast.Node) ?[]const u8 {
 fn isArith(op: []const u8) bool {
     return std.mem.eql(u8, op, "-") or std.mem.eql(u8, op, "*") or
         std.mem.eql(u8, op, "/") or std.mem.eql(u8, op, "%") or
-        std.mem.eql(u8, op, "^") or std.mem.eql(u8, op, "**");
+        std.mem.eql(u8, op, "^") or std.mem.eql(u8, op, "**") or
+        // Wrapping arithmetic mirrors the checked operators' types exactly.
+        std.mem.eql(u8, op, "+%") or std.mem.eql(u8, op, "-%") or std.mem.eql(u8, op, "*%");
 }
 
 fn inferCall(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, call_node: *ast.Node, c: *const ast.Call) TypecheckError!ir.Type {

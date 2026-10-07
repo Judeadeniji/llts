@@ -80,4 +80,14 @@ pub const OpCode = enum(u8) {
     /// Like OP_JUMP_IF_FALSE but tests `value == .null` — used for `??` null-coalescing
     /// and `.?` assertion unwrap. Does NOT consume the top-of-stack value.
     OP_JUMP_IF_NULL,
+    // Wrapping arithmetic (`+%`, `-%`, `*%`). Plain OP_ADD/SUB/MUL are checked
+    // and trap on i64 overflow; these wrap two's-complement instead.
+    OP_ADD_WRAP,
+    OP_SUB_WRAP,
+    OP_MUL_WRAP,
+    // Width-typed wrapping counterparts (operand u8 Width), mirroring
+    // OP_ADD_TYPED / OP_SUB_TYPED / OP_MUL_TYPED.
+    OP_ADD_TYPED_WRAP,
+    OP_SUB_TYPED_WRAP,
+    OP_MUL_TYPED_WRAP,
 };

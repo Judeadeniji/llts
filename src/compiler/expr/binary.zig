@@ -105,6 +105,14 @@ fn emitBinOp(state: *CompilerState, bin: *const ast.Binary) !void {
         } else {
             try emit.emitOp(state, .OP_ADD);
         }
+    } else if (std.mem.eql(u8, op, "+%")) {
+        // Wrapping add: never traps, two's-complement wrap on overflow.
+        if (both_int) {
+            try emit.emitOp(state, .OP_ADD_TYPED_WRAP);
+            try emit.emitByte(state, @intFromEnum(l_width.?));
+        } else {
+            try emit.emitOp(state, .OP_ADD_WRAP);
+        }
     } else if (std.mem.eql(u8, op, "-")) {
         if (both_int) {
             try emit.emitOp(state, .OP_SUB_TYPED);
@@ -112,12 +120,26 @@ fn emitBinOp(state: *CompilerState, bin: *const ast.Binary) !void {
         } else {
             try emit.emitOp(state, .OP_SUB);
         }
+    } else if (std.mem.eql(u8, op, "-%")) {
+        if (both_int) {
+            try emit.emitOp(state, .OP_SUB_TYPED_WRAP);
+            try emit.emitByte(state, @intFromEnum(l_width.?));
+        } else {
+            try emit.emitOp(state, .OP_SUB_WRAP);
+        }
     } else if (std.mem.eql(u8, op, "*")) {
         if (both_int) {
             try emit.emitOp(state, .OP_MUL_TYPED);
             try emit.emitByte(state, @intFromEnum(l_width.?));
         } else {
             try emit.emitOp(state, .OP_MUL);
+        }
+    } else if (std.mem.eql(u8, op, "*%")) {
+        if (both_int) {
+            try emit.emitOp(state, .OP_MUL_TYPED_WRAP);
+            try emit.emitByte(state, @intFromEnum(l_width.?));
+        } else {
+            try emit.emitOp(state, .OP_MUL_WRAP);
         }
     } else if (std.mem.eql(u8, op, "/")) {
         try emit.emitOp(state, .OP_DIV);

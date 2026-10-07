@@ -16,6 +16,48 @@ fn fail(vm: *VMState, msg: []const u8) ArithError {
 
 const ArithOp = enum { add, sub, mul, div, mod, pow };
 
+/// Human-readable verb for an arithmetic op, used in overflow diagnostics.
+fn opVerb(kind: ArithOp) []const u8 {
+    return switch (kind) {
+        .add => "addition",
+        .sub => "subtraction",
+        .mul => "multiplication",
+        .div => "division",
+        .mod => "remainder",
+        .pow => "exponentiation",
+    };
+}
+
+/// Report a detected integer overflow as a deterministic runtime trap.
+/// Plain `+`/`-`/`*` are checked; `+%`/`-%`/`*%` and `**` wrap instead.
+fn overflowFail(vm: *VMState, kind: ArithOp, width_name: []const u8) ArithError {
+    var buf: [192]u8 = undefined;
+    const wrap: []const u8 = switch (kind) {
+        .add => "+%",
+        .sub => "-%",
+        .mul => "*%",
+        else => "",
+    };
+    const msg = std.fmt.bufPrint(
+        &buf,
+        "integer overflow: {s} exceeds '{s}'; use '{s}' if wraparound is intended",
+        .{ opVerb(kind), width_name, wrap },
+    ) catch "integer overflow";
+    return fail(vm, msg);
+}
+
+/// Checked i64 `+`/`-`/`*`; traps on overflow instead of wrapping.
+fn checkedI64(vm: *VMState, kind: ArithOp, a: i64, b: i64) ArithError!i64 {
+    const r = switch (kind) {
+        .add => @addWithOverflow(a, b),
+        .sub => @subWithOverflow(a, b),
+        .mul => @mulWithOverflow(a, b),
+        else => unreachable,
+    };
+    if (r[1] != 0) return overflowFail(vm, kind, "i64");
+    return r[0];
+}
+
 fn asInt(v: Value) ?i64 {
     return widths.valueAsI64(v);
 }
@@ -24,7 +66,10 @@ fn asFloat(v: Value) ?f64 {
     return widths.valueAsF64(v);
 }
 
-pub fn binArith(vm: *VMState, op: OpCode) ArithError!void {
+/// `checked` selects trapping (`+`,`-`,`*`) versus wrapping (`+%`,`-%`,`*%`)
+/// semantics for integer add/sub/mul. Division/modulo always trap on zero and
+/// on the `minInt / -1` overflow; `**` always wraps.
+pub fn binArith(vm: *VMState, op: OpCode, checked: bool) ArithError!void {
     const kind: ArithOp = switch (op) {
         .OP_ADD => .add,
         .OP_SUB => .sub,
@@ -41,10 +86,12 @@ pub fn binArith(vm: *VMState, op: OpCode) ArithError!void {
             const ai = a_val.i64;
             const bi = b_val.i64;
             if (bi == 0 and (kind == .div or kind == .mod)) return fail(vm, "Division by zero");
+            if (kind == .div and ai == std.math.minInt(i64) and bi == -1)
+                return overflowFail(vm, .div, "i64");
             const result: i64 = switch (kind) {
-                .add => ai +% bi,
-                .sub => ai -% bi,
-                .mul => ai *% bi,
+                .add => if (checked) try checkedI64(vm, .add, ai, bi) else ai +% bi,
+                .sub => if (checked) try checkedI64(vm, .sub, ai, bi) else ai -% bi,
+                .mul => if (checked) try checkedI64(vm, .mul, ai, bi) else ai *% bi,
                 .div => @divTrunc(ai, bi),
                 .mod => @rem(ai, bi),
                 .pow => powi(ai, bi),
@@ -97,11 +144,18 @@ pub fn binArith(vm: *VMState, op: OpCode) ArithError!void {
     }
     const ai = asInt(a) orelse return fail(vm, "Operands must be numbers");
     const bi = asInt(b) orelse return fail(vm, "Operands must be numbers");
+    const is_ptr = (kind == .add and (a == .ptr or b == .ptr)) or
+        (kind == .sub and a == .ptr and b == .ptr);
     const result: i64 = switch (kind) {
-        .add => ai +% bi,
-        .sub => ai -% bi,
-        .mul => ai *% bi,
-        .div => if (bi == 0) return fail(vm, "Division by zero") else @divTrunc(ai, bi),
+        .add => if (checked and !is_ptr) try checkedI64(vm, .add, ai, bi) else ai +% bi,
+        .sub => if (checked and !is_ptr) try checkedI64(vm, .sub, ai, bi) else ai -% bi,
+        .mul => if (checked) try checkedI64(vm, .mul, ai, bi) else ai *% bi,
+        .div => if (bi == 0)
+            return fail(vm, "Division by zero")
+        else if (ai == std.math.minInt(i64) and bi == -1)
+            return overflowFail(vm, .div, "i64")
+        else
+            @divTrunc(ai, bi),
         .mod => if (bi == 0) return fail(vm, "Division by zero") else @rem(ai, bi),
         .pow => powi(ai, bi),
     };
@@ -116,7 +170,10 @@ pub fn binArith(vm: *VMState, op: OpCode) ArithError!void {
 
 pub const TypedOp = enum { add, sub, mul };
 
-pub inline fn binArithTyped(vm: *VMState, kind: TypedOp, width_byte: u8) ArithError!void {
+/// Width-typed `+`/`-`/`*`. When `checked`, the *wide* (i128) result must fit
+/// the declared width or the VM traps; when wrapping, the low bits are kept
+/// (two's complement), matching `+%`/`-%`/`*%`.
+pub inline fn binArithTyped(vm: *VMState, kind: TypedOp, width_byte: u8, checked: bool) ArithError!void {
     const width: widths.Width = @enumFromInt(width_byte);
     if (vm.sp >= 2) {
         const a_val = vm.stack_buf[vm.sp - 2];
@@ -125,9 +182,9 @@ pub inline fn binArithTyped(vm: *VMState, kind: TypedOp, width_byte: u8) ArithEr
             const ai = a_val.i64;
             const bi = b_val.i64;
             const result: i64 = switch (kind) {
-                .add => ai +% bi,
-                .sub => ai -% bi,
-                .mul => ai *% bi,
+                .add => if (checked) try checkedI64(vm, .add, ai, bi) else ai +% bi,
+                .sub => if (checked) try checkedI64(vm, .sub, ai, bi) else ai -% bi,
+                .mul => if (checked) try checkedI64(vm, .mul, ai, bi) else ai *% bi,
             };
             vm.sp -= 1;
             vm.stack_buf[vm.sp - 1] = .{ .i64 = result };
@@ -138,11 +195,22 @@ pub inline fn binArithTyped(vm: *VMState, kind: TypedOp, width_byte: u8) ArithEr
     const a = stack.pop(vm);
     const bi = widths.valueAsI64(b) orelse return fail(vm, "Operands must be ints");
     const ai = widths.valueAsI64(a) orelse return fail(vm, "Operands must be ints");
-    const result: i64 = switch (kind) {
-        .add => ai +% bi,
-        .sub => ai -% bi,
-        .mul => ai *% bi,
+    // Widen to i128 so the true product/sum is representable, then either trap
+    // when it leaves the declared range or truncate for wrapping semantics.
+    const wide: i128 = switch (kind) {
+        .add => @as(i128, ai) + @as(i128, bi),
+        .sub => @as(i128, ai) - @as(i128, bi),
+        .mul => @as(i128, ai) * @as(i128, bi),
     };
+    if (checked and !widths.i128Fits(width, wide)) {
+        const kind_op: ArithOp = switch (kind) {
+            .add => .add,
+            .sub => .sub,
+            .mul => .mul,
+        };
+        return overflowFail(vm, kind_op, width.name());
+    }
+    const result: i64 = @truncate(wide);
     try stack.push(vm, widths.wrapToWidth(result, width));
 }
 
@@ -170,7 +238,10 @@ fn powi(base: i64, exp: i64) i64 {
 pub fn negate(vm: *VMState) ArithError!void {
     const a = stack.pop(vm);
     switch (a) {
-        .i64 => |n| try stack.push(vm, .{ .i64 = -n }),
+        .i64 => |n| {
+            if (n == std.math.minInt(i64)) return overflowFail(vm, .sub, "i64");
+            try stack.push(vm, .{ .i64 = -n });
+        },
         .u8 => |n| try stack.push(vm, .{ .i64 = -@as(i64, n) }),
         .f32 => |n| try stack.push(vm, .{ .f32 = -n }),
         .f64 => |n| try stack.push(vm, .{ .f64 = -n }),

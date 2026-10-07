@@ -17,9 +17,11 @@ pub const PRECEDENCE = struct {
         if (std.mem.eql(u8, op, ">") or std.mem.eql(u8, op, ">=") or
             std.mem.eql(u8, op, "<") or std.mem.eql(u8, op, "<=")) return 9;
         if (std.mem.eql(u8, op, "<<") or std.mem.eql(u8, op, ">>")) return 10;
-        if (std.mem.eql(u8, op, "+") or std.mem.eql(u8, op, "-") or std.mem.eql(u8, op, "|>")) return 11;
+        if (std.mem.eql(u8, op, "+") or std.mem.eql(u8, op, "-") or std.mem.eql(u8, op, "|>") or
+            std.mem.eql(u8, op, "+%") or std.mem.eql(u8, op, "-%")) return 11;
         if (std.mem.eql(u8, op, "*") or std.mem.eql(u8, op, "/") or
-            std.mem.eql(u8, op, "%") or std.mem.eql(u8, op, "**")) return 12;
+            std.mem.eql(u8, op, "%") or std.mem.eql(u8, op, "**") or
+            std.mem.eql(u8, op, "*%")) return 12;
         if (std.mem.eql(u8, op, "^")) return 13;
         if (std.mem.eql(u8, op, "..")) return 14;
         return -1;

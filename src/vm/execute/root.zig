@@ -90,12 +90,18 @@ pub fn execute(vm: *VMState, start_ip: usize) RuntimeError!void {
                     (code_ptr[ip + 1] == @intFromEnum(widths.Width.i64) or code_ptr[ip + 1] == @intFromEnum(widths.Width.isize)) and
                     sp > 0 and stack_buf[sp - 1] == .i64 and constants[c_idx] == .i64)
                 {
-                    stack_buf[sp - 1].i64 *%= constants[c_idx].i64;
-                    ip += 2;
-                    continue;
+                    // Checked `*`: only fuse when the product cannot overflow.
+                    // On overflow fall through so OP_MUL_TYPED traps with context.
+                    const r = @mulWithOverflow(stack_buf[sp - 1].i64, constants[c_idx].i64);
+                    if (r[1] == 0) {
+                        stack_buf[sp - 1].i64 = r[0];
+                        ip += 2;
+                        continue;
+                    }
                 }
                 if (ip < code_len and code_ptr[ip] == @intFromEnum(OpCode.OP_DIV) and
-                    sp > 0 and stack_buf[sp - 1] == .i64 and constants[c_idx] == .i64 and constants[c_idx].i64 != 0)
+                    sp > 0 and stack_buf[sp - 1] == .i64 and constants[c_idx] == .i64 and constants[c_idx].i64 != 0 and
+                    !(stack_buf[sp - 1].i64 == std.math.minInt(i64) and constants[c_idx].i64 == -1))
                 {
                     stack_buf[sp - 1].i64 = @divTrunc(stack_buf[sp - 1].i64, constants[c_idx].i64);
                     ip += 1;
@@ -140,31 +146,82 @@ pub fn execute(vm: *VMState, start_ip: usize) RuntimeError!void {
             },
             .OP_ADD => {
                 if (sp >= 2 and stack_buf[sp - 2] == .i64 and stack_buf[sp - 1] == .i64) {
+                    const r = @addWithOverflow(stack_buf[sp - 2].i64, stack_buf[sp - 1].i64);
+                    if (r[1] == 0) {
+                        stack_buf[sp - 2].i64 = r[0];
+                        sp -= 1;
+                    } else {
+                        syncVM(vm, sp);
+                        try arith.binArith(vm, .OP_ADD, true);
+                        sp = vm.sp;
+                    }
+                } else {
+                    syncVM(vm, sp);
+                    try arith.binArith(vm, .OP_ADD, true);
+                    sp = vm.sp;
+                }
+            },
+            .OP_ADD_WRAP => {
+                if (sp >= 2 and stack_buf[sp - 2] == .i64 and stack_buf[sp - 1] == .i64) {
                     stack_buf[sp - 2].i64 +%= stack_buf[sp - 1].i64;
                     sp -= 1;
                 } else {
                     syncVM(vm, sp);
-                    try arith.binArith(vm, .OP_ADD);
+                    try arith.binArith(vm, .OP_ADD, false);
                     sp = vm.sp;
                 }
             },
             .OP_SUB => {
                 if (sp >= 2 and stack_buf[sp - 2] == .i64 and stack_buf[sp - 1] == .i64) {
+                    const r = @subWithOverflow(stack_buf[sp - 2].i64, stack_buf[sp - 1].i64);
+                    if (r[1] == 0) {
+                        stack_buf[sp - 2].i64 = r[0];
+                        sp -= 1;
+                    } else {
+                        syncVM(vm, sp);
+                        try arith.binArith(vm, .OP_SUB, true);
+                        sp = vm.sp;
+                    }
+                } else {
+                    syncVM(vm, sp);
+                    try arith.binArith(vm, .OP_SUB, true);
+                    sp = vm.sp;
+                }
+            },
+            .OP_SUB_WRAP => {
+                if (sp >= 2 and stack_buf[sp - 2] == .i64 and stack_buf[sp - 1] == .i64) {
                     stack_buf[sp - 2].i64 -%= stack_buf[sp - 1].i64;
                     sp -= 1;
                 } else {
                     syncVM(vm, sp);
-                    try arith.binArith(vm, .OP_SUB);
+                    try arith.binArith(vm, .OP_SUB, false);
                     sp = vm.sp;
                 }
             },
             .OP_MUL => {
                 if (sp >= 2 and stack_buf[sp - 2] == .i64 and stack_buf[sp - 1] == .i64) {
+                    const r = @mulWithOverflow(stack_buf[sp - 2].i64, stack_buf[sp - 1].i64);
+                    if (r[1] == 0) {
+                        stack_buf[sp - 2].i64 = r[0];
+                        sp -= 1;
+                    } else {
+                        syncVM(vm, sp);
+                        try arith.binArith(vm, .OP_MUL, true);
+                        sp = vm.sp;
+                    }
+                } else {
+                    syncVM(vm, sp);
+                    try arith.binArith(vm, .OP_MUL, true);
+                    sp = vm.sp;
+                }
+            },
+            .OP_MUL_WRAP => {
+                if (sp >= 2 and stack_buf[sp - 2] == .i64 and stack_buf[sp - 1] == .i64) {
                     stack_buf[sp - 2].i64 *%= stack_buf[sp - 1].i64;
                     sp -= 1;
                 } else {
                     syncVM(vm, sp);
-                    try arith.binArith(vm, .OP_MUL);
+                    try arith.binArith(vm, .OP_MUL, false);
                     sp = vm.sp;
                 }
             },
@@ -174,7 +231,7 @@ pub fn execute(vm: *VMState, start_ip: usize) RuntimeError!void {
                     sp -= 1;
                 } else {
                     syncVM(vm, sp);
-                    try arith.binArith(vm, .OP_DIV);
+                    try arith.binArith(vm, .OP_DIV, true);
                     sp = vm.sp;
                 }
             },
@@ -184,13 +241,13 @@ pub fn execute(vm: *VMState, start_ip: usize) RuntimeError!void {
                     sp -= 1;
                 } else {
                     syncVM(vm, sp);
-                    try arith.binArith(vm, .OP_MOD);
+                    try arith.binArith(vm, .OP_MOD, true);
                     sp = vm.sp;
                 }
             },
             .OP_POW => {
                 syncVM(vm, sp);
-                try arith.binArith(vm, .OP_POW);
+                try arith.binArith(vm, .OP_POW, false);
                 sp = vm.sp;
             },
             .OP_BIT_AND, .OP_BIT_OR, .OP_BIT_XOR, .OP_SHL, .OP_SHR => {
@@ -311,39 +368,78 @@ pub fn execute(vm: *VMState, start_ip: usize) RuntimeError!void {
                 if (sp >= 2 and stack_buf[sp - 2] == .i64 and stack_buf[sp - 1] == .i64 and
                     (width_byte == @intFromEnum(widths.Width.i64) or width_byte == @intFromEnum(widths.Width.isize)))
                 {
-                    stack_buf[sp - 2].i64 +%= stack_buf[sp - 1].i64;
-                    sp -= 1;
+                    const r = @addWithOverflow(stack_buf[sp - 2].i64, stack_buf[sp - 1].i64);
+                    if (r[1] == 0) {
+                        stack_buf[sp - 2].i64 = r[0];
+                        sp -= 1;
+                    } else {
+                        syncVM(vm, sp);
+                        try arith.binArithTyped(vm, .add, width_byte, true);
+                        sp = vm.sp;
+                    }
                 } else {
                     syncVM(vm, sp);
-                    try arith.binArithTyped(vm, .add, width_byte);
+                    try arith.binArithTyped(vm, .add, width_byte, true);
                     sp = vm.sp;
                 }
+            },
+            .OP_ADD_TYPED_WRAP => {
+                const width_byte = readByte(code_ptr, &ip);
+                syncVM(vm, sp);
+                try arith.binArithTyped(vm, .add, width_byte, false);
+                sp = vm.sp;
             },
             .OP_SUB_TYPED => {
                 const width_byte = readByte(code_ptr, &ip);
                 if (sp >= 2 and stack_buf[sp - 2] == .i64 and stack_buf[sp - 1] == .i64 and
                     (width_byte == @intFromEnum(widths.Width.i64) or width_byte == @intFromEnum(widths.Width.isize)))
                 {
-                    stack_buf[sp - 2].i64 -%= stack_buf[sp - 1].i64;
-                    sp -= 1;
+                    const r = @subWithOverflow(stack_buf[sp - 2].i64, stack_buf[sp - 1].i64);
+                    if (r[1] == 0) {
+                        stack_buf[sp - 2].i64 = r[0];
+                        sp -= 1;
+                    } else {
+                        syncVM(vm, sp);
+                        try arith.binArithTyped(vm, .sub, width_byte, true);
+                        sp = vm.sp;
+                    }
                 } else {
                     syncVM(vm, sp);
-                    try arith.binArithTyped(vm, .sub, width_byte);
+                    try arith.binArithTyped(vm, .sub, width_byte, true);
                     sp = vm.sp;
                 }
+            },
+            .OP_SUB_TYPED_WRAP => {
+                const width_byte = readByte(code_ptr, &ip);
+                syncVM(vm, sp);
+                try arith.binArithTyped(vm, .sub, width_byte, false);
+                sp = vm.sp;
             },
             .OP_MUL_TYPED => {
                 const width_byte = readByte(code_ptr, &ip);
                 if (sp >= 2 and stack_buf[sp - 2] == .i64 and stack_buf[sp - 1] == .i64 and
                     (width_byte == @intFromEnum(widths.Width.i64) or width_byte == @intFromEnum(widths.Width.isize)))
                 {
-                    stack_buf[sp - 2].i64 *%= stack_buf[sp - 1].i64;
-                    sp -= 1;
+                    const r = @mulWithOverflow(stack_buf[sp - 2].i64, stack_buf[sp - 1].i64);
+                    if (r[1] == 0) {
+                        stack_buf[sp - 2].i64 = r[0];
+                        sp -= 1;
+                    } else {
+                        syncVM(vm, sp);
+                        try arith.binArithTyped(vm, .mul, width_byte, true);
+                        sp = vm.sp;
+                    }
                 } else {
                     syncVM(vm, sp);
-                    try arith.binArithTyped(vm, .mul, width_byte);
+                    try arith.binArithTyped(vm, .mul, width_byte, true);
                     sp = vm.sp;
                 }
+            },
+            .OP_MUL_TYPED_WRAP => {
+                const width_byte = readByte(code_ptr, &ip);
+                syncVM(vm, sp);
+                try arith.binArithTyped(vm, .mul, width_byte, false);
+                sp = vm.sp;
             },
             .OP_LT_TYPED => {
                 const width_byte = readByte(code_ptr, &ip);
@@ -375,8 +471,10 @@ pub fn execute(vm: *VMState, start_ip: usize) RuntimeError!void {
                     code_ptr[ip] == @intFromEnum(OpCode.OP_ADD_TYPED) and
                     (code_ptr[ip + 1] == @intFromEnum(widths.Width.i64) or code_ptr[ip + 1] == @intFromEnum(widths.Width.isize)) and
                     sp > 0 and idx < sp and stack_buf[sp - 1] == .i64 and stack_buf[idx] == .i64)
-                {
-                    stack_buf[sp - 1].i64 +%= stack_buf[idx].i64;
+                add_peephole: {
+                    const r = @addWithOverflow(stack_buf[sp - 1].i64, stack_buf[idx].i64);
+                    if (r[1] != 0) break :add_peephole;
+                    stack_buf[sp - 1].i64 = r[0];
                     ip += 2;
                     if (ip + 4 <= code_len and
                         code_ptr[ip] == @intFromEnum(OpCode.OP_SET_GLOBAL) and
@@ -421,8 +519,10 @@ pub fn execute(vm: *VMState, start_ip: usize) RuntimeError!void {
                     code_ptr[ip] == @intFromEnum(OpCode.OP_SUB_TYPED) and
                     (code_ptr[ip + 1] == @intFromEnum(widths.Width.i64) or code_ptr[ip + 1] == @intFromEnum(widths.Width.isize)) and
                     sp > 0 and idx < sp and stack_buf[sp - 1] == .i64 and stack_buf[idx] == .i64)
-                {
-                    stack_buf[sp - 1].i64 -%= stack_buf[idx].i64;
+                sub_peephole: {
+                    const r = @subWithOverflow(stack_buf[sp - 1].i64, stack_buf[idx].i64);
+                    if (r[1] != 0) break :sub_peephole;
+                    stack_buf[sp - 1].i64 = r[0];
                     ip += 2;
                     continue;
                 }

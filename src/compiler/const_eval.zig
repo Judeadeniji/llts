@@ -128,22 +128,37 @@ pub const ConstValue = union(enum) {
 pub const ComptimeScope = struct {
     allocator: std.mem.Allocator,
     locals: std.StringHashMap(ConstValue),
+    const_names: std.StringHashMap(void),
     parent: ?*ComptimeScope = null,
+    is_loop: bool = false,
     broken_val: ?ConstValue = null,
     returned_val: ?ConstValue = null,
     has_broken: bool = false,
     has_returned: bool = false,
+    has_continued: bool = false,
 
     pub fn init(allocator: std.mem.Allocator, parent: ?*ComptimeScope) ComptimeScope {
         return .{
             .allocator = allocator,
             .locals = std.StringHashMap(ConstValue).init(allocator),
+            .const_names = std.StringHashMap(void).init(allocator),
             .parent = parent,
+        };
+    }
+
+    pub fn initLoop(allocator: std.mem.Allocator, parent: ?*ComptimeScope) ComptimeScope {
+        return .{
+            .allocator = allocator,
+            .locals = std.StringHashMap(ConstValue).init(allocator),
+            .const_names = std.StringHashMap(void).init(allocator),
+            .parent = parent,
+            .is_loop = true,
         };
     }
 
     pub fn deinit(self: *ComptimeScope) void {
         self.locals.deinit();
+        self.const_names.deinit();
     }
 
     pub fn get(self: *const ComptimeScope, name: []const u8) ?ConstValue {
@@ -162,10 +177,50 @@ pub const ComptimeScope = struct {
         return null;
     }
 
+    pub fn contains(self: *const ComptimeScope, name: []const u8) bool {
+        if (self.locals.contains(name)) return true;
+        if (name.len > 0 and name[0] == '$') {
+            if (self.locals.contains(name[1..])) return true;
+        } else {
+            var buf: [128]u8 = undefined;
+            if (name.len + 1 <= buf.len) {
+                buf[0] = '$';
+                @memcpy(buf[1 .. name.len + 1], name);
+                if (self.locals.contains(buf[0 .. name.len + 1])) return true;
+            }
+        }
+        if (self.parent) |p| return p.contains(name);
+        return false;
+    }
+
+    pub fn isConst(self: *const ComptimeScope, name: []const u8) bool {
+        if (self.const_names.contains(name)) return true;
+        if (name.len > 0 and name[0] == '$') {
+            if (self.const_names.contains(name[1..])) return true;
+        } else {
+            var buf: [128]u8 = undefined;
+            if (name.len + 1 <= buf.len) {
+                buf[0] = '$';
+                @memcpy(buf[1 .. name.len + 1], name);
+                if (self.const_names.contains(buf[0 .. name.len + 1])) return true;
+            }
+        }
+        if (self.parent) |p| return p.isConst(name);
+        return false;
+    }
+
     pub fn put(self: *ComptimeScope, name: []const u8, val: ConstValue) !void {
         try self.locals.put(name, val);
         if (name.len > 0 and name[0] == '$') {
             try self.locals.put(name[1..], val);
+        }
+    }
+
+    pub fn putConst(self: *ComptimeScope, name: []const u8, val: ConstValue) !void {
+        try self.put(name, val);
+        try self.const_names.put(name, {});
+        if (name.len > 0 and name[0] == '$') {
+            try self.const_names.put(name[1..], {});
         }
     }
 
@@ -188,6 +243,23 @@ pub const ComptimeScope = struct {
         return false;
     }
 };
+
+fn isConstBinding(state: *CompilerState, scope: ?*const ComptimeScope, name: []const u8) bool {
+    if (scope) |s| {
+        if (s.isConst(name)) return true;
+        if (s.contains(name)) return false;
+    }
+    if (state.global_consts.contains(name)) return true;
+    if (state.const_values.contains(name)) return true;
+    if (state.ready_global_consts.contains(name)) return true;
+    if (name.len > 0 and name[0] == '$') {
+        const bare = name[1..];
+        if (state.global_consts.contains(bare)) return true;
+        if (state.const_values.contains(bare)) return true;
+        if (state.ready_global_consts.contains(bare)) return true;
+    }
+    return false;
+}
 
 fn parseIntWithUnderscores(raw: []const u8, radix: u8) !i64 {
     var buf: [128]u8 = undefined;
@@ -296,7 +368,10 @@ fn evalExprInner(state: *CompilerState, scope: ?*ComptimeScope, n: *ast.Node) an
             const arg_val = (try evalExpr(state, scope, u.arg)) orelse return null;
             if (std.mem.eql(u8, u.operator, "-")) {
                 return switch (arg_val) {
-                    .i64 => |v| .{ .i64 = -v },
+                    .i64 => |v| blk: {
+                        if (v == std.math.minInt(i64)) return compile_errors.compileFailFmt(state, "integer overflow in constant expression", .{});
+                        break :blk .{ .i64 = -v };
+                    },
                     .f64 => |v| .{ .f64 = -v },
                     else => null,
                 };
@@ -323,7 +398,11 @@ fn evalExprInner(state: *CompilerState, scope: ?*ComptimeScope, n: *ast.Node) an
             const right_val = (try evalExpr(state, scope, b.right)) orelse return null;
 
             if (std.mem.eql(u8, b.operator, "+")) {
-                if (left_val == .i64 and right_val == .i64) return .{ .i64 = left_val.i64 + right_val.i64 };
+                if (left_val == .i64 and right_val == .i64) {
+                    const r = @addWithOverflow(left_val.i64, right_val.i64);
+                    if (r[1] != 0) return compile_errors.compileFailFmt(state, "integer overflow in constant expression", .{});
+                    return .{ .i64 = r[0] };
+                }
                 if (left_val == .f64 and right_val == .f64) return .{ .f64 = left_val.f64 + right_val.f64 };
                 if (left_val == .string and right_val == .string) {
                     const joined = try std.mem.concat(state.allocator, u8, &[_][]const u8{ left_val.string, right_val.string });
@@ -331,14 +410,34 @@ fn evalExprInner(state: *CompilerState, scope: ?*ComptimeScope, n: *ast.Node) an
                 }
                 return null;
             }
+            if (std.mem.eql(u8, b.operator, "+%")) {
+                if (left_val == .i64 and right_val == .i64) return .{ .i64 = left_val.i64 +% right_val.i64 };
+                return null;
+            }
             if (std.mem.eql(u8, b.operator, "-")) {
-                if (left_val == .i64 and right_val == .i64) return .{ .i64 = left_val.i64 - right_val.i64 };
+                if (left_val == .i64 and right_val == .i64) {
+                    const r = @subWithOverflow(left_val.i64, right_val.i64);
+                    if (r[1] != 0) return compile_errors.compileFailFmt(state, "integer overflow in constant expression", .{});
+                    return .{ .i64 = r[0] };
+                }
                 if (left_val == .f64 and right_val == .f64) return .{ .f64 = left_val.f64 - right_val.f64 };
                 return null;
             }
+            if (std.mem.eql(u8, b.operator, "-%")) {
+                if (left_val == .i64 and right_val == .i64) return .{ .i64 = left_val.i64 -% right_val.i64 };
+                return null;
+            }
             if (std.mem.eql(u8, b.operator, "*")) {
-                if (left_val == .i64 and right_val == .i64) return .{ .i64 = left_val.i64 * right_val.i64 };
+                if (left_val == .i64 and right_val == .i64) {
+                    const r = @mulWithOverflow(left_val.i64, right_val.i64);
+                    if (r[1] != 0) return compile_errors.compileFailFmt(state, "integer overflow in constant expression", .{});
+                    return .{ .i64 = r[0] };
+                }
                 if (left_val == .f64 and right_val == .f64) return .{ .f64 = left_val.f64 * right_val.f64 };
+                return null;
+            }
+            if (std.mem.eql(u8, b.operator, "*%")) {
+                if (left_val == .i64 and right_val == .i64) return .{ .i64 = left_val.i64 *% right_val.i64 };
                 return null;
             }
             if (std.mem.eql(u8, b.operator, "/")) {

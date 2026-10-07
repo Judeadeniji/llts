@@ -5,6 +5,9 @@ pub const BinOps = struct {
         "+",  "-",  "*",  "/",  "%",  "^",  "==", "!=", ">", ">=", "<", "<=",
         "&&", "||", "**", "|>", "..", "=>", "??",
         "&",  "|",  "~",  "<<", ">>",
+        // Wrapping arithmetic (`+%`, `-%`, `*%`): two's-complement wrap on
+        // overflow. Plain `+`/`-`/`*` are checked and trap on overflow.
+        "+%", "-%", "*%",
     };
 };
 

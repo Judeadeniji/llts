@@ -19,22 +19,32 @@ Operators are represented as struct namespaces containing `values`, which is a s
 pub const BinOps = struct {
     pub const values = [_][]const u8{
         "+",  "-",  "*",  "/",  "%",  "^",  "==", "!=", ">", ">=", "<", "<=",
-        "&&", "||", "**", "|>", "..", "=>",
+        "&&", "||", "**", "|>", "..", "=>", "??",
+        "&",  "|",  "~",  "<<", ">>",
+        "+%", "-%", "*%",
     };
 };
 
 // Unary Operators
 pub const UnaryOps = struct {
-    pub const values = [_][]const u8{ "!", "-" };
+    pub const values = [_][]const u8{ "!", "-", "~" };
 };
 
 // Assignment Operators
 pub const AssignOps = struct {
     pub const values = [_][]const u8{
         "=", "+=", "-=", "*=", "/=", "%=", "^=", "&&=", "||=",
+        "&=", "|=", "~=", "<<=", ">>=",
     };
 };
 ```
+
+**Overflow semantics:** `+`, `-`, and `*` are **checked** — an integer overflow traps
+with a deterministic runtime diagnostic. The wrapping operators `+%`, `-%`, and `*%`
+opt into two's-complement wraparound (`u8 250 +% 10 == 4`). Constant expressions are
+checked at compile time (`integer overflow in constant expression`) and may use the
+wrapping form to opt out. See `src/vm/execute/arith.zig` (`checkedI64`, `overflowFail`)
+and `src/compiler/widths.zig` (`i128Fits`).
 
 **Constraints & Rules:**
 - Operator representations must perfectly match the token strings extracted during the scanning phase.
@@ -59,8 +69,8 @@ pub const PRECEDENCE = struct {
 3. Logical AND (`&&`)
 4. Equality (`==`, `!=`)
 5. Relational (`>`, `>=`, `<`, `<=`)
-6. Additive & Pipe (`+`, `-`, `|>`)
-7. Multiplicative (`*`, `/`, `%`, `**`)
+6. Additive & Pipe (`+`, `-`, `|>`, `+%`, `-%`)
+7. Multiplicative (`*`, `/`, `%`, `**`, `*%`)
 8. Exponentiation (`^`)
 9. Range (`..`)
 

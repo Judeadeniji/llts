@@ -121,6 +121,24 @@ pub fn i64Fits(width: Width, n: i64) bool {
     };
 }
 
+/// True when an i128 value fits the declared integer width without loss.
+/// Used by checked `+`/`-`/`*` to trap instead of wrapping.
+pub fn i128Fits(width: Width, n: i128) bool {
+    return switch (width.concrete()) {
+        .u1 => n == 0 or n == 1,
+        .i8 => n >= std.math.minInt(i8) and n <= std.math.maxInt(i8),
+        .i16 => n >= std.math.minInt(i16) and n <= std.math.maxInt(i16),
+        .i32 => n >= std.math.minInt(i32) and n <= std.math.maxInt(i32),
+        .i64 => n >= std.math.minInt(i64) and n <= std.math.maxInt(i64),
+        .u8 => n >= 0 and n <= std.math.maxInt(u8),
+        .u16 => n >= 0 and n <= std.math.maxInt(u16),
+        .u32 => n >= 0 and n <= std.math.maxInt(u32),
+        .u64 => n >= 0 and n <= std.math.maxInt(u64),
+        .f32, .f64 => true,
+        else => unreachable,
+    };
+}
+
 const value_mod = @import("../bytecode/value.zig");
 const Value = value_mod.Value;
 
