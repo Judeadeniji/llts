@@ -270,8 +270,12 @@ Ensure no regressions can compromise the soundness invariants.
     * *"parameter 'a' of function 'add' must have an explicit type annotation in strict mode; write 'a: int' (or the intended type)"*
     * *"@switch is missing enum variants: Green, Blue; add a prong for each, or an '@else'"*
     * Overflow, arena-escape, optional-access, union-access, and `null`→`*T` diagnostics already name the offending construct and the fix.
-* [ ] **5.3 Release-Mode Verification**
-  * Verify that `--release` retains static soundness: since the compiler proves validity at compile time, release builds can strip assertion overhead without risking undefined behavior.
+* [x] **5.3 Release-Mode Verification**
+  * `--release` (`-r`) only strips debug-only bytecode — `OP_LINE` source maps and `OP_ASSERT_TYPE` — so release builds drop diagnostic overhead without weakening safety.
+  * Verified by [`tests/46_release_soundness.test.ts`](file:///home/apex/Workspace/llts-zig/tests/46_release_soundness.test.ts):
+    * Valid programs produce byte-identical output in debug and release.
+    * Every `tests/compile_fails/` rejection still fires under `-r` (and `-r -s` for strict-mode cases), since typecheck runs regardless of flags.
+    * Runtime soundness traps (checked overflow, dynamic bounds) still abort in release — they are real VM traps, not debug assertions. Only the `file:line:col` context is dropped.
 
 ---
 
