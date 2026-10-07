@@ -174,8 +174,8 @@ fn checkEnumExhaustiveness(state: *CompilerState, sw: *const ast.Switch) !bool {
                         }
                     }
                 }
-                var buf: [128]u8 = undefined;
-                const msg = std.fmt.bufPrint(&buf, "@switch is missing enum variant: {s}", .{vname}) catch "@switch is missing enum variant";
+                var buf: [192]u8 = undefined;
+                const msg = std.fmt.bufPrint(&buf, "@switch is missing enum variant: {s}; add a prong for it or an '@else'", .{vname}) catch "@switch is missing enum variant";
                 return fail(state, msg);
             }
         }
@@ -207,7 +207,7 @@ fn checkEnumExhaustiveness(state: *CompilerState, sw: *const ast.Switch) !bool {
 }
 
 fn failMissingVariants(state: *CompilerState, missing: []const []const u8) error{CompileError} {
-    var buf: [256]u8 = undefined;
+    var buf: [320]u8 = undefined;
     var fbs = std.io.fixedBufferStream(&buf);
     const w = fbs.writer();
     w.writeAll("@switch is missing enum variant") catch {};
@@ -217,6 +217,7 @@ fn failMissingVariants(state: *CompilerState, missing: []const []const u8) error
         if (i > 0) w.writeAll(", ") catch {};
         w.writeAll(m) catch {};
     }
+    w.writeAll("; add a prong for each, or an '@else'") catch {};
     return fail(state, fbs.getWritten());
 }
 

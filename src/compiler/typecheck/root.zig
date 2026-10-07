@@ -755,7 +755,7 @@ fn fnParamTypes(state: *state_mod.CompilerState, ta: ir.TypeAlloc, func_name: []
         } else if (state.strict) {
             const is_method_self = (method_struct != null and i == 0 and std.mem.eql(u8, pnode.name, "self"));
             if (!is_method_self) {
-                return compiler_errors.compileFailFmt(state, "parameter '{s}' of function '{s}' must have an explicit type annotation in strict mode", .{ pnode.name, f.name });
+                return compiler_errors.compileFailFmt(state, "parameter '{s}' of function '{s}' must have an explicit type annotation in strict mode; write '{s}: int' (or the intended type)", .{ pnode.name, f.name, pnode.name });
             }
         }
         if (method_struct) |sname| {
@@ -1242,7 +1242,7 @@ fn inferExprInner(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, 
             } else if (state.strict) {
                 if (!ir.isSubtype(ir.peelDefined(cond_t), ir.TBool)) {
                     const disp = try ownDisplay(state, cond_t);
-                    return compiler_errors.compileFailFmt(state, "condition of @if must be boolean ('bool' or 'u1'), got '{s}'", .{disp});
+                    return compiler_errors.compileFailFmt(state, "condition of @if must be boolean ('bool' or 'u1'), got '{s}'; compare explicitly (e.g. 'x != 0') for a truthiness test", .{disp});
                 }
             }
             _ = try inferExpr(state, env, ta, i.body);
@@ -1329,7 +1329,7 @@ fn inferExprInner(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, 
                 // the condition must be a real boolean, no truthiness coercion.
                 if (state.strict and !ir.isSubtype(ir.peelDefined(expr_type), ir.TBool)) {
                     const disp = try ownDisplay(state, expr_type);
-                    return compiler_errors.compileFailFmt(state, "condition of @for must be boolean ('bool' or 'u1'), got '{s}'", .{disp});
+                    return compiler_errors.compileFailFmt(state, "condition of @for must be boolean ('bool' or 'u1'), got '{s}'; compare explicitly (e.g. 'i < n')", .{disp});
                 }
             }
             _ = try inferExpr(state, env, ta, f.body);
@@ -1715,7 +1715,7 @@ fn inferStructInit(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc,
                     if (!provided) {
                         return compiler_errors.compileFailFmt(
                             state,
-                            "missing required field '{s}' in initialization of '{s}'",
+                            "missing required field '{s}' in initialization of '{s}'; provide it in the initializer or declare the field optional ('?T')",
                             .{ required_name, ir.cleanTypeName(struct_name) },
                         );
                     }
@@ -1935,7 +1935,7 @@ fn checkFunction(state: *state_mod.CompilerState, ta: ir.TypeAlloc, f: *ast.Func
                 }
             }
             if (!is_method_self) {
-                return compiler_errors.compileFailFmt(state, "parameter '{s}' of function '{s}' must have an explicit type annotation in strict mode", .{ pnode.name, f.name });
+                return compiler_errors.compileFailFmt(state, "parameter '{s}' of function '{s}' must have an explicit type annotation in strict mode; write '{s}: int' (or the intended type)", .{ pnode.name, f.name, pnode.name });
             }
         }
         if (std.mem.indexOf(u8, f.name, "::")) |idx| {
@@ -2019,10 +2019,19 @@ fn checkFunction(state: *state_mod.CompilerState, ta: ir.TypeAlloc, f: *ast.Func
         const ret_disp = if (expected) |a| try ownDisplay(state, a) else if (state.functions.get(f.name)) |def| def.return_type else null;
         if (ret_disp) |rd| {
             if (!std.mem.eql(u8, rd, "void") and !nodeAlwaysReturns(f.body)) {
+                // Point at the fall-through path: the last statement of the body
+                // (or the declaration when the body is empty).
+                var end_line: u32 = f.loc.line;
+                switch (f.body.*) {
+                    .block => |b| {
+                        if (b.statements.len > 0) end_line = b.statements[b.statements.len - 1].loc().line;
+                    },
+                    else => {},
+                }
                 return compiler_errors.compileFailFmt(
                     state,
-                    "function '{s}' must return a value on all control paths",
-                    .{f.name},
+                    "function '{s}' must return a value on all control paths; add a 'return <value>' on the path ending at line {d}",
+                    .{ f.name, end_line },
                 );
             }
         }
@@ -2186,7 +2195,7 @@ fn checkStructFieldTypes(state: *state_mod.CompilerState, ta: ir.TypeAlloc, s: *
             const disp = try ownDisplay(state, t);
             try def.types.put(field.name, disp);
         } else if (state.strict) {
-            return compiler_errors.compileFailFmt(state, "field '{s}' of struct '{s}' must have an explicit type annotation in strict mode", .{ field.name, s.name });
+            return compiler_errors.compileFailFmt(state, "field '{s}' of struct '{s}' must have an explicit type annotation in strict mode; write '{s}: int' (or the intended type)", .{ field.name, s.name, field.name });
         }
     }
 }

@@ -6,6 +6,23 @@ This document outlines the error reporting and stack trace formatting capabiliti
 
 The `src/errors` module is responsible for formatting, logging, and dispatching diagnostic information. It is heavily inspired by TypeScript's error reporting style (e.g. `Error: message` and `--> path:line:col`). The module separates the concerns of visual output (source printing, stack traces) from the VM execution logic.
 
+## Diagnostic fix hints (Phase 5.2)
+
+Every soundness rejection is phrased so the fix is visible without leaving the
+terminal. The message names the offending construct and, where useful, the
+concrete repair:
+
+- `condition of @if must be boolean ('bool' or 'u1'), got 'i64'; compare explicitly (e.g. 'x != 0') for a truthiness test`
+- `function 'pick' must return a value on all control paths; add a 'return <value>' on the path ending at line 2`
+- `missing required field 'name' in initialization of 'User'; provide it in the initializer or declare the field optional ('?T')`
+- `parameter 'a' of function 'add' must have an explicit type annotation in strict mode; write 'a: int' (or the intended type)`
+- `@switch is missing enum variants: Green, Blue; add a prong for each, or an '@else'`
+- `integer overflow: addition exceeds 'u8'; use '+%' if wraparound is intended`
+- `value escapes its arena region; the arena is local to this function — pass the arena in as a parameter or use an allocator that outlives the call`
+
+These messages are covered by the negative suite (`tests/compile_fails/`, Phase 5.1),
+which asserts the expected substring for each rejection.
+
 ## Components and API
 
 ### 1. `report.zig`

@@ -262,11 +262,14 @@ Ensure no regressions can compromise the soundness invariants.
     * `arena_local_escape.lls` → rejects returning a body-local-arena pointer (4.1).
     * `const_overflow.lls` → rejects constant integer overflow (4.3).
   * Adding a case is just dropping a new `.lls` file with an `# expect:` header.
-* [ ] **5.2 Diagnostic Fix Hints**
-  * Every soundness error must provide an actionable suggestion:
-    * *"Missing field 'email' in initialization of 'User'."*
-    * *"Condition must be a boolean ('u1') or optional capture. Did you mean 'x != 0'?"*
-    * *"Missing return on path ending at line 42."*
+* [x] **5.2 Diagnostic Fix Hints**
+  * Every soundness error now carries an actionable suggestion:
+    * *"missing required field 'name' in initialization of 'User'; provide it in the initializer or declare the field optional ('?T')"*
+    * *"condition of @if must be boolean ('bool' or 'u1'), got 'i64'; compare explicitly (e.g. 'x != 0') for a truthiness test"*
+    * *"function 'pick' must return a value on all control paths; add a 'return <value>' on the path ending at line 2"*
+    * *"parameter 'a' of function 'add' must have an explicit type annotation in strict mode; write 'a: int' (or the intended type)"*
+    * *"@switch is missing enum variants: Green, Blue; add a prong for each, or an '@else'"*
+    * Overflow, arena-escape, optional-access, union-access, and `null`→`*T` diagnostics already name the offending construct and the fix.
 * [ ] **5.3 Release-Mode Verification**
   * Verify that `--release` retains static soundness: since the compiler proves validity at compile time, release builds can strip assertion overhead without risking undefined behavior.
 
