@@ -67,6 +67,40 @@ pub fn getIndex(vm: *VMState) HeapError!void {
     }
 }
 
+/// `arr.get(i)` — bounds-safe index: pushes the element, or `.null` when the
+/// index is out of range (Phase 4.4). Never traps for out-of-bounds input.
+pub fn getIndexOrNull(vm: *VMState) HeapError!void {
+    const idx = stack.pop(vm);
+    const ptr = stack.pop(vm);
+    const i = switch (idx) {
+        .i64 => |x| x,
+        else => return fail(vm, "Index must be int"),
+    };
+    switch (ptr) {
+        .bytes => |b| {
+            if (i < 0 or i >= b.len) return stack.push(vm, .null);
+            return stack.push(vm, .{ .u8 = vm.bytes.items[b.offset + @as(u32, @intCast(i))] });
+        },
+        .array => |a| {
+            if (i < 0 or i >= a.count) return stack.push(vm, .null);
+            return stack.push(vm, vm.arrayElemConst(a, @intCast(i)));
+        },
+        .slice => |s| {
+            if (i < 0 or i >= s.len) return stack.push(vm, .null);
+            return stack.push(vm, vm.slot(@as(i32, @intCast(s.offset)) + @as(i32, @intCast(i))).*);
+        },
+        .name => |name_idx| {
+            const str = vm.chunk.stringAt(name_idx);
+            if (i < 0 or i >= str.len) return stack.push(vm, .null);
+            return stack.push(vm, .{ .u8 = str[@intCast(i)] });
+        },
+        // Pointers carry no length; treat the index as valid (no bounds info).
+        .ptr => |p| return stack.push(vm, vm.slot(p + @as(i32, @intCast(i))).*),
+        .null => return stack.push(vm, .null),
+        else => return fail(vm, "Indexing non-pointer"),
+    }
+}
+
 pub fn setIndex(vm: *VMState) HeapError!void {
     const val = stack.pop(vm);
     const idx = stack.pop(vm);

@@ -228,10 +228,16 @@ Guarantee predictable execution and memory safety at the hardware and VM boundar
     * Constant expressions are checked during `@const` evaluation: `@const $x = MAX + 1;` → `integer overflow in constant expression`.
     * Division/modulo additionally trap on zero and on the `minInt / -1` overflow.
     * Implemented in `src/vm/execute/arith.zig` (`checkedI64`, `overflowFail`), `src/compiler/widths.zig` (`i128Fits`), and `src/compiler/const_eval.zig`.
-* [ ] **4.4 Safe Array & Slice Indexing**
-  * **Compile-Time Bounds**: For `[N]T` fixed arrays where the index is constant, verify `0 <= i < N` at compile time.
-  * **Safe Indexing API**: Introduce `arr.get(i): ?T` returning `null` if out of bounds.
-  * **Bounds-Checked Traps**: Retain runtime bounds checks on dynamic `arr[i]`, ensuring trapped failure with line/column context rather than memory corruption.
+* [x] **4.4 Safe Array & Slice Indexing**
+  * **Compile-Time Bounds**: For `[N]T` fixed arrays where the index is constant (including `@const` and folded `+`/`-`/`*` expressions), verify `0 <= i < N` at compile time:
+    ```lls
+    $a: [3]int = [1, 2, 3];
+    print(a[5]);     # COMPILE ERROR: Array index 5 out of bounds for fixed-size array '[3]i64' (length 3)
+    print(a[0 - 1]); # COMPILE ERROR (constant fold)
+    ```
+    Dynamic-length slices (`[]T`) and non-constant indices are left to the runtime check.
+  * **Safe Indexing API**: `arr.get(i): ?T` returns the element or `null` when out of range, for arrays, slices, and strings (byte). Lowered to `OP_GET_ARRAY_OR_NULL` (`getIndexOrNull` in `src/vm/execute/heap.zig`).
+  * **Bounds-Checked Traps**: Retained runtime bounds checks on dynamic `arr[i]`, ensuring trapped failure with line/column context rather than memory corruption.
 * [x] **4.5 Frame-Local Memory Invariant**
   * Reinforce the boundary in [`src/compiler/escape.zig`](file:///home/apex/Workspace/llts-zig/src/compiler/escape.zig): frame-allocated instances (`Foo{}`) can never escape the stack frame.
   * Enforced for `return <local>` and `return &<local>`, including struct literals that embed a frame-local operand. Bare `return Foo{…}` with frame-free operands is promoted to immortal (module-init lifetime).

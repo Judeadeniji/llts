@@ -1479,6 +1479,20 @@ fn inferCall(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, call_
         return ir.TInt;
     }
 
+    // `arrayLike.get(i)` → `?T` (null when out of bounds) — Phase 4.4.
+    if (c.callee.* == .member and c.callee.member.property.* == .primary and
+        std.mem.eql(u8, c.callee.member.property.primary.name, "get") and c.args.len == 1)
+    {
+        const obj_ty = try inferExpr(state, env, ta, c.callee.member.object);
+        _ = try inferExpr(state, env, ta, c.args[0]);
+        const disp = try ownDisplay(state, obj_ty);
+        if (arrayElemDisplay(disp)) |elem_disp| {
+            const elem = ir.parseDisplayType(ta, elem_disp) catch ir.TUnknown;
+            var arms = [_]ir.Type{ elem, ir.TNull };
+            return try ta.unionType(&arms);
+        }
+    }
+
     const method = try resolveMethodCallee(state, env, ta, c);
     const name: ?[]const u8 = if (method) |m| m.name else resolveCalleeName(state, c);
     const named_fn = if (name) |n| state.functions.contains(n) else false;
@@ -1581,6 +1595,16 @@ fn checkFuncValueCall(
     while (i < c.args.len) : (i += 1) {
         _ = try inferExpr(state, env, ta, c.args[i]);
     }
+}
+
+/// For an array/slice display type (`[N]T`, `[]T`), return the element display
+/// string. Returns null for tuples (`[A, B]`) and non-array types.
+fn arrayElemDisplay(disp: []const u8) ?[]const u8 {
+    if (disp.len < 2 or disp[0] != '[') return null;
+    const close = std.mem.indexOfScalar(u8, disp, ']') orelse return null;
+    const rest = std.mem.trim(u8, disp[close + 1 ..], " \t");
+    if (rest.len == 0) return null;
+    return rest;
 }
 
 fn constIntIndex(node: *ast.Node) !?i64 {

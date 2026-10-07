@@ -36,7 +36,8 @@ test("runtime error prints LLTS call stack", () => {
 	const res = runSource(`
 @func boom() {
     @const $a = [1];
-    print(a[5]);
+    $i = 5;
+    print(a[i]);
 }
 
 @func mid() {
@@ -102,7 +103,8 @@ test("cross-module stack frames show imported file path", () => {
 		helper,
 		`pub @func boom() {
     @const $a = [1];
-    print(a[9]);
+    $i = 9;
+    print(a[i]);
 }
 `,
 		"utf-8",

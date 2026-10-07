@@ -40,6 +40,19 @@ pub fn compileCall(state: *CompilerState, c: *const ast.Call, node: *ast.Node) !
         const mem = &c.callee.member;
         if (mem.property.* == .primary) {
             const prop = mem.property.primary.name;
+            // `arrayLike.get(i)` → element or null (bounds-safe, Phase 4.4).
+            // Structs with a real `get` method are unaffected: their type display
+            // does not start with `[`.
+            if (std.mem.eql(u8, prop, "get") and c.args.len == 1) {
+                if (types.resolveType(state, mem.object)) |disp| {
+                    if (arrayElemDisplay(disp) != null) {
+                        try expr.compileExpression(state, mem.object);
+                        try expr.compileExpression(state, c.args[0]);
+                        try emit.emitOp(state, .OP_GET_ARRAY_OR_NULL);
+                        return;
+                    }
+                }
+            }
             if (types.resolveType(state, mem.object)) |type_name| {
                 if (types.lookupStruct(state, type_name)) |sd| {
                     if (sd.offsets.get(prop) == null) {
@@ -73,6 +86,16 @@ pub fn compileCall(state: *CompilerState, c: *const ast.Call, node: *ast.Node) !
     for (c.args) |arg| try expr.compileExpression(state, arg);
     try emit.emitOp(state, .OP_CALL);
     try emit.emitByte(state, @intCast(c.args.len));
+}
+
+/// For an array/slice display type (`[N]T`, `[]T`), return the element display
+/// string. Returns null for tuples (`[A, B]`) and non-array types.
+fn arrayElemDisplay(disp: []const u8) ?[]const u8 {
+    if (disp.len < 2 or disp[0] != '[') return null;
+    const close = std.mem.indexOfScalar(u8, disp, ']') orelse return null;
+    const rest = std.mem.trim(u8, disp[close + 1 ..], " \t");
+    if (rest.len == 0) return null;
+    return rest;
 }
 
 fn emitMethodCall(state: *CompilerState, name: []const u8, self_obj: *ast.Node, args: []*ast.Node) !void {

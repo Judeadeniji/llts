@@ -30,9 +30,87 @@ pub fn compileIndex(state: *CompilerState, idx: *const ast.Index) !void {
         const start = idx.index orelse {
             return compiler_errors.compileFailFmt(state, "Expected index expression", .{});
         };
+        // Compile-time bounds check for fixed-size arrays (`[N]T`) with a
+        // constant index. Dynamic slices (`[]T`) and non-constant indices still
+        // fall back to the runtime bounds trap (Phase 4.4).
+        if (fixedArrayLength(state, idx.object)) |len| {
+            if (constantIntValue(state, start)) |i| {
+                if (i < 0 or i >= @as(i64, @intCast(len))) {
+                    const disp = types.resolveType(state, idx.object) orelse "array";
+                    if (idx.loc.path.len > 0) state.diag_path = idx.loc.path;
+                    state.diag_line = start.loc().line;
+                    state.diag_column = start.loc().column;
+                    return compiler_errors.compileFailFmt(
+                        state,
+                        "Array index {d} out of bounds for fixed-size array '{s}' (length {d})",
+                        .{ i, disp, len },
+                    );
+                }
+            }
+        }
         try expr.compileExpression(state, start);
         try emit.emitOp(state, .OP_GET_ARRAY);
     }
+}
+
+/// Length of a fixed-size array type (`[N]T`) for `node`, or `null` when the
+/// type is unknown or a dynamic slice (`[]T`).
+fn fixedArrayLength(state: *CompilerState, node: *ast.Node) ?usize {
+    const disp = types.resolveType(state, node) orelse return null;
+    if (disp.len < 3 or disp[0] != '[') return null;
+    if (disp[1] == ']') return null;
+    const close = std.mem.indexOfScalar(u8, disp, ']') orelse return null;
+    return types.parseArrayLengthString(disp[1..close]) catch null;
+}
+
+/// Compile-time integer value of a constant index expression, or `null`.
+fn constantIntValue(state: *CompilerState, node: *ast.Node) ?i64 {
+    switch (node.*) {
+        .literal => |lit| {
+            switch (lit.literal_type) {
+                .number, .hex, .binary, .octal => return parseConstInt(lit.value),
+                else => return null,
+            }
+        },
+        .unary => |u| {
+            if (!std.mem.eql(u8, u.operator, "-")) return null;
+            const v = constantIntValue(state, u.arg) orelse return null;
+            return -%v;
+        },
+        .binary => |b| {
+            const l = constantIntValue(state, b.left) orelse return null;
+            const r = constantIntValue(state, b.right) orelse return null;
+            if (std.mem.eql(u8, b.operator, "+") or std.mem.eql(u8, b.operator, "+%")) return l +% r;
+            if (std.mem.eql(u8, b.operator, "-") or std.mem.eql(u8, b.operator, "-%")) return l -% r;
+            if (std.mem.eql(u8, b.operator, "*") or std.mem.eql(u8, b.operator, "*%")) return l *% r;
+            if (std.mem.eql(u8, b.operator, "/")) return if (r != 0) @divTrunc(l, r) else null;
+            if (std.mem.eql(u8, b.operator, "%")) return if (r != 0) @rem(l, r) else null;
+            return null;
+        },
+        .primary => |p| {
+            if (p.kind != .identifier and p.kind != .register) return null;
+            if (state.const_values.get(p.name)) |cv| {
+                if (cv == .i64) return cv.i64;
+            }
+            var buf: [128]u8 = undefined;
+            if (p.name.len + 1 <= buf.len) {
+                buf[0] = '$';
+                @memcpy(buf[1 .. p.name.len + 1], p.name);
+                if (state.const_values.get(buf[0 .. p.name.len + 1])) |cv| {
+                    if (cv == .i64) return cv.i64;
+                }
+            }
+            return null;
+        },
+        else => return null,
+    }
+}
+
+fn parseConstInt(raw: []const u8) ?i64 {
+    if (std.mem.startsWith(u8, raw, "0x")) return std.fmt.parseInt(i64, raw[2..], 16) catch null;
+    if (std.mem.startsWith(u8, raw, "0b")) return std.fmt.parseInt(i64, raw[2..], 2) catch null;
+    if (std.mem.startsWith(u8, raw, "0o")) return std.fmt.parseInt(i64, raw[2..], 8) catch null;
+    return std.fmt.parseInt(i64, raw, 10) catch null;
 }
 
 pub fn compileError(state: *CompilerState, err: *const ast.ErrorExpr) !void {

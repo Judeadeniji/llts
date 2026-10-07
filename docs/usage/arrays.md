@@ -73,6 +73,25 @@ a.reset(); # reclaim list storage
   std.fmt.printf("arr[0] = %d\n", arr[0]);
   ```
 
+### 3.1 Bounds safety (Phase 4.4)
+
+- **Compile-time bounds for fixed arrays**: a constant index into `[N]T` is
+  checked during compilation (including `@const` and folded `+`/`-`/`*`):
+  ```llts
+  $a: [3]int = [1, 2, 3];
+  print(a[5]);      # COMPILE ERROR: out of bounds for fixed-size array
+  print(a[0 - 1]);  # COMPILE ERROR (constant fold)
+  ```
+- **Runtime trap for dynamic indices**: `$i = 7; a[i]` still aborts with
+  `Array index out of bounds: 7 (len 3); use len(arr)` and a source location.
+- **`arr.get(i): ?T`** — bounds-safe access that returns `null` instead of
+  trapping. Works for arrays, slices, and strings (returns `?byte`):
+  ```llts
+  $a = [10, 20, 30];
+  @if (a.get(1)) |v| { print(v); }   # 20
+  @if (a.get(9)) |v| { print(v); } @else { print("none"); }  # none
+  ```
+
 ## 4. Built-in Functions
 - **`len()`**: Retrieves the length (bounds) of an array literal.
   ```llts

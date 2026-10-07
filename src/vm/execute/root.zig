@@ -670,6 +670,11 @@ pub fn execute(vm: *VMState, start_ip: usize) RuntimeError!void {
                 try heap.getIndex(vm);
                 sp = vm.sp;
             },
+            .OP_GET_ARRAY_OR_NULL => {
+                syncVM(vm, sp);
+                try heap.getIndexOrNull(vm);
+                sp = vm.sp;
+            },
             .OP_SET_INDEX => {
                 syncVM(vm, sp);
                 try heap.setIndex(vm);

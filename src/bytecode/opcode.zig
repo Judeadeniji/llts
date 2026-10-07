@@ -90,4 +90,6 @@ pub const OpCode = enum(u8) {
     OP_ADD_TYPED_WRAP,
     OP_SUB_TYPED_WRAP,
     OP_MUL_TYPED_WRAP,
+    /// Bounds-safe index for `arr.get(i): ?T`: stack [obj, index] → element or `.null`.
+    OP_GET_ARRAY_OR_NULL,
 };

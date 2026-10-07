@@ -41,7 +41,8 @@ test("negative array index is a runtime error", () => {
 	expectError(
 		runSource(`
 $a = [1, 2, 3];
-print(a[-1]);
+$i = 0 - 1;
+print(a[i]);
 `),
 		"Array index out of bounds",
 	);
@@ -51,7 +52,8 @@ test("index equal to len is out of bounds", () => {
 	expectError(
 		runSource(`
 $a = [1, 2, 3];
-print(a[3]);
+$i = 3;
+print(a[i]);
 `),
 		"Array index out of bounds",
 	);
@@ -136,7 +138,8 @@ print(a);
 test("runtime OOB error includes LLTS source location", () => {
 	const res = runSource(`
 $a = [1, 2];
-print(a[9]);
+$i = 9;
+print(a[i]);
 `);
 	expectError(res, "Array index out of bounds");
 	const combined = res.stderr + res.stdout;
