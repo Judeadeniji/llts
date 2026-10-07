@@ -8,9 +8,11 @@
  * debug assertions.
  */
 import { test } from "bun:test";
+import * as fs from "node:fs";
 import * as path from "node:path";
-import { runFile, runSource } from "./helpers";
+import { runSource, runSourceWithFlags } from "./helpers";
 
+const FIXTURES = path.join(import.meta.dir, "compile_fails");
 
 // --- valid programs behave identically ------------------------------------
 
@@ -23,8 +25,8 @@ pub @func main() {
     print(add(sum, 32));
 }
 `;
-	const debug = runSource(src, []);
-	const release = runSource(src, ["-r"]);
+	const debug = runSource(src);
+	const release = runSourceWithFlags(src, ["-r"]);
 	if (debug.exitCode !== 0) throw new Error(`debug run failed: ${debug.stderr}`);
 	if (release.exitCode !== 0)
 		throw new Error(`release run failed: ${release.stderr}`);
@@ -50,8 +52,9 @@ const staticCases: Array<{ file: string; needle: string; strict: boolean }> = [
 
 for (const c of staticCases) {
 	test(`release still rejects ${c.file}`, () => {
+		const source = fs.readFileSync(path.join(FIXTURES, c.file), "utf-8");
 		const flags = c.strict ? ["-r", "-s"] : ["-r"];
-		const res = runFile(path.join(FIXTURES, c.file), flags);
+		const res = runSourceWithFlags(source, flags);
 		const combined = res.stderr + res.stdout;
 		if (res.exitCode === 0) {
 			throw new Error(`${c.file}: compiled under release but should be rejected`);
@@ -67,7 +70,7 @@ for (const c of staticCases) {
 // --- runtime traps are retained -------------------------------------------
 
 test("release retains the checked-overflow trap", () => {
-	const res = runSource(
+	const res = runSourceWithFlags(
 		`
 $b: u8 = 250;
 print(b + 10);
@@ -81,7 +84,7 @@ print(b + 10);
 });
 
 test("release retains the bounds trap for dynamic indices", () => {
-	const res = runSource(
+	const res = runSourceWithFlags(
 		`
 $a = [1, 2, 3];
 $i = 9;
