@@ -9,9 +9,14 @@ pub const Local = struct {
     depth: i32,
     type_name: ?[]const u8 = null,
     is_const: bool = false,
+    /// True for function parameters (and unannotated method `self`). A parameter
+    /// may carry memory that outlives the call, so `@new(param, …)` results may
+    /// escape the frame; an arena that is a *body-local* may not (Phase 4.1).
+    is_param: bool = false,
     /// Where heap data bound to this local came from (escape analysis).
     /// `.frame` = bare struct/array literal — must not be returned.
-    /// `.pass` = `@new(allocator, …)` — may escape the frame.
+    /// `.arena_local` = `@new(body_local_arena, …)` — frame-bound by ownership.
+    /// `.pass` = `@new(allocator, …)` with an escaping allocator — may escape.
     alloc_region: AllocRegion = .unknown,
 };
 
@@ -19,6 +24,10 @@ pub const Local = struct {
 pub const AllocRegion = enum {
     unknown,
     frame,
+    /// `@new` into an arena whose owner is a local of the current function.
+    /// The arena (and everything it owns) is unreachable once the function
+    /// returns, so a pointer into it must not escape the frame.
+    arena_local,
     pass,
 };
 

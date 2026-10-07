@@ -15,27 +15,32 @@ const AllocRegion = state_mod.AllocRegion;
 pub fn checkReturnValue(state: *CompilerState, value: *ast.Node) !void {
     if (canPromoteReturnLiteral(state, value)) return;
     switch (regionOf(state, value)) {
-        .frame => {
-            const loc = value.loc();
-            const path = if (loc.path.len > 0) loc.path else state.chunk.file;
-            const source = if (std.mem.eql(u8, path, state.chunk.file)) state.chunk.source else blk: {
-                for (state.chunk.sources.items) |s| {
-                    if (std.mem.eql(u8, s.path, path)) break :blk s.text;
-                }
-                break :blk state.chunk.source;
-            };
-            return @import("../errors/compile.zig").compileFailAt(
-                state,
-                path,
-                source,
-                loc.line,
-                loc.column,
-                "value escapes its frame region; allocate with @new(allocator, …)",
-                .{},
-            );
-        },
+        .frame => return failEscape(state, value, "value escapes its frame region; allocate with @new(allocator, …)"),
+        .arena_local => return failEscape(state, value,
+            "value escapes its arena region; the arena is local to this function — pass the arena in as a parameter or use an allocator that outlives the call"),
         .pass, .unknown => {},
     }
+}
+
+/// Emit an escape diagnostic at the value's source location.
+fn failEscape(state: *CompilerState, value: *ast.Node, comptime msg: []const u8) error{CompileError} {
+    const loc = value.loc();
+    const path = if (loc.path.len > 0) loc.path else state.chunk.file;
+    const source = if (std.mem.eql(u8, path, state.chunk.file)) state.chunk.source else blk: {
+        for (state.chunk.sources.items) |s| {
+            if (std.mem.eql(u8, s.path, path)) break :blk s.text;
+        }
+        break :blk state.chunk.source;
+    };
+    return @import("../errors/compile.zig").compileFailAt(
+        state,
+        path,
+        source,
+        loc.line,
+        loc.column,
+        msg,
+        .{},
+    );
 }
 
 /// True when `return <value>` can immortalize a literal shell instead of erroring.
@@ -69,10 +74,15 @@ pub fn regionOf(state: *CompilerState, node: *ast.Node) AllocRegion {
     switch (node.*) {
         // Bare literals → frame bump; immortal only for module-level inits / return promotion.
         .struct_init, .array_literal => return if (state.alloc_immortal) .pass else .frame,
-        // `@new(a, Foo{…})` — compiler intrinsic; Pass / outer allocator.
+        // `@new(a, Foo{…})` — compiler intrinsic. The result inherits the
+        // lifetime of its allocator (Phase 4.1): an arena owned by a body-local
+        // cannot outlive the frame, but an arena passed in (or any other
+        // allocator we cannot prove local) may escape.
         .call => |c| {
-            if (c.callee.* == .primary and std.mem.eql(u8, c.callee.primary.name, "@new"))
+            if (c.callee.* == .primary and std.mem.eql(u8, c.callee.primary.name, "@new")) {
+                if (c.args.len > 0 and allocatorIsFunctionLocal(state, c.args[0])) return .arena_local;
                 return .pass;
+            }
             return .unknown;
         },
         .primary => |p| {
@@ -93,6 +103,18 @@ pub fn regionOf(state: *CompilerState, node: *ast.Node) AllocRegion {
 
 pub fn regionOfRhs(state: *CompilerState, node: *ast.Node) AllocRegion {
     return regionOf(state, node);
+}
+
+/// True when `node` directly names a local of the *current function body*
+/// (not a parameter, not a module-level binding). Such a local — typically an
+/// `Arena` from `mem.create(...)` — is unreachable once the function returns,
+/// so memory allocated from it is frame-bound.
+fn allocatorIsFunctionLocal(state: *CompilerState, node: *ast.Node) bool {
+    if (node.* != .primary) return false;
+    const p = node.primary;
+    if (p.kind != .identifier and p.kind != .register) return false;
+    const idx = resolveLocalIndex(state, p.name) orelse return false;
+    return !state.locals.items[idx].is_param;
 }
 
 fn resolveLocalIndex(state: *CompilerState, name: []const u8) ?usize {

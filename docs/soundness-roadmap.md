@@ -199,9 +199,18 @@ Prevent truthiness bugs and "property `x` does not exist on `y`" runtime errors.
 Guarantee predictable execution and memory safety at the hardware and VM boundary.
 
 * [ ] **4.1 Memory Safety: Lexical Arena Lifetimes & Generational Traps**
-  * **Compile-Time**: Prevent pointers allocated via `@new(arena, ...)` from escaping outside the lexical scope of the owning `arena`.
-  * **Runtime Zero-UB Trap**: Encode an `arena_id` and allocation generation into packed heap handles in `vm.bytes`.
+  * [x] **Compile-Time Lexical Arena Lifetimes**: Prevent pointers allocated via `@new(arena, ...)` from escaping outside the lexical scope of the owning `arena`.
+    * `@new` inherits the lifetime of its allocator. An allocator that is a **body-local** of the current function (`$a = mem.create(0)` then `@new(a, …)`) makes the result frame-bound; returning that pointer is rejected:
+      ```lls
+      @func make(): *Box {
+          $a = mem.create(0);
+          return @new(a, Box { n: 1 }); # COMPILE ERROR: value escapes its arena region
+      }
+      ```
+    * Allocators that outlive the call stay valid: an **arena parameter** (`make(a: mem.Arena)`) or a **module-level** arena (`$heap = mem.create(0)`) may be returned from. See `AllocRegion.arena_local` in [`src/compiler/state.zig`](file:///home/apex/Workspace/llts-zig/src/compiler/state.zig) and `allocatorIsFunctionLocal` in [`src/compiler/escape.zig`](file:///home/apex/Workspace/llts-zig/src/compiler/escape.zig).
+  * [ ] **Runtime Zero-UB Trap**: Encode an `arena_id` and allocation generation into packed heap handles in `vm.bytes`.
     * If a pointer is accessed after its arena is deinitialized or reset, the VM traps **deterministically with an informative panic and stack trace**, completely eliminating silent memory corruption.
+    * _Not yet implemented: use-after-`deinit()` currently reads stale bytes rather than trapping._
 * [ ] **4.2 Compile-Time Arithmetic Fault Prevention**
   * Constant-evaluation pass checks all division and modulo operators (`/`, `%`):
     ```lls

@@ -83,6 +83,45 @@ $x: i32 = 42;              # real i32, not an int alias
 4. **Storage widths** — ✅ full matrix `i8`…`i64`, `u8`…`u64`, `f32`/`f64` + `@as`.
 5. **Slice views** — ✅ `arr[i..j]` on packed bytes / strings (`OP_SLICE`).
 
+## Escape regions (Phase 4.1 — compile-time arena lifetimes)
+
+A `*T` returned from a function must point at memory that outlives the call.
+The compiler assigns each expression a **lifetime color** (`AllocRegion` in
+[`src/compiler/state.zig`](file:///home/apex/Workspace/llts-zig/src/compiler/state.zig)) and rejects returns that would leak frame-bound memory.
+
+| Region | Meaning | May escape? |
+|--------|---------|-------------|
+| `frame` | Bare `Foo{…}` / `[…]` literal on the frame bump (value heaps) | No — `escapes its frame region` |
+| `arena_local` | `@new(body_local, …)` where the allocator is a local of the *current function body* | No — `escapes its arena region` |
+| `pass` | `@new(allocator, …)` with an allocator we cannot prove local: a **parameter**, a **module-level** arena, or any indirect allocator | Yes |
+| `unknown` | Untracked expression (calls into user code, etc.) | Yes (no false positives) |
+
+Key rules:
+
+1. **Parameters are borrowed, not owned.** `@func make(a: mem.Arena): *Box { return @new(a, Box{…}); }`
+   is valid: the caller owns `a` and keeps it alive. `pushParam` marks the local
+   `is_param = true` so `allocatorIsFunctionLocal` returns false.
+2. **A body-local arena is frame-bound.** `$a = mem.create(0)` creates an `Arena`
+   value owned by the frame; `@new(a, …)` memory is unreachable once the function
+   returns, so returning it is an error — even when the arena is first bound to
+   an intermediate local:
+   ```lls
+   @func make(): *Box {
+       $a = mem.create(0);
+       $p = @new(a, Box { n: 1 });
+       return p;   # ERROR: value escapes its arena region
+   }
+   ```
+3. **Module-level arenas escape.** `$heap = mem.create(0)` at file scope has no
+   function-local binding, so `@new(heap, …)` is `pass` and may be returned
+   (the classic `examples/hello-world.lls` pattern).
+4. **Literal promotion is unchanged.** `return Foo{ x: 1 };` with all-frame-free
+   operands is compiled immortal (`.`pass`), same as module-level init.
+
+This is a purely static, intraprocedural analysis — no runtime handle tags yet.
+The matching **runtime** generational trap (arena id + generation in packed
+heap handles, trapping use-after-`deinit()`) is still open; see roadmap 4.1.
+
 ## Non-goals
 
 - JIT / tracing / LLVM AOT

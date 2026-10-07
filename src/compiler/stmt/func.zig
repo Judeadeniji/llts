@@ -111,6 +111,9 @@ fn pushParam(state: *CompilerState, p: ast.Param, method_struct: ?[]const u8) !v
         .name = p.name,
         .depth = state.scope_depth,
         .type_name = p_type,
+        // Parameters are borrowed for the duration of the call, so allocations
+        // from a parameter arena are allowed to escape (Phase 4.1).
+        .is_param = true,
     });
 }
 

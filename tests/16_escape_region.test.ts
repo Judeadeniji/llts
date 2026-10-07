@@ -84,6 +84,84 @@ pub @func main() {
 	);
 });
 
+test("@new into a function-local arena must not escape (local binding)", () => {
+	expectError(
+		runSource(`
+$mem = @import("std/mem");
+@struct Box { n: int; }
+
+@func make(): *Box {
+    $a = mem.create(0);
+    $p = @new(a, Box { n: 1 });
+    return p;
+}
+
+pub @func main() {
+    print(make().n);
+}
+`),
+		"escapes its arena region",
+	);
+});
+
+test("@new into a function-local arena must not escape (direct return)", () => {
+	expectError(
+		runSource(`
+$mem = @import("std/mem");
+@struct Box { n: int; }
+
+@func make(): *Box {
+    $a = mem.create(0);
+    return @new(a, Box { n: 1 });
+}
+
+pub @func main() {
+    print(make().n);
+}
+`),
+		"escapes its arena region",
+	);
+});
+
+test("@new into a parameter arena may escape", () => {
+	expectOutput(
+		runSource(`
+$mem = @import("std/mem");
+@struct Box { n: int; }
+
+@func make(a: mem.Arena): *Box {
+    return @new(a, Box { n: 7 });
+}
+
+pub @func main() {
+    $a = mem.create(0);
+    defer a.deinit();
+    print(make(a).n);
+}
+`),
+		["7"],
+	);
+});
+
+test("@new into a module-level arena may escape", () => {
+	expectOutput(
+		runSource(`
+$mem = @import("std/mem");
+@struct Box { n: int; }
+$heap = mem.create(0);
+
+@func make(): *Box {
+    return @new(heap, Box { n: 9 });
+}
+
+pub @func main() {
+    print(make().n);
+}
+`),
+		["9"],
+	);
+});
+
 test("frame-local struct temps are ok if not returned", () => {
 	expectOutput(
 		runSource(`
