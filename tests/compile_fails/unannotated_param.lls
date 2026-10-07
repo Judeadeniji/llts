@@ -1,0 +1,4 @@
+# expect: must have an explicit type annotation
+# mode: strict
+@func add(a, b) { return a + b; }
+pub @func main() { print(add(1, 2)); }

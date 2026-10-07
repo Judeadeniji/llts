@@ -1,0 +1,12 @@
+# expect: is not available on union type
+# mode: strict
+@struct A { x: int; }
+@struct B { y: int; }
+@func pick(b: bool): A | B {
+    @if (b) { return A { x: 1 }; }
+    return B { y: 2 };
+}
+pub @func main() {
+    $v = pick(true);
+    print(v.x);
+}

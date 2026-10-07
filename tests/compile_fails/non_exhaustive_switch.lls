@@ -1,0 +1,8 @@
+# expect: @switch is missing enum variants
+@enum Color { Red, Green, Blue }
+pub @func main() {
+    $c = Color.Red;
+    @switch (c) {
+        Color.Red => { print("r"); },
+    }
+}

@@ -1,0 +1,8 @@
+# expect: escapes its arena region
+$mem = @import("std/mem");
+@struct Box { n: int; }
+@func make(): *Box {
+    $a = mem.create(0);
+    return @new(a, Box { n: 1 });
+}
+pub @func main() { print(make().n); }

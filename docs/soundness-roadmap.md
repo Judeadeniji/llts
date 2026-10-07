@@ -248,8 +248,8 @@ Guarantee predictable execution and memory safety at the hardware and VM boundar
 
 Ensure no regressions can compromise the soundness invariants.
 
-* [ ] **5.1 Comprehensive Negative Conformance Test Suite (`tests/compile_fails/`)**
-  * Build a test runner that executes and asserts compile-time rejections:
+* [x] **5.1 Comprehensive Negative Conformance Test Suite (`tests/compile_fails/`)**
+  * Fixture-driven runner [`tests/45_compile_fails.test.ts`](file:///home/apex/Workspace/llts-zig/tests/45_compile_fails.test.ts): every `.lls` file in `tests/compile_fails/` is compiled and must fail with a diagnostic containing its declared `# expect: <substring>` header (optionally `# mode: strict`).
     * `unannotated_param.lls` → rejects missing parameter type.
     * `missing_struct_field.lls` → rejects uninitialized non-optional fields.
     * `truthiness_coercion.lls` → rejects `@if (int_var)`.
@@ -259,6 +259,9 @@ Ensure no regressions can compromise the soundness invariants.
     * `non_exhaustive_switch.lls` → rejects incomplete `@switch`.
     * `div_by_zero_const.lls` → rejects constant `/ 0`.
     * `null_to_pointer.lls` → rejects assigning `null` to `*T`.
+    * `arena_local_escape.lls` → rejects returning a body-local-arena pointer (4.1).
+    * `const_overflow.lls` → rejects constant integer overflow (4.3).
+  * Adding a case is just dropping a new `.lls` file with an `# expect:` header.
 * [ ] **5.2 Diagnostic Fix Hints**
   * Every soundness error must provide an actionable suggestion:
     * *"Missing field 'email' in initialization of 'User'."*

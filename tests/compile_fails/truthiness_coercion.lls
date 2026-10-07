@@ -1,0 +1,6 @@
+# expect: condition of @if must be boolean
+# mode: strict
+pub @func main() {
+    $n = 5;
+    @if (n) { print("yes"); }
+}

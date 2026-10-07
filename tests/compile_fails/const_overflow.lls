@@ -1,0 +1,3 @@
+# expect: integer overflow in constant expression
+@const $x = 9223372036854775807 + 1;
+pub @func main() { print(x); }

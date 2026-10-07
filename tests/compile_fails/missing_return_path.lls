@@ -1,0 +1,6 @@
+# expect: must return a value on all control paths
+# mode: strict
+@func pick(b: bool): int {
+    @if (b) { return 1; }
+}
+pub @func main() { print(pick(true)); }

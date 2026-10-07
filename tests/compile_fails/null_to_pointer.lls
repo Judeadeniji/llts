@@ -1,0 +1,5 @@
+# expect: type 'null' is not assignable to '*i64'
+pub @func main() {
+    $p: *int = null;
+    print("ok");
+}

@@ -1,0 +1,5 @@
+# expect: missing required field 'name'
+# mode: strict
+@struct User { id: int; name: string; }
+$u = User { id: 1 };
+pub @func main() { print(u.id); }
