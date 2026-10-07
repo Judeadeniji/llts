@@ -1,0 +1,4 @@
+# expect: type 'null' is not assignable to '*S'
+@struct S { v: int; }
+@func f(): *S { return null; }
+pub @func main() { print("x"); }

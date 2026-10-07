@@ -160,8 +160,9 @@ Ensure that null pointer dereferences and uninitialized memory are syntactically
     ```lls
     $must_user: User = opt_user.?; # Explicit, self-documenting panic if null
     ```
-* [ ] **2.4 Distinct Non-Null Pointer (`*T`) vs Optional Pointer (`?*T`)**
+* [x] **2.4 Distinct Non-Null Pointer (`*T`) vs Optional Pointer (`?*T`)**
   * Enforce that `*T` can **never** hold null. Passing `null` to `*T` fails at compile time.
+  * Enforced in both modes for declarations (`$p: *T = null`), return positions (`return null` from a `*T` function), and arguments (`f(null)` for a `*T` parameter). Use `?*T` for a nullable pointer and unwrap with `@if (p) |q|` / `.?`.
 
 ---
 
