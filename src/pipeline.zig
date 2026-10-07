@@ -14,6 +14,7 @@ const report = @import("errors/report.zig");
 pub const RunOptions = struct {
     debug: bool = true,
     strict: bool = false,
+    comptime_max_loop_iterations: ?usize = null,
     /// Extra argv forwarded to `os.args()` as argv[1..] (argv[0] is the script path).
     script_args: []const []const u8 = &.{},
     max_memory_slots: usize = 1048576,
@@ -21,6 +22,8 @@ pub const RunOptions = struct {
 
 pub const EmitLlvmOptions = struct {
     debug: bool = true,
+    strict: bool = false,
+    comptime_max_loop_iterations: ?usize = null,
     /// When set, also write textual LLVM IR to this path.
     ir_path: ?[*:0]const u8 = null,
     /// Run LLVM module verification (default true).
@@ -39,7 +42,11 @@ pub fn compileSource(
     var doc = try parser.parse(allocator, scan_result.tokens.items, path, source, null);
     defer doc.deinit();
 
-    return try compiler.compile(allocator, &doc, .{ .debug = options.debug, .strict = options.strict });
+    return try compiler.compile(allocator, &doc, .{
+        .debug = options.debug,
+        .strict = options.strict,
+        .comptime_max_loop_iterations = options.comptime_max_loop_iterations,
+    });
 }
 
 pub fn runChunk(
@@ -148,7 +155,11 @@ pub fn emitLlvmBitcode(
     var doc = try parser.parse(allocator, scan_result.tokens.items, path, source, null);
     defer doc.deinit();
 
-    var state = try compiler.analyze(allocator, &doc, .{ .debug = options.debug });
+    var state = try compiler.analyze(allocator, &doc, .{
+        .debug = options.debug,
+        .strict = options.strict,
+        .comptime_max_loop_iterations = options.comptime_max_loop_iterations,
+    });
     defer {
         state.chunk.deinit();
         compiler.state_mod.deinit(&state);

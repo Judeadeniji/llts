@@ -150,6 +150,71 @@ export function runSourceWithArgs(source: string, scriptArgs: string[]): RunResu
 	}
 }
 
+/** Compile and run inline source with custom environment variables. */
+export function runSourceWithEnv(
+	source: string,
+	env: Record<string, string>,
+): RunResult {
+	requireBinary();
+	const tmp = path.join(
+		os.tmpdir(),
+		`llts_test_${Date.now()}_${Math.random().toString(36).slice(2)}.lls`,
+	);
+	fs.writeFileSync(tmp, ensureMain(source), "utf-8");
+	try {
+		const result = spawnSync([ENTRY, "run", tmp], {
+			cwd: ROOT,
+			env: { ...process.env, ...env },
+		});
+		const stdout = result.stdout.toString();
+		const stderr = result.stderr.toString();
+		const allLines = stdout.split(/\r?\n/);
+		while (allLines.length > 0 && allLines[allLines.length - 1] === "") {
+			allLines.pop();
+		}
+		return {
+			stdout,
+			stderr,
+			exitCode: result.exitCode ?? 1,
+			lines: allLines,
+		};
+	} finally {
+		fs.unlinkSync(tmp);
+	}
+}
+
+/** Compile and run inline source with custom CLI flags. */
+export function runSourceWithFlags(
+	source: string,
+	flags: string[],
+): RunResult {
+	requireBinary();
+	const tmp = path.join(
+		os.tmpdir(),
+		`llts_test_${Date.now()}_${Math.random().toString(36).slice(2)}.lls`,
+	);
+	fs.writeFileSync(tmp, ensureMain(source), "utf-8");
+	try {
+		const result = spawnSync([ENTRY, "run", ...flags, tmp], {
+			cwd: ROOT,
+		});
+		const stdout = result.stdout.toString();
+		const stderr = result.stderr.toString();
+		const allLines = stdout.split(/\r?\n/);
+		while (allLines.length > 0 && allLines[allLines.length - 1] === "") {
+			allLines.pop();
+		}
+		return {
+			stdout,
+			stderr,
+			exitCode: result.exitCode ?? 1,
+			lines: allLines,
+		};
+	} finally {
+		fs.unlinkSync(tmp);
+	}
+}
+
 /** Assert the run succeeded (exit 0) and produced exactly the expected output lines. */
 export function expectOutput(result: RunResult, expected: string[]) {
 	if (result.exitCode !== 0) {

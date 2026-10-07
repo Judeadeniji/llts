@@ -21,6 +21,7 @@ pub const unused = @import("unused.zig");
 pub const CompileOptions = struct {
     debug: bool = true,
     strict: bool = false,
+    comptime_max_loop_iterations: ?usize = null,
 };
 
 pub const CompileError = error{
@@ -42,6 +43,9 @@ pub fn analyze(
 
     state.debug = opts.debug;
     state.strict = opts.strict;
+    if (opts.comptime_max_loop_iterations) |lim| {
+        state.comptime_max_loop_iterations = lim;
+    }
     state.chunk.file = doc.path;
     state.chunk.source = doc.source;
     state.diag_path = doc.path;

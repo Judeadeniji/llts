@@ -9,6 +9,8 @@ const layout = @import("layout.zig");
 
 const CompilerState = state_mod.CompilerState;
 
+pub const DEFAULT_COMPTIME_MAX_LOOP_ITERATIONS: usize = 100_000;
+
 pub const ConstArray = struct {
     allocator: std.mem.Allocator,
     elements: std.ArrayList(ConstValue) = .empty,
@@ -321,6 +323,143 @@ fn noteDiag(state: *CompilerState, node: *ast.Node) void {
     if (loc.path.len > 0) state.diag_path = loc.path;
 }
 
+pub fn evalBinaryOp(state: *CompilerState, op: []const u8, left_val: ConstValue, right_val: ConstValue) anyerror!?ConstValue {
+    if (std.mem.eql(u8, op, "+")) {
+        if (left_val == .i64 and right_val == .i64) {
+            const r = @addWithOverflow(left_val.i64, right_val.i64);
+            if (r[1] != 0) return compile_errors.compileFailFmt(state, "integer overflow in constant expression", .{});
+            return .{ .i64 = r[0] };
+        }
+        if (left_val == .f64 and right_val == .f64) return .{ .f64 = left_val.f64 + right_val.f64 };
+        if (left_val == .string and right_val == .string) {
+            const joined = try std.mem.concat(state.allocator, u8, &[_][]const u8{ left_val.string, right_val.string });
+            return .{ .string = joined };
+        }
+        return null;
+    }
+    if (std.mem.eql(u8, op, "+%")) {
+        if (left_val == .i64 and right_val == .i64) return .{ .i64 = left_val.i64 +% right_val.i64 };
+        return null;
+    }
+    if (std.mem.eql(u8, op, "-")) {
+        if (left_val == .i64 and right_val == .i64) {
+            const r = @subWithOverflow(left_val.i64, right_val.i64);
+            if (r[1] != 0) return compile_errors.compileFailFmt(state, "integer overflow in constant expression", .{});
+            return .{ .i64 = r[0] };
+        }
+        if (left_val == .f64 and right_val == .f64) return .{ .f64 = left_val.f64 - right_val.f64 };
+        return null;
+    }
+    if (std.mem.eql(u8, op, "-%")) {
+        if (left_val == .i64 and right_val == .i64) return .{ .i64 = left_val.i64 -% right_val.i64 };
+        return null;
+    }
+    if (std.mem.eql(u8, op, "*")) {
+        if (left_val == .i64 and right_val == .i64) {
+            const r = @mulWithOverflow(left_val.i64, right_val.i64);
+            if (r[1] != 0) return compile_errors.compileFailFmt(state, "integer overflow in constant expression", .{});
+            return .{ .i64 = r[0] };
+        }
+        if (left_val == .f64 and right_val == .f64) return .{ .f64 = left_val.f64 * right_val.f64 };
+        return null;
+    }
+    if (std.mem.eql(u8, op, "*%")) {
+        if (left_val == .i64 and right_val == .i64) return .{ .i64 = left_val.i64 *% right_val.i64 };
+        return null;
+    }
+    if (std.mem.eql(u8, op, "/")) {
+        if (left_val == .i64 and right_val == .i64) {
+            if (right_val.i64 == 0) {
+                return compile_errors.compileFailFmt(state, "division by zero in constant expression", .{});
+            }
+            return .{ .i64 = @divTrunc(left_val.i64, right_val.i64) };
+        }
+        if (left_val == .f64 and right_val == .f64) {
+            if (right_val.f64 == 0.0) {
+                return compile_errors.compileFailFmt(state, "division by zero in constant expression", .{});
+            }
+            return .{ .f64 = left_val.f64 / right_val.f64 };
+        }
+        return null;
+    }
+    if (std.mem.eql(u8, op, "%")) {
+        if (left_val == .i64 and right_val == .i64) {
+            if (right_val.i64 == 0) {
+                return compile_errors.compileFailFmt(state, "division by zero in constant expression", .{});
+            }
+            return .{ .i64 = @rem(left_val.i64, right_val.i64) };
+        }
+        return null;
+    }
+    if (std.mem.eql(u8, op, "&")) {
+        if (left_val == .i64 and right_val == .i64) return .{ .i64 = left_val.i64 & right_val.i64 };
+        return null;
+    }
+    if (std.mem.eql(u8, op, "|")) {
+        if (left_val == .i64 and right_val == .i64) return .{ .i64 = left_val.i64 | right_val.i64 };
+        return null;
+    }
+    if (std.mem.eql(u8, op, "^") or std.mem.eql(u8, op, "~")) {
+        if (left_val == .i64 and right_val == .i64) return .{ .i64 = left_val.i64 ^ right_val.i64 };
+        return null;
+    }
+    if (std.mem.eql(u8, op, "<<")) {
+        if (left_val == .i64 and right_val == .i64) {
+            if (right_val.i64 < 0 or right_val.i64 >= 64) return null;
+            return .{ .i64 = left_val.i64 << @intCast(right_val.i64) };
+        }
+        return null;
+    }
+    if (std.mem.eql(u8, op, ">>")) {
+        if (left_val == .i64 and right_val == .i64) {
+            if (right_val.i64 < 0 or right_val.i64 >= 64) return null;
+            return .{ .i64 = left_val.i64 >> @intCast(right_val.i64) };
+        }
+        return null;
+    }
+    if (std.mem.eql(u8, op, "==")) {
+        if (left_val == .i64 and right_val == .i64) return .{ .bool = left_val.i64 == right_val.i64 };
+        if (left_val == .bool and right_val == .bool) return .{ .bool = left_val.bool == right_val.bool };
+        if (left_val == .string and right_val == .string) return .{ .bool = std.mem.eql(u8, left_val.string, right_val.string) };
+        if (left_val == .null and right_val == .null) return .{ .bool = true };
+        return .{ .bool = false };
+    }
+    if (std.mem.eql(u8, op, "!=")) {
+        if (left_val == .i64 and right_val == .i64) return .{ .bool = left_val.i64 != right_val.i64 };
+        if (left_val == .bool and right_val == .bool) return .{ .bool = left_val.bool != right_val.bool };
+        if (left_val == .string and right_val == .string) return .{ .bool = !std.mem.eql(u8, left_val.string, right_val.string) };
+        if (left_val == .null and right_val == .null) return .{ .bool = false };
+        return .{ .bool = true };
+    }
+    if (std.mem.eql(u8, op, "<")) {
+        if (left_val == .i64 and right_val == .i64) return .{ .bool = left_val.i64 < right_val.i64 };
+        if (left_val == .f64 and right_val == .f64) return .{ .bool = left_val.f64 < right_val.f64 };
+        return null;
+    }
+    if (std.mem.eql(u8, op, "<=")) {
+        if (left_val == .i64 and right_val == .i64) return .{ .bool = left_val.i64 <= right_val.i64 };
+        if (left_val == .f64 and right_val == .f64) return .{ .bool = left_val.f64 <= right_val.f64 };
+        return null;
+    }
+    if (std.mem.eql(u8, op, ">")) {
+        if (left_val == .i64 and right_val == .i64) return .{ .bool = left_val.i64 > right_val.i64 };
+        if (left_val == .f64 and right_val == .f64) return .{ .bool = left_val.f64 > right_val.f64 };
+        return null;
+    }
+    if (std.mem.eql(u8, op, ">=")) {
+        if (left_val == .i64 and right_val == .i64) return .{ .bool = left_val.i64 >= right_val.i64 };
+        if (left_val == .f64 and right_val == .f64) return .{ .bool = left_val.f64 >= right_val.f64 };
+        return null;
+    }
+    if (std.mem.eql(u8, op, "&&")) {
+        return .{ .bool = left_val.isTruthy() and right_val.isTruthy() };
+    }
+    if (std.mem.eql(u8, op, "||")) {
+        return .{ .bool = left_val.isTruthy() or right_val.isTruthy() };
+    }
+    return null;
+}
+
 pub fn evalExpr(state: *CompilerState, scope: ?*ComptimeScope, node: ?*ast.Node) anyerror!?ConstValue {
     const n = node orelse return null;
     const prev_line = state.diag_line;
@@ -396,141 +535,7 @@ fn evalExprInner(state: *CompilerState, scope: ?*ComptimeScope, n: *ast.Node) an
         .binary => |b| {
             const left_val = (try evalExpr(state, scope, b.left)) orelse return null;
             const right_val = (try evalExpr(state, scope, b.right)) orelse return null;
-
-            if (std.mem.eql(u8, b.operator, "+")) {
-                if (left_val == .i64 and right_val == .i64) {
-                    const r = @addWithOverflow(left_val.i64, right_val.i64);
-                    if (r[1] != 0) return compile_errors.compileFailFmt(state, "integer overflow in constant expression", .{});
-                    return .{ .i64 = r[0] };
-                }
-                if (left_val == .f64 and right_val == .f64) return .{ .f64 = left_val.f64 + right_val.f64 };
-                if (left_val == .string and right_val == .string) {
-                    const joined = try std.mem.concat(state.allocator, u8, &[_][]const u8{ left_val.string, right_val.string });
-                    return .{ .string = joined };
-                }
-                return null;
-            }
-            if (std.mem.eql(u8, b.operator, "+%")) {
-                if (left_val == .i64 and right_val == .i64) return .{ .i64 = left_val.i64 +% right_val.i64 };
-                return null;
-            }
-            if (std.mem.eql(u8, b.operator, "-")) {
-                if (left_val == .i64 and right_val == .i64) {
-                    const r = @subWithOverflow(left_val.i64, right_val.i64);
-                    if (r[1] != 0) return compile_errors.compileFailFmt(state, "integer overflow in constant expression", .{});
-                    return .{ .i64 = r[0] };
-                }
-                if (left_val == .f64 and right_val == .f64) return .{ .f64 = left_val.f64 - right_val.f64 };
-                return null;
-            }
-            if (std.mem.eql(u8, b.operator, "-%")) {
-                if (left_val == .i64 and right_val == .i64) return .{ .i64 = left_val.i64 -% right_val.i64 };
-                return null;
-            }
-            if (std.mem.eql(u8, b.operator, "*")) {
-                if (left_val == .i64 and right_val == .i64) {
-                    const r = @mulWithOverflow(left_val.i64, right_val.i64);
-                    if (r[1] != 0) return compile_errors.compileFailFmt(state, "integer overflow in constant expression", .{});
-                    return .{ .i64 = r[0] };
-                }
-                if (left_val == .f64 and right_val == .f64) return .{ .f64 = left_val.f64 * right_val.f64 };
-                return null;
-            }
-            if (std.mem.eql(u8, b.operator, "*%")) {
-                if (left_val == .i64 and right_val == .i64) return .{ .i64 = left_val.i64 *% right_val.i64 };
-                return null;
-            }
-            if (std.mem.eql(u8, b.operator, "/")) {
-                if (left_val == .i64 and right_val == .i64) {
-                    if (right_val.i64 == 0) {
-                        return compile_errors.compileFailFmt(state, "division by zero in constant expression", .{});
-                    }
-                    return .{ .i64 = @divTrunc(left_val.i64, right_val.i64) };
-                }
-                if (left_val == .f64 and right_val == .f64) {
-                    if (right_val.f64 == 0.0) {
-                        return compile_errors.compileFailFmt(state, "division by zero in constant expression", .{});
-                    }
-                    return .{ .f64 = left_val.f64 / right_val.f64 };
-                }
-                return null;
-            }
-            if (std.mem.eql(u8, b.operator, "%")) {
-                if (left_val == .i64 and right_val == .i64) {
-                    if (right_val.i64 == 0) {
-                        return compile_errors.compileFailFmt(state, "division by zero in constant expression", .{});
-                    }
-                    return .{ .i64 = @rem(left_val.i64, right_val.i64) };
-                }
-                return null;
-            }
-            if (std.mem.eql(u8, b.operator, "&")) {
-                if (left_val == .i64 and right_val == .i64) return .{ .i64 = left_val.i64 & right_val.i64 };
-                return null;
-            }
-            if (std.mem.eql(u8, b.operator, "|")) {
-                if (left_val == .i64 and right_val == .i64) return .{ .i64 = left_val.i64 | right_val.i64 };
-                return null;
-            }
-            if (std.mem.eql(u8, b.operator, "^")) {
-                if (left_val == .i64 and right_val == .i64) return .{ .i64 = left_val.i64 ^ right_val.i64 };
-                return null;
-            }
-            if (std.mem.eql(u8, b.operator, "<<")) {
-                if (left_val == .i64 and right_val == .i64) {
-                    if (right_val.i64 < 0 or right_val.i64 >= 64) return null;
-                    return .{ .i64 = left_val.i64 << @intCast(right_val.i64) };
-                }
-                return null;
-            }
-            if (std.mem.eql(u8, b.operator, ">>")) {
-                if (left_val == .i64 and right_val == .i64) {
-                    if (right_val.i64 < 0 or right_val.i64 >= 64) return null;
-                    return .{ .i64 = left_val.i64 >> @intCast(right_val.i64) };
-                }
-                return null;
-            }
-            if (std.mem.eql(u8, b.operator, "==")) {
-                if (left_val == .i64 and right_val == .i64) return .{ .bool = left_val.i64 == right_val.i64 };
-                if (left_val == .bool and right_val == .bool) return .{ .bool = left_val.bool == right_val.bool };
-                if (left_val == .string and right_val == .string) return .{ .bool = std.mem.eql(u8, left_val.string, right_val.string) };
-                if (left_val == .null and right_val == .null) return .{ .bool = true };
-                return .{ .bool = false };
-            }
-            if (std.mem.eql(u8, b.operator, "!=")) {
-                if (left_val == .i64 and right_val == .i64) return .{ .bool = left_val.i64 != right_val.i64 };
-                if (left_val == .bool and right_val == .bool) return .{ .bool = left_val.bool != right_val.bool };
-                if (left_val == .string and right_val == .string) return .{ .bool = !std.mem.eql(u8, left_val.string, right_val.string) };
-                if (left_val == .null and right_val == .null) return .{ .bool = false };
-                return .{ .bool = true };
-            }
-            if (std.mem.eql(u8, b.operator, "<")) {
-                if (left_val == .i64 and right_val == .i64) return .{ .bool = left_val.i64 < right_val.i64 };
-                if (left_val == .f64 and right_val == .f64) return .{ .bool = left_val.f64 < right_val.f64 };
-                return null;
-            }
-            if (std.mem.eql(u8, b.operator, "<=")) {
-                if (left_val == .i64 and right_val == .i64) return .{ .bool = left_val.i64 <= right_val.i64 };
-                if (left_val == .f64 and right_val == .f64) return .{ .bool = left_val.f64 <= right_val.f64 };
-                return null;
-            }
-            if (std.mem.eql(u8, b.operator, ">")) {
-                if (left_val == .i64 and right_val == .i64) return .{ .bool = left_val.i64 > right_val.i64 };
-                if (left_val == .f64 and right_val == .f64) return .{ .bool = left_val.f64 > right_val.f64 };
-                return null;
-            }
-            if (std.mem.eql(u8, b.operator, ">=")) {
-                if (left_val == .i64 and right_val == .i64) return .{ .bool = left_val.i64 >= right_val.i64 };
-                if (left_val == .f64 and right_val == .f64) return .{ .bool = left_val.f64 >= right_val.f64 };
-                return null;
-            }
-            if (std.mem.eql(u8, b.operator, "&&")) {
-                return .{ .bool = left_val.isTruthy() and right_val.isTruthy() };
-            }
-            if (std.mem.eql(u8, b.operator, "||")) {
-                return .{ .bool = left_val.isTruthy() or right_val.isTruthy() };
-            }
-            return null;
+            return try evalBinaryOp(state, b.operator, left_val, right_val);
         },
         .array_literal => |arr| {
             const carr = try state.allocator.create(ConstArray);
@@ -616,6 +621,13 @@ fn evalExprInner(state: *CompilerState, scope: ?*ComptimeScope, n: *ast.Node) an
                     }
                     return t[idx];
                 },
+                .array => |a| {
+                    const idx = std.fmt.parseInt(usize, prop_name, 10) catch return null;
+                    if (idx >= a.elements.items.len) {
+                        return compile_errors.compileFailFmt(state, "Index {d} out of range (len {d})", .{ idx, a.elements.items.len });
+                    }
+                    return a.elements.items[idx];
+                },
                 else => return null,
             }
         },
@@ -663,24 +675,57 @@ pub fn evalComptimeBlock(state: *CompilerState, parent_scope: ?*ComptimeScope, b
             parent.has_returned = true;
             parent.returned_val = bscope.returned_val;
         }
+        if (!bscope.is_loop) {
+            if (bscope.has_broken) {
+                parent.has_broken = true;
+                parent.broken_val = bscope.broken_val;
+            }
+            if (bscope.has_continued) {
+                parent.has_continued = true;
+            }
+        }
     };
 
     var last_val: ConstValue = .null;
     for (block.statements) |stmt_node| {
+        if (bscope.has_broken or bscope.has_returned or bscope.has_continued) break;
         noteDiag(state, stmt_node);
         switch (stmt_node.*) {
             .declaration => |d| {
                 const val = (try evalExpr(state, &bscope, d.value)) orelse return null;
-                try bscope.put(d.name, val);
+                if (d.is_const) {
+                    try bscope.putConst(d.name, val);
+                } else {
+                    try bscope.put(d.name, val);
+                }
                 last_val = val;
             },
             .assignment => |a| {
                 const right_val = (try evalExpr(state, &bscope, a.right)) orelse return null;
+                const is_compound = a.operator.len > 1 and a.operator[a.operator.len - 1] == '=';
+                const compound_op = if (is_compound) a.operator[0 .. a.operator.len - 1] else null;
+
                 if (a.left.* == .primary) {
-                    if (!bscope.update(a.left.primary.name, right_val)) {
-                        try bscope.put(a.left.primary.name, right_val);
+                    const name = a.left.primary.name;
+                    if (isConstBinding(state, &bscope, name)) {
+                        return compile_errors.compileFailFmt(state, "Cannot mutate constant '{s}'", .{name});
                     }
+                    var final_val = right_val;
+                    if (compound_op) |cop| {
+                        const cur_val = bscope.get(name) orelse (state.const_values.get(name) orelse return null);
+                        final_val = (try evalBinaryOp(state, cop, cur_val, right_val)) orelse return null;
+                    }
+                    if (!bscope.update(name, final_val)) {
+                        try bscope.put(name, final_val);
+                    }
+                    last_val = final_val;
                 } else if (a.left.* == .index) {
+                    if (a.left.index.object.* == .primary) {
+                        const obj_name = a.left.index.object.primary.name;
+                        if (isConstBinding(state, &bscope, obj_name)) {
+                            return compile_errors.compileFailFmt(state, "Cannot mutate elements of constant '{s}'", .{obj_name});
+                        }
+                    }
                     const obj_val = (try evalExpr(state, &bscope, a.left.index.object)) orelse return compile_errors.compileFailFmt(state, "Cannot index assignment target in comptime", .{});
                     const start_expr = a.left.index.index orelse return compile_errors.compileFailFmt(state, "Expected index expression in comptime assignment", .{});
                     const idx_val = (try evalExpr(state, &bscope, start_expr)) orelse return compile_errors.compileFailFmt(state, "Index expression must evaluate to constant", .{});
@@ -691,17 +736,73 @@ pub fn evalComptimeBlock(state: *CompilerState, parent_scope: ?*ComptimeScope, b
                         if (idx < 0 or idx >= a_obj.elements.items.len) {
                             return compile_errors.compileFailFmt(state, "index {d} out of bounds for array of length {d}", .{ idx, a_obj.elements.items.len });
                         }
-                        a_obj.elements.items[@intCast(idx)] = right_val;
+                        var final_val = right_val;
+                        if (compound_op) |cop| {
+                            const cur_val = a_obj.elements.items[@intCast(idx)];
+                            final_val = (try evalBinaryOp(state, cop, cur_val, right_val)) orelse return null;
+                        }
+                        a_obj.elements.items[@intCast(idx)] = final_val;
+                        last_val = final_val;
                     } else {
                         return compile_errors.compileFailFmt(state, "Target is not a mutable array in comptime block", .{});
                     }
                 } else if (a.left.* == .member) {
+                    if (a.left.member.object.* == .primary) {
+                        const obj_name = a.left.member.object.primary.name;
+                        if (isConstBinding(state, &bscope, obj_name)) {
+                            return compile_errors.compileFailFmt(state, "Cannot mutate field of constant '{s}'", .{obj_name});
+                        }
+                    }
                     const obj_val = (try evalExpr(state, &bscope, a.left.member.object)) orelse return compile_errors.compileFailFmt(state, "Cannot access member target in comptime", .{});
-                    if (obj_val == .struct_val and a.left.member.property.* == .primary) {
-                        try obj_val.struct_val.fields.put(a.left.member.property.primary.name, right_val);
+                    if (a.left.member.property.* != .primary) {
+                        return compile_errors.compileFailFmt(state, "Expected identifier property in member assignment", .{});
+                    }
+                    const prop_name = a.left.member.property.primary.name;
+
+                    if (obj_val == .struct_val) {
+                        const s = obj_val.struct_val;
+                        if (state.structs.get(s.type_name)) |sd| {
+                            if (!sd.offsets.contains(prop_name)) {
+                                return compile_errors.compileFailFmt(state, "field '{s}' does not exist on '{s}'", .{ prop_name, s.type_name });
+                            }
+                        }
+                        var final_val = right_val;
+                        if (compound_op) |cop| {
+                            const cur_val = s.fields.get(prop_name) orelse return compile_errors.compileFailFmt(state, "field '{s}' not initialized on '{s}'", .{ prop_name, s.type_name });
+                            final_val = (try evalBinaryOp(state, cop, cur_val, right_val)) orelse return null;
+                        }
+                        try s.fields.put(prop_name, final_val);
+                        last_val = final_val;
+                    } else if (obj_val == .tuple) {
+                        const ci = std.fmt.parseInt(usize, prop_name, 10) catch
+                            return compile_errors.compileFailFmt(state, "Tuple fields are numeric (.0, .1, …), got '.{s}'", .{prop_name});
+                        if (ci >= obj_val.tuple.len) {
+                            return compile_errors.compileFailFmt(state, "Tuple index {d} out of range (len {d})", .{ ci, obj_val.tuple.len });
+                        }
+                        var final_val = right_val;
+                        if (compound_op) |cop| {
+                            const cur_val = obj_val.tuple[ci];
+                            final_val = (try evalBinaryOp(state, cop, cur_val, right_val)) orelse return null;
+                        }
+                        obj_val.tuple[ci] = final_val;
+                        last_val = final_val;
+                    } else if (obj_val == .array) {
+                        const ci = std.fmt.parseInt(usize, prop_name, 10) catch
+                            return compile_errors.compileFailFmt(state, "Tuple fields are numeric (.0, .1, …), got '.{s}'", .{prop_name});
+                        if (ci >= obj_val.array.elements.items.len) {
+                            return compile_errors.compileFailFmt(state, "Tuple index {d} out of range (len {d})", .{ ci, obj_val.array.elements.items.len });
+                        }
+                        var final_val = right_val;
+                        if (compound_op) |cop| {
+                            const cur_val = obj_val.array.elements.items[ci];
+                            final_val = (try evalBinaryOp(state, cop, cur_val, right_val)) orelse return null;
+                        }
+                        obj_val.array.elements.items[ci] = final_val;
+                        last_val = final_val;
+                    } else {
+                        return compile_errors.compileFailFmt(state, "Target is not a mutable struct, tuple, or array in comptime member assignment", .{});
                     }
                 }
-                last_val = right_val;
             },
             .for_expr => |f| {
                 if (f.expr.* == .binary and std.mem.eql(u8, f.expr.binary.operator, "..")) {
@@ -716,10 +817,10 @@ pub fn evalComptimeBlock(state: *CompilerState, parent_scope: ?*ComptimeScope, b
 
                     while (cur < end) : (cur += 1) {
                         iters += 1;
-                        if (iters > 100000) {
-                            return compile_errors.compileFailFmt(state, "comptime loop exceeded maximum iteration limit of 100000", .{});
+                        if (iters > state.comptime_max_loop_iterations) {
+                            return compile_errors.compileFailFmt(state, "comptime loop exceeded maximum iteration limit of {d}", .{state.comptime_max_loop_iterations});
                         }
-                        var loop_scope = ComptimeScope.init(state.allocator, &bscope);
+                        var loop_scope = ComptimeScope.initLoop(state.allocator, &bscope);
                         defer loop_scope.deinit();
 
                         if (capture_name) |cname| {
@@ -728,7 +829,38 @@ pub fn evalComptimeBlock(state: *CompilerState, parent_scope: ?*ComptimeScope, b
 
                         if (f.body.* == .block) {
                             const res = try evalComptimeBlock(state, &loop_scope, &f.body.block);
-                            if (loop_scope.has_broken) break;
+                            if (loop_scope.has_broken) {
+                                if (loop_scope.broken_val) |bv| last_val = bv;
+                                break;
+                            }
+                            if (loop_scope.has_returned) {
+                                bscope.has_returned = true;
+                                bscope.returned_val = loop_scope.returned_val;
+                                return loop_scope.returned_val orelse .null;
+                            }
+                            if (res) |rv| last_val = rv;
+                        }
+                    }
+                } else if (f.captures.len == 0) {
+                    var iters: usize = 0;
+                    while (true) {
+                        iters += 1;
+                        if (iters > state.comptime_max_loop_iterations) {
+                            return compile_errors.compileFailFmt(state, "comptime loop exceeded maximum iteration limit of {d}", .{state.comptime_max_loop_iterations});
+                        }
+                        const cond_val = (try evalExpr(state, &bscope, f.expr)) orelse
+                            return compile_errors.compileFailFmt(state, "for loop condition must be constant in comptime", .{});
+                        if (!cond_val.isTruthy()) break;
+
+                        var loop_scope = ComptimeScope.initLoop(state.allocator, &bscope);
+                        defer loop_scope.deinit();
+
+                        if (f.body.* == .block) {
+                            const res = try evalComptimeBlock(state, &loop_scope, &f.body.block);
+                            if (loop_scope.has_broken) {
+                                if (loop_scope.broken_val) |bv| last_val = bv;
+                                break;
+                            }
                             if (loop_scope.has_returned) {
                                 bscope.has_returned = true;
                                 bscope.returned_val = loop_scope.returned_val;
@@ -738,7 +870,131 @@ pub fn evalComptimeBlock(state: *CompilerState, parent_scope: ?*ComptimeScope, b
                         }
                     }
                 } else {
-                    return compile_errors.compileFailFmt(state, "Only range for loops (@for (start..end)) supported in comptime blocks currently", .{});
+                    const first_val = (try evalExpr(state, &bscope, f.expr)) orelse
+                        return compile_errors.compileFailFmt(state, "for loop expression must be constant in comptime", .{});
+
+                    switch (first_val) {
+                        .array => |a_obj| {
+                            var iters: usize = 0;
+                            for (a_obj.elements.items, 0..) |item, idx| {
+                                iters += 1;
+                                if (iters > state.comptime_max_loop_iterations) {
+                                    return compile_errors.compileFailFmt(state, "comptime loop exceeded maximum iteration limit of {d}", .{state.comptime_max_loop_iterations});
+                                }
+                                var loop_scope = ComptimeScope.initLoop(state.allocator, &bscope);
+                                defer loop_scope.deinit();
+
+                                try loop_scope.put(f.captures[0].name, item);
+                                if (f.captures.len > 1) {
+                                    try loop_scope.put(f.captures[1].name, .{ .i64 = @intCast(idx) });
+                                }
+
+                                if (f.body.* == .block) {
+                                    const res = try evalComptimeBlock(state, &loop_scope, &f.body.block);
+                                    if (loop_scope.has_broken) {
+                                        if (loop_scope.broken_val) |bv| last_val = bv;
+                                        break;
+                                    }
+                                    if (loop_scope.has_returned) {
+                                        bscope.has_returned = true;
+                                        bscope.returned_val = loop_scope.returned_val;
+                                        return loop_scope.returned_val orelse .null;
+                                    }
+                                    if (res) |rv| last_val = rv;
+                                }
+                            }
+                        },
+                        .tuple => |t_obj| {
+                            var iters: usize = 0;
+                            for (t_obj, 0..) |item, idx| {
+                                iters += 1;
+                                if (iters > state.comptime_max_loop_iterations) {
+                                    return compile_errors.compileFailFmt(state, "comptime loop exceeded maximum iteration limit of {d}", .{state.comptime_max_loop_iterations});
+                                }
+                                var loop_scope = ComptimeScope.initLoop(state.allocator, &bscope);
+                                defer loop_scope.deinit();
+
+                                try loop_scope.put(f.captures[0].name, item);
+                                if (f.captures.len > 1) {
+                                    try loop_scope.put(f.captures[1].name, .{ .i64 = @intCast(idx) });
+                                }
+
+                                if (f.body.* == .block) {
+                                    const res = try evalComptimeBlock(state, &loop_scope, &f.body.block);
+                                    if (loop_scope.has_broken) {
+                                        if (loop_scope.broken_val) |bv| last_val = bv;
+                                        break;
+                                    }
+                                    if (loop_scope.has_returned) {
+                                        bscope.has_returned = true;
+                                        bscope.returned_val = loop_scope.returned_val;
+                                        return loop_scope.returned_val orelse .null;
+                                    }
+                                    if (res) |rv| last_val = rv;
+                                }
+                            }
+                        },
+                        .string => |s_obj| {
+                            var iters: usize = 0;
+                            for (s_obj, 0..) |byte, idx| {
+                                iters += 1;
+                                if (iters > state.comptime_max_loop_iterations) {
+                                    return compile_errors.compileFailFmt(state, "comptime loop exceeded maximum iteration limit of {d}", .{state.comptime_max_loop_iterations});
+                                }
+                                var loop_scope = ComptimeScope.initLoop(state.allocator, &bscope);
+                                defer loop_scope.deinit();
+
+                                try loop_scope.put(f.captures[0].name, .{ .i64 = @intCast(byte) });
+                                if (f.captures.len > 1) {
+                                    try loop_scope.put(f.captures[1].name, .{ .i64 = @intCast(idx) });
+                                }
+
+                                if (f.body.* == .block) {
+                                    const res = try evalComptimeBlock(state, &loop_scope, &f.body.block);
+                                    if (loop_scope.has_broken) {
+                                        if (loop_scope.broken_val) |bv| last_val = bv;
+                                        break;
+                                    }
+                                    if (loop_scope.has_returned) {
+                                        bscope.has_returned = true;
+                                        bscope.returned_val = loop_scope.returned_val;
+                                        return loop_scope.returned_val orelse .null;
+                                    }
+                                    if (res) |rv| last_val = rv;
+                                }
+                            }
+                        },
+                        else => {
+                            var cur_val = first_val;
+                            var iters: usize = 0;
+                            while (cur_val != .null and cur_val.isTruthy()) {
+                                iters += 1;
+                                if (iters > state.comptime_max_loop_iterations) {
+                                    return compile_errors.compileFailFmt(state, "comptime loop exceeded maximum iteration limit of {d}", .{state.comptime_max_loop_iterations});
+                                }
+                                var loop_scope = ComptimeScope.initLoop(state.allocator, &bscope);
+                                defer loop_scope.deinit();
+
+                                try loop_scope.put(f.captures[0].name, cur_val);
+
+                                if (f.body.* == .block) {
+                                    const res = try evalComptimeBlock(state, &loop_scope, &f.body.block);
+                                    if (loop_scope.has_broken) {
+                                        if (loop_scope.broken_val) |bv| last_val = bv;
+                                        break;
+                                    }
+                                    if (loop_scope.has_returned) {
+                                        bscope.has_returned = true;
+                                        bscope.returned_val = loop_scope.returned_val;
+                                        return loop_scope.returned_val orelse .null;
+                                    }
+                                    if (res) |rv| last_val = rv;
+                                }
+                                const next_val = (try evalExpr(state, &bscope, f.expr)) orelse break;
+                                cur_val = next_val;
+                            }
+                        },
+                    }
                 }
             },
             .if_expr => |ife| {
@@ -795,6 +1051,10 @@ pub fn evalComptimeBlock(state: *CompilerState, parent_scope: ?*ComptimeScope, b
                     break;
                 }
             },
+            .continue_expr => {
+                bscope.has_continued = true;
+                return last_val;
+            },
             .break_expr => |brk| {
                 if (brk.value) |bv| {
                     const v = (try evalExpr(state, &bscope, bv)) orelse return null;
@@ -827,29 +1087,55 @@ pub fn evalComptimeBlock(state: *CompilerState, parent_scope: ?*ComptimeScope, b
 }
 
 pub fn evalComptimeCall(state: *CompilerState, scope: ?*ComptimeScope, call: *const ast.Call) anyerror!?ConstValue {
-    if (call.callee.* != .primary) return null;
-    const fn_name = call.callee.primary.name;
+    var fn_name: []const u8 = undefined;
+    var self_val: ?ConstValue = null;
+
+    if (call.callee.* == .primary) {
+        fn_name = call.callee.primary.name;
+    } else if (call.callee.* == .member and call.callee.member.property.* == .primary) {
+        const prop_name = call.callee.member.property.primary.name;
+        if (call.callee.member.object.* == .primary and state.structs.contains(call.callee.member.object.primary.name)) {
+            const sname = call.callee.member.object.primary.name;
+            fn_name = try std.fmt.allocPrint(state.allocator, "{s}::{s}", .{ sname, prop_name });
+        } else {
+            const obj_val = (try evalExpr(state, scope, call.callee.member.object)) orelse return null;
+            if (obj_val == .struct_val) {
+                self_val = obj_val;
+                fn_name = try std.fmt.allocPrint(state.allocator, "{s}::{s}", .{ obj_val.struct_val.type_name, prop_name });
+            } else {
+                return null;
+            }
+        }
+    } else {
+        return null;
+    }
 
     const fn_def = state.functions.get(fn_name) orelse return null;
     if (fn_def.node.* != .function_decl) return null;
     const fdecl = fn_def.node.function_decl;
 
-    var call_scope = ComptimeScope.init(state.allocator, scope);
+    var call_scope = ComptimeScope.init(state.allocator, null);
     defer call_scope.deinit();
 
     // Bind parameters
     const plist: []ast.Param = if (fdecl.params.* == .params) fdecl.params.params.params else &.{};
+    var arg_idx: usize = 0;
     for (plist, 0..) |p, i| {
-        if (i < call.args.len) {
-            const arg_val = (try evalExpr(state, scope, call.args[i])) orelse return null;
+        if (i == 0 and self_val != null and (std.mem.eql(u8, p.name, "self") or std.mem.eql(u8, p.name, "this"))) {
+            try call_scope.put(p.name, self_val.?);
+        } else if (arg_idx < call.args.len) {
+            const arg_val = (try evalExpr(state, scope, call.args[arg_idx])) orelse return null;
             try call_scope.put(p.name, arg_val);
+            arg_idx += 1;
         } else {
             try call_scope.put(p.name, .null);
         }
     }
 
     if (fdecl.body.* == .block) {
-        return try evalComptimeBlock(state, &call_scope, &fdecl.body.block);
+        const res = try evalComptimeBlock(state, &call_scope, &fdecl.body.block);
+        if (call_scope.has_returned) return call_scope.returned_val orelse .null;
+        return res;
     }
     return try evalExpr(state, &call_scope, fdecl.body);
 }

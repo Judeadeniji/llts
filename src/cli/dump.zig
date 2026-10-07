@@ -11,10 +11,11 @@ pub fn execute(ctx: zli.CommandContext) !void {
     const file = ctx.getArg("file").?;
     const out_val = ctx.flag("output", []const u8);
     const out_path: ?[]const u8 = if (out_val.len > 0) out_val else null;
+    const comptime_iters = common.getComptimeMaxLoopIterations(ctx.allocator, ctx);
 
     if (llts.serialize.isBytecodePath(file)) {
         common.failExit("Cannot dump bytecode from a .llb file; use a .lls source\n", .{});
     }
 
-    try pipeline.dumpFile(ctx.allocator, file, release, strict, out_path);
+    try pipeline.dumpFile(ctx.allocator, file, release, strict, out_path, comptime_iters);
 }

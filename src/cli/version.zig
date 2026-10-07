@@ -1,5 +1,6 @@
 const std = @import("std");
 const zli = @import("zli");
+const llts = @import("llts");
 
 pub const VERSION = std.SemanticVersion{
     .major = 0,
@@ -10,7 +11,7 @@ pub const VERSION = std.SemanticVersion{
 pub fn print() void {
     var buf: [64]u8 = undefined;
     const str = std.fmt.bufPrint(&buf, "{d}.{d}.{d}\n", .{ VERSION.major, VERSION.minor, VERSION.patch }) catch return;
-    @import("llts").io.writeStdout(str);
+    llts.io.writeStdout(str);
 }
 
 pub fn versionCmd(ctx: zli.CommandContext) !void {

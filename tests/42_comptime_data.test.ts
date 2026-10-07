@@ -1,5 +1,5 @@
 import { test } from "bun:test";
-import { runSource, runSourceStrict, expectOutput, expectError } from "./helpers";
+import { runSource, runSourceStrict, runSourceWithEnv, runSourceWithFlags, expectOutput, expectError } from "./helpers";
 
 // ---------------------------------------------------------------------------
 // Constant-folding engine: `@comptime` blocks, calls, aggregates and statics
@@ -345,3 +345,194 @@ print(S);
 print(E);
 `), ["20", "99"]);
 });
+
+test("@comptime @for iterates over an array", () => {
+  expectOutput(runSource(`
+@const $SUM = @comptime {
+    $arr = [10, 20, 30, 40];
+    $s = 0;
+    @for (arr) |item| {
+        s += item;
+    }
+    return s;
+};
+print(SUM);
+`), ["100"]);
+});
+
+test("@comptime @for iterates over an array with index capture", () => {
+  expectOutput(runSource(`
+@const $INDEXED = @comptime {
+    $arr = [10, 20, 30];
+    $res = [0, 0, 0];
+    @for (arr) |val, idx| {
+        res[idx] = val + idx;
+    }
+    return res;
+};
+print(INDEXED[0]);
+print(INDEXED[1]);
+print(INDEXED[2]);
+`), ["10", "21", "32"]);
+});
+
+test("@comptime @for(true) condition loop with break", () => {
+  expectOutput(runSource(`
+@const $VAL = @comptime {
+    $i = 0;
+    @for (true) {
+        i += 1;
+        @if (i == 5) {
+            break;
+        }
+    }
+    return i;
+};
+print(VAL);
+`), ["5"]);
+});
+
+test("@comptime @for(condition) while loop with continue", () => {
+  expectOutput(runSource(`
+@const $ODDS = @comptime {
+    $sum = 0;
+    @for (0..10) |i| {
+        @if (i % 2 == 0) {
+            continue;
+        }
+        sum += i;
+    }
+    return sum;
+};
+print(ODDS);
+`), ["25"]);
+});
+
+test("@comptime can mutate local struct fields and use compound assignment", () => {
+  expectOutput(runSource(`
+@struct Point { x: int; y: int; }
+@const $P = @comptime {
+    $p = Point { x: 10, y: 20 };
+    p.x += 5;
+    p.y = 99;
+    return p;
+};
+print(P.x);
+print(P.y);
+`), ["15", "99"]);
+});
+
+test("@comptime can mutate local tuple fields", () => {
+  expectOutput(runSource(`
+@const $T = @comptime {
+    $t = [10, 20];
+    t.0 += 5;
+    t.1 = 99;
+    return t;
+};
+print(T.0);
+print(T.1);
+`), ["15", "99"]);
+});
+
+test("@comptime rejects mutating outer @const struct", () => {
+  expectError(runSource(`
+@struct Point { x: int; y: int; }
+@const $ORIGIN = Point { x: 0, y: 0 };
+@const $BAD = @comptime {
+    ORIGIN.x = 10;
+    return ORIGIN;
+};
+`), "Cannot mutate field of constant 'ORIGIN'");
+});
+
+test("@comptime rejects mutating outer @const array elements", () => {
+  expectError(runSource(`
+@const $ARR = [1, 2, 3];
+@const $BAD = @comptime {
+    ARR[0] = 99;
+    return ARR;
+};
+`), "Cannot mutate elements of constant 'ARR'");
+});
+
+test("@comptime executes struct method", () => {
+  expectOutput(runSource(`
+@struct Rect {
+    w: int;
+    h: int;
+
+    @func area(self): int {
+        return self.w * self.h;
+    }
+}
+
+@const $A = @comptime {
+    $r = Rect { w: 10, h: 5 };
+    return r.area();
+};
+print(A);
+`), ["50"]);
+});
+
+test("@comptime loop iteration limit is configurable via LLTS_COMPTIME_MAX_LOOP_ITERATIONS env var", () => {
+  const code = `
+@const $VAL = @comptime {
+    $sum = 0;
+    @for (0..20) |i| {
+        sum += i;
+    }
+    return sum;
+};
+print(VAL);
+`;
+  expectError(
+    runSourceWithEnv(code, { LLTS_COMPTIME_MAX_LOOP_ITERATIONS: "10" }),
+    "comptime loop exceeded maximum iteration limit of 10"
+  );
+
+  expectOutput(
+    runSourceWithEnv(code, { LLTS_COMPTIME_MAX_LOOP_ITERATIONS: "30" }),
+    ["190"]
+  );
+});
+
+test("@comptime loop iteration limit is configurable via --comptime-max-loop-iterations flag", () => {
+  const code = `
+@const $VAL = @comptime {
+    $sum = 0;
+    @for (0..20) |i| {
+        sum += i;
+    }
+    return sum;
+};
+print(VAL);
+`;
+  expectError(
+    runSourceWithFlags(code, ["--comptime-max-loop-iterations", "10"]),
+    "comptime loop exceeded maximum iteration limit of 10"
+  );
+
+  expectOutput(
+    runSourceWithFlags(code, ["--comptime-max-loop-iterations", "50"]),
+    ["190"]
+  );
+});
+
+test("@comptime condition loop respects configurable iteration limit", () => {
+  const code = `
+@const $VAL = @comptime {
+    $i = 0;
+    @for (i < 50) {
+        i += 1;
+    }
+    return i;
+};
+print(VAL);
+`;
+  expectError(
+    runSourceWithEnv(code, { LLTS_COMPTIME_MAX_LOOP_ITERATIONS: "15" }),
+    "comptime loop exceeded maximum iteration limit of 15"
+  );
+});
+

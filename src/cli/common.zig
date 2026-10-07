@@ -26,6 +26,18 @@ pub fn getMaxMemory(allocator: std.mem.Allocator, ctx: zli.CommandContext) usize
     return 1048576;
 }
 
+pub fn getComptimeMaxLoopIterations(allocator: std.mem.Allocator, ctx: zli.CommandContext) ?usize {
+    const flag_val = ctx.flag("comptime-max-loop-iterations", []const u8);
+    if (flag_val.len > 0) {
+        if (std.fmt.parseInt(usize, flag_val, 10)) |v| return v else |_| {}
+    }
+    if (std.process.getEnvVarOwned(allocator, "LLTS_COMPTIME_MAX_LOOP_ITERATIONS")) |env_val| {
+        defer allocator.free(env_val);
+        if (std.fmt.parseInt(usize, env_val, 10)) |v| return v else |_| {}
+    } else |_| {}
+    return null;
+}
+
 pub fn failExit(comptime format: []const u8, args: anytype) noreturn {
     io.printStderr(format, args);
     std.process.exit(1);

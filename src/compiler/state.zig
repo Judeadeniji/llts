@@ -3,6 +3,7 @@ const chunk_mod = @import("../bytecode/chunk.zig");
 const ast = @import("../ast/root.zig");
 pub const const_eval = @import("const_eval.zig");
 pub const ConstValue = const_eval.ConstValue;
+const layout = @import("layout.zig");
 
 pub const Local = struct {
     name: []const u8,
@@ -175,12 +176,23 @@ pub const CompilerState = struct {
     import_stack: std.ArrayList(ImportFrame) = .empty,
     /// Resolved module path → import site that loaded it (survives after load for compile errors).
     import_from: std.StringHashMap(ImportFrame),
+    /// Max loop iterations allowed during constant evaluation.
+    comptime_max_loop_iterations: usize = const_eval.DEFAULT_COMPTIME_MAX_LOOP_ITERATIONS,
 };
 
 pub fn create(allocator: std.mem.Allocator) !CompilerState {
+    var max_iters: usize = const_eval.DEFAULT_COMPTIME_MAX_LOOP_ITERATIONS;
+    if (std.process.getEnvVarOwned(allocator, "LLTS_COMPTIME_MAX_LOOP_ITERATIONS")) |env_val| {
+        defer allocator.free(env_val);
+        if (std.fmt.parseInt(usize, env_val, 10)) |v| {
+            max_iters = v;
+        } else |_| {}
+    } else |_| {}
+
     var state: CompilerState = .{
         .allocator = allocator,
         .chunk = chunk_mod.Chunk.init(allocator),
+        .comptime_max_loop_iterations = max_iters,
         .functions = std.StringHashMap(FunctionDef).init(allocator),
         .structs = std.StringHashMap(StructDef).init(allocator),
         .enums = std.StringHashMap(EnumDef).init(allocator),
@@ -224,7 +236,6 @@ pub fn create(allocator: std.mem.Allocator) !CompilerState {
 }
 
 fn putStruct(state: *CompilerState, name: []const u8, fields: []const struct { []const u8, []const u8 }) !void {
-    const layout = @import("layout.zig");
     var types = std.StringHashMap([]const u8).init(state.allocator);
     var specs: std.ArrayList(layout.FieldSpec) = .empty;
     defer specs.deinit(state.allocator);
