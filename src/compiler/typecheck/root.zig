@@ -530,6 +530,60 @@ fn fieldTypeFromStruct(state: *state_mod.CompilerState, ta: ir.TypeAlloc, struct
     return try from_ast.parseDisplayType(state, ta, raw, null);
 }
 
+fn lookupModuleDeclExact(state: *state_mod.CompilerState, ta: ir.TypeAlloc, mod_path: []const u8, member: []const u8) !?ir.Type {
+    var sbuf: [512]u8 = undefined;
+    const sub_key = std.fmt.bufPrint(&sbuf, "${s}::{s}", .{ mod_path, member }) catch return null;
+    if (state.global_types.get(sub_key)) |gt| {
+        if (std.mem.startsWith(u8, gt, "module:")) return ir.Type{ .struct_ = gt };
+    }
+    var bbuf: [512]u8 = undefined;
+    const bare_sub_key = std.fmt.bufPrint(&bbuf, "${s}", .{member}) catch "";
+    if (bare_sub_key.len > 0) {
+        if (state.global_types.get(bare_sub_key)) |gt| {
+            if (std.mem.startsWith(u8, gt, "module:")) return ir.Type{ .struct_ = gt };
+        }
+    }
+
+    var qbuf: [512]u8 = undefined;
+    const q = std.fmt.bufPrint(&qbuf, "{s}::{s}", .{ mod_path, member }) catch return null;
+    if (state.chunk.exports.contains(q) or state.global_vars.contains(q) or state.global_consts.contains(q)) {
+        if (state.global_types.get(q)) |gt| {
+            if (std.mem.startsWith(u8, gt, "module:")) return ir.Type{ .struct_ = gt };
+            return try from_ast.parseDisplayType(state, ta, gt, null);
+        }
+        if (try funcTypeOfName(state, ta, q)) |ft| return ft;
+        if (state.structs.contains(q)) return ir.Type{ .struct_ = q };
+        if (state.enums.contains(q)) return ir.Type{ .enum_ = q };
+        if (state.error_sets.contains(q)) return ir.Type{ .error_set = q };
+        if (state.typedefs.get(q)) |td| return try from_ast.parseDisplayType(state, ta, td.underlying, null);
+        return ir.TUnknown;
+    }
+    if (state.global_types.get(q)) |gt| {
+        if (std.mem.startsWith(u8, gt, "module:")) return ir.Type{ .struct_ = gt };
+        return try from_ast.parseDisplayType(state, ta, gt, null);
+    }
+    if (try funcTypeOfName(state, ta, q)) |ft| return ft;
+    if (state.structs.contains(q)) return ir.Type{ .struct_ = q };
+    if (state.enums.contains(q)) return ir.Type{ .enum_ = q };
+    if (state.error_sets.contains(q)) return ir.Type{ .error_set = q };
+    if (state.typedefs.get(q)) |td| return try from_ast.parseDisplayType(state, ta, td.underlying, null);
+    if (state.native_globals.contains(member)) return ir.TUnknown;
+    return null;
+}
+
+fn resolveModuleMemberType(state: *state_mod.CompilerState, ta: ir.TypeAlloc, mod_path: []const u8, member: []const u8) !?ir.Type {
+    if (try lookupModuleDeclExact(state, ta, mod_path, member)) |t| return t;
+    if (std.mem.endsWith(u8, mod_path, ".lls")) {
+        const no_ext = mod_path[0 .. mod_path.len - 4];
+        if (try lookupModuleDeclExact(state, ta, no_ext, member)) |t| return t;
+    } else {
+        var mext: [512]u8 = undefined;
+        const with_ext = std.fmt.bufPrint(&mext, "{s}.lls", .{mod_path}) catch return null;
+        if (try lookupModuleDeclExact(state, ta, with_ext, member)) |t| return t;
+    }
+    return null;
+}
+
 const UnionFieldInfo = struct {
     /// Type of the field when it exists on every arm (a union when arms differ).
     ty: ir.Type,
@@ -842,17 +896,25 @@ fn coerceNumericPair(
     // Untyped integer variables (`int_lit` type from unannotated literal declarations
     // like `$a = 10`) adapt silently to the concrete type of the other operand —
     // just like a bare literal node does, but via the stored type rather than AST.
+    const left_is_untyped = ir.peelDefined(l) == .int_lit;
+    const right_is_untyped = ir.peelDefined(r) == .int_lit;
+    if (left_is_untyped and !right_is_untyped) {
+        try recordExprType(state, left_node, rw);
+        return rw;
+    }
+    if (right_is_untyped and !left_is_untyped) {
+        try recordExprType(state, right_node, lw);
+        return lw;
+    }
+    if (lw == .f64 and isBareIntLiteral(right_node)) {
+        try recordExprType(state, right_node, lw);
+        return lw;
+    }
+    if (rw == .f64 and isBareIntLiteral(left_node)) {
+        try recordExprType(state, left_node, rw);
+        return rw;
+    }
     if (ir.isInteger(lw) and ir.isInteger(rw)) {
-        const left_is_untyped = ir.peelDefined(l) == .int_lit;
-        const right_is_untyped = ir.peelDefined(r) == .int_lit;
-        if (left_is_untyped and !right_is_untyped) {
-            try recordExprType(state, left_node, rw);
-            return rw;
-        }
-        if (right_is_untyped and !left_is_untyped) {
-            try recordExprType(state, right_node, lw);
-            return lw;
-        }
         // Both untyped OR both typed with same i64 width: fall through.
         // Existing bare-literal coercion (lw == .i64 and isBareIntLiteral) below.
         if (lw == .i64 and isBareIntLiteral(left_node) and rw != .i64) {
@@ -1005,6 +1067,14 @@ fn inferExprInner(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, 
             if (m.property.* == .primary) {
                 // Layout key first — `@type Name = {…}` registers under Name.
                 if (ir.structNameOf(obj)) |sname| {
+                    if (std.mem.startsWith(u8, sname, "module:")) {
+                        const mod_path = sname["module:".len..];
+                        if (try resolveModuleMemberType(state, ta, mod_path, m.property.primary.name)) |mt| {
+                            break :blk mt;
+                        }
+                        const mod_display = if (m.object.* == .primary) m.object.primary.name else mod_path;
+                        return compiler_errors.compileFailFmt(state, "'{s}' has no export '{s}'", .{ mod_display, m.property.primary.name });
+                    }
                     if (from_ast.lookupStruct(state, sname)) |def| {
                         if (def.types.get(m.property.primary.name) == null) {
                             return compiler_errors.compileFailFmt(state, "Field '{s}' does not exist on '{s}'", .{ m.property.primary.name, ir.cleanTypeName(sname) });
@@ -1012,8 +1082,21 @@ fn inferExprInner(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, 
                     }
                     break :blk try fieldTypeFromStruct(state, ta, sname, m.property.primary.name);
                 }
+                if (path.tryResolveStaticPath(state, m.object) catch null) |sp| {
+                    var is_mod = false;
+                    if (from_ast.resolveType(state, m.object)) |t| {
+                        if (std.mem.startsWith(u8, t, "module:")) is_mod = true;
+                    }
+                    if (is_mod) {
+                        if (try resolveModuleMemberType(state, ta, sp, m.property.primary.name)) |mt| {
+                            break :blk mt;
+                        }
+                        const mod_display = if (m.object.* == .primary) m.object.primary.name else sp;
+                        return compiler_errors.compileFailFmt(state, "'{s}' has no export '{s}'", .{ mod_display, m.property.primary.name });
+                    }
+                }
                 const field_obj = ir.peelDefined(obj);
-                // Tuple field access: `.0`, `.1`, …
+                // Tuple / array numeric field access: `.0`, `.1`, …
                 if (field_obj == .tuple) {
                     if (std.fmt.parseInt(i64, m.property.primary.name, 10)) |ci| {
                         if (ci < 0 or ci >= field_obj.tuple.len) {
@@ -1022,6 +1105,16 @@ fn inferExprInner(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, 
                         break :blk field_obj.tuple[@intCast(ci)];
                     } else |_| {
                         return compiler_errors.compileFailFmt(state, "Tuple fields are numeric (.0, .1, …), got '.{s}'", .{m.property.primary.name});
+                    }
+                }
+                if (field_obj == .array) {
+                    if (std.fmt.parseInt(i64, m.property.primary.name, 10) catch null) |ci| {
+                        if (field_obj.array.length) |alen| {
+                            if (ci < 0 or ci >= @as(i64, @intCast(alen))) {
+                                return compiler_errors.compileFailFmt(state, "Tuple field .{s} out of range (len {d})", .{ m.property.primary.name, alen });
+                            }
+                        }
+                        break :blk field_obj.array.elem.*;
                     }
                 }
                 if (field_obj == .shape) {
@@ -1166,12 +1259,75 @@ fn inferExprInner(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, 
                         } else |_| {
                             return compiler_errors.compileFailFmt(state, "Tuple fields are numeric (.0, .1, …), got '.{s}'", .{mem.property.primary.name});
                         }
+                    } else if (field_obj == .array) {
+                        if (std.fmt.parseInt(i64, mem.property.primary.name, 10) catch null) |ci| {
+                            if (field_obj.array.length) |alen| {
+                                if (ci < 0 or ci >= @as(i64, @intCast(alen))) {
+                                    return compiler_errors.compileFailFmt(state, "Tuple field .{s} out of range (len {d})", .{ mem.property.primary.name, alen });
+                                }
+                            }
+                            try requireAssignFrom(state, val, field_obj.array.elem.*, "assignment to array element", a.right);
+                        } else {
+                            return compiler_errors.compileFailFmt(state, "Array fields are numeric (.0, .1, …), got '.{s}'", .{mem.property.primary.name});
+                        }
                     } else if (ir.structNameOf(obj)) |sname| {
+                        if (std.mem.startsWith(u8, sname, "module:")) {
+                            const mod_path = sname["module:".len..];
+                            // A module may write another module's exported *mutable*
+                            // global (`internal.defaultOutput = bridge`); everything
+                            // else reachable through the namespace is read-only.
+                            if (path.moduleMemberIsMutableGlobal(state, mod_path, mem.property.primary.name)) {
+                                if (try resolveModuleMemberType(state, ta, mod_path, mem.property.primary.name)) |mt| {
+                                    try recordExprType(state, a.left, mt);
+                                    try requireAssignFrom(state, val, mt, "assignment to field", a.right);
+                                }
+                                break :blk val;
+                            }
+                            return compiler_errors.compileFailFmt(
+                                state,
+                                "Cannot assign to member '{s}' of imported module '{s}'",
+                                .{ mem.property.primary.name, mod_path },
+                            );
+                        }
+                        if (from_ast.lookupStruct(state, sname)) |def| {
+                            if (def.types.get(mem.property.primary.name) == null) {
+                                return compiler_errors.compileFailFmt(
+                                    state,
+                                    "Field '{s}' does not exist on '{s}'",
+                                    .{ mem.property.primary.name, ir.cleanTypeName(sname) },
+                                );
+                            }
+                        }
                         const ft = try fieldTypeFromStruct(state, ta, sname, mem.property.primary.name);
                         // Record the field type on the member node so editor
                         // features (hover) can resolve assignment targets.
                         try recordExprType(state, a.left, ft);
                         try requireAssignFrom(state, val, ft, "assignment to field", a.right);
+                    } else {
+                        const mod_name = if (from_ast.resolveType(state, mem.object)) |rt|
+                            (if (std.mem.startsWith(u8, rt, "module:")) rt["module:".len..] else null)
+                        else if (path.tryResolveStaticPath(state, mem.object) catch null) |sp|
+                            (if (from_ast.resolveType(state, mem.object)) |t| (if (std.mem.startsWith(u8, t, "module:")) sp else null) else null)
+                        else
+                            null;
+                        if (mod_name) |mn| {
+                            if (path.moduleMemberIsMutableGlobal(state, mn, mem.property.primary.name)) {
+                                if (try resolveModuleMemberType(state, ta, mn, mem.property.primary.name)) |mt| {
+                                    try recordExprType(state, a.left, mt);
+                                    try requireAssignFrom(state, val, mt, "assignment to field", a.right);
+                                }
+                                break :blk val;
+                            }
+                            return compiler_errors.compileFailFmt(
+                                state,
+                                "Cannot assign to member '{s}' of imported module '{s}'",
+                                .{ mem.property.primary.name, mn },
+                            );
+                        }
+                        if (field_obj != .unknown) {
+                            const d = try ownDisplay(state, obj);
+                            return compiler_errors.compileFailFmt(state, "cannot assign field '{s}' on type '{s}'", .{ mem.property.primary.name, d });
+                        }
                     }
                 }
             } else if (a.left.* == .index) {

@@ -60,6 +60,29 @@ pub fn resolveModuleType(state: *CompilerState, type_name: []const u8) ![]const 
     return type_name;
 }
 
+/// True when `<mod_path>::<member>` is a declared module-level *mutable* global
+/// (`pub $name = …`). That export is the one namespace member another module is
+/// allowed to assign through the module name (`internal.defaultOutput = bridge`);
+/// functions, types, constants, submodules and undeclared names are read-only.
+pub fn moduleMemberIsMutableGlobal(state: *CompilerState, mod_path: []const u8, member: []const u8) bool {
+    if (member.len == 0 or mod_path.len == 0) return false;
+    if (std.mem.indexOfScalar(u8, member, ':') != null) return false;
+    var buf: [512]u8 = undefined;
+    if (isMutableGlobalKey(state, &buf, mod_path, member)) return true;
+    // Module keys are recorded with the `.lls` suffix; accept the extensionless
+    // form too so callers that resolved a module by name still match.
+    if (std.mem.endsWith(u8, mod_path, ".lls")) {
+        var ebuf: [512]u8 = undefined;
+        return isMutableGlobalKey(state, &ebuf, mod_path[0 .. mod_path.len - 4], member);
+    }
+    return false;
+}
+
+fn isMutableGlobalKey(state: *CompilerState, buf: []u8, mod_path: []const u8, member: []const u8) bool {
+    const key = std.fmt.bufPrint(buf, "{s}::{s}", .{ mod_path, member }) catch return false;
+    return state.global_vars.contains(key) and !state.global_consts.contains(key);
+}
+
 pub fn tryResolveStaticPath(state: *CompilerState, node: *ast.Node) !?[]const u8 {
     switch (node.*) {
         .primary => |p| {

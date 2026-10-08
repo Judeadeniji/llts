@@ -842,16 +842,14 @@ fn setProperty(vm: *VMState, const_idx: u16) RuntimeError!void {
         .name => |i| i,
         else => return error.RuntimeError,
     });
-    const val = stack.pop(vm);
+    _ = stack.pop(vm);
     const obj = stack.pop(vm);
     if (obj == .module) {
-        const gop = try obj.module.props.getOrPut(name);
-        if (!gop.found_existing) {
-            gop.key_ptr.* = try vm.allocator.dupe(u8, name);
-        }
-        gop.value_ptr.* = val;
-        try stack.push(vm, val);
-        return;
+        var buf: [256]u8 = undefined;
+        const msg = std.fmt.bufPrint(&buf, "Cannot modify properties of imported module '{s}'", .{obj.module.name}) catch "Cannot modify module properties";
+        return runtime.runtimeFail(vm, msg);
     }
-    try stack.push(vm, val);
+    var buf: [256]u8 = undefined;
+    const msg = std.fmt.bufPrint(&buf, "Cannot assign property '{s}' on non-struct object", .{name}) catch "Cannot assign property";
+    return runtime.runtimeFail(vm, msg);
 }
