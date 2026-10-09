@@ -115,27 +115,73 @@ pub fn dumpFile(
     }
 }
 
-pub fn emitLlvm(
+pub fn emitZig(
     allocator: std.mem.Allocator,
     path: []const u8,
-    out_path: []const u8,
-    ir_path: []const u8,
     release: bool,
+    strict: bool,
+    output_path: ?[]const u8,
+    comptime_max_loop_iterations: ?usize,
+    runtime_path: ?[]const u8,
 ) !void {
     llts.diag.reset();
     const source = common.readSourceOrExit(allocator, path);
     defer allocator.free(source);
 
-    const out_z = try std.mem.Allocator.dupeZ(allocator, u8, out_path);
-    defer allocator.free(out_z);
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(allocator);
 
-    const ir_owned: ?[:0]u8 = if (ir_path.len > 0) try allocator.dupeZ(u8, ir_path) else null;
-    defer if (ir_owned) |p| allocator.free(p);
-
-    llts.pipeline.emitLlvmBitcode(allocator, path, source, out_z, .{
+    llts.pipeline.emitZigCode(allocator, path, source, out.writer(allocator), .{
         .debug = !release,
-        .ir_path = if (ir_owned) |p| p.ptr else null,
-        .verify = true,
+        .strict = strict,
+        .comptime_max_loop_iterations = comptime_max_loop_iterations,
+        .runtime_path = runtime_path orelse "src/runtime/root.zig",
+    }) catch |err| {
+        if (!llts.diag.wasEmitted()) {
+            io.printStderr("Error: {}\n", .{err});
+        }
+        std.process.exit(1);
+    };
+
+    if (output_path) |out_path| {
+        std.fs.cwd().writeFile(.{ .sub_path = out_path, .data = out.items }) catch |err| {
+            common.failExit("Failed to write {s}: {}\n", .{ out_path, err });
+        };
+    } else {
+        io.writeStdout(out.items);
+    }
+}
+
+/// Compile an LLTS source file to a native binary via the native backend.
+/// Strict mode is on by default for native targets.
+pub fn compileNative(
+    allocator: std.mem.Allocator,
+    path: []const u8,
+    release: bool,
+    strict: bool,
+    out_path: []const u8,
+    comptime_max_loop_iterations: ?usize,
+    zig_bin: []const u8,
+    target: ?[]const u8,
+    zig_opt: ?[]const u8,
+    emit_mode: llts.pipeline.EmitZigOptions.EmitMode,
+    runtime_path: ?[]const u8,
+    zig_args: []const []const u8,
+) !void {
+    llts.diag.reset();
+    const source = common.readSourceOrExit(allocator, path);
+    defer allocator.free(source);
+
+    llts.pipeline.compileNativeBinary(allocator, path, source, out_path, .{
+        .debug = !release,
+        .strict = strict,
+        .comptime_max_loop_iterations = comptime_max_loop_iterations,
+        .zig_bin = zig_bin,
+        .target = target,
+        .zig_optimize = zig_opt,
+        .emit_mode = emit_mode,
+        .runtime_path = runtime_path orelse "src/runtime/root.zig",
+        .zig_args = zig_args,
     }) catch |err| {
         if (!llts.diag.wasEmitted()) {
             io.printStderr("Error: {}\n", .{err});

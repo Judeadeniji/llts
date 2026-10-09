@@ -7,7 +7,7 @@ const serialize = @import("bytecode/serialize.zig");
 const vm_state = @import("vm/state.zig");
 const execute = @import("vm/execute/root.zig");
 const builtins = @import("vm/builtins/root.zig");
-const llvm_backend = @import("compiler/llvm/root.zig");
+const zig_backend = @import("compiler/zig/root.zig");
 const print_fmt = @import("vm/builtins/print.zig");
 const report = @import("errors/report.zig");
 
@@ -20,14 +20,31 @@ pub const RunOptions = struct {
     max_memory_slots: usize = 1048576,
 };
 
-pub const EmitLlvmOptions = struct {
+pub const EmitZigOptions = struct {
     debug: bool = true,
-    strict: bool = false,
+    /// Native emission typechecks under strict soundness **by default**
+    /// (native-backend Core Principle #1: "Strict by Default"). Callers may
+    /// pass `false` explicitly to opt out during the transition.
+    strict: bool = true,
     comptime_max_loop_iterations: ?usize = null,
-    /// When set, also write textual LLVM IR to this path.
-    ir_path: ?[*:0]const u8 = null,
-    /// Run LLVM module verification (default true).
-    verify: bool = true,
+    /// @import path for the LLTS runtime, written into the emitted Zig source.
+    runtime_path: []const u8 = "src/runtime/root.zig",
+    /// Path to zig compiler executable (defaults to "zig", or env LLTS_ZIG_BIN).
+    zig_bin: []const u8 = "zig",
+    /// Target triple for native compilation (e.g. x86_64-linux, aarch64-macos).
+    target: ?[]const u8 = null,
+    /// Optimization mode passed to `zig build-exe` (e.g. "ReleaseFast", "ReleaseSmall", "Debug").
+    zig_optimize: ?[]const u8 = null,
+    /// What output format to emit.
+    emit_mode: EmitMode = .bin,
+    /// Additional arguments/options forwarded directly to `zig build-exe`.
+    zig_args: []const []const u8 = &.{},
+
+    pub const EmitMode = enum {
+        bin,
+        asm_code,
+        zig_source,
+    };
 };
 
 pub fn compileSource(
@@ -141,13 +158,15 @@ pub fn runBytecodeFile(
     try runChunk(allocator, &chunk, path, script_args, max_memory_slots);
 }
 
-/// Lower a source file to LLVM IR and write bitcode (and optional textual IR).
-pub fn emitLlvmBitcode(
+
+/// Emit a source file as runtime-driving Zig code (the native backend output).
+/// Pass any `std.io` writer; the result is a monolithic `.zig` compilation unit.
+pub fn emitZigCode(
     allocator: std.mem.Allocator,
     path: []const u8,
     source: []const u8,
-    out_path: ?[*:0]const u8,
-    options: EmitLlvmOptions,
+    writer: anytype,
+    options: EmitZigOptions,
 ) !void {
     var scan_result = try scanner.scan(allocator, source, path);
     defer scanner.deinitScanResult(&scan_result);
@@ -165,14 +184,33 @@ pub fn emitLlvmBitcode(
         compiler.state_mod.deinit(&state);
     }
 
-    var lc = llvm_backend.LlvmContext.init(allocator, path, &state);
-    defer lc.deinit();
+    try zig_backend.emitRuntimeZig(allocator, &doc, &state, writer, .{
+        .release = !options.debug,
+        .runtime_path = options.runtime_path,
+    });
+}
 
-    try llvm_backend.codegen(&lc, &doc);
+/// Compile an LLTS source file to a native binary by emitting runtime Zig and
+/// invoking `zig build-exe`.
+///
+/// The full front half (scan → parse → strict typecheck → emit) runs here, so
+/// soundness is enforced at the native entry point even before Phase 4 lands.
+///
+/// Phase 4 implementation pending — returns NotImplemented after emission.
+pub fn compileNativeBinary(
+    allocator: std.mem.Allocator,
+    path: []const u8,
+    source: []const u8,
+    out_binary_path: []const u8,
+    options: EmitZigOptions,
+) !void {
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(allocator);
 
-    if (options.verify) try lc.verify();
+    try emitZigCode(allocator, path, source, out.writer(allocator), options);
 
-    if (options.ir_path) |irp| try lc.writeIr(irp);
-
-    if (out_path) |p| try lc.writeBitcode(p);
+    _ = out_binary_path;
+    // TODO Phase 4: write `out.items` to a temp file and spawn
+    //   `zig build-exe <tmp> -Mruntime=… -O <zig_optimize> -femit-bin=<out_binary_path>`
+    return error.NotImplemented;
 }

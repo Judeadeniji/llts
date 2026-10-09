@@ -7,6 +7,7 @@ const version = @import("version.zig");
 const run = @import("run.zig");
 const build_cmd = @import("build_cmd.zig");
 const dump = @import("dump.zig");
+const emit = @import("emit.zig");
 const smoke = @import("smoke.zig");
 
 fn showHelp(ctx: zli.CommandContext) !void {
@@ -55,15 +56,15 @@ pub fn build(stdout: anytype, stdin: anytype, gpa: std.mem.Allocator) !*zli.Comm
 
     const build_sub = try zli.Command.init(stdout, stdin, gpa, .{
         .name = "build",
-        .description = "Compile an LLTS source file to bytecode",
+        .description = "Compile an LLTS source file to bytecode or a native binary (--native)",
     }, build_cmd.execute);
     try flags.addCompileFlags(build_sub);
     try build_sub.addFlag(.{
         .name = "output",
         .shortcut = "o",
-        .description = "Output bytecode file path",
+        .description = "Output file path (default: out.llb; out when --native)",
         .type = .String,
-        .default_value = .{ .String = "out.llb" },
+        .default_value = .{ .String = "" },
     });
     try build_sub.addPositionalArg(.{
         .name = "file",
@@ -71,6 +72,25 @@ pub fn build(stdout: anytype, stdin: anytype, gpa: std.mem.Allocator) !*zli.Comm
         .required = true,
     });
     try root.addCommand(build_sub);
+
+    const emit_zig_sub = try zli.Command.init(stdout, stdin, gpa, .{
+        .name = "emit-zig",
+        .description = "Emit runtime-driving Zig code from an LLTS source file",
+    }, emit.execute);
+    try flags.addEmitZigFlags(emit_zig_sub);
+    try emit_zig_sub.addFlag(.{
+        .name = "output",
+        .shortcut = "o",
+        .description = "Output file path (default: stdout)",
+        .type = .String,
+        .default_value = .{ .String = "" },
+    });
+    try emit_zig_sub.addPositionalArg(.{
+        .name = "file",
+        .description = "Source file to emit",
+        .required = true,
+    });
+    try root.addCommand(emit_zig_sub);
 
     const dump_sub = try zli.Command.init(stdout, stdin, gpa, .{
         .name = "dump",

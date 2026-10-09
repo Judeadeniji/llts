@@ -215,6 +215,29 @@ export function runSourceWithFlags(
 	}
 }
 
+/**
+ * Run the llts binary with arbitrary argv (e.g. `["emit-zig", file]`,
+ * `["build", "--native", file]`). For subcommands other than `run`.
+ */
+export function runCli(args: string[]): RunResult {
+	requireBinary();
+	const result = spawnSync([ENTRY, ...args], {
+		cwd: ROOT,
+	});
+	const stdout = result.stdout.toString();
+	const stderr = result.stderr.toString();
+	const allLines = stdout.split(/\r?\n/);
+	while (allLines.length > 0 && allLines[allLines.length - 1] === "") {
+		allLines.pop();
+	}
+	return {
+		stdout,
+		stderr,
+		exitCode: result.exitCode ?? 1,
+		lines: allLines,
+	};
+}
+
 /** Assert the run succeeded (exit 0) and produced exactly the expected output lines. */
 export function expectOutput(result: RunResult, expected: string[]) {
 	if (result.exitCode !== 0) {
