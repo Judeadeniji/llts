@@ -7,6 +7,8 @@ const path = @import("../expr/path.zig");
 const intrinsics = @import("../intrinsics.zig");
 const compiler_errors = @import("../../errors/compile.zig");
 const widths = @import("../widths.zig");
+const cfg_mod = @import("cfg.zig");
+const flow_mod = @import("flow.zig");
 
 pub const typeAstToDisplay = from_ast.typeAstToDisplay;
 
@@ -26,6 +28,20 @@ pub const Env = struct {
     prefer_literals: bool = false,
     /// True while typechecking a function body — locals must not overwrite `global_types`.
     in_function: bool = false,
+    /// CFG-based flow analysis results for the current function body (arena-owned).
+    flow_results: ?*const flow_mod.FlowResults = null,
+    /// Current flow-sensitive narrowing overlay.  Consulted by `lookup` only
+    /// to *refine* an existing lexical binding.  Updated as the AST walker
+    /// enters each statement / branch whose entry env the dataflow pass
+    /// computed.
+    flow: ?*const flow_mod.FlowEnv = null,
+    /// Names whose declaring scope has been popped.  The dataflow pass does
+    /// not model lexical scoping (blocks are flattened into the CFG), so its
+    /// snapshots may still contain bindings that the walker has popped —
+    /// possibly shadowing an outer binding of the same name.  `lookup` skips
+    /// the flow overlay for these names (sound; loses precision after
+    /// shadowing).  Monotonic: never unmarked.
+    flow_dead: std.StringHashMap(void),
     allocator: std.mem.Allocator,
 
     fn init(allocator: std.mem.Allocator) Env {
@@ -34,6 +50,7 @@ pub const Env = struct {
             .globals = std.StringHashMap(ir.Type).init(allocator),
             .const_names = std.StringHashMap(void).init(allocator),
             .const_scopes = .empty,
+            .flow_dead = std.StringHashMap(void).init(allocator),
             .allocator = allocator,
         };
     }
@@ -45,6 +62,7 @@ pub const Env = struct {
         self.const_names.deinit();
         for (self.const_scopes.items) |*m| m.deinit();
         self.const_scopes.deinit(self.allocator);
+        self.flow_dead.deinit();
     }
 
     fn pushScope(self: *Env) !void {
@@ -55,6 +73,10 @@ pub const Env = struct {
     fn popScope(self: *Env) void {
         if (self.locals.items.len == 0) return;
         var m = self.locals.pop().?;
+        // Names leaving this scope must not be refined through `flow` any
+        // more: a flow snapshot may still hold the inner (shadowing) binding.
+        var kit = m.keyIterator();
+        while (kit.next()) |k| self.flow_dead.put(k.*, {}) catch {};
         m.deinit();
         if (self.const_scopes.items.len > 0) {
             var c = self.const_scopes.pop().?;
@@ -89,7 +111,42 @@ pub const Env = struct {
         }
     }
 
+    /// Install a flow overlay for the upcoming region (statement / branch).
+    pub fn setFlow(self: *Env, f: ?*const flow_mod.FlowEnv) void {
+        self.flow = f;
+    }
+
     pub fn lookup(self: *Env, name: []const u8) ?ir.Type {
+        // The flow overlay only *refines* an existing lexical binding: find
+        // the declared type first so out-of-scope names can never resolve
+        // through a stale snapshot.
+        var declared: ?ir.Type = null;
+        var i = self.locals.items.len;
+        while (i > 0) {
+            i -= 1;
+            if (self.locals.items[i].get(name)) |t| {
+                declared = t;
+                break;
+            }
+        }
+        if (declared == null) declared = self.globals.get(name);
+        const d = declared orelse return null;
+        // A binding whose scope was popped may still linger in the overlay
+        // (the dataflow pass flattens blocks) — never refine through it.
+        if (self.flow_dead.contains(name)) return d;
+        if (self.flow) |f| {
+            if (f.get(name)) |ft| {
+                // Accept only a concrete narrowing of the declared type;
+                // anything else (unknown, unrelated shadow type) falls back.
+                if (!ir.involvesUnknown(ft) and ir.isSubtype(ft, d)) return ft;
+            }
+        }
+        return d;
+    }
+
+    /// Declared (non-flow) lookup — used when assigning to a variable so the
+    /// target type is the binding's declared type, not a path-narrowed one.
+    pub fn lookupDeclared(self: *Env, name: []const u8) ?ir.Type {
         var i = self.locals.items.len;
         while (i > 0) {
             i -= 1;
@@ -958,6 +1015,11 @@ fn coerceNumericPair(
 
 pub fn inferExpr(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node: *ast.Node) TypecheckError!ir.Type {
     noteDiag(state, node);
+    // Statement-like nodes reached through `inferExpr` (single-statement
+    // if/switch/for bodies, expression statements) also carry snapshots.
+    if (env.flow_results) |fr| {
+        if (fr.stmtEnv(node)) |f| env.flow = f;
+    }
     const result = try inferExprInner(state, env, ta, node);
     try recordExprType(state, node, result);
     return result;
@@ -1235,7 +1297,9 @@ fn inferExprInner(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, 
         .assignment => |a| blk: {
             const val = try inferExpr(state, env, ta, a.right);
             if (a.left.* == .primary) {
-                if (env.lookup(a.left.primary.name)) |existing| {
+                // Against the *declared* type: a narrowed branch may re-widen
+                // the variable (`x = null` inside `if (x != null)`).
+                if (env.lookupDeclared(a.left.primary.name)) |existing| {
                     try requireAssignFrom(state, val, existing, "assignment", a.right);
                 }
             } else if (a.left.* == .member) {
@@ -1887,6 +1951,11 @@ fn inferStructInit(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc,
 
 fn checkStmt(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node: *ast.Node) TypecheckError!?ir.Type {
     noteDiag(state, node);
+    // Install the flow snapshot the dataflow pass computed for this
+    // statement (statements with no snapshot keep the ambient overlay).
+    if (env.flow_results) |fr| {
+        if (fr.stmtEnv(node)) |f| env.flow = f;
+    }
     switch (node.*) {
         .declaration => |d| {
             if (d.value.* == .call and d.value.call.callee.* == .primary and std.mem.eql(u8, d.value.call.callee.primary.name, "@import")) {
@@ -2115,6 +2184,29 @@ fn checkFunction(state: *state_mod.CompilerState, ta: ir.TypeAlloc, f: *ast.Func
             t = try ta.arrayType(elem, null);
         }
         try env.define(pnode.name, t);
+    }
+
+    // Full CFG-based flow analysis: compute per-statement narrowing
+    // snapshots before the walker runs.  `checkStmt` / `inferExpr` install
+    // them through `env.flow` as the walk reaches each statement / branch.
+    // CFG, entry env and results are arena-owned (freed with typecheck).
+    if (try cfg_mod.build(ta.allocator, f.body)) |cfg| {
+        var entry = flow_mod.FlowEnv.init(ta.allocator);
+        defer entry.deinit();
+        // Seed declared bindings so facts extract against real types:
+        // params live in locals[0]; module globals may be narrowed too.
+        for (env.locals.items) |*m| {
+            var it = m.iterator();
+            while (it.next()) |e| try entry.put(e.key_ptr.*, e.value_ptr.*);
+        }
+        {
+            var git2 = env.globals.iterator();
+            while (git2.next()) |e| try entry.put(e.key_ptr.*, e.value_ptr.*);
+        }
+        const results = try flow_mod.analyze(state, ta, cfg, entry);
+        const slot = try ta.allocator.create(flow_mod.FlowResults);
+        slot.* = results;
+        env.flow_results = slot;
     }
 
     if (f.body.* == .block) {

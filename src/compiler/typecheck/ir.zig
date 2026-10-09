@@ -490,7 +490,7 @@ pub fn typeEquals(a: Type, b: Type) bool {
         .error_set => |n| b == .error_set and std.mem.eql(u8, n, b.error_set),
         .error_lit => |e| b == .error_lit and std.mem.eql(u8, e.set_name, b.error_lit.set_name) and std.mem.eql(u8, e.variant, b.error_lit.variant),
         .defined => |d| (b == .defined and std.mem.eql(u8, d.name, b.defined.name)) or typeEquals(d.underlying.*, b),
-        .u1, .i8, .i16, .i32, .i64, .u8, .u16, .u32, .u64, .f32, .f64, .isize, .usize, .fsize, .null, .error_, .unknown, .never => true,
+        .u1, .i8, .i16, .i32, .i64, .u8, .u16, .u32, .u64, .f32, .f64, .isize, .usize, .fsize, .null, .error_, .unknown, .never => std.meta.activeTag(a) == std.meta.activeTag(b),
         .union_ => |arms| blk: {
             if (b != .union_) break :blk false;
             if (arms.len != b.union_.len) break :blk false;

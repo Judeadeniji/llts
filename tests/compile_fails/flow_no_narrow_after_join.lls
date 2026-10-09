@@ -1,0 +1,10 @@
+# expect: cannot access field 'name' on optional type '?User'
+# mode: strict
+@struct User { name: string; }
+pub @func main() {
+    $u: ?User = User { name: "j" };
+    @if (u != null) {
+        print("in");
+    }
+    print(u.name);
+}
