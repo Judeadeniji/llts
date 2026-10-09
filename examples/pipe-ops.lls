@@ -1,6 +1,6 @@
 @const $fmt = @import("std/fmt");
 
-@func sqr(a) {
+@func sqr(a: float) {
 	return a**2;
 }
 

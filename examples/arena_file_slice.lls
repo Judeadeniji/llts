@@ -11,14 +11,14 @@
 @const $fmt = @import("std/fmt");
 @const $io = @import("std/io");
 
-@func copyStringToSlice(src, dst) {
+@func copyStringToSlice(src: string, dst: unknown) {
     $n = string.len(src);
     @for (0..n) |i| {
         dst[i] = string.charCodeAt(src, i);
     }
 }
 
-@func countNewlines(buf) {
+@func countNewlines(buf: unknown) {
     $lines = 0;
     $n = len(buf);
     @for (0..n) |i| {
@@ -30,7 +30,7 @@
 }
 
 # Uppercase ASCII letters in place (a-z → A-Z).
-@func uppercaseAscii(buf) {
+@func uppercaseAscii(buf: unknown) {
     $n = len(buf);
     @for (0..n) |i| {
         $c = buf[i];
@@ -43,7 +43,7 @@
 }
 
 # Build a short string preview from the byte slice (via std/buffer).
-@func preview(arena, buf, max) {
+@func preview(arena: mem.Arena, buf: unknown, max: int) {
     $n = len(buf);
     @if (n > max) {
         n = max;
@@ -76,5 +76,5 @@ pub @func main() {
     fmt.printf("newlines=%d\n", countNewlines(slice));
 
     uppercaseAscii(slice);
-    fmt.printf("preview=%s\n", preview(a, slice, 60));
+    fmt.printf("preview=%s\n", preview(a, slice, 120));
 }

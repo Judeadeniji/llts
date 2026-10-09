@@ -3,7 +3,7 @@
 $arena = mem.create(0);
 $state = list.create(arena);
 
-@func f(fail) {
+@func f(fail: bool) {
     defer list.push(state, 1);
     errdefer list.push(state, 10);
     @if (fail) {

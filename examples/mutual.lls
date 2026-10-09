@@ -1,4 +1,4 @@
-@func ping(n) {
+@func ping(n: int) {
     print("ping check", n);
     @if (n > 0) {
         print("ping", n);
@@ -7,7 +7,7 @@
     return n;
 }
 
-@func pong(n) {
+@func pong(n: int) {
     print("pong check", n);
     @if (n > 0) {
         print("pong", n);
