@@ -11,6 +11,7 @@ const cfg_mod = @import("cfg.zig");
 const flow_mod = @import("flow.zig");
 
 pub const typeAstToDisplay = from_ast.typeAstToDisplay;
+pub const typeAstToDisplayQualified = from_ast.typeAstToDisplayQualified;
 
 pub const TypecheckError = error{ OutOfMemory, CompileError, Overflow, InvalidCharacter };
 
@@ -162,6 +163,14 @@ pub fn ownDisplay(state: *state_mod.CompilerState, t: ir.Type) ![]const u8 {
     return s;
 }
 
+/// Like `ownDisplay`, but keeps module qualifiers — for displays stored in
+/// `global_types` / signatures that are later re-parsed via `parseDisplayType`.
+pub fn ownDisplayQualified(state: *state_mod.CompilerState, t: ir.Type) ![]const u8 {
+    const s = try ir.displayTypeQualifiedAlloc(state.allocator, t);
+    try state.owned.append(state.allocator, s);
+    return s;
+}
+
 fn sourceFor(state: *state_mod.CompilerState, file_path: []const u8) []const u8 {
     for (state.chunk.sources.items) |s| {
         if (std.mem.eql(u8, s.path, file_path)) return s.text;
@@ -192,7 +201,7 @@ fn requireAssignAt(state: *state_mod.CompilerState, got: ir.Type, expected: ir.T
             sourceFor(state, file_path),
             line,
             col,
-            "{s}: cannot assign opaque type '{s}' to '{s}'; explicit cast or narrowing required",
+            "{s}: Cannot assign opaque type '{s}' to '{s}'; explicit cast or narrowing required",
             .{ ctx, g, e },
         );
     }
@@ -248,7 +257,7 @@ fn requireAssignAt(state: *state_mod.CompilerState, got: ir.Type, expected: ir.T
                     sourceFor(state, file_path),
                     line,
                     col,
-                    "literal {s} overflows target type '{s}'",
+                    "Literal {s} overflows target type '{s}'",
                     .{ node.literal.value, exp_name },
                 );
             }
@@ -352,11 +361,11 @@ fn requireAssignAt(state: *state_mod.CompilerState, got: ir.Type, expected: ir.T
             sourceFor(state, file_path),
             line,
             col,
-            "{s}: type '{s}' is not assignable to '{s}' (use @as)",
-            .{ ctx, g, e },
+            "{s}: type '{s}' is not assignable to '{s}'; did you mean '@as({s}, {s})'?",
+            .{ ctx, g, e, e, g },
         );
     }
-    return compiler_errors.compileFailFmt(state, "{s}: type '{s}' is not assignable to '{s}' (use @as)", .{ ctx, g, e });
+    return compiler_errors.compileFailFmt(state, "{s}: type '{s}' is not assignable to '{s}'; did you mean '@as({s}, {s})'?", .{ ctx, g, e, e, g });
 }
 
 fn matchesValueLiteralToType(node: *ast.Node, expected: ir.Type) bool {
@@ -747,8 +756,23 @@ fn remainingNarrowType(
     return try ta.unionType(arms.items);
 }
 
+/// Module prefix of `std/log.lls::default` → `std/log.lls`; null for a
+/// free function with no module qualifier.
+fn moduleOfFuncName(func_name: []const u8) ?[]const u8 {
+    const idx = std.mem.indexOf(u8, func_name, "::") orelse return null;
+    if (idx == 0) return null;
+    return func_name[0..idx];
+}
+
 fn fnReturnType(state: *state_mod.CompilerState, ta: ir.TypeAlloc, func_name: []const u8) !ir.Type {
     if (state.functions.get(func_name)) |def| {
+        // Bare type names inside this function's stored displays (e.g. the
+        // `Logger` in `log.default(): Logger`) belong to the callee's own
+        // module — hint the resolver so same-named types from other modules
+        // don't get picked at random.
+        const prev_hint = state.module_hint;
+        state.module_hint = moduleOfFuncName(func_name);
+        defer state.module_hint = prev_hint;
         if (def.return_type) |rt| return try from_ast.parseDisplayType(state, ta, rt, null);
         if (def.node.* == .function_decl) {
             if (def.node.function_decl.return_type) |rt_node| {
@@ -785,7 +809,7 @@ fn resolveMethodSelfType(
     const d = try ownDisplay(state, annotated);
     return compiler_errors.compileFailFmt(
         state,
-        "method self must be '{s}' or '*{s}', got '{s}'",
+        "Method self must be '{s}' or '*{s}', got '{s}'",
         .{ struct_name, struct_name, d },
     );
 }
@@ -813,7 +837,7 @@ fn requireMethodReceiver(
     const e = try ownDisplay(state, expected);
     return compiler_errors.compileFailFmt(
         state,
-        "method '{s}' receiver: type '{s}' is not assignable to '{s}'",
+        "Method '{s}' receiver: type '{s}' is not assignable to '{s}'",
         .{ method_name, g, e },
     );
 }
@@ -866,7 +890,7 @@ fn fnParamTypes(state: *state_mod.CompilerState, ta: ir.TypeAlloc, func_name: []
         } else if (state.strict) {
             const is_method_self = (method_struct != null and i == 0 and std.mem.eql(u8, pnode.name, "self"));
             if (!is_method_self) {
-                return compiler_errors.compileFailFmt(state, "parameter '{s}' of function '{s}' must have an explicit type annotation in strict mode; write '{s}: int' (or the intended type)", .{ pnode.name, f.name, pnode.name });
+                return compiler_errors.compileFailFmt(state, "Parameter '{s}' of function '{s}' must have an explicit type annotation in strict mode; did you mean '{s}: int'?", .{ pnode.name, f.name, pnode.name });
             }
         }
         if (method_struct) |sname| {
@@ -919,7 +943,7 @@ pub fn recordExprType(state: *state_mod.CompilerState, node: *ast.Node, t: ir.Ty
     // unannotated functions. Recording `unknown` here would shadow that better
     // answer and degrade field access to dynamic GET_PROPERTY.
     if (codegen_t == .unknown) return;
-    const disp = try ownDisplay(state, codegen_t);
+    const disp = try ownDisplayQualified(state, codegen_t);
     if (!state.type_of_results.contains(node)) {
         try state.type_of_results.put(node, disp);
     }
@@ -1053,14 +1077,14 @@ fn inferExprInner(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, 
             if (std.mem.eql(u8, u.operator, "&")) {
                 if (ir.involvesUnknown(t)) break :blk ir.TUnknown;
                 if (t == .ptr) {
-                    return compiler_errors.compileFailFmt(state, "cannot take address of a pointer (no **T yet)", .{});
+                    return compiler_errors.compileFailFmt(state, "Cannot take the address of a pointer (no **T yet)", .{});
                 }
                 if (ir.optionalPayload(t) != null) {
-                    return compiler_errors.compileFailFmt(state, "cannot take address of an optional; use a non-optional struct value", .{});
+                    return compiler_errors.compileFailFmt(state, "Cannot take the address of an optional; use a non-optional struct value", .{});
                 }
                 if (t != .struct_) {
                     const d = try ownDisplay(state, t);
-                    return compiler_errors.compileFailFmt(state, "address-of requires a struct value, got '{s}'", .{d});
+                    return compiler_errors.compileFailFmt(state, "Address-of requires a struct value, got '{s}'", .{d});
                 }
                 break :blk try ta.ptrType(t);
             }
@@ -1122,7 +1146,7 @@ fn inferExprInner(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, 
                 const d = try ownDisplay(state, obj);
                 return compiler_errors.compileFailFmt(
                     state,
-                    "cannot access field '{s}' on optional type '{s}'; unwrap with '@if' or '.?'",
+                    "Cannot access field '{s}' on optional type '{s}'; unwrap with '@if' or '.?'",
                     .{ m.property.primary.name, d },
                 );
             }
@@ -1212,12 +1236,12 @@ fn inferExprInner(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, 
                 }
                 if (state.strict and field_obj != .unknown and ir.structNameOf(obj) == null and field_obj != .tuple and field_obj != .shape) {
                     const d = try ownDisplay(state, obj);
-                    return compiler_errors.compileFailFmt(state, "cannot access field '{s}' on type '{s}'", .{ m.property.primary.name, d });
+                    return compiler_errors.compileFailFmt(state, "Cannot access field '{s}' on type '{s}'", .{ m.property.primary.name, d });
                 }
             }
             if (state.strict and obj != .unknown) {
                 const d = try ownDisplay(state, obj);
-                return compiler_errors.compileFailFmt(state, "cannot access property on type '{s}'", .{d});
+                return compiler_errors.compileFailFmt(state, "Cannot access property on type '{s}'", .{d});
             }
             break :blk ir.TUnknown;
         },
@@ -1307,6 +1331,7 @@ fn inferExprInner(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, 
                 if (mem.object.* == .primary) {
                     const obj_name = mem.object.primary.name;
                     if (env.hasConstName(obj_name) or (obj_name.len > 0 and obj_name[0] == '$' and env.hasConstName(obj_name[1..]))) {
+                        std.debug.print("DEBUG typecheck const-mutate: '{s}'\n", .{obj_name});
                         return compiler_errors.compileFailFmt(state, "Cannot mutate field of constant '{s}'", .{obj_name});
                     }
                 }
@@ -1390,7 +1415,7 @@ fn inferExprInner(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, 
                         }
                         if (field_obj != .unknown) {
                             const d = try ownDisplay(state, obj);
-                            return compiler_errors.compileFailFmt(state, "cannot assign field '{s}' on type '{s}'", .{ mem.property.primary.name, d });
+                            return compiler_errors.compileFailFmt(state, "Cannot assign field '{s}' on type '{s}'", .{ mem.property.primary.name, d });
                         }
                     }
                 }
@@ -1445,7 +1470,7 @@ fn inferExprInner(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, 
                 try env.define(ename, ir.TError);
             }
             if (i.pipe_value) |pv| {
-                if (pv.* != .primary) return compiler_errors.compileFailFmt(state, "if capture must be identifier", .{});
+                if (pv.* != .primary) return compiler_errors.compileFailFmt(state, "@if capture must be an identifier", .{});
                 const peeled = ir.peelDefined(cond_t);
                 if (ir.optionalPayload(peeled)) |opt| {
                     try env.define(pv.primary.name, opt);
@@ -1454,7 +1479,7 @@ fn inferExprInner(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, 
                     try env.define(pv.primary.name, unwrapped);
                 } else if (state.strict) {
                     const disp = try ownDisplay(state, cond_t);
-                    return compiler_errors.compileFailFmt(state, "cannot capture from non-container type '{s}'; @if capture requires optional '?T' or error union", .{disp});
+                    return compiler_errors.compileFailFmt(state, "Cannot capture from a non-container type '{s}'; @if capture requires an optional '?T' or an error union", .{disp});
                 } else {
                     const unwrapped = cond_t;
                     try env.define(pv.primary.name, unwrapped);
@@ -1462,7 +1487,7 @@ fn inferExprInner(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, 
             } else if (state.strict) {
                 if (!ir.isSubtype(ir.peelDefined(cond_t), ir.TBool)) {
                     const disp = try ownDisplay(state, cond_t);
-                    return compiler_errors.compileFailFmt(state, "condition of @if must be boolean ('bool' or 'u1'), got '{s}'; compare explicitly (e.g. 'x != 0') for a truthiness test", .{disp});
+                    return compiler_errors.compileFailFmt(state, "Condition of @if must be boolean ('bool' or 'u1'), got '{s}'; did you mean 'x != 0'?", .{disp});
                 }
             }
             _ = try inferExpr(state, env, ta, i.body);
@@ -1549,7 +1574,7 @@ fn inferExprInner(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, 
                 // the condition must be a real boolean, no truthiness coercion.
                 if (state.strict and !ir.isSubtype(ir.peelDefined(expr_type), ir.TBool)) {
                     const disp = try ownDisplay(state, expr_type);
-                    return compiler_errors.compileFailFmt(state, "condition of @for must be boolean ('bool' or 'u1'), got '{s}'; compare explicitly (e.g. 'i < n')", .{disp});
+                    return compiler_errors.compileFailFmt(state, "Condition of @for must be boolean ('bool' or 'u1'), got '{s}'; did you mean 'i < n'?", .{disp});
                 }
             }
             _ = try inferExpr(state, env, ta, f.body);
@@ -1683,7 +1708,7 @@ fn inferCall(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, call_
         if (intrinsics.match(name)) |i| {
             return try intrinsics.typecheck(state, env, ta, i, call_node, c);
         }
-        return compiler_errors.compileFailFmt(state, "unknown intrinsic '{s}'", .{name});
+        return compiler_errors.compileFailFmt(state, "Unknown intrinsic '{s}'", .{name});
     }
 
     // `T(x)` cast sugar ≡ `@as(T, x)` when T is a type and not a function.
@@ -1913,7 +1938,7 @@ fn inferStructInit(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc,
         }
         const got = try inferExpr(state, env, ta, field.value);
         var ctx_buf: [128]u8 = undefined;
-        const ctx = std.fmt.bufPrint(&ctx_buf, "field '{s}' of '{s}'", .{ field.name, ir.cleanTypeName(struct_name) }) catch "field";
+        const ctx = std.fmt.bufPrint(&ctx_buf, "Field '{s}' of '{s}'", .{ field.name, ir.cleanTypeName(struct_name) }) catch "Field";
         try requireAssignFrom(state, got, expected, ctx, field.value);
     }
     if (state.strict) {
@@ -1935,7 +1960,7 @@ fn inferStructInit(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc,
                     if (!provided) {
                         return compiler_errors.compileFailFmt(
                             state,
-                            "missing required field '{s}' in initialization of '{s}'; provide it in the initializer or declare the field optional ('?T')",
+                            "Missing required field '{s}' in initialization of '{s}'; provide it in the initializer or declare the field optional ('?T')",
                             .{ required_name, ir.cleanTypeName(struct_name) },
                         );
                     }
@@ -1999,22 +2024,22 @@ fn checkStmt(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node:
                 try recordExprType(state, d.value, annot);
                 try env.define(d.name, annot);
                 if (persist_global) {
-                    const disp = try ownDisplay(state, annot);
+                    const disp = try ownDisplayQualified(state, annot);
                     try state.global_types.put(d.name, disp);
                 }
             } else {
                 if (state.strict) {
                     if (d.value.* == .array_literal and d.value.array_literal.elements.len == 0) {
-                        return compiler_errors.compileFailFmt(state, "cannot infer type for local '${s}' from empty array literal; explicit type annotation required", .{d.name});
+                        return compiler_errors.compileFailFmt(state, "Cannot infer the type of local '${s}' from an empty array literal; add an explicit type annotation", .{d.name});
                     }
                     if (value_type == .unknown) {
-                        return compiler_errors.compileFailFmt(state, "cannot infer type for local '${s}'; explicit type annotation required", .{d.name});
+                        return compiler_errors.compileFailFmt(state, "Cannot infer the type of local '${s}'; add an explicit type annotation", .{d.name});
                     }
                 }
                 if (value_type == .struct_) {
                     try env.define(d.name, value_type);
                     if (persist_global) {
-                        const disp = try ownDisplay(state, value_type);
+                        const disp = try ownDisplayQualified(state, value_type);
                         try state.global_types.put(d.name, disp);
                     }
                 } else if (value_type == .enum_ or value_type == .enum_lit or
@@ -2031,7 +2056,7 @@ fn checkStmt(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node:
                         const disp = if (value_type == .int_lit and !d.is_const)
                             "i64"
                         else
-                            try ownDisplay(state, value_type);
+                            try ownDisplayQualified(state, value_type);
                         try state.global_types.put(d.name, disp);
                     }
                 } else {
@@ -2041,7 +2066,7 @@ fn checkStmt(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node:
                     if (persist_global and
                         (value_type == .ptr or value_type == .array or value_type == .func))
                     {
-                        const disp = try ownDisplay(state, value_type);
+                        const disp = try ownDisplayQualified(state, value_type);
                         try state.global_types.put(d.name, disp);
                     }
                 }
@@ -2087,7 +2112,7 @@ fn checkStmt(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node:
                     sourceFor(state, file_path),
                     line,
                     col,
-                    "error-carrying value discarded; handle with '?', '@isError', '@switch', or bind to a variable",
+                    "Error-carrying value discarded; handle with '?', '@isError', '@switch', or bind to a variable",
                     .{},
                 );
             }
@@ -2160,7 +2185,7 @@ fn checkFunction(state: *state_mod.CompilerState, ta: ir.TypeAlloc, f: *ast.Func
                 }
             }
             if (!is_method_self) {
-                return compiler_errors.compileFailFmt(state, "parameter '{s}' of function '{s}' must have an explicit type annotation in strict mode; write '{s}: int' (or the intended type)", .{ pnode.name, f.name, pnode.name });
+                return compiler_errors.compileFailFmt(state, "Parameter '{s}' of function '{s}' must have an explicit type annotation in strict mode; did you mean '{s}: int'?", .{ pnode.name, f.name, pnode.name });
             }
         }
         if (std.mem.indexOf(u8, f.name, "::")) |idx| {
@@ -2168,7 +2193,7 @@ fn checkFunction(state: *state_mod.CompilerState, ta: ir.TypeAlloc, f: *ast.Func
             // Module-qualified free funcs use `path.lls::name`; only bare struct names are methods.
             if (state.structs.contains(sname) and i == 0) {
                 if (!std.mem.eql(u8, pnode.name, "self")) {
-                    return compiler_errors.compileFailFmt(state, "method '{s}' must have first parameter named 'self'", .{f.name});
+                    return compiler_errors.compileFailFmt(state, "Method '{s}' must have its first parameter named 'self'", .{f.name});
                 }
                 t = try resolveMethodSelfType(state, ta, sname, pnode.type_annotation != null, t);
             }
@@ -2217,7 +2242,7 @@ fn checkFunction(state: *state_mod.CompilerState, ta: ir.TypeAlloc, f: *ast.Func
 
     if (expected) |a| {
         if (state.functions.getPtr(f.name)) |def| {
-            const disp = try ownDisplay(state, a);
+            const disp = try ownDisplayQualified(state, a);
             // `unknown | error` from refineErrorReturns — upgrade success arm from body.
             const weak_success = std.mem.eql(u8, disp, "unknown") or
                 std.mem.eql(u8, disp, "error") or
@@ -2278,7 +2303,7 @@ fn checkFunction(state: *state_mod.CompilerState, ta: ir.TypeAlloc, f: *ast.Func
                 }
                 return compiler_errors.compileFailFmt(
                     state,
-                    "function '{s}' must return a value on all control paths; add a 'return <value>' on the path ending at line {d}",
+                    "Function '{s}' must return a value on all control paths; add a 'return <value>' on the path ending at line {d}",
                     .{ f.name, end_line },
                 );
             }
@@ -2443,7 +2468,7 @@ fn checkStructFieldTypes(state: *state_mod.CompilerState, ta: ir.TypeAlloc, s: *
             const disp = try ownDisplay(state, t);
             try def.types.put(field.name, disp);
         } else if (state.strict) {
-            return compiler_errors.compileFailFmt(state, "field '{s}' of struct '{s}' must have an explicit type annotation in strict mode; write '{s}: int' (or the intended type)", .{ field.name, s.name, field.name });
+            return compiler_errors.compileFailFmt(state, "Field '{s}' of struct '{s}' must have an explicit type annotation in strict mode; did you mean '{s}: int'?", .{ field.name, s.name, field.name });
         }
     }
 }

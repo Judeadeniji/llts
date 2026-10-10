@@ -76,7 +76,7 @@ pub fn compileDeclaration(state: *CompilerState, decl: *const ast.Declaration) !
         if (state.global_types.get(decl.name)) |gt| {
             type_name = gt;
         } else {
-            type_name = try from_ast.typeAstToDisplay(ta, state);
+            type_name = try from_ast.typeAstToDisplayQualified(ta, state);
         }
         // Assignability is enforced in typecheck; keep a defensive check for emit-only paths.
         if (types.resolveType(state, decl.value)) |got| {
@@ -287,7 +287,7 @@ pub fn compileStruct(state: *CompilerState, s: *const ast.StructDecl) !void {
     for (s.fields) |field| {
         var disp: []const u8 = "int";
         if (field.type_annotation) |ta| {
-            disp = (try from_ast.typeAstToDisplay(ta, state)) orelse "unknown";
+            disp = (try from_ast.typeAstToDisplayQualified(ta, state)) orelse "unknown";
         }
         try type_map.put(field.name, disp);
         try field_list.append(state.allocator, .{ .name = field.name, .type_name = disp });
@@ -408,7 +408,7 @@ pub fn compileTypeDecl(state: *CompilerState, td: *const ast.TypeDecl) !void {
     if (ir.isBuiltinTypeName(td.name)) {
         return compile_errors.compileFailFmt(state, "Cannot redefine builtin type '{s}'", .{td.name});
     }
-    const disp = (try from_ast.typeAstToDisplay(td.type_expr, state)) orelse {
+    const disp = (try from_ast.typeAstToDisplayQualified(td.type_expr, state)) orelse {
         return compile_errors.compileFailFmt(state, "Invalid type expression for '{s}'", .{td.name});
     };
     try state.typedefs.put(td.name, .{
@@ -442,7 +442,7 @@ fn registerShapeLayout(state: *CompilerState, key: []const u8, shape: *const ast
     for (shape.fields) |field| {
         var field_disp: []const u8 = "int";
         if (field.type_annotation) |ta| {
-            field_disp = (try from_ast.typeAstToDisplay(ta, state)) orelse "unknown";
+            field_disp = (try from_ast.typeAstToDisplayQualified(ta, state)) orelse "unknown";
         }
         try type_map.put(field.name, field_disp);
         try field_list.append(state.allocator, .{ .name = field.name, .type_name = field_disp });

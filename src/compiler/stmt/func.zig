@@ -105,7 +105,7 @@ fn pushParam(state: *CompilerState, p: ast.Param, method_struct: ?[]const u8) !v
         }
     }
     if (p.type_annotation) |ta| {
-        p_type = (try from_ast.typeAstToDisplay(ta, state));
+        p_type = (try from_ast.typeAstToDisplayQualified(ta, state));
     }
     try state.locals.append(state.allocator, .{
         .name = p.name,

@@ -515,7 +515,7 @@ fn collectFuncs(state: *state_mod.CompilerState, node: *ast.Node, struct_name: ?
             var has_return = false;
             var return_type: ?[]const u8 = null;
             if (fn_decl.return_type) |rt| {
-                return_type = typecheck.typeAstToDisplay(rt, state) catch null;
+                return_type = typecheck.typeAstToDisplayQualified(rt, state) catch null;
             }
             try analyzeBody(state, fn_decl.body, &calls, &has_loop, &has_return, &return_type, fn_decl.name);
             const loc = node.loc();

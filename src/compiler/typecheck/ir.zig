@@ -263,20 +263,36 @@ pub fn cleanTypeName(name: []const u8) []const u8 {
 }
 
 pub fn displayTypeAlloc(allocator: std.mem.Allocator, t: Type) ![]const u8 {
+    return displayTypeAllocFlags(allocator, t, false);
+}
+
+/// Like `displayTypeAlloc`, but keeps module-qualified names (`mod.lls::Struct`)
+/// intact.  Use for displays that are *stored and re-parsed* (struct field
+/// layouts, typedef underlyings, param types) — stripping the qualifier there
+/// makes same-named types from different modules indistinguishable.
+pub fn displayTypeQualifiedAlloc(allocator: std.mem.Allocator, t: Type) ![]const u8 {
+    return displayTypeAllocFlags(allocator, t, true);
+}
+
+fn dispNamed(allocator: std.mem.Allocator, n: []const u8, qualified: bool) ![]const u8 {
+    return try allocator.dupe(u8, if (qualified) n else cleanTypeName(n));
+}
+
+fn displayTypeAllocFlags(allocator: std.mem.Allocator, t: Type, qualified: bool) ![]const u8 {
     return switch (t) {
         .u1, .i8, .i16, .i32, .i64, .u8, .u16, .u32, .u64, .f32, .f64, .isize, .usize, .fsize => try allocator.dupe(u8, displayWidth(t)),
         .null => try allocator.dupe(u8, "null"),
         .error_ => try allocator.dupe(u8, "error"),
         .unknown => try allocator.dupe(u8, "unknown"),
         .never => try allocator.dupe(u8, "never"),
-        .struct_ => |n| try allocator.dupe(u8, cleanTypeName(n)),
-        .enum_ => |n| try allocator.dupe(u8, cleanTypeName(n)),
-        .enum_lit => |e| try std.fmt.allocPrint(allocator, "{s}.{s}", .{ cleanTypeName(e.enum_name), e.variant }),
+        .struct_ => |n| try dispNamed(allocator, n, qualified),
+        .enum_ => |n| try dispNamed(allocator, n, qualified),
+        .enum_lit => |e| try std.fmt.allocPrint(allocator, "{s}.{s}", .{ if (qualified) e.enum_name else cleanTypeName(e.enum_name), e.variant }),
         .str_lit => |s| try std.fmt.allocPrint(allocator, "\"{s}\"", .{s}),
         .int_lit => |n| try std.fmt.allocPrint(allocator, "{d}", .{n}),
         .bool_lit => |b| try allocator.dupe(u8, if (b) "true" else "false"),
         .array => |a| blk: {
-            const elem = try displayTypeAlloc(allocator, a.elem.*);
+            const elem = try displayTypeAllocFlags(allocator, a.elem.*, qualified);
             defer allocator.free(elem);
             // Prefer `[]byte` spelling for u8 slices (string ≡ []byte).
             const elem_disp = if (a.elem.* == .u8) "byte" else elem;
@@ -291,7 +307,7 @@ pub fn displayTypeAlloc(allocator: std.mem.Allocator, t: Type) ![]const u8 {
                 for (parts.items) |p| allocator.free(p);
                 parts.deinit(allocator);
             }
-            for (elems) |e| try parts.append(allocator, try displayTypeAlloc(allocator, e));
+            for (elems) |e| try parts.append(allocator, try displayTypeAllocFlags(allocator, e, qualified));
             var total: usize = 2; // []
             for (parts.items, 0..) |p, i| {
                 total += p.len;
@@ -312,7 +328,7 @@ pub fn displayTypeAlloc(allocator: std.mem.Allocator, t: Type) ![]const u8 {
             break :blk out;
         },
         .ptr => |p| blk: {
-            const inner = try displayTypeAlloc(allocator, p.*);
+            const inner = try displayTypeAllocFlags(allocator, p.*, qualified);
             defer allocator.free(inner);
             break :blk try std.fmt.allocPrint(allocator, "*{s}", .{inner});
         },
@@ -323,7 +339,7 @@ pub fn displayTypeAlloc(allocator: std.mem.Allocator, t: Type) ![]const u8 {
                 parts.deinit(allocator);
             }
             for (f.params, 0..) |p, i| {
-                const d = try displayTypeAlloc(allocator, p);
+                const d = try displayTypeAllocFlags(allocator, p, qualified);
                 if (f.variadic and i + 1 == f.params.len) {
                     const with_dots = try std.fmt.allocPrint(allocator, "...{s}", .{d});
                     allocator.free(d);
@@ -348,7 +364,7 @@ pub fn displayTypeAlloc(allocator: std.mem.Allocator, t: Type) ![]const u8 {
                 @memcpy(params_s[poff .. poff + p.len], p);
                 poff += p.len;
             }
-            const ret = try displayTypeAlloc(allocator, f.ret.*);
+            const ret = try displayTypeAllocFlags(allocator, f.ret.*, qualified);
             defer allocator.free(ret);
             break :blk try std.fmt.allocPrint(allocator, "@func({s}): {s}", .{ params_s, ret });
         },
@@ -359,7 +375,7 @@ pub fn displayTypeAlloc(allocator: std.mem.Allocator, t: Type) ![]const u8 {
                 parts.deinit(allocator);
             }
             for (fields) |f| {
-                const ty = try displayTypeAlloc(allocator, f.ty);
+                const ty = try displayTypeAllocFlags(allocator, f.ty, qualified);
                 defer allocator.free(ty);
                 try parts.append(allocator, try std.fmt.allocPrint(allocator, "{s}: {s}", .{ f.name, ty }));
             }
@@ -382,12 +398,12 @@ pub fn displayTypeAlloc(allocator: std.mem.Allocator, t: Type) ![]const u8 {
             out[offset] = '}';
             break :blk out;
         },
-        .error_set => |n| try allocator.dupe(u8, cleanTypeName(n)),
-        .error_lit => |e| try std.fmt.allocPrint(allocator, "{s}.{s}", .{ cleanTypeName(e.set_name), e.variant }),
-        .defined => |d| try allocator.dupe(u8, cleanTypeName(d.name)),
+        .error_set => |n| try dispNamed(allocator, n, qualified),
+        .error_lit => |e| try std.fmt.allocPrint(allocator, "{s}.{s}", .{ if (qualified) e.set_name else cleanTypeName(e.set_name), e.variant }),
+        .defined => |d| try dispNamed(allocator, d.name, qualified),
         .union_ => |arms| blk: {
             if (optionalPayload(t)) |payload| {
-                const inner = try displayTypeAlloc(allocator, payload);
+                const inner = try displayTypeAllocFlags(allocator, payload, qualified);
                 defer allocator.free(inner);
                 break :blk try std.fmt.allocPrint(allocator, "?{s}", .{inner});
             }
@@ -396,7 +412,7 @@ pub fn displayTypeAlloc(allocator: std.mem.Allocator, t: Type) ![]const u8 {
                 for (parts.items) |p| allocator.free(p);
                 parts.deinit(allocator);
             }
-            for (arms) |arm| try parts.append(allocator, try displayTypeAlloc(allocator, arm));
+            for (arms) |arm| try parts.append(allocator, try displayTypeAllocFlags(allocator, arm, qualified));
             var total: usize = 0;
             for (parts.items, 0..) |p, i| {
                 total += p.len;

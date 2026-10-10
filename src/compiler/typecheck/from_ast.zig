@@ -127,7 +127,7 @@ fn mergeErrorSets(state: *state_mod.CompilerState, left: []const u8, right: []co
             if (!std.mem.eql(u8, l_origin, r_origin)) {
                 return compile_error.compileFailFmt(
                     state,
-                    "conflicting error member '{s}' in '{s}' & '{s}' (from '{s}' and '{s}')",
+                    "Conflicting error member '{s}' in '{s}' & '{s}' (from '{s}' and '{s}')",
                     .{ name, left, right, l_origin, r_origin },
                 );
             }
@@ -187,7 +187,7 @@ fn intersectShapes(
                         defer st.allocator.free(rt);
                         return compile_error.compileFailFmt(
                             st,
-                            "conflicting types for field '{s}' in shape intersection ('{s}' vs '{s}')",
+                            "Conflicting types for field '{s}' in shape intersection ('{s}' vs '{s}')",
                             .{ rfield.name, lt, rt },
                         );
                     }
@@ -275,60 +275,56 @@ fn resolveTypedef(
     return try ta.definedType(td.name, under);
 }
 
-pub fn findStructKey(state: *const state_mod.CompilerState, name: []const u8) ?[]const u8 {
-    if (state.structs.contains(name)) return name;
-    var kit = state.structs.keyIterator();
+/// Resolve a bare name to a `module::Name` table key by suffix match.
+///
+/// Several modules can declare the same bare name (e.g. `Logger` in both
+/// `log.lls` and `log/slog.lls`), so a bare name can match more than one key.
+/// Among the matches we prefer a key whose module prefix equals the current
+/// `module_hint` (the module of the declaration being resolved); failing that
+/// we prefer the shortest module prefix so resolution is deterministic.  Only
+/// returns null when nothing matches at all.
+fn uniqueSuffixKey(state: *const state_mod.CompilerState, map_keys: anytype, name: []const u8) ?[]const u8 {
+    var hinted: ?[]const u8 = null;
+    var shortest: ?[]const u8 = null;
+    var shortest_prefix_len: usize = std.math.maxInt(usize);
+    var kit = map_keys;
     while (kit.next()) |k| {
-        if (std.mem.endsWith(u8, k.*, name)) {
-            const prefix_len = k.*.len - name.len;
-            if (prefix_len >= 2 and std.mem.eql(u8, k.*[prefix_len - 2 .. prefix_len], "::")) {
-                return k.*;
+        if (!std.mem.endsWith(u8, k.*, name)) continue;
+        const prefix_len = k.*.len - name.len;
+        if (prefix_len < 2 or !std.mem.eql(u8, k.*[prefix_len - 2 .. prefix_len], "::")) continue;
+        const module_prefix = k.*[0 .. prefix_len - 2];
+        if (state.module_hint) |hint| {
+            if (std.mem.eql(u8, module_prefix, hint)) {
+                hinted = k.*; // the current module's own declaration wins outright
+                break;
             }
         }
+        if (module_prefix.len < shortest_prefix_len) {
+            shortest = k.*;
+            shortest_prefix_len = module_prefix.len;
+        }
     }
-    return null;
+    return hinted orelse shortest;
+}
+
+pub fn findStructKey(state: *const state_mod.CompilerState, name: []const u8) ?[]const u8 {
+    if (state.structs.contains(name)) return name;
+    return uniqueSuffixKey(state, state.structs.keyIterator(), name);
 }
 
 pub fn findEnumKey(state: *const state_mod.CompilerState, name: []const u8) ?[]const u8 {
     if (state.enums.contains(name)) return name;
-    var kit = state.enums.keyIterator();
-    while (kit.next()) |k| {
-        if (std.mem.endsWith(u8, k.*, name)) {
-            const prefix_len = k.*.len - name.len;
-            if (prefix_len >= 2 and std.mem.eql(u8, k.*[prefix_len - 2 .. prefix_len], "::")) {
-                return k.*;
-            }
-        }
-    }
-    return null;
+    return uniqueSuffixKey(state, state.enums.keyIterator(), name);
 }
 
 pub fn findErrorSetKey(state: *const state_mod.CompilerState, name: []const u8) ?[]const u8 {
     if (state.error_sets.contains(name)) return name;
-    var kit = state.error_sets.keyIterator();
-    while (kit.next()) |k| {
-        if (std.mem.endsWith(u8, k.*, name)) {
-            const prefix_len = k.*.len - name.len;
-            if (prefix_len >= 2 and std.mem.eql(u8, k.*[prefix_len - 2 .. prefix_len], "::")) {
-                return k.*;
-            }
-        }
-    }
-    return null;
+    return uniqueSuffixKey(state, state.error_sets.keyIterator(), name);
 }
 
 pub fn findTypedefKey(state: *const state_mod.CompilerState, name: []const u8) ?[]const u8 {
     if (state.typedefs.contains(name)) return name;
-    var kit = state.typedefs.keyIterator();
-    while (kit.next()) |k| {
-        if (std.mem.endsWith(u8, k.*, name)) {
-            const prefix_len = k.*.len - name.len;
-            if (prefix_len >= 2 and std.mem.eql(u8, k.*[prefix_len - 2 .. prefix_len], "::")) {
-                return k.*;
-            }
-        }
-    }
-    return null;
+    return uniqueSuffixKey(state, state.typedefs.keyIterator(), name);
 }
 
 /// Like `ir.parseDisplayType` but resolves `@type` / `@alias` / structs / enums via `state`.
@@ -624,7 +620,7 @@ pub fn ensureShapeLayoutFromDisplayAs(
     defer field_list.deinit(state.allocator);
 
     for (t.shape) |f| {
-        const field_disp = try ir.displayTypeAlloc(state.allocator, f.ty);
+        const field_disp = try ir.displayTypeQualifiedAlloc(state.allocator, f.ty);
         try state.owned.append(state.allocator, field_disp);
         const name_owned = try state.allocator.dupe(u8, f.name);
         try state.owned.append(state.allocator, name_owned);
@@ -787,6 +783,23 @@ pub fn typeAstToDisplay(node: ?*ast.Node, state: ?*state_mod.CompilerState) From
     const t = try typeFromAst(n, state, ta);
     if (state) |st| {
         const s = try ir.displayTypeAlloc(st.allocator, t);
+        try st.owned.append(st.allocator, s);
+        return s;
+    }
+    return ir.displayTypeSimple(t);
+}
+
+/// Like `typeAstToDisplay`, but keeps `mod.lls::Name` qualifiers so the stored
+/// display round-trips through `parseDisplayType` without ambiguous bare-name
+/// resolution.  Use for struct layouts / typedefs / param types.
+pub fn typeAstToDisplayQualified(node: ?*ast.Node, state: ?*state_mod.CompilerState) FromAstError!?[]const u8 {
+    const n = node orelse return null;
+    var arena = std.heap.ArenaAllocator.init(if (state) |st| st.allocator else std.heap.page_allocator);
+    defer arena.deinit();
+    const ta = ir.TypeAlloc{ .allocator = arena.allocator() };
+    const t = try typeFromAst(n, state, ta);
+    if (state) |st| {
+        const s = try ir.displayTypeQualifiedAlloc(st.allocator, t);
         try st.owned.append(st.allocator, s);
         return s;
     }
