@@ -20,39 +20,39 @@ pub @const $lstdFlags = ldate | ltime;
 pub @const $discard = "discard";
 
 # --- In-memory Buffer (compatible with bytes.Buffer / strings.Builder) ---
-pub @struct Buffer {
+pub @struct LogBuffer {
     str: string;
 
-    @func write(self: *Buffer, s: string) {
+    @func write(self: *LogBuffer, s: string) {
         self.str = self.str + s;
     }
 
-    @func writeString(self: *Buffer, s: string) {
+    @func writeString(self: *LogBuffer, s: string) {
         self.str = self.str + s;
     }
 
-    @func string(self: *Buffer): string {
+    @func string(self: *LogBuffer): string {
         return self.str;
     }
 
-    @func bytes(self: *Buffer): string {
+    @func bytes(self: *LogBuffer): string {
         return self.str;
     }
 
-    @func reset(self: *Buffer) {
+    @func reset(self: *LogBuffer) {
         self.str = "";
     }
 }
 
-pub @func newBuffer(): Buffer {
-    return Buffer { str: "" };
+pub @func newBuffer(): LogBuffer {
+    return LogBuffer { str: "" };
 }
 
 # --- LogWriter abstraction ---
 pub @struct LogWriter {
     kind: string; # "fd", "buffer", "func", "discard"
     fd: int;
-    buf: ?*Buffer;
+    buf: ?*LogBuffer;
     write_fn: unknown;
 
     @func write(self: *LogWriter, s: string) {
