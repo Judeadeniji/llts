@@ -10,6 +10,12 @@ pub @const $levelInfo = 0;
 pub @const $levelWarn = 4;
 pub @const $levelError = 8;
 
+# Go slog compatibility: re-export capitalized Level* constants alongside internal level* variants
+pub @const $LevelDebug = levelDebug;
+pub @const $LevelInfo = levelInfo;
+pub @const $LevelWarn = levelWarn;
+pub @const $LevelError = levelError;
+
 pub @func levelString(l: int): string {
     @if (l <= levelDebug) {
         @if (l == levelDebug) { return "DEBUG"; }
@@ -41,6 +47,10 @@ pub @struct LevelVar {
     @func string(self: *LevelVar): string {
         return levelString(self.val);
     }
+}
+
+pub @func newLevelVar(initial: int): LevelVar {
+    return LevelVar { val: initial };
 }
 
 # --- Value Kinds ---
@@ -160,6 +170,7 @@ pub @func intValue(v: int): Value {
         groupVal: null,
     };
 }
+pub @const $int64Value = intValue;
 
 pub @func uint64Value(v: int): Value {
     return Value {

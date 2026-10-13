@@ -89,14 +89,10 @@ fn assignMember(state: *CompilerState, mem: *const ast.Member, node: *ast.Node, 
         if (state.global_consts.contains(static_path)) {
             return compile_errors.compileFailFmt(state, "Cannot assign to constant '{s}'", .{static_path});
         }
-        if (arith) |op| {
-            try emit.emitNameGet(state, .OP_GET_GLOBAL, static_path);
-            try expr.compileExpression(state, right);
-            try emit.emitOp(state, op);
-        } else {
-            try expr.compileExpression(state, right);
+        if (!state.global_vars.contains(static_path)) {
+            return compile_errors.compileFailFmt(state, "Cannot assign to member '{s}' of imported module", .{mem.property.primary.name});
         }
-        try emit.emitNameGet(state, .OP_SET_GLOBAL, static_path);
+        try assignStaticGlobal(state, static_path, right, arith);
         return;
     }
 
@@ -129,6 +125,23 @@ fn assignMember(state: *CompilerState, mem: *const ast.Member, node: *ast.Node, 
         } else |_| {}
     }
     if (types.resolveType(state, mem.object)) |type_name| {
+        if (std.mem.startsWith(u8, type_name, "module:")) {
+            const mod_path = type_name["module:".len..];
+            // Exported *mutable* globals stay assignable across modules
+            // (`internal.defaultOutput = bridge`); every other namespace member
+            // is read-only. Keep this in sync with typecheck's assignment path.
+            if (mem.property.* == .primary and path.moduleMemberIsMutableGlobal(state, mod_path, mem.property.primary.name)) {
+                const key = try std.fmt.allocPrint(state.allocator, "{s}::{s}", .{ mod_path, mem.property.primary.name });
+                try state.owned.append(state.allocator, key);
+                try assignStaticGlobal(state, key, right, arith);
+                return;
+            }
+            return compile_errors.compileFailFmt(
+                state,
+                "Cannot assign to member '{s}' of imported module '{s}'",
+                .{ mem.property.primary.name, mod_path },
+            );
+        }
         if (mem.property.* == .primary) {
             if (types.lookupStructField(state, type_name, mem.property.primary.name)) |info| {
                 const kind: u8 = @intFromEnum(layout.fieldKind(state, info.field_ty));
@@ -149,25 +162,65 @@ fn assignMember(state: *CompilerState, mem: *const ast.Member, node: *ast.Node, 
                 }
                 try emit.emitStoreField(state, info.offset, kind);
                 return;
+            } else {
+                return compile_errors.compileFailFmt(
+                    state,
+                    "Field '{s}' does not exist on '{s}'",
+                    .{ mem.property.primary.name, type_name },
+                );
             }
         }
     }
     if (mem.property.* == .primary) {
         const prop = mem.property.primary.name;
-        if (arith) |op| {
-            try expr.compileExpression(state, mem.object);
-            try emit.emitOp(state, .OP_DUP);
-            try emit.emitLineIfNeeded(state, mem.loc.line, mem.loc.column);
-            try emit.emitNameGet(state, .OP_GET_PROPERTY, prop);
-            try expr.compileExpression(state, right);
-            try emit.emitOp(state, op);
-        } else {
-            try expr.compileExpression(state, mem.object);
-            try expr.compileExpression(state, right);
+        if (std.fmt.parseInt(i64, prop, 10) catch null) |ci| {
+            if (arith) |op| {
+                try expr.compileExpression(state, mem.object);
+                try emit.emitConstant(state, .{ .i64 = ci });
+                try expr.compileExpression(state, mem.object);
+                try emit.emitConstant(state, .{ .i64 = ci });
+                try emit.emitOp(state, .OP_GET_ARRAY);
+                try expr.compileExpression(state, right);
+                try emit.emitOp(state, op);
+                try emit.emitOp(state, .OP_SET_ARRAY);
+                return;
+            } else {
+                try expr.compileExpression(state, mem.object);
+                try emit.emitConstant(state, .{ .i64 = ci });
+                try expr.compileExpression(state, right);
+                try emit.emitOp(state, .OP_SET_ARRAY);
+                return;
+            }
         }
-        try emit.emitLineIfNeeded(state, mem.loc.line, mem.loc.column);
-        try emit.emitNameGet(state, .OP_SET_PROPERTY, prop);
+        if (path.tryResolveStaticPath(state, mem.object) catch null) |sp| {
+            if (types.resolveType(state, mem.object)) |t| {
+                if (std.mem.startsWith(u8, t, "module:")) {
+                    return compile_errors.compileFailFmt(
+                        state,
+                        "Cannot assign to member '{s}' of imported module '{s}'",
+                        .{ prop, sp },
+                    );
+                }
+            }
+        }
+        return compile_errors.compileFailFmt(
+            state,
+            "Cannot assign field '{s}' on non-struct target",
+            .{prop},
+        );
     }
+}
+
+/// Store to a module-qualified global by name (`<mod>::<member>`).
+fn assignStaticGlobal(state: *CompilerState, key: []const u8, right: *ast.Node, arith: ?OpCode) !void {
+    if (arith) |op| {
+        try emit.emitNameGet(state, .OP_GET_GLOBAL, key);
+        try expr.compileExpression(state, right);
+        try emit.emitOp(state, op);
+    } else {
+        try expr.compileExpression(state, right);
+    }
+    try emit.emitNameGet(state, .OP_SET_GLOBAL, key);
 }
 
 fn assignPrimary(state: *CompilerState, prim: *const ast.Primary, right: *ast.Node, arith: ?OpCode) !void {

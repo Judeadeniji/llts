@@ -920,13 +920,23 @@ pub fn resolveType(state: *state_mod.CompilerState, node: *ast.Node) ?[]const u8
             if (std.mem.indexOfScalar(u8, object_type, '.') != null) {
                 object_type = expr_path.resolveModuleType(state, object_type) catch object_type;
             }
-            // Module namespace (`module:path`) — field types come from exported globals.
+            // Module namespace (`module:path`) — field types come from exported globals or submodules.
             if (std.mem.startsWith(u8, object_type, "module:")) {
                 const mod_path = object_type["module:".len..];
+                var sbuf: [512]u8 = undefined;
+                const sk = std.fmt.bufPrint(&sbuf, "${s}::{s}", .{ mod_path, m.property.primary.name }) catch "";
+                if (sk.len > 0) {
+                    if (state.global_types.get(sk)) |sub_gt| {
+                        if (std.mem.startsWith(u8, sub_gt, "module:")) break :blk sub_gt;
+                    }
+                }
                 var qbuf: [512]u8 = undefined;
                 const q = std.fmt.bufPrint(&qbuf, "{s}::{s}", .{ mod_path, m.property.primary.name }) catch break :blk null;
                 if (state.global_types.get(q)) |gt| {
-                    if (!std.mem.startsWith(u8, gt, "module:")) break :blk gt;
+                    break :blk gt;
+                }
+                if (state.functions.get(q)) |fdef| {
+                    if (fdef.return_type) |rt| break :blk rt;
                 }
                 break :blk null;
             }
