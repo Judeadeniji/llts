@@ -114,7 +114,7 @@ Shape fields with type `@func(…): R` can hold first-class function values (sto
 
 `@typeOf` prints the distinct name for `@type` values. `@sizeOf(Name)` matches the underlying layout.
 
-Both may also appear inside a function body. A local type is visible anywhere in that function and nowhere else; two functions may each declare their own `T`. Within one function a local type name must be unique and cannot also name a variable or parameter.
+Both may also appear inside any block: a function body, a nested `@if` / `@for` / `{ }` block, a labeled block expression, or a `@comptime { … }` body (including blocks among top-level statements). Scope is lexical, like `$` variables: a local type is visible anywhere in its block, including nested blocks, and nowhere after it. Sibling blocks may each declare their own `T`, and an inner block may shadow an outer or global type. Within one block a type name must be unique, and it cannot also name a parameter or a variable visible in that block.
 
 ```llts
 @func area(w: i64, h: i64): i64 {
