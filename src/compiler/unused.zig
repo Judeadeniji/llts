@@ -405,6 +405,7 @@ fn walkNode(ctx: *Context, node: *ast.Node, worklist: ?*std.ArrayList(usize)) vo
         .enum_decl => {},
         .error_decl => {},
         .type_decl => |t| walkTypeNode(ctx, t.type_expr, worklist),
+        .comptime_expr => |ce| walkNode(ctx, ce.expr, worklist),
         else => {},
     }
 }
