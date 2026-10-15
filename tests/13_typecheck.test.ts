@@ -347,7 +347,7 @@ pub @func main() {
 	);
 });
 
-test("@typeOf supports bare types statically", () => {
+test("@typeOf of a bare type is `type`", () => {
 	expectOutput(
 		runSource(`
 @struct Point { x: i64; y: i64; }
@@ -371,19 +371,19 @@ print(@sizeOf([]i64));
 print(@sizeOf([10]i64));
 `),
 		[
+			"type",
+			"type",
+			"type",
+			"type",
+			"type",
+			"type",
+			"type",
+			"type",
+			"type",
+			"type",
 			"i64",
-			"u8",
-			"i64",
-			"[]byte",
 			"Point",
-			"*Point",
-			"?Point",
-			"[]byte",
-			"[10]i64",
-			"i64 | []byte",
-			"i64",
-			"Point",
-			"[]byte",
+			"type",
 			"8",
 			"8",
 		],

@@ -62,7 +62,7 @@ pub @func printf(format, ...args) {
 
 pub @func fprintf(file, format, ...args) {
     $fd = file;
-    @if (@typeOf(file) == "struct") {
+    @if (__type(file) == "struct") {
         $fd = file.fd;
     }
     return __fprintf(fd, format, args);
@@ -86,7 +86,7 @@ pub @func println(...args) {
 
 pub @func fprint(file, ...args) {
     $fd = file;
-    @if (@typeOf(file) == "struct") {
+    @if (__type(file) == "struct") {
         $fd = file.fd;
     }
     return __fprint(fd, args);
@@ -94,7 +94,7 @@ pub @func fprint(file, ...args) {
 
 pub @func fprintln(file, ...args) {
     $fd = file;
-    @if (@typeOf(file) == "struct") {
+    @if (__type(file) == "struct") {
         $fd = file.fd;
     }
     return __fprintln(fd, args);

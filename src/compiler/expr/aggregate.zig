@@ -235,6 +235,20 @@ pub fn compileNew(state: *CompilerState, c: *const ast.Call) !void {
             try emitArenaAllocBytes(state, c.args[0], null, struct_def.size);
             try zeroFillStruct(state, struct_def);
         },
+        .call => {
+            const denoted = if (types.isTypeCall(value)) state.type_call_results.get(value) else null;
+            const disp = denoted orelse {
+                return compiler_errors.compileFailFmt(state, "@new expects a type name — value literals are not accepted", .{});
+            };
+            if (c.args.len != 2) {
+                return compiler_errors.compileFailFmt(state, "@new struct type takes (allocator, Type)", .{});
+            }
+            const struct_def = types.lookupStruct(state, disp) orelse {
+                return compiler_errors.compileFailFmt(state, "@new type must be a struct, string, or array type, got '{s}'", .{disp});
+            };
+            try emitArenaAllocBytes(state, c.args[0], null, struct_def.size);
+            try zeroFillStruct(state, struct_def);
+        },
         else => {
             return compiler_errors.compileFailFmt(state, "@new expects a type name — value literals are not accepted", .{});
         },

@@ -9,6 +9,10 @@ const types = @import("../typecheck/from_ast.zig");
 const CompilerState = state_mod.CompilerState;
 
 pub fn compileBinary(state: *CompilerState, bin: *const ast.Binary) !void {
+    if (state.type_eq_folds.get(bin.left)) |same| {
+        try emit.emitOp(state, if (same) .OP_TRUE else .OP_FALSE);
+        return;
+    }
     if (std.mem.eql(u8, bin.operator, "&&")) {
         try expr.compileExpression(state, bin.left);
         const end_jump = try emit.emitJump(state, .OP_JUMP_IF_FALSE);

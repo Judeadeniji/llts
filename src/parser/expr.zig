@@ -229,7 +229,7 @@ pub fn parseStructInitWithType(self: *Parser, type_expr: *Node) ParseError!*Node
     return finishStructInit(self, type_expr, tok);
 }
 
-fn finishCall(self: *Parser, callee: *Node) ParseError!*Node {
+pub fn finishCall(self: *Parser, callee: *Node) ParseError!*Node {
     _ = try self.consume(.delimiter, "Expected '('", "(");
     var args: std.ArrayList(*Node) = .empty;
     if (!self.checkDelim(")")) {

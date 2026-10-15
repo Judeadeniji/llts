@@ -113,8 +113,44 @@ Shape fields with type `@func(…): R` can hold first-class function values (sto
 | `@alias Name = T` | Transparent rename; `Name` ≡ `T`. |
 
 `@typeOf` prints the distinct name for `@type` values. `@sizeOf(Name)` matches the underlying layout.
-
 `T` may be a width, pointer, array, optional, union (`|`), tuple (`[T, U]`), function type (`@func(…): R`), literal type, or **object shape**. `@struct` / `@enum` remain their own declarations; `@type` names and composes them (e.g. `@type Expr = Literal | Add`).
+
+## Types as compile-time values
+
+Types are values of the meta type `type`. They exist only at compile time: the typechecker resolves them and nothing about them reaches the VM except the code they shape.
+
+`@typeOf(expr)` returns the **static** type of `expr` as a `type` value. The operand is never evaluated, so `@typeOf(f())` does not call `f`. Applied to a type itself, it returns `type`:
+
+```llts
+$x: i64 = 42;
+print(@typeOf(x));          # i64
+print(@typeOf(i64));        # type
+print(@typeOf(@typeOf(x))); # type
+```
+
+Anything that returns a type can be used wherever a type can be written:
+
+```llts
+$g: u8 = 7;
+@alias G = @typeOf(g);                 # name a type (the only way; no `@const $T = …`)
+@struct Holder { v: @typeOf(g); w: i64; }
+
+@func twice(a: i64, b: @typeOf(a)): @typeOf(a) { return a + b; }
+
+$y: ?@typeOf(x) = null;                # composites: ?T, []T, T | U, *T
+$c = @as(@typeOf(g), 9);
+print(@sizeOf(@typeOf(x)));            # 8
+$p = @new(arena, @typeOf(proto));      # *N
+```
+
+**Rules:**
+
+- `==` / `!=` between two type values fold to a constant `true` / `false` at compile time. `@type` names compare nominally (`@typeOf(m) == Meters` is true, `== i64` is false). Other operators on types are errors.
+- A type value cannot occupy a runtime slot: `$t = @typeOf(x)`, `return @typeOf(x)`, assignments, and `type`-annotated fields/params/returns are rejected. Use `@alias` to name a type.
+- Comparing a type with a string (`@typeOf(x) == "i64"`) is an error. For the runtime tag of a value, use `__type(v)` (returns a string such as `"struct"`).
+- A value in type position (`$x: @sizeOf(i64)`) is an error.
+- In declarations (struct fields, typedefs, function signatures) the operand must have a statically known type: an annotated global, or one initialized with a literal. Otherwise you get "Cannot resolve this type here"; add an annotation.
+- `print` of a type value prints its name.
 
 ## When runtime is the same
 

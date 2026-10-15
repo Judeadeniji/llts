@@ -262,14 +262,20 @@ print(arr[2]);
 `), ["1"]);
 });
 
-test("@const @import and @typeOf are allowed", () => {
+test("@const @import is allowed", () => {
   expectOutput(runSource(`
 @const $mem = @import("std/mem");
 @const $a = 1;
-@const $t = @typeOf(a);
-print(t);
+print(@typeOf(a));
 print(mem.alloc(1) > 0);
 `), ["1", "true"]);
+});
+
+test("@const of a type value is rejected (use @alias)", () => {
+  expectError(runSource(`
+@const $a = 1;
+@const $t = @typeOf(a);
+`), "Cannot use a 'type' value as a variable's value");
 });
 
 test("@const string and bool literals are allowed", () => {

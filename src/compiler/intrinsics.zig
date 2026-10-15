@@ -96,21 +96,30 @@ pub fn typecheck(state: *CompilerState, env: *typecheck_root.Env, ta: ir.TypeAll
             return ir.TBool;
         },
         .typeOf => {
-            if (isBareTypeNode(state, env, c.args[0])) {
-                const arg_type = try from_ast.typeFromAst(c.args[0], state, ta);
-                const disp = try typecheck_root.ownDisplay(state, arg_type);
-                try state.type_of_results.put(call_node, disp);
-                try state.type_of_is_type.put(call_node, {});
-                return ir.TString;
-            }
-            const arg_type = try typecheck_root.inferExpr(state, env, ta, c.args[0]);
-            const disp = try typecheck_root.ownDisplay(state, arg_type);
-            try state.type_of_results.put(call_node, disp);
-            return ir.TString;
+            const arg = c.args[0];
+            const denoted: ir.Type = if (isTypeValueNode(state, env, arg)) blk: {
+                _ = try denotedType(state, env, ta, arg);
+                break :blk ir.TType;
+            } else blk: {
+                const t = try typecheck_root.inferExpr(state, env, ta, arg);
+                if (t == .unknown) try requireKnownIdentifier(state, env, arg);
+                break :blk t;
+            };
+            try state.type_of_results.put(call_node, try typecheck_root.ownDisplay(state, denoted));
+            try recordTypeValue(state, call_node, denoted);
+            return ir.TType;
         },
         .sizeOf => {
-            if (!isBareTypeNode(state, env, c.args[0])) {
-                _ = try typecheck_root.inferExpr(state, env, ta, c.args[0]);
+            const arg = c.args[0];
+            if (isTypeValueNode(state, env, arg)) {
+                const t = try denotedType(state, env, ta, arg);
+                const size = (try layout.sizeOfType(state, t)) orelse {
+                    const d = try typecheck_root.ownDisplay(state, t);
+                    return compile_errors.compileFailFmt(state, "@sizeOf: type '{s}' has no static size", .{d});
+                };
+                try state.size_of_results.put(call_node, size);
+            } else {
+                _ = try typecheck_root.inferExpr(state, env, ta, arg);
             }
             return ir.TInt;
         },
@@ -154,7 +163,15 @@ pub fn typecheck(state: *CompilerState, env: *typecheck_root.Env, ta: ir.TypeAll
             const v = c.args[1];
             if (c.args.len == 3) _ = try typecheck_root.inferExpr(state, env, ta, c.args[2]);
             const base: ir.Type = switch (v.*) {
-                .array_type, .union_type, .intersection_type, .pointer_type, .func_type, .tuple_type, .shape_type => try from_ast.typeFromAst(v, state, ta),
+                .array_type, .union_type, .intersection_type, .pointer_type, .func_type, .tuple_type, .shape_type => blk: {
+                    try resolveTypeExprs(state, env, ta, v);
+                    break :blk try from_ast.typeFromAst(v, state, ta);
+                },
+                .call => blk: {
+                    if (!from_ast.isTypeCall(v)) break :blk try typecheck_root.inferExpr(state, env, ta, v);
+                    try resolveTypeExprs(state, env, ta, v);
+                    break :blk try from_ast.typeFromAst(v, state, ta);
+                },
                 .primary => |p| blk: {
                     if (p.kind == .identifier) {
                         if (std.mem.eql(u8, p.name, "string") or std.mem.eql(u8, p.name, "[]byte")) {
@@ -206,66 +223,17 @@ pub fn compile(state: *CompilerState, intr: Intrinsic, node: *ast.Node, c: *cons
             try emit.emitOp(state, .OP_IS_ERROR);
         },
         .typeOf => {
-            const disp = state.type_of_results.get(node) orelse
-                from_ast.resolveType(state, c.args[0]) orelse "unknown";
-            if (state.type_of_is_type.contains(node)) {
-                try emit.emitString(state, disp);
-                return;
-            }
-            try expr.compileExpression(state, c.args[0]);
-            try emit.emitOp(state, .OP_POP);
-            try emit.emitString(state, disp);
+            // Purely static: the operand is never evaluated.
+            try emit.emitString(state, state.type_of_results.get(node) orelse "unknown");
         },
         .sizeOf => {
-            var static_type: ?[]const u8 = null;
-            if (c.args[0].* == .primary and c.args[0].primary.kind == .identifier) {
-                static_type = c.args[0].primary.name;
-            } else if (c.args[0].* == .pointer_type or c.args[0].* == .array_type or c.args[0].* == .union_type or c.args[0].* == .intersection_type or c.args[0].* == .func_type or c.args[0].* == .tuple_type or c.args[0].* == .shape_type) {
-                static_type = try from_ast.typeAstToDisplay(c.args[0], state);
-            } else if (try path.tryResolveStaticPath(state, c.args[0])) |p| {
-                static_type = p;
+            if (state.size_of_results.get(node)) |size| {
+                try emit.emitConstant(state, .{ .i64 = size });
+                return;
             }
-
-            if (static_type) |st| {
-                var is_type = false;
-                var size: i32 = 0;
-                if (st.len > 0 and (st[0] == '*' or st[0] == '?')) {
-                    is_type = true;
-                    size = layout.sizeOfTypeName(st);
-                } else if (std.mem.startsWith(u8, st, "@func(")) {
-                    is_type = true;
-                    size = 8;
-                } else if (st.len > 0 and st[0] == '{') {
-                    is_type = true;
-                    _ = from_ast.lookupStruct(state, st);
-                    size = layout.sizeOfNamedType(state, st);
-                } else if (st.len > 0 and st[0] == '[') {
-                    // Array / tuple type display `[T, U]`, `[]T`, `[N]T` — handle-sized like arrays
-                    is_type = true;
-                    size = 8;
-                } else if (widths.fromName(st)) |w| {
-                    is_type = true;
-                    size = w.size();
-                } else if (std.mem.eql(u8, st, "null")) {
-                    is_type = true;
-                    size = 0;
-                } else if (std.mem.eql(u8, st, "string") or std.mem.eql(u8, st, "[]byte")) {
-                    is_type = true;
-                    size = 8;
-                } else if (state.structs.get(st)) |sd| {
-                    is_type = true;
-                    size = sd.size;
-                } else if (state.enums.contains(st)) {
-                    is_type = true;
-                    size = 8;
-                } else if (state.typedefs.contains(st)) {
-                    is_type = true;
-                    size = layout.sizeOfNamedType(state, st);
-                }
-                if (is_type) {
-                    try emit.emitConstant(state, .{ .i64 = size });
-                    return;
-                }
+            if (try staticTypeArgSize(state, c.args[0])) |size| {
+                try emit.emitConstant(state, .{ .i64 = size });
+                return;
             }
 
             if (from_ast.resolveType(state, c.args[0])) |type_name| {
@@ -324,6 +292,107 @@ pub fn compile(state: *CompilerState, intr: Intrinsic, node: *ast.Node, c: *cons
     }
 }
 
+/// Emit-time `@sizeOf` for a bare type argument the typechecker did not visit.
+fn staticTypeArgSize(state: *CompilerState, node: *ast.Node) !?i32 {
+    const is_type = switch (node.*) {
+        .pointer_type, .array_type, .union_type, .intersection_type, .func_type, .tuple_type, .shape_type => true,
+        .primary => |p| p.kind == .identifier and scope.resolveLocal(state, p.name) == -1 and
+            !state.global_vars.contains(p.name) and isTypeName(state, p.name),
+        .member => (try path.tryResolveStaticPath(state, node)) != null and !isEnumOrErrorMember(state, node),
+        else => false,
+    };
+    if (!is_type) return null;
+    var arena = std.heap.ArenaAllocator.init(state.allocator);
+    defer arena.deinit();
+    const ta = ir.TypeAlloc{ .allocator = arena.allocator() };
+    const t = from_ast.typeFromAst(node, state, ta) catch return null;
+    return try layout.sizeOfType(state, t);
+}
+
+/// `Enum.Variant` / `ErrorSet.Member` in expression position is a value, not a type.
+fn isEnumOrErrorMember(state: *CompilerState, node: *ast.Node) bool {
+    if (node.* != .member or node.member.property.* != .primary) return false;
+    const prop = node.member.property.primary.name;
+    if (from_ast.resolveEnumName(state, node.member.object)) |ename| {
+        if (state.enums.get(ename)) |ed| return ed.variants.contains(prop);
+    }
+    if (from_ast.resolveErrorSetName(state, node.member.object)) |esname| {
+        if (state.error_sets.get(esname)) |ed| return ed.variants.contains(prop);
+    }
+    return false;
+}
+
+/// A node used as a `type` value: a type-returning call or a bare type expression.
+pub fn isTypeValueNode(state: *CompilerState, env: *typecheck_root.Env, node: *ast.Node) bool {
+    return from_ast.isTypeCall(node) or isBareTypeNode(state, env, node);
+}
+
+/// Record the type a type-valued node denotes (read back by `typeFromAst`).
+pub fn recordTypeValue(state: *CompilerState, node: *ast.Node, t: ir.Type) !void {
+    try state.type_call_results.put(node, try typecheck_root.ownDisplayQualified(state, t));
+}
+
+/// The type denoted by a type-valued node (see `isTypeValueNode`).
+pub fn denotedType(state: *CompilerState, env: *typecheck_root.Env, ta: ir.TypeAlloc, node: *ast.Node) !ir.Type {
+    if (from_ast.isTypeCall(node)) {
+        _ = try typecheck_root.inferExpr(state, env, ta, node);
+        const disp = state.type_call_results.get(node) orelse return ir.TUnknown;
+        return try from_ast.parseDisplayType(state, ta, disp, null);
+    }
+    try resolveTypeExprs(state, env, ta, node);
+    const t = try from_ast.typeFromAst(node, state, ta);
+    try recordTypeValue(state, node, t);
+    return t;
+}
+
+/// Resolve every call inside a type AST (`$x: ?@typeOf(y)`) in `env`. Each call
+/// must produce a `type`; its denoted type is recorded for `typeFromAst`.
+pub fn resolveTypeExprs(state: *CompilerState, env: *typecheck_root.Env, ta: ir.TypeAlloc, node: ?*ast.Node) !void {
+    const n = node orelse return;
+    switch (n.*) {
+        .call => {
+            const t = try typecheck_root.inferExpr(state, env, ta, n);
+            if (t != .type_) {
+                const d = try typecheck_root.ownDisplay(state, t);
+                return compile_errors.compileFailFmt(state, "Expected a type, found a value of type '{s}'", .{d});
+            }
+        },
+        .array_type => |a| try resolveTypeExprs(state, env, ta, a.elem),
+        .tuple_type => |t| for (t.elems) |e| try resolveTypeExprs(state, env, ta, e),
+        .pointer_type => |p| try resolveTypeExprs(state, env, ta, p.elem),
+        .func_type => |f| {
+            for (f.params) |p| try resolveTypeExprs(state, env, ta, p);
+            try resolveTypeExprs(state, env, ta, f.return_type);
+        },
+        .shape_type => |s| for (s.fields) |f| try resolveTypeExprs(state, env, ta, f.type_annotation),
+        .union_type => |u| {
+            try resolveTypeExprs(state, env, ta, u.left);
+            try resolveTypeExprs(state, env, ta, u.right);
+        },
+        .intersection_type => |ix| {
+            try resolveTypeExprs(state, env, ta, ix.left);
+            try resolveTypeExprs(state, env, ta, ix.right);
+        },
+        .binary => |b| {
+            try resolveTypeExprs(state, env, ta, b.left);
+            try resolveTypeExprs(state, env, ta, b.right);
+        },
+        else => {},
+    }
+}
+
+/// `@typeOf(name)` never evaluates its operand, so an undefined bare name must be
+/// rejected here rather than by codegen.
+fn requireKnownIdentifier(state: *CompilerState, env: *typecheck_root.Env, node: *ast.Node) !void {
+    if (node.* != .primary or node.primary.kind != .identifier) return;
+    const name = node.primary.name;
+    if (env.lookup(name) != null) return;
+    if (state.global_vars.contains(name) or state.global_consts.contains(name) or
+        state.global_types.contains(name) or state.functions.contains(name) or
+        state.native_globals.contains(name)) return;
+    return compile_errors.compileFailFmt(state, "Unknown identifier '{s}'", .{name});
+}
+
 fn isBareTypeNode(state: *CompilerState, env: *typecheck_root.Env, node: *ast.Node) bool {
     switch (node.*) {
         .pointer_type, .array_type, .union_type, .intersection_type, .func_type, .tuple_type, .shape_type => return true,
@@ -346,6 +415,7 @@ fn isBareTypeNode(state: *CompilerState, env: *typecheck_root.Env, node: *ast.No
         .member => |m| {
             if (m.object.* == .primary and env.lookup(m.object.primary.name) != null) return false;
             if (m.object.* == .primary and (state.global_vars.contains(m.object.primary.name) or state.global_consts.contains(m.object.primary.name))) return false;
+            if (isEnumOrErrorMember(state, node)) return false;
             var arena = std.heap.ArenaAllocator.init(state.allocator);
             defer arena.deinit();
             const ta = ir.TypeAlloc{ .allocator = arena.allocator() };
@@ -521,6 +591,7 @@ fn isTypeName(state: *CompilerState, name: []const u8) bool {
 
 /// Typecheck `T(x)` / `@as(T, x)` — returns the target type.
 pub fn typecheckCast(state: *CompilerState, env: *typecheck_root.Env, ta: ir.TypeAlloc, type_node: *ast.Node, value: *ast.Node) !ir.Type {
+    try resolveTypeExprs(state, env, ta, type_node);
     const target = try from_ast.typeFromAst(type_node, state, ta);
     const src = try typecheck_root.inferExpr(state, env, ta, value);
     try checkAsCast(state, src, target);

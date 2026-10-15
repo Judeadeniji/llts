@@ -10,11 +10,11 @@ test("unannotated method self is *T", () => {
 @struct Counter {
     value: i64;
     @func kind(self) {
-        return @typeOf(self);
+        print(@typeOf(self));
     }
 }
 $c = Counter { value: 1 };
-print(c.kind());
+c.kind();
 `),
 		["*Counter"],
 	);
@@ -87,11 +87,11 @@ test("self: T @typeOf is T not *T", () => {
 @struct Box {
     n: i64;
     @func kind(self: Box) {
-        return @typeOf(self);
+        print(@typeOf(self));
     }
 }
 $b = Box { n: 1 };
-print(b.kind());
+b.kind();
 `),
 		["Box"],
 	);

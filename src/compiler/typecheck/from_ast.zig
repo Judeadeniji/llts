@@ -83,7 +83,53 @@ pub fn typeFromAst(node: ?*ast.Node, state: ?*state_mod.CompilerState, ta: ir.Ty
             break :blk ir.TUnknown;
         },
         .member => try resolveImportedType(n, state, ta),
+        // Type-returning expression (`@typeOf(x)`): typecheck resolved it in context.
+        .call => blk: {
+            const st = state orelse break :blk ir.TUnknown;
+            const disp = st.type_call_results.get(n) orelse break :blk ir.TUnknown;
+            break :blk try parseDisplayType(st, ta, disp, null);
+        },
         else => ir.TUnknown,
+    };
+}
+
+/// Intrinsics whose result is a `type` value.
+const type_returning_intrinsics = [_][]const u8{"@typeOf"};
+
+/// `@typeOf(...)` and any other intrinsic call that yields a `type`.
+pub fn isTypeCall(node: *const ast.Node) bool {
+    if (node.* != .call) return false;
+    const callee = node.call.callee;
+    if (callee.* != .primary) return false;
+    for (type_returning_intrinsics) |name| {
+        if (std.mem.eql(u8, callee.primary.name, name)) return true;
+    }
+    return false;
+}
+
+/// True when a type AST contains a call node anywhere (e.g. `?@typeOf(x)`).
+pub fn typeNodeHasCall(node: ?*ast.Node) bool {
+    const n = node orelse return false;
+    return switch (n.*) {
+        .call => true,
+        .array_type => |a| typeNodeHasCall(a.elem),
+        .tuple_type => |t| blk: {
+            for (t.elems) |e| if (typeNodeHasCall(e)) break :blk true;
+            break :blk false;
+        },
+        .pointer_type => |p| typeNodeHasCall(p.elem),
+        .func_type => |f| blk: {
+            for (f.params) |p| if (typeNodeHasCall(p)) break :blk true;
+            break :blk typeNodeHasCall(f.return_type);
+        },
+        .shape_type => |s| blk: {
+            for (s.fields) |f| if (typeNodeHasCall(f.type_annotation)) break :blk true;
+            break :blk false;
+        },
+        .union_type => |u| typeNodeHasCall(u.left) or typeNodeHasCall(u.right),
+        .intersection_type => |ix| typeNodeHasCall(ix.left) or typeNodeHasCall(ix.right),
+        .binary => |b| typeNodeHasCall(b.left) or typeNodeHasCall(b.right),
+        else => false,
     };
 }
 
@@ -973,11 +1019,14 @@ pub fn resolveType(state: *state_mod.CompilerState, node: *ast.Node) ?[]const u8
             break :blk struct_def.types.get(m.property.primary.name);
         },
         .call => |c| blk: {
+            if (isTypeCall(node)) break :blk "type";
             // `@as(T, v)` / `T(v)` cast: the result's static type is T. Member access
             // on the cast result needs this to emit typed field loads (otherwise the
             // value stays `unknown` and falls back to dynamic GET_PROPERTY).
             if (c.callee.* == .primary and std.mem.eql(u8, c.callee.primary.name, "@as") and c.args.len == 2) {
-                const ta_cast = ir.TypeAlloc{ .allocator = state.allocator };
+                var scratch = std.heap.ArenaAllocator.init(state.allocator);
+                defer scratch.deinit();
+                const ta_cast = ir.TypeAlloc{ .allocator = scratch.allocator() };
                 if (typeFromAst(c.args[0], state, ta_cast)) |target| {
                     if (ir.displayTypeAlloc(state.allocator, target)) |disp| {
                         state.owned.append(state.allocator, disp) catch {};
@@ -991,7 +1040,9 @@ pub fn resolveType(state: *state_mod.CompilerState, node: *ast.Node) ?[]const u8
                     state.chunk.functions.contains(name) or
                     state.native_globals.contains(name);
                 if (!is_callable) {
-                    const ta_cast = ir.TypeAlloc{ .allocator = state.allocator };
+                    var scratch = std.heap.ArenaAllocator.init(state.allocator);
+                    defer scratch.deinit();
+                    const ta_cast = ir.TypeAlloc{ .allocator = scratch.allocator() };
                     if (resolveNamedType(name, state, ta_cast)) |target| {
                         if (ir.displayTypeAlloc(state.allocator, target)) |disp| {
                             state.owned.append(state.allocator, disp) catch {};

@@ -119,8 +119,11 @@ Packed byte heap + honest numeric widths. See [`docs/memory-model.md`](docs/memo
 - [x] **`const` literal modifier** — `const "x"` / `@const $k = "x"` keep singleton type `"x"` (and deep tuples for `const […]`); bare `"x"` still `[N]byte`.
 - [x] **Structs as types** — including imported `mod.Name` (e.g. `mem.Arena`).
 - [x] **Debug type asserts**; strip with `--release`.
-- [x] **`@typeOf(expr)`**
+- [x] **`@typeOf(expr)`** — returns a compile-time `type` value; operand never evaluated.
 - [x] **`@sizeOf(T_or_expr)`** — static sizes for types / typed values; runtime `OP_SIZEOF` fallback (`tests/26_sizeof.test.ts`).
+- [x] **Types as compile-time values** — meta type `type`; `@typeOf(...)` usable anywhere a type is (annotations, params, returns, struct fields, `@alias`, composites, `@as`, `@new`, `@sizeOf`); type `==`/`!=` folded at compile time; type values rejected in runtime slots (`tests/50_type_values.test.ts`, `docs/usage/shapes_and_types.md`).
+- [ ] **User-defined type functions** — `@func f(): type` and `T: type` params (comptime generics); follow-up to type values.
+- [ ] **Local `@type` / `@alias` inside function bodies** — currently "Unknown type".
 - [x] **`@nameOf(enum_or_error)`** — variant/member spelling as declared (`tests/15_enums.test.ts`, `tests/37_error_sets.test.ts`).
 - [x] **`pub` for user files** — private decls stay in-module; relative `./` / `../` imports.
 
