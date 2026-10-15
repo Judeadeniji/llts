@@ -23,7 +23,7 @@ $heap = mem.create(0);
     }
 
     @func run(self) {
-        std.debug.printLn("builder result = {i}", self.value);
+        std.fmt.printf("builder result = {i}\n", self.value);
         return self.value;
     }
 }
@@ -68,9 +68,6 @@ $heap = mem.create(0);
 @const $j = 1 + a + b + c;
 @const $k = a * b / c % 2;
 
-# assignment expressions
-@const $l = a = b = c + 1;
-
 $add = std.math.add;
 
 # function calls
@@ -78,12 +75,12 @@ $m = add(a, b);
 $n = add(1, add(a, b));
 
 # member access
-$o = std.debug;
-$p = std.debug.printLn;
+$o = std.fmt;
+$p = std.fmt.printf;
 
 # call + member chaining
-$q = std.debug.printLn("sum = {i}", a + b);
-$r = std.debug.printLn("calc = {i}", add(a, b) * c);
+$q = std.fmt.printf("sum = {i}\n", a + b);
+$r = std.fmt.printf("calc = {i}\n", add(a, b) * c);
 
 # currying / call chaining: getAdder returns `add` as a first-class function
 $s = getAdder(1)(2, 3);
@@ -98,12 +95,36 @@ $u = std.math.add(1, a + b * c);
 $v = (get().next())(a, b);
 
 # final side-effect call
-std.debug.printLn(
-    "a={i}, b={i}, c={i}, result={i}",
+std.fmt.printf(
+    "a={i}, b={i}, c={i}, result={i}\n",
     a,
     b,
     c,
     a + b * c
 );
 
-pub @func main() {}
+pub @func main() {
+    # Reference top-level bindings so unused-analysis stays quiet
+    _ = heap;
+    _ = msg;
+    _ = d;
+    _ = e;
+    _ = f;
+    _ = g;
+    _ = h;
+    _ = i;
+    _ = j;
+    _ = k;
+    _ = add;
+    _ = getAdder;
+    _ = m;
+    _ = n;
+    _ = o;
+    _ = p;
+    _ = q;
+    _ = r;
+    _ = s;
+    _ = t;
+    _ = u;
+    _ = v;
+}
