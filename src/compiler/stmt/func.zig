@@ -27,7 +27,16 @@ pub fn compileReturn(state: *CompilerState, ret: *const ast.Return) !void {
         const prev_immortal = state.alloc_immortal;
         if (escape.canPromoteReturnLiteral(state, v)) state.alloc_immortal = true;
         defer state.alloc_immortal = prev_immortal;
-        try expr.compileExpression(state, v);
+        // Frame-bound flat scalar struct → shallow-copy into immortal storage
+        // so the value outlives the frame without an allocator.
+        if (escape.canAutoCloneReturn(state, v)) {
+            try emit.emitNameGet(state, .OP_GET_GLOBAL, "__cloneBytesImmortal");
+            try expr.compileExpression(state, v);
+            try emit.emitOp(state, .OP_CALL);
+            try emit.emitByte(state, 1);
+        } else {
+            try expr.compileExpression(state, v);
+        }
     } else {
         try emit.emitOp(state, .OP_NULL);
     }
