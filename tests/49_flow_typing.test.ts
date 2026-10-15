@@ -109,7 +109,7 @@ pub @func main() {
     print(u.name);
 }
 `),
-		"cannot access field 'name' on optional type '?User'",
+		"Cannot access field 'name' on optional type '?User'",
 	);
 });
 
@@ -124,7 +124,7 @@ pub @func main() {
     }
 }
 `),
-		"cannot access field 'name' on type 'null'",
+		"Cannot access field 'name' on type 'null'",
 	);
 });
 
@@ -137,7 +137,7 @@ pub @func main() {
     print(u.name);
 }
 `),
-		"cannot access field 'name' on optional type '?User'",
+		"Cannot access field 'name' on optional type '?User'",
 	);
 });
 

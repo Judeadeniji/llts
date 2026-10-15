@@ -37,7 +37,7 @@ s[0] = 65;      # OK: mutating an arena []byte buffer
 
 `[]byte` / `string` / `[N]byte` are **mutable packed byte arrays** on the arena's byte heap (one host byte per element). Other `[]T` use value-slot arrays. Neither is an interned string literal. Plain `"text"` values and `$b = x` string assignment semantics are documented in [String semantics](../std/string.md#string-semantics).
 
-Also: `@new(a, Point)` zero-fills structs; `@new(a, Point{ x: 1 })` / `@new(a, [1,2,3])` for explicit inits.
+Also: `@new(a, Point)` zero-fills structs (`@new` is type-directed only — assign fields after allocation).
 
 Growable value arrays: `__arena_array_push(arena, arr, x)` (and `std/list` on top) extend capacity in the arena. Bare `[…]` stays frame-local fixed length.
 

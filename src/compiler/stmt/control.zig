@@ -17,7 +17,7 @@ pub fn compileIf(state: *CompilerState, if_expr: *const ast.If) !void {
     
     try scope.beginScope(state);
     if (if_expr.pipe_value) |pv| {
-        if (pv.* != .primary) return fail(state, "if capture must be an identifier");
+        if (pv.* != .primary) return fail(state, "@if capture must be an identifier");
         const slot = try scope.addLocal(state, pv.primary.name, true);
         // Bind capture to optional payload type so `t.field` uses LOAD_FIELD, not dynamic GET_PROPERTY.
         if (from_ast.resolveType(state, if_expr.condition)) |cond_ty| {
@@ -35,7 +35,7 @@ pub fn compileIf(state: *CompilerState, if_expr: *const ast.If) !void {
     
     const body = switch (if_expr.body.*) {
         .block => |*b| b,
-        else => return fail(state, "if body must be block"),
+        else => return fail(state, "@if body must be a block"),
     };
     for (body.statements) |s| try stmt.compileStatement(state, s);
     try scope.endScope(state);
@@ -62,7 +62,7 @@ pub fn compileIf(state: *CompilerState, if_expr: *const ast.If) !void {
 
 /// Value-producing `@if`: every arm must `break <value>`; result left on the stack.
 pub fn compileIfValue(state: *CompilerState, if_expr: *const ast.If) !void {
-    if (if_expr.else_body == null) return fail(state, "value-producing @if requires @else");
+    if (if_expr.else_body == null) return fail(state, "A value-producing @if requires @else");
     try beginExprFrame(state, if_expr.label);
     try compileIfValueBody(state, if_expr);
     try finishExprFrame(state);
@@ -79,7 +79,7 @@ fn compileIfValueBody(state: *CompilerState, if_expr: *const ast.If) !void {
     emit.patchJump(state, then_jump);
     try emit.emitOp(state, .OP_POP);
 
-    const else_body = if_expr.else_body orelse return fail(state, "value-producing @if requires @else");
+    const else_body = if_expr.else_body orelse return fail(state, "A value-producing @if requires @else");
     if (else_body.* == .if_expr) {
         try compileIfValueBody(state, &else_body.if_expr);
     } else {
@@ -97,7 +97,7 @@ pub fn compileSwitch(state: *CompilerState, sw: *const ast.Switch) !void {
 pub fn compileSwitchValue(state: *CompilerState, sw: *const ast.Switch) !void {
     const exhaustive = (try checkEnumExhaustiveness(state, sw)) or (try checkErrorExhaustiveness(state, sw));
     if (!hasElseProng(sw) and !exhaustive) {
-        return fail(state, "value-producing @switch requires @else (or cover every enum/error variant)");
+        return fail(state, "A value-producing @switch requires @else (or cover every enum/error variant)");
     }
     try beginExprFrame(state, sw.label);
     try compileSwitchInner(state, sw, true);
@@ -438,7 +438,7 @@ fn compileSwitchInner(state: *CompilerState, sw: *const ast.Switch, value_mode: 
             try end_jumps.append(state.allocator, j);
             continue;
         }
-        if (prong.patterns.len == 0) return fail(state, "switch prong requires at least one pattern");
+        if (prong.patterns.len == 0)            return fail(state, "Switch prong requires at least one pattern");
 
         var matched_jumps: std.ArrayList(usize) = .empty;
         defer matched_jumps.deinit(state.allocator);
@@ -504,14 +504,14 @@ fn compileSwitchInner(state: *CompilerState, sw: *const ast.Switch, value_mode: 
 
 /// Labeled block as a value: `blk: { break :blk v; }`
 pub fn compileBlockValue(state: *CompilerState, block: *const ast.Block) !void {
-    if (block.label == null) return fail(state, "value-producing block requires a label (e.g. blk: { break :blk value; })");
+    if (block.label == null) return fail(state, "A value-producing block requires a label (e.g. blk: { break :blk value; })");
     try beginExprFrame(state, block.label);
     const jumps_before = state.exprs.items[state.exprs.items.len - 1].break_jumps.items.len;
     try scope.beginScope(state);
     for (block.statements) |s| try stmt.compileStatement(state, s);
     try scope.endScope(state);
     if (state.exprs.items[state.exprs.items.len - 1].break_jumps.items.len == jumps_before) {
-        return fail(state, "value-producing block must `break` a value");
+        return fail(state, "A value-producing block must 'break' a value");
     }
     try finishExprFrame(state);
 }
@@ -526,12 +526,12 @@ fn compileStmtArm(state: *CompilerState, body: *ast.Node) !void {
 }
 
 fn compileValueArmCapture(state: *CompilerState, body: *ast.Node, arm_name: []const u8, pipe_value: ?*ast.Node, pop_if_no_capture: bool) !void {
-    if (state.exprs.items.len == 0) return fail(state, "internal: value arm without expr frame");
+    if (state.exprs.items.len == 0) return fail(state, "Internal error: value arm without expr frame");
     const jumps_before = state.exprs.items[state.exprs.items.len - 1].break_jumps.items.len;
     try scope.beginScope(state);
 
     if (pipe_value) |pv| {
-        if (pv.* != .primary) return fail(state, "if capture must be an identifier");
+        if (pv.* != .primary) return fail(state, "@if capture must be an identifier");
         _ = try scope.addLocal(state, pv.primary.name, true);
     } else if (pop_if_no_capture) {
         // We pop the condition if there is no capture.
@@ -544,7 +544,7 @@ fn compileValueArmCapture(state: *CompilerState, body: *ast.Node, arm_name: []co
     }
     try scope.endScope(state);
     if (state.exprs.items[state.exprs.items.len - 1].break_jumps.items.len == jumps_before) {
-        return compile_errors.compileFailFmt(state, "{s} arm of value expression must `break` a value", .{arm_name});
+        return compile_errors.compileFailFmt(state, "{s} arm of value expression must 'break' a value", .{arm_name});
     }
 }
 
@@ -574,7 +574,7 @@ pub fn compileBreak(state: *CompilerState, brk: *const ast.Break) !void {
     if (brk.label) |lab| {
         if (findExprLabel(state, lab)) |target| {
             _ = target;
-            return fail(state, "break to a value expression requires a value (break :label value;)");
+            return fail(state, "Break to a value expression requires a value ('break :label value;')");
         }
     }
 
@@ -608,14 +608,14 @@ fn beginExprFrame(state: *CompilerState, label: ?[]const u8) !void {
 }
 
 fn finishExprFrame(state: *CompilerState) !void {
-    if (state.exprs.items.len == 0) return fail(state, "internal: finishExprFrame with empty exprs");
+    if (state.exprs.items.len == 0) return fail(state, "Internal error: finishExprFrame with empty exprs");
     var tracker = state.exprs.pop().?;
     for (tracker.break_jumps.items) |j| emit.patchJump(state, j);
     tracker.break_jumps.deinit(state.allocator);
 
     // Leave the result value on the stack; drop only the compiler local entry.
     if (state.locals.items.len == 0 or state.locals.items[state.locals.items.len - 1].depth != state.scope_depth) {
-        return fail(state, "internal: expr result local missing");
+        return fail(state, "Internal error: expr result local missing");
     }
     _ = state.locals.pop();
 
@@ -640,7 +640,7 @@ fn findExpr(state: *CompilerState, label: ?[]const u8) !*state_mod.ExprTracker {
         return compile_errors.compileFailFmt(state, "Cannot find value expression with label '{s}'", .{lab});
     }
     if (state.exprs.items.len == 0) {
-        return fail(state, "break with value requires a value-producing @if, @switch, or labeled block");
+        return fail(state, "Break with a value requires a value-producing @if, @switch, or labeled block");
     }
     return &state.exprs.items[state.exprs.items.len - 1];
 }

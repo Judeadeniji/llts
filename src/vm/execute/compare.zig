@@ -1,3 +1,4 @@
+const std = @import("std");
 const state_mod = @import("../state.zig");
 const stack = @import("../stack.zig");
 const runtime = @import("../../errors/runtime.zig");
@@ -8,6 +9,14 @@ const VMState = state_mod.VMState;
 pub const CmpError = error{ RuntimeError, TypeError, OutOfMemory };
 
 fn fail(vm: *VMState, msg: []const u8) CmpError {
+    return runtime.runtimeFail(vm, msg);
+}
+
+/// Format a runtime diagnostic, then report it. `runtimeFail` prints
+/// synchronously, so the scratch buffer is safe for the whole call.
+fn failFmt(vm: *VMState, comptime fmt: []const u8, args: anytype) CmpError {
+    var buf: [256]u8 = undefined;
+    const msg = std.fmt.bufPrint(&buf, fmt, args) catch return runtime.runtimeFail(vm, "runtime diagnostic too long");
     return runtime.runtimeFail(vm, msg);
 }
 
@@ -82,8 +91,8 @@ fn isErrorPtr(vm: *VMState, p: i32) bool {
 pub fn compareOrd(vm: *VMState, op: OpCode) CmpError!void {
     const b = stack.pop(vm);
     const a = stack.pop(vm);
-    const af = asOrdFloat(a) orelse return fail(vm, "Operands must be numbers");
-    const bf = asOrdFloat(b) orelse return fail(vm, "Operands must be numbers");
+    const af = asOrdFloat(a) orelse return failFmt(vm, "Comparison operands must be numbers, got '{s}'", .{a.kindName()});
+    const bf = asOrdFloat(b) orelse return failFmt(vm, "Comparison operands must be numbers, got '{s}'", .{b.kindName()});
     const result = switch (op) {
         .OP_LESS => af < bf,
         .OP_LESS_EQUAL => af <= bf,

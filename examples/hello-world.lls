@@ -29,7 +29,9 @@ $heap = mem.create(0);
 }
 
 @func factory() {
-    return @new(heap, Builder { value: 10 });
+    $b = @new(heap, Builder);
+    b.value = 10;
+    return b;
 }
 
 @struct Iter {
@@ -41,7 +43,9 @@ $heap = mem.create(0);
 }
 
 @func get() {
-    return @new(heap, Iter { value: 0 });
+    $i = @new(heap, Iter);
+    i.value = 0;
+    return i;
 }
 
 # literals + registers

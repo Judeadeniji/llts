@@ -56,14 +56,14 @@ test("@const indexing out of bounds is a compile-time error", () => {
 @const $ARR = [1, 2];
 @const $BAD = ARR[5];
 print(BAD);
-`), "index 5 out of bounds for array of length 2");
+`), "Index 5 out of bounds for array of length 2");
 });
 
 test("@const division by zero is a compile-time error", () => {
   expectError(runSource(`
 @const $BAD = 100 / 0;
 print(BAD);
-`), "division by zero in constant expression");
+`), "Division by zero in constant expression");
 });
 
 test("@const array elements are readonly", () => {
@@ -90,7 +90,7 @@ test("@comptime static errors point at the inner expression", () => {
 };
 print(BAD);
 `);
-  expectError(result, "index 5 out of bounds for array of length 2");
+  expectError(result, "Index 5 out of bounds for array of length 2");
   if (!result.stderr.includes("break arr[i];")) {
     throw new Error(
       `Expected the diagnostic to point at the offending line.\nstderr: ${result.stderr}`,
@@ -488,7 +488,7 @@ print(VAL);
 `;
   expectError(
     runSourceWithEnv(code, { LLTS_COMPTIME_MAX_LOOP_ITERATIONS: "10" }),
-    "comptime loop exceeded maximum iteration limit of 10"
+    "Comptime loop exceeded the iteration limit of 10"
   );
 
   expectOutput(
@@ -510,7 +510,7 @@ print(VAL);
 `;
   expectError(
     runSourceWithFlags(code, ["--comptime-max-loop-iterations", "10"]),
-    "comptime loop exceeded maximum iteration limit of 10"
+    "Comptime loop exceeded the iteration limit of 10"
   );
 
   expectOutput(
@@ -532,7 +532,7 @@ print(VAL);
 `;
   expectError(
     runSourceWithEnv(code, { LLTS_COMPTIME_MAX_LOOP_ITERATIONS: "15" }),
-    "comptime loop exceeded maximum iteration limit of 15"
+    "Comptime loop exceeded the iteration limit of 15"
   );
 });
 

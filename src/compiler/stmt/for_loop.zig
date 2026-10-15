@@ -29,7 +29,7 @@ pub fn compileFor(state: *CompilerState, for_expr: *const ast.For) !void {
 fn bodyBlock(state: *CompilerState, for_expr: *const ast.For) !*const ast.Block {
     return switch (for_expr.body.*) {
         .block => |*b| b,
-        else => @import("../../errors/compile.zig").compileFailFmt(state, "for body must be block", .{}),
+        else => @import("../../errors/compile.zig").compileFailFmt(state, "@for body must be a block", .{}),
     };
 }
 

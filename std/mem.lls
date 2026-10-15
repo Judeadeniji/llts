@@ -1,15 +1,17 @@
 # Memory: Allocator lives in the library (not language syntax).
 #
 # Region model (see compiler escape checks + VM frame watermarks):
-#   - Bare `Foo{}` / `[…]` → frame-local bump; dies on return; cannot escape.
-#   - `@new(allocator, Foo{…})` → compiler intrinsic (like Go make); allocates
-#     into a library Allocator (today: Arena). Result may be returned.
+#   - Bare `Foo{}` / `[…]` → frame-local bump; dies on return; cannot escape
+#     (flat scalar structs returned by name auto-clone into immortal storage).
+#   - `@new(allocator, Type)` → compiler intrinsic (like Go make); type form
+#     only, zero-fills, yields `*Type`. Allocates into a library Allocator
+#     (today: Arena). Result may be returned.
 #   - `@new(a, []byte, n)` / `[N]byte` → packed bytes (1 byte per element), not
 #     one Value slot per byte.
 #   - `create` → growable Arena (Zig ArenaAllocator-style chunk list).
 
-pub @func alloc(size) {
-    return __alloc(size);
+pub @func alloc(size: int): int {
+    return @as(int, __alloc(size));
 }
 
 # Growable bump arena: initial_hint sizes the first chunk (0 = default).
@@ -17,20 +19,20 @@ pub @func alloc(size) {
 pub @struct Arena {
     handle: int;
 
-    @func alloc(self, n) {
-        return __arena_alloc(self.handle, n);
+    @func alloc(self: *Arena, n: int): int {
+        return @as(int, __arena_alloc(self.handle, n));
     }
 
-    @func reset(self) {
+    @func reset(self: *Arena) {
         __arena_reset(self.handle);
     }
 
-    @func deinit(self) {
+    @func deinit(self: *Arena) {
         __arena_deinit(self.handle);
     }
 }
 
 # `initial_hint` = first chunk data slots; 0 picks a small default. Not a hard cap.
-pub @func create(initial_hint): Arena {
-    return __arena_create(initial_hint);
+pub @func create(initial_hint: int): Arena {
+    return @as(Arena, __arena_create(initial_hint));
 }

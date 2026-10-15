@@ -110,14 +110,6 @@ pub fn reportCompileMessage(message: []const u8) void {
     out.printStderr("{s}Error{s}: {s}\n", .{ c_err, r, message });
 }
 
-/// Location-less compile failure; keeps `CompileError:` prefix for existing tests.
-pub fn reportCompileError(message: []const u8) void {
-    diag.markEmitted();
-    const c_err = color.paint(color.bold ++ color.bright_red);
-    const r = color.r();
-    out.printStderr("{s}CompileError{s}: {s}\n", .{ c_err, r, message });
-}
-
 pub fn reportRuntimeError(message: []const u8) void {
     diag.markEmitted();
     const c_err = color.paint(color.bold ++ color.bright_red);

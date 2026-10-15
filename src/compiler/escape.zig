@@ -1,25 +1,75 @@
 const std = @import("std");
 const ast = @import("../ast/root.zig");
 const state_mod = @import("state.zig");
+const widths = @import("widths.zig");
 
 const CompilerState = state_mod.CompilerState;
 const AllocRegion = state_mod.AllocRegion;
 
 /// Escape policy: frame-local heap must not outlive its frame.
 ///
-/// Returning a **frame-bound local** (or `&` of one) is a compile error.
-/// Returning a bare `Foo{…}` / `[…]` **literal** whose fields/elements are not
-/// frame-colored is allowed: the return site compiles it immortal (see
-/// `compileReturn`), matching module-level init. Prefer `@new(allocator, …)`
-/// when the value should live in a reclaimable arena.
+/// Returning a **frame-bound local** of a *flat scalar struct* auto-clones it
+/// into immortal storage (value semantics — no allocator needed). Every other
+/// frame-bound return is a compile error. Returning a bare `Foo{…}` / `[…]`
+/// **literal** whose fields/elements are not frame-colored is allowed: the
+/// return site compiles it immortal (see `compileReturn`), matching module-level
+/// init. Use `@new(allocator, T)` when a non-flat value should live in a
+/// reclaimable arena.
 pub fn checkReturnValue(state: *CompilerState, value: *ast.Node) !void {
     if (canPromoteReturnLiteral(state, value)) return;
     switch (regionOf(state, value)) {
-        .frame => return failEscape(state, value, "value escapes its frame region; allocate with @new(allocator, …)"),
+        .frame => {
+            if (canAutoCloneReturn(state, value)) return;
+            return failEscape(state, value,
+                "value escapes its frame region; flat scalar structs clone automatically on return — for nested/aggregate values allocate with @new(allocator, T) in an arena that outlives the call");
+        },
         .arena_local => return failEscape(state, value,
             "value escapes its arena region; the arena is local to this function — pass the arena in as a parameter or use an allocator that outlives the call"),
         .pass, .unknown => {},
     }
+}
+
+/// True when `return <value>` may auto-clone a frame-bound binding into
+/// immortal storage. Applies to struct-typed identifiers whose transitive
+/// fields are all scalar (widths / bool / enums) — a shallow byte copy is
+/// then a full copy: no nested handles that could themselves be frame-bound.
+pub fn canAutoCloneReturn(state: *CompilerState, value: *ast.Node) bool {
+    if (regionOf(state, value) != .frame) return false;
+    if (value.* != .primary) return false;
+    const p = value.primary;
+    if (p.kind != .identifier and p.kind != .register) return false;
+    const idx = resolveLocalIndex(state, p.name) orelse return false;
+    const tn = state.locals.items[idx].type_name orelse return false;
+    return isFlatScalarStruct(state, tn, 0);
+}
+
+/// True when display name `tn` resolves to a struct whose fields are all
+/// scalar (numeric widths, bool, enums — incl. `Enum.Variant` literals and
+/// scalar typedef chains). Depth-limited; cycles cannot occur through
+/// scalar-only fields, but the guard is cheap insurance.
+fn isFlatScalarStruct(state: *CompilerState, tn: []const u8, depth: u8) bool {
+    if (depth > 8) return false;
+    const sd = state.structs.get(tn) orelse return false;
+    var it = sd.types.iterator();
+    while (it.next()) |e| {
+        if (!isFlatFieldType(state, e.value_ptr.*, depth)) return false;
+    }
+    return true;
+}
+
+fn isFlatFieldType(state: *CompilerState, disp: []const u8, depth: u8) bool {
+    if (widths.fromName(disp) != null) return true;
+    if (state.enums.contains(disp)) return true;
+    // Enum variant literal display `Enum.Variant`.
+    if (std.mem.lastIndexOfScalar(u8, disp, '.')) |dot| {
+        if (state.enums.contains(disp[0..dot])) return true;
+    }
+    // Scalar typedef chain (`@type UserId = i64`).
+    if (state.typedefs.get(disp)) |td| {
+        if (td.underlying.len > 0) return isFlatFieldType(state, td.underlying, depth + 1);
+        return false;
+    }
+    return false;
 }
 
 /// Emit an escape diagnostic at the value's source location.

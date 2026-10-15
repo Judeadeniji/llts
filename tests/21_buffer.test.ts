@@ -266,11 +266,12 @@ test("buffer: additional edge cases", () => {
 		}
 	`), ["44"]);
 
-	// Type error (pass int where buffer expected)
+	// Type error (pass int where buffer expected) — now rejected at compile
+	// time by the sound parameter contract instead of at runtime.
 	expectError(runSource(`
 		@const $buffer = @import("std/buffer");
 		@const $mem = @import("std/mem");
 		pub @func main() {
 			$a = mem.create(0); buffer.len(123); }
-	`), "TypeError");
+	`), "not assignable to '*Buffer'");
 });

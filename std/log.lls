@@ -1,12 +1,12 @@
 # Package log implements a simple logging package analogous to Go's log package.
 # LLTS standard library is pro-camelCase.
 
-@const $fmt = @import("std/fmt.lls");
-@const $internal = @import("std/log/internal.lls");
+@const $fmt = @import("./fmt.lls");
+@const $internal = @import("./log/internal.lls");
 
 # --- Submodules ---
-pub @const $slog = @import("std/log/slog.lls");
-pub @const $syslog = @import("std/log/syslog.lls");
+pub @const $slog = @import("./log/slog.lls");
+pub @const $syslog = @import("./log/syslog.lls");
 
 # --- Log flags (camelCase) ---
 pub @const $ldate = 1;         # 1 << 0: the date in the local time zone: 2009/01/23

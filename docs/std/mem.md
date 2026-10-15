@@ -8,16 +8,16 @@ In `llts-zig`, the memory region model supports different styles of allocation:
 - **Frame-Local Bump Allocation:** Creating simple objects or arrays directly (e.g., `Foo{}` or `[...]`) typically performs a frame-local bump allocation. These objects die when the function returns. Returning a frame-local *variable* is a compile error; a bare `return Foo{…}` immortalizes the literal.
 - **Heap/Library Allocation:** Using `@new` with an `Arena` allocator places items in reclaimable heap, which allows objects to outlive their current frame without process-lifetime immortalization.
 
-### `@new(allocator, Type | value)`
+### `@new(allocator, Type)`
 
-Compiler intrinsic (see also [arrays](../usage/arrays.md)):
+Compiler intrinsic (see also [arrays](../usage/arrays.md)). Type-directed only — no value literals; assign fields after allocation.
 
 ```llts
 $buf = @new(arena, [256]byte);      # packed bytes (1 host byte per element)
 $s = @new(arena, string, n);      # runtime-length packed byte buffer
 $xs = @new(arena, []int, n);      # runtime-length value array
-$p = @new(arena, Point);            # zero-filled struct
-$q = @new(arena, Point{ x: 1 });  # explicit init
+$p = @new(arena, Point);            # zero-filled struct, yields *Point
+p.x = 1;                            # fields assigned after allocation
 ```
 
 Reclaim with `arena.reset()` or `arena.deinit()` — there is no per-object `free`.

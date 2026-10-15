@@ -14,7 +14,7 @@ pub fn execute(ctx: zli.CommandContext) !void {
     const comptime_iters = common.getComptimeMaxLoopIterations(ctx.allocator, ctx);
 
     if (llts.serialize.isBytecodePath(file)) {
-        common.failExit("Cannot dump bytecode from a .llb file; use a .lls source\n", .{});
+        common.failExit("Cannot dump bytecode from a .llb file; use a .lls source", .{});
     }
 
     try pipeline.dumpFile(ctx.allocator, file, release, strict, out_path, comptime_iters);

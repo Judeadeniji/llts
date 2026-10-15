@@ -8,12 +8,12 @@ pub fn runBytecode(allocator: std.mem.Allocator, path: []const u8, script_args: 
     llts.runBytecodeFile(allocator, path, script_args, max_memory) catch |err| {
         if (!llts.diag.wasEmitted()) {
             switch (err) {
-                error.FileNotFound => io.printStderr("Bytecode file not found: {s}\n", .{path}),
-                error.AccessDenied => io.printStderr("Permission denied reading bytecode: {s}\n", .{path}),
-                error.TruncatedInput => io.printStderr("Bytecode file is truncated or corrupt: {s}\n", .{path}),
-                error.InvalidMagic => io.printStderr("Not a valid LLTS bytecode file: {s}\n", .{path}),
-                error.UnsupportedVersion => io.printStderr("Unsupported bytecode version: {s}\n", .{path}),
-                else => io.printStderr("Failed to run bytecode {s}: {}\n", .{ path, err }),
+                error.FileNotFound => common.failExit("Cannot read bytecode file \"{s}\": file not found", .{path}),
+                error.AccessDenied => common.failExit("Cannot read bytecode file \"{s}\": permission denied", .{path}),
+                error.TruncatedInput => common.failExit("Bytecode file \"{s}\" is truncated or corrupt; rebuild it with `llts build`", .{path}),
+                error.InvalidMagic => common.failExit("\"{s}\" is not a valid LLTS bytecode file", .{path}),
+                error.UnsupportedVersion => common.failExit("Unsupported bytecode version in \"{s}\"; rebuild it with `llts build`", .{path}),
+                else => common.failExit("Cannot run bytecode \"{s}\": {s}", .{ path, common.reason(err) }),
             }
         }
         std.process.exit(1);
@@ -38,14 +38,14 @@ pub fn compileToFile(
         .comptime_max_loop_iterations = comptime_max_loop_iterations,
     }) catch |err| {
         if (!llts.diag.wasEmitted()) {
-            io.printStderr("Error: {}\n", .{err});
+            common.failExit("Compilation failed: {s}", .{common.reason(err)});
         }
         std.process.exit(1);
     };
     defer chunk.deinit();
 
     llts.writeBytecodeFile(allocator, &chunk, out_path) catch |err| {
-        common.failExit("Failed to write {s}: {}\n", .{ out_path, err });
+        common.failExit("Cannot write \"{s}\": {s}", .{ out_path, common.reason(err) });
     };
 }
 
@@ -70,7 +70,7 @@ pub fn runFile(
         .comptime_max_loop_iterations = comptime_max_loop_iterations,
     }) catch |err| {
         if (!llts.diag.wasEmitted()) {
-            io.printStderr("Error: {}\n", .{err});
+            common.failExit("Run failed: {s}", .{common.reason(err)});
         }
         std.process.exit(1);
     };
@@ -94,7 +94,7 @@ pub fn dumpFile(
         .comptime_max_loop_iterations = comptime_max_loop_iterations,
     }) catch |err| {
         if (!llts.diag.wasEmitted()) {
-            io.printStderr("Error: {}\n", .{err});
+            common.failExit("Compilation failed: {s}", .{common.reason(err)});
         }
         std.process.exit(1);
     };
@@ -103,12 +103,12 @@ pub fn dumpFile(
     var out: std.ArrayList(u8) = .empty;
     defer out.deinit(allocator);
     llts.disasm.dump(&chunk, out.writer(allocator)) catch |err| {
-        common.failExit("Failed to dump bytecode: {}\n", .{err});
+        common.failExit("Cannot dump bytecode: {s}", .{common.reason(err)});
     };
 
     if (output_path) |out_path| {
         std.fs.cwd().writeFile(.{ .sub_path = out_path, .data = out.items }) catch |err| {
-            common.failExit("Failed to write {s}: {}\n", .{ out_path, err });
+            common.failExit("Cannot write \"{s}\": {s}", .{ out_path, common.reason(err) });
         };
     } else {
         io.writeStdout(out.items);
@@ -138,14 +138,14 @@ pub fn emitZig(
         .runtime_path = runtime_path orelse "src/runtime/root.zig",
     }) catch |err| {
         if (!llts.diag.wasEmitted()) {
-            io.printStderr("Error: {}\n", .{err});
+            common.failExit("Zig emit failed: {s}", .{common.reason(err)});
         }
         std.process.exit(1);
     };
 
     if (output_path) |out_path| {
         std.fs.cwd().writeFile(.{ .sub_path = out_path, .data = out.items }) catch |err| {
-            common.failExit("Failed to write {s}: {}\n", .{ out_path, err });
+            common.failExit("Cannot write \"{s}\": {s}", .{ out_path, common.reason(err) });
         };
     } else {
         io.writeStdout(out.items);
@@ -184,7 +184,7 @@ pub fn compileNative(
         .zig_args = zig_args,
     }) catch |err| {
         if (!llts.diag.wasEmitted()) {
-            io.printStderr("Error: {}\n", .{err});
+            common.failExit("Native compile failed: {s}", .{common.reason(err)});
         }
         std.process.exit(1);
     };

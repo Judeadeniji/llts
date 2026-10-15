@@ -151,6 +151,10 @@ pub const CompilerState = struct {
     global_slots: std.StringHashMap(u16),
     inline_return_jumps: std.ArrayList(std.ArrayList(usize)) = .empty,
     owned: std.ArrayList([]const u8) = .empty,
+    /// Module prefix (`std/log.lls`) of the declaration currently being
+    /// resolved. Used to disambiguate bare type names that suffix-match
+    /// structs from several modules (e.g. `Logger` in both `log` and `slog`).
+    module_hint: ?[]const u8 = null,
     /// Imported module ASTs (own their arenas). Freed in `deinit`.
     module_docs: std.ArrayList(*ast.Document) = .empty,
     type_of_results: std.AutoHashMap(*ast.Node, []const u8),

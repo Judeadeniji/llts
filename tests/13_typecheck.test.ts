@@ -328,8 +328,14 @@ pub @func main() {
     $a = mem.create(0);
     defer a.deinit();
     $head: ?*Node = null;
-    head = @new(a, Node { value: 1, next: head });
-    head = @new(a, Node { value: 2, next: head });
+    $n1 = @new(a, Node);
+    n1.value = 1;
+    n1.next = head;
+    head = n1;
+    $n2 = @new(a, Node);
+    n2.value = 2;
+    n2.next = head;
+    head = n2;
     print(@typeOf(head));
     print(@typeOf(@new(a, Node)));
     print(head.value);

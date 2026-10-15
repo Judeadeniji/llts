@@ -1,4 +1,4 @@
-# expect: cannot access field 'name' on type 'null'
+# expect: Cannot access field 'name' on type 'null'
 # mode: strict
 @struct User { name: string; }
 pub @func main() {

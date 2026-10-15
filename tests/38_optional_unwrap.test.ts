@@ -123,7 +123,7 @@ pub @func main() {
     }
 }
 `),
-		"Expected \"|\" after pipe capture",
+		"Expected '|' after pipe capture",
 	);
 });
 

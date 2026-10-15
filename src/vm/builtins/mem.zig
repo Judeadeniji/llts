@@ -55,6 +55,7 @@ var arena_reset_native: NativeFunction = undefined;
 var arena_deinit_native: NativeFunction = undefined;
 var arena_alloc_bytes_native: NativeFunction = undefined;
 var clone_bytes_native: NativeFunction = undefined;
+var clone_bytes_immortal_native: NativeFunction = undefined;
 
 fn fail(vm: *VMState, comptime op: []const u8, comptime msg: []const u8) error{RuntimeError} {
     return runtime.runtimeFail(vm, op ++ ": " ++ msg);
@@ -228,6 +229,26 @@ fn cloneBytesFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     };
     if (src.len == 0) return .{ .bytes = .{ .offset = 0, .len = 0 } };
     const off = try vm.allocFrameBytes(@intCast(src.len));
+    const dst_off: usize = @intCast(off);
+    const src_off: usize = src.offset;
+    const n: usize = src.len;
+    @memcpy(vm.bytes.items[dst_off..][0..n], vm.bytes.items[src_off..][0..n]);
+    return .{ .bytes = .{ .offset = @intCast(off), .len = src.len } };
+}
+
+/// Shallow-copy a packed object handle into immortal storage.
+/// Used for auto-clone-on-return: a flat scalar struct bound to a frame local
+/// survives `return local` without an allocator.
+fn cloneBytesImmortalFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
+    const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
+    const src: struct { offset: u32, len: u32 } = switch (args[0]) {
+        .bytes => |b| .{ .offset = b.offset, .len = b.len },
+        .slice => |s| .{ .offset = s.offset, .len = s.len },
+        .null => return fail(vm, "__cloneBytesImmortal", "cannot clone null"),
+        else => return fail(vm, "__cloneBytesImmortal", "expected object handle"),
+    };
+    if (src.len == 0) return .{ .bytes = .{ .offset = 0, .len = 0 } };
+    const off = try vm.allocImmortalBytes(@intCast(src.len));
     const dst_off: usize = @intCast(off);
     const src_off: usize = src.offset;
     const n: usize = src.len;
@@ -631,6 +652,7 @@ pub fn register(vm: *VMState) !void {
     arena_deinit_native = .{ .name = "__arena_deinit", .func = arenaDeinit, .arity = 1 };
     arena_alloc_bytes_native = .{ .name = "__arena_alloc_bytes", .func = arenaAllocBytes, .arity = 2 };
     clone_bytes_native = .{ .name = "__cloneBytes", .func = cloneBytesFn, .arity = 1 };
+    clone_bytes_immortal_native = .{ .name = "__cloneBytesImmortal", .func = cloneBytesImmortalFn, .arity = 1 };
     arena_array_push_native = .{ .name = "__arena_array_push", .func = arenaArrayPushFn, .arity = 3 };
 
     try vm.defineGlobal("__alloc", .{ .native = &alloc_native });
@@ -646,5 +668,6 @@ pub fn register(vm: *VMState) !void {
     try vm.defineGlobal("__arena_reset", .{ .native = &arena_reset_native });
     try vm.defineGlobal("__arena_deinit", .{ .native = &arena_deinit_native });
     try vm.defineGlobal("__cloneBytes", .{ .native = &clone_bytes_native });
+    try vm.defineGlobal("__cloneBytesImmortal", .{ .native = &clone_bytes_immortal_native });
     try vm.defineGlobal("__arena_array_push", .{ .native = &arena_array_push_native });
 }

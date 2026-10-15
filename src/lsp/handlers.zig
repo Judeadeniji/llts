@@ -87,8 +87,20 @@ fn buildDiagnostics(server: *state.ServerState, ra: std.mem.Allocator, uri: []co
         }
 
         if (json_diags.items.len < MAX_DIAGNOSTICS and analysis.doc.diagnostics.len == 0 and analysis.tc_diagnostic == null) {
-            const unused_list = llts.compiler.unused.detect(ra, &analysis.doc) catch &.{};
-            for (unused_list) |u| {
+            const detect_result: llts.compiler.unused.DetectResult =
+                llts.compiler.unused.detect(ra, &analysis.doc) catch .{ .unused = &.{}, .shadows = &.{} };
+            for (detect_result.shadows) |sh| {
+                if (json_diags.items.len >= MAX_DIAGNOSTICS) break;
+                var msg_buf: [256]u8 = undefined;
+                const msg = sh.formatMessage(&msg_buf);
+                const msg_duped = ra.dupe(u8, msg) catch msg;
+                json_diags.append(ra, .{
+                    .range = diagRangeAt(analysis, sh.loc.line, sh.loc.column),
+                    .severity = 2, // Warning
+                    .message = msg_duped,
+                }) catch break;
+            }
+            for (detect_result.unused) |u| {
                 if (json_diags.items.len >= MAX_DIAGNOSTICS) break;
                 var msg_buf: [256]u8 = undefined;
                 const msg = u.formatMessage(&msg_buf);

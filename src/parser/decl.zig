@@ -25,7 +25,7 @@ pub fn parseDeclaration(self: *Parser, is_const: bool) ParseError!*Node {
     }
 
     var msg_buf: [128]u8 = undefined;
-    const eq_msg = std.fmt.bufPrint(&msg_buf, "Expected \"=\" after \"{s}\"", .{register.value}) catch "Expected \"=\" after register";
+    const eq_msg = std.fmt.bufPrint(&msg_buf, "Expected '=' after '{s}'", .{register.value}) catch "Expected '=' after register";
     _ = try self.consume(.assign_op, eq_msg, "=");
     const expr = @import("expr.zig");
     // `$p: Point = { x: 1, y: 2 }` — annotated bare object init (not a block).
@@ -94,7 +94,7 @@ fn parseTypeDecl(self: *Parser, distinct: bool) ParseError!*Node {
 pub fn parseCompilerFunc(self: *Parser) ParseError!*Node {
     const name = self.advance() orelse return error.ParseFailed;
     if (name.type != .identifier) {
-        return self.failTok(name, "Expected a valid function name but found \"{s}\" instead.", .{name.value});
+        return self.failTok(name, "Invalid function name '{s}'", .{name.value});
     }
 
     _ = try self.consume(.delimiter, "Expected '(' after function name", "(");

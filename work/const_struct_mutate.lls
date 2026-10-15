@@ -1,0 +1,32 @@
+# Does a struct bound to @const allow mutation?
+#   zig-out/bin/llts run work/const_struct_mutate.lls
+@struct Point {
+    x: int;
+    y: int;
+
+    @func shift(self, dx: int) {
+        self.x = self.x + dx;
+    }
+}
+
+@const $ORIGIN = Point { x: 0, y: 0 };
+
+pub @func main() {
+    # 1. plain local: baseline, should mutate fine
+    $p = Point { x: 10, y: 20 };
+    p.x = 42;
+    p.shift(8);
+    print(p.x);
+
+    # 2. const struct: direct field mutation
+    ORIGIN.x = 99;
+    print(ORIGIN.x);
+
+    # 3. const struct: mutating method call
+    ORIGIN.shift(5);
+    print(ORIGIN.x);
+
+    # 4. const struct: rebinding the whole binding
+    $ORIGIN = Point { x: 1, y: 1 };
+    print(ORIGIN.x);
+}

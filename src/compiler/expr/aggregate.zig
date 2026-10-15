@@ -162,30 +162,22 @@ pub fn compileStructInit(state: *CompilerState, init: *const ast.StructInit) !vo
     try fillStruct(state, init, struct_def);
 }
 
-/// `@new(allocator, Type | Foo{…} | […])` — allocate into a library Allocator (Arena).
-/// Type form zero-defaults; result is Pass-colored and may be returned / freed via arena.reset.
+/// `@new(allocator, Type)` — allocate a zero-filled Type into a library
+/// Allocator (Arena). Type-directed only (no value literals). Result is
+/// Pass-colored and may be returned / freed via arena.reset.
 /// Runtime-sized: `@new(a, []T, n)` or `@new(a, string, n)`.
 pub fn compileNew(state: *CompilerState, c: *const ast.Call) !void {
     if (c.args.len != 2 and c.args.len != 3) {
-        return compiler_errors.compileFailFmt(state, "@new expects (allocator, type_or_value) or (allocator, []T|string, length)", .{});
+        return compiler_errors.compileFailFmt(state, "@new expects (allocator, type) or (allocator, []T|string, length)", .{});
     }
     const value = c.args[1];
     switch (value.*) {
-        .struct_init => |*init| {
-            if (c.args.len != 2) {
-                return compiler_errors.compileFailFmt(state, "@new struct literal takes (allocator, value)", .{});
-            }
-            const struct_def = try resolveStructDef(state, init);
-            try emitArenaAllocBytes(state, c.args[0], null, struct_def.size);
-            try fillStruct(state, init, struct_def);
-        },
-        .array_literal => |*arr| {
-            if (c.args.len != 2) {
-                return compiler_errors.compileFailFmt(state, "@new array literal takes (allocator, value)", .{});
-            }
-            const length: i32 = @intCast(arr.elements.len);
-            try emitArenaAllocArray(state, c.args[0], null, length);
-            try fillArray(state, arr);
+        .struct_init, .array_literal => {
+            return compiler_errors.compileFailFmt(
+                state,
+                "@new takes a type, not a value — write @new(allocator, Type) and assign fields, or return the literal directly (literals returned from functions are immortalized automatically)",
+                .{},
+            );
         },
         .array_type => |*at| {
             if (at.length_text) |text| {
@@ -213,32 +205,38 @@ pub fn compileNew(state: *CompilerState, c: *const ast.Call) !void {
                 }
             }
         },
-        .primary => |p| {
-            if (p.kind != .identifier) {
-                return compiler_errors.compileFailFmt(state, "@new type must be a struct, string, or array type", .{});
-            }
-            if (isStringyTypeName(p.name)) {
-                if (c.args.len != 3) {
-                    return compiler_errors.compileFailFmt(state, "@new string/[]byte needs a length: @new(allocator, string, n)", .{});
+        .primary, .member => {
+            if (value.* == .primary) {
+                const p = value.primary;
+                if (p.kind != .identifier) {
+                    return compiler_errors.compileFailFmt(state, "@new type must be a struct, string, or array type", .{});
                 }
-                try emitArenaAllocBytes(state, c.args[0], c.args[2], null);
-                return;
+                if (isStringyTypeName(p.name)) {
+                    if (c.args.len != 3) {
+                        return compiler_errors.compileFailFmt(state, "@new string/[]byte needs a length: @new(allocator, string, n)", .{});
+                    }
+                    try emitArenaAllocBytes(state, c.args[0], c.args[2], null);
+                    return;
+                }
             }
             if (c.args.len != 2) {
                 return compiler_errors.compileFailFmt(state, "@new struct type takes (allocator, Type)", .{});
             }
-            var struct_name = p.name;
+            const sn = types.resolveStructName(state, value) orelse {
+                return compiler_errors.compileFailFmt(state, "@new type must be a struct, string, or array type", .{});
+            };
+            var struct_name = sn;
             if (std.mem.indexOfScalar(u8, struct_name, '.') != null) {
                 struct_name = try path.resolveModuleType(state, struct_name);
             }
             const struct_def = types.lookupStruct(state, struct_name) orelse {
-                return compiler_errors.compileFailFmt(state, "@new unknown type '{s}'", .{p.name});
+                return compiler_errors.compileFailFmt(state, "@new unknown type '{s}'", .{sn});
             };
             try emitArenaAllocBytes(state, c.args[0], null, struct_def.size);
             try zeroFillStruct(state, struct_def);
         },
         else => {
-            return compiler_errors.compileFailFmt(state, "@new expects a type, struct literal, or array literal", .{});
+            return compiler_errors.compileFailFmt(state, "@new expects a type name — value literals are not accepted", .{});
         },
     }
 }
@@ -357,7 +355,7 @@ fn resolveStructDef(state: *CompilerState, init: *const ast.StructInit) !state_m
     }
     try types.checkStructInitExport(state, init.type_expr, struct_name);
     return types.lookupStruct(state, struct_name) orelse {
-        return compiler_errors.compileFailFmt(state, "Unknown struct: {s}", .{sn});
+        return compiler_errors.compileFailFmt(state, "Unknown struct '{s}'", .{sn});
     };
 }
 
@@ -374,7 +372,7 @@ fn fillArray(state: *CompilerState, arr: *const ast.ArrayLiteral) !void {
 fn fillStruct(state: *CompilerState, init: *const ast.StructInit, struct_def: state_mod.StructDef) !void {
     for (init.fields) |field| {
         const offset = struct_def.offsets.get(field.name) orelse {
-            return compiler_errors.compileFailFmt(state, "Unknown field {s}", .{field.name});
+            return compiler_errors.compileFailFmt(state, "Unknown field '{s}'", .{field.name});
         };
         const field_ty = struct_def.types.get(field.name) orelse "int";
         const kind: u8 = @intFromEnum(layout.fieldKind(state, field_ty));

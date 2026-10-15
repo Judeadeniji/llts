@@ -161,7 +161,7 @@ fn scanRegister(self: *ctx.Scanner) ScanError!void {
         if (!ctx.isAlphaNumeric(c)) break;
         _ = self.advance();
     }
-    if (self.pos == start) return failScan(self, error.ExpectedRegister, "Expected register name after $");
+    if (self.pos == start) return failScan(self, error.ExpectedRegister, "Expected register name after '$'");
     try self.pushToken(.v_register, self.source[start..self.pos], col, line);
 }
 
@@ -174,7 +174,7 @@ fn scanCompilerKeyword(self: *ctx.Scanner) ScanError!void {
         if (!ctx.isAlphaNumeric(c)) break;
         _ = self.advance();
     }
-    if (self.pos == start) return failScan(self, error.ExpectedCompilerKeyword, "Expected compiler keyword after @");
+    if (self.pos == start) return failScan(self, error.ExpectedCompilerKeyword, "Expected compiler keyword after '@'");
     const kw = self.source[start..self.pos];
     try self.pushToken(.compiler_keyword, kw, col, line);
 }
@@ -198,8 +198,8 @@ fn scanIdentifierOrKeyword(self: *ctx.Scanner) ScanError!void {
 }
 
 fn scanMemberExpression(self: *ctx.Scanner) ScanError!void {
-    const base = self.previous() orelse return failScan(self, error.InvalidMember, "Invalid member access");
-    if (base.type != .v_register and base.type != .identifier) return failScan(self, error.InvalidMember, "Invalid member access");
+    const base = self.previous() orelse return failScan(self, error.InvalidMember, "Member access '.' must follow a register or identifier");
+    if (base.type != .v_register and base.type != .identifier) return failScan(self, error.InvalidMember, "Member access '.' must follow a register or identifier");
     while (self.peek(0) == '.') {
         const col = self.column;
         const line = self.line;

@@ -132,7 +132,7 @@ test("conflicting field types in intersection is an error", () => {
 @type B = { x: string; };
 @type C = A & B;
 `),
-		"conflicting types",
+		"Conflicting types",
 	);
 });
 

@@ -6,30 +6,30 @@
 #   io.eprintln("fail");
 #   $line = io.stdin.readLine();
 
-@const $syscall = @import("std/syscall.lls");
-@const $buffer = @import("std/buffer.lls");
-@const $mem = @import("std/mem.lls");
+@const $syscall = @import("./syscall.lls");
+@const $buffer = @import("./buffer.lls");
+@const $mem = @import("./mem.lls");
 
 pub @struct File {
     fd: int;
 
-    @func write(self, data) {
+    @func write(self: *File, data: string): unknown {
         return write(self.fd, data);
     }
 
-    @func writeAll(self, data) {
+    @func writeAll(self: *File, data: string): unknown {
         return writeAll(self.fd, data);
     }
 
-    @func read(self, buf) {
+    @func read(self: *File, buf: *buffer.Buffer): unknown {
         return read(self.fd, buf);
     }
 
-    @func readLine(self) {
+    @func readLine(self: *File): string {
         return readLineFd(self.fd);
     }
 
-    @func flush(self) {
+    @func flush(self: *File): unknown {
         return syscall.fsync(self.fd);
     }
 }
@@ -38,52 +38,56 @@ pub $stdin = File{ fd: syscall.STDIN_FILENO };
 pub $stdout = File{ fd: syscall.STDOUT_FILENO };
 pub $stderr = File{ fd: syscall.STDERR_FILENO };
 
-pub @func fromFd(arena: mem.Arena, fd) {
-    return @new(arena, File{ fd: fd });
+pub @func fromFd(arena: mem.Arena, fd: int): *File {
+    $f = @new(arena, File);
+    f.fd = fd;
+    return f;
 }
 
 # --- fd operations ---
 
-pub @func write(fd, data) {
+pub @func write(fd: int, data: string): unknown {
     return syscall.write(fd, data);
 }
 
-pub @func writeAll(fd, data) {
+pub @func writeAll(fd: int, data: string): unknown {
     return syscall.writeAll(fd, data);
 }
 
-pub @func read(fd, buf) {
+pub @func read(fd: int, buf: *buffer.Buffer): unknown {
     return syscall.read(fd, buf);
 }
 
-pub @func readLineFd(fd) {
-    return __readLine(fd);
+pub @func readLineFd(fd: int): string {
+    return @as(string, __readLine(fd));
 }
 
 # --- convenience (stdout / stderr / stdin) ---
 
-pub @func readLine() {
-    return stdin.readLine();
+pub @func readLine(): string {
+    return @as(string, stdin.readLine());
 }
 
-pub @func print(data) {
+pub @func print(data: string): unknown {
     return stdout.writeAll(data);
 }
 
-pub @func eprint(data) {
+pub @func eprint(data: string): unknown {
     return stderr.writeAll(data);
 }
 
-pub @func println(data) {
-    $rc = stdout.writeAll(data);
+# Dynamic-error-channel boundary: the syscall result is `unknown` until
+# `@isError` narrows it, so the local must be annotated.
+pub @func println(data: string): unknown {
+    $rc: unknown = stdout.writeAll(data);
     @if (@isError(rc)) {
         return rc;
     }
     return stdout.writeAll("\n");
 }
 
-pub @func eprintln(data) {
-    $rc = stderr.writeAll(data);
+pub @func eprintln(data: string): unknown {
+    $rc: unknown = stderr.writeAll(data);
     @if (@isError(rc)) {
         return rc;
     }
@@ -92,20 +96,21 @@ pub @func eprintln(data) {
 
 # Drain stdin until EOF into a string.
 # Uses createImmortal (process-lifetime) so the result outlives the scratch arena.
-pub @func readAll() {
+pub @func readAll(): string {
     $scratch = mem.create(0);
     $chunk = buffer.alloc(scratch, 8192);
     $out = buffer.createImmortal();
     @for (0..1000000) |i| {
-        $n = stdin.read(chunk);
-        @if (@isError(n)) {
+        $n: unknown = stdin.read(chunk);
+        @if (!@isError(n)) {
+            @if (@as(int, n) == 0) {
+                break;
+            }
+            buffer.appendString(out, buffer.readString(chunk, 0, @as(int, n)));
+        } @else {
             scratch.deinit();
-            return n;
+            return @as(string, n);
         }
-        @if (n == 0) {
-            break;
-        }
-        buffer.appendString(out, buffer.readString(chunk, 0, n));
     }
     scratch.deinit();
     return buffer.readString(out, 0, buffer.len(out));

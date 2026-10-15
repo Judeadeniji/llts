@@ -1,0 +1,13 @@
+# params exist but first isn't self — should error
+@struct Point {
+    x: int;
+
+    @func shift(dx: int) {
+        print(dx);
+    }
+}
+
+pub @func main() {
+    $p = Point { x: 1 };
+    p.shift(5);
+}

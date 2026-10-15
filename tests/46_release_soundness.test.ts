@@ -41,12 +41,12 @@ pub @func main() {
 
 const staticCases: Array<{ file: string; needle: string; strict: boolean }> = [
 	{ file: "non_exhaustive_switch.lls", needle: "@switch is missing enum variants", strict: false },
-	{ file: "div_by_zero_const.lls", needle: "division by zero in constant expression", strict: false },
+	{ file: "div_by_zero_const.lls", needle: "Division by zero in constant expression", strict: false },
 	{ file: "null_to_pointer.lls", needle: "not assignable to '*i64'", strict: false },
 	{ file: "arena_local_escape.lls", needle: "escapes its arena region", strict: false },
-	{ file: "const_overflow.lls", needle: "integer overflow in constant expression", strict: false },
+	{ file: "const_overflow.lls", needle: "Integer overflow in constant expression", strict: false },
 	{ file: "unannotated_param.lls", needle: "explicit type annotation", strict: true },
-	{ file: "missing_struct_field.lls", needle: "missing required field", strict: true },
+	{ file: "missing_struct_field.lls", needle: "Missing required field", strict: true },
 	{ file: "truthiness_coercion.lls", needle: "must be boolean", strict: true },
 ];
 
@@ -78,7 +78,7 @@ print(b + 10);
 		["-r"],
 	);
 	if (res.exitCode === 0) throw new Error("overflow did not trap in release");
-	if (!res.stderr.includes("integer overflow")) {
+	if (!res.stderr.includes("Integer overflow")) {
 		throw new Error(`missing overflow diagnostic:\n${res.stderr}`);
 	}
 });

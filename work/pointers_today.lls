@@ -1,0 +1,33 @@
+# Full pointer round-trip today
+@const $mem = @import("std/mem");
+
+@struct Point {
+    x: int;
+    y: int;
+}
+
+@func bump(p: *Point, dx: int) {
+    p.x = p.x + dx;
+}
+
+pub @func main() {
+    # 1. &struct_value → *T, field read through pointer
+    $p = Point { x: 1, y: 2 };
+    $pp = &p;
+    print(pp.x);
+
+    # 2. field write through pointer mutates the original
+    pp.x = 10;
+    print(p.x);
+
+    # 3. pointer param mutates caller's struct
+    bump(&p, 5);
+    print(p.x);
+
+    # 4. @new yields *T; mutate through it
+    $arena = mem.create(0);
+    $q = @new(arena, Point { x: 0, y: 0 });
+    q.x = 7;
+    print(q.x);
+    arena.deinit();
+}

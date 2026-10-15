@@ -18,11 +18,16 @@
     head: ?*Node;
 
     @func pushFront(self: *LinkedList, value: i64) {
-        self.head = @new(self.arena, Node { value: value, next: self.head });
+        $n = @new(self.arena, Node);
+        n.value = value;
+        n.next = self.head;
+        self.head = n;
     }
 
     @func pushBack(self: *LinkedList, value: i64) {
-        $n = @new(self.arena, Node { value: value, next: null });
+        $n = @new(self.arena, Node);
+        n.value = value;
+        n.next = null;
         @if (self.head == null) {
             self.head = n;
             return;
@@ -87,7 +92,10 @@
 }
 
 @func create(arena: mem.Arena): *LinkedList {
-    return @new(arena, LinkedList { arena: arena, head: null });
+    $list = @new(arena, LinkedList);
+    list.arena = arena;
+    list.head = null;
+    return list;
 }
 
 pub @func main() {

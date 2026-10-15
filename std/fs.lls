@@ -6,9 +6,9 @@
 # Bodies live on `Dir`. Module functions forward to `fs.cwd`:
 #   fs.readFile(path)  ==  fs.cwd.readFile(path)
 
-@const $syscall = @import("std/syscall.lls");
-@const $buffer = @import("std/buffer.lls");
-@const $mem = @import("std/mem.lls");
+@const $syscall = @import("./syscall.lls");
+@const $buffer = @import("./buffer.lls");
+@const $mem = @import("./mem.lls");
 
 pub @struct Stat {
     size: int;

@@ -187,7 +187,7 @@ test("@const requires an initializer", () => {
   expectError(runSource(`
 @const $a;
 print(a);
-`), "Expected \"=\" after \"a\"");
+`), "Expected '=' after 'a'");
 });
 
 test("cannot redeclare the same @const twice in the same scope", () => {

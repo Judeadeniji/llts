@@ -1,0 +1,20 @@
+# Nested struct return should still be an escape error (not flat scalar)
+@struct Inner {
+    n: int;
+}
+
+@struct Outer {
+    inner: Inner;
+    tag: int;
+}
+
+@func make() {
+    $i = Inner { n: 1 };
+    $o = Outer { inner: i, tag: 2 };
+    return o;
+}
+
+pub @func main() {
+    $r = make();
+    print(r.tag);
+}

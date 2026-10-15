@@ -25,7 +25,7 @@ pub fn execute(ctx: zli.CommandContext) !void {
     const comptime_iters = common.getComptimeMaxLoopIterations(ctx.allocator, ctx);
 
     if (llts.serialize.isBytecodePath(file)) {
-        common.failExit("Cannot compile a .llb file; use a .lls source\n", .{});
+        common.failExit("Cannot compile a .llb file; use a .lls source", .{});
     }
 
     if (is_emit_zig) {

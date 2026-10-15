@@ -104,6 +104,18 @@ pub const Env = struct {
         return self.const_names.contains(name);
     }
 
+    /// True when `name` is bound in a *local* scope (function body / block),
+    /// not a module-level global. Locals shadow same-named module consts —
+    /// including consts of other modules merged into this compilation unit.
+    fn isLocalBinding(self: *const Env, name: []const u8) bool {
+        var i = self.locals.items.len;
+        while (i > 0) {
+            i -= 1;
+            if (self.locals.items[i].contains(name)) return true;
+        }
+        return false;
+    }
+
     pub fn define(self: *Env, name: []const u8, t: ir.Type) !void {
         if (self.locals.items.len > 0) {
             try self.locals.items[self.locals.items.len - 1].put(name, t);
@@ -1330,8 +1342,9 @@ fn inferExprInner(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, 
                 const mem = a.left.member;
                 if (mem.object.* == .primary) {
                     const obj_name = mem.object.primary.name;
-                    if (env.hasConstName(obj_name) or (obj_name.len > 0 and obj_name[0] == '$' and env.hasConstName(obj_name[1..]))) {
-                        std.debug.print("DEBUG typecheck const-mutate: '{s}'\n", .{obj_name});
+                    // A function/block local shadows any module-level const
+                    // with the same name (incl. consts of other modules).
+                    if (!env.isLocalBinding(obj_name) and (env.hasConstName(obj_name) or (obj_name.len > 0 and obj_name[0] == '$' and env.hasConstName(obj_name[1..])))) {
                         return compiler_errors.compileFailFmt(state, "Cannot mutate field of constant '{s}'", .{obj_name});
                     }
                 }

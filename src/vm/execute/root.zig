@@ -537,7 +537,7 @@ pub fn execute(vm: *VMState, start_ip: usize) RuntimeError!void {
             },
             .OP_SET_LOCAL => {
                 const slot = readByte(code_ptr, &ip);
-                if (cur_frame.isConst(slot)) return runtime.runtimeFail(vm, "Cannot assign to @const binding");
+                if (cur_frame.isConst(slot)) return runtime.runtimeFail(vm, "Cannot assign to a @const binding; create a new variable instead");
                 const idx = base_slot + slot;
                 if (ip < code_len and code_ptr[ip] == @intFromEnum(OpCode.OP_POP)) {
                     ip += 1;

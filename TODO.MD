@@ -85,6 +85,12 @@ Packed byte heap + honest numeric widths. See [`docs/memory-model.md`](docs/memo
 - [x] **Hex / binary / octal literals**
 - [x] **`^` / `**` exponent**
 - [x] **Unary `+`** — identity operator.
+- [ ] **`@const` holes (URGENT)** — const structs are only *partially* immutable:
+  - [x] `ORIGIN.x = 99` — rejected (`Cannot mutate field of constant`)
+  - [ ] **Mutating method call on const** — `ORIGIN.shift(5)` silently mutates a `@const` struct; the compiler never checks receiver constness at method-call sites (`work/const_method_call.lls`). Fix: at a method call on a const receiver, look up the method's `self` param — if `self` is a pointer to the struct (`self: *T`, including the unannotated default which is `*T`), fail with "method might mutate constant". Allowed cases: `self: T` (caller already clones via `__cloneBytes`, original untouched) and no `self` param at all (`self` is skippable — method has no receiver handle, can't mutate it). Check in both emit (`call.zig` method branch) and typecheck (`inferCall`).
+  - [x] **Const rebind shadows instead of erroring** — not a bug; shadowing a const binding with a new declaration is by design (warning only, asserted by `tests/07_const.test.ts`). Warning says `'{s}' shadows constant '{s}' declared at line {d}` at the hiding decl (no misleading `unused constant`); see `tests/40_unused.test.ts`. Assignment form (`ORIGIN = …`) errors correctly.
+  - **Aliasing hole** — const-ness is binding-level only; the packed-heap object behind a `@const` struct stays mutable through any alias: `$alias = ORIGIN` copies the handle without cloning, so `alias.x = 99` / `alias.shift(5)` mutates the const's object (`work/const_alias.lls`). Fix: struct value assignment/declaration should **clone, not share the handle** — emit `__cloneBytes` (already used for `self: T` by-value receivers) when the value's type is a struct, giving struct copies value semantics consistent with `T` vs `*T`. No VM immutability flags needed. **Aliasing becomes explicit**: shared-handle (today's) behavior only via pointers (`*T` / `&x`) — call sites and fields that need mutation-through-alias must opt in with `*T`, matching the existing `self: T` (clone) vs `self: *T` (share) receiver split. Audit existing code for reliance on implicit handle-sharing before flipping.
+  - Likely related: const-ness through pointers (`@const $P = &x` then `P.field = …`) — may already be rejected by the existing member-assign check (`assign.zig` keys on binding name); verify with a repro.
 
 ### P1 — Missing Language Features
 
@@ -124,8 +130,8 @@ Packed byte heap + honest numeric widths. See [`docs/memory-model.md`](docs/memo
 - [x] **`defer` / `errdefer`** — LIFO scope-exit cleanup; `errdefer` on error path only (`?` / error returns).
 - [x] **No tracing GC** — ownership is explicit (allocator + defer).
 - [x] **Frame regions** — VM rewinds heap bump on return; bare `Foo{}` / `[…]` are frame-local.
-- [x] **Escape = compile error** — cannot return frame-local heap; use `@new(allocator, …)`.
-- [x] **`@new`** — compiler intrinsic (Go `make`-style); Allocator comes from `std.mem`.
+- [x] **Escape = compile error** — cannot return frame-local heap (except flat scalar structs, which auto-clone into immortal storage on return); use `@new(allocator, …)` for arena-managed values.
+- [x] **`@new`** — compiler intrinsic (Go `make`-style); type-directed only: `@new(allocator, T)` zero-fills and yields `*T`; literal value forms are rejected (return the literal directly — flat scalar structs clone automatically).
 
 ### P6 — Language (make the low-level story honest)
 

@@ -15,7 +15,7 @@ pub fn execute(ctx: zli.CommandContext) !void {
     const comptime_iters = common.getComptimeMaxLoopIterations(ctx.allocator, ctx);
 
     if (llts.serialize.isBytecodePath(file)) {
-        common.failExit("Cannot emit Zig from a .llb file; use a .lls source\n", .{});
+        common.failExit("Cannot emit Zig from a .llb file; use a .lls source", .{});
     }
 
     try pipeline.emitZig(ctx.allocator, file, release, strict, out_path, comptime_iters, runtime_path);

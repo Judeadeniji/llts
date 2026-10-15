@@ -169,7 +169,7 @@ test("merge & conflicting member names", () => {
 
 pub @func main() {}
 `),
-		"conflicting error member",
+		"Conflicting error member",
 	);
 });
 

@@ -256,7 +256,7 @@ test("invalid self annotation is rejected", () => {
 $p = Point { x: 1 };
 print(p.bad());
 `),
-		"method self must be",
+		"Method self must be",
 	);
 });
 
@@ -275,7 +275,7 @@ test("self typed as a different struct is rejected", () => {
 $b = B { y: 1 };
 print(b.bad());
 `),
-		"method self must be",
+		"Method self must be",
 	);
 });
 

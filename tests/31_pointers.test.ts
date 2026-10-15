@@ -25,7 +25,10 @@ test("function returning @new is *T not T", () => {
 @const $mem = @import("std/mem");
 @struct Point { x: i64; y: i64; }
 @func mk(arena) {
-    return @new(arena, Point { x: 1, y: 2 });
+    $p = @new(arena, Point);
+    p.x = 1;
+    p.y = 2;
+    return p;
 }
 $a = mem.create(0);
 $p = mk(a);
@@ -58,7 +61,9 @@ test("?*T accepts null and *T", () => {
 $a = mem.create(0);
 $p: ?*Box = null;
 print(@typeOf(p));
-p = @new(a, Box { n: 9 });
+$bx = @new(a, Box);
+bx.n = 9;
+p = bx;
 print(@typeOf(p));
 print(p.n);
 a.deinit();
@@ -100,7 +105,7 @@ $n: i64 = 1;
 $p = &n;
 print(p);
 `),
-		"address-of requires a struct value",
+		"Address-of requires a struct value",
 	);
 });
 
@@ -114,7 +119,7 @@ $p = @new(a, Point);
 $q = &p;
 print(q);
 `),
-		"cannot take address of a pointer",
+		"Cannot take the address of a pointer",
 	);
 });
 

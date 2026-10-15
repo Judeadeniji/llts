@@ -1,4 +1,4 @@
-# expect: condition of @if must be boolean
+# expect: Condition of @if must be boolean
 # mode: strict
 pub @func main() {
     $n = 5;

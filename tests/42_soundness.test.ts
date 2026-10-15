@@ -15,7 +15,7 @@ pub @func main() {
     print(add(1, 2));
 }
 `),
-		"parameter 'a' of function 'add' must have an explicit type annotation in strict mode",
+		"Parameter 'a' of function 'add' must have an explicit type annotation in strict mode",
 	);
 });
 
@@ -62,7 +62,7 @@ pub @func main() {
     $items = [];
 }
 `),
-		"cannot infer type for local '$items' from empty array literal; explicit type annotation required",
+		"Cannot infer the type of local '$items' from an empty array literal; add an explicit type annotation",
 	);
 });
 
@@ -103,7 +103,7 @@ pub @func main() {
     $b: u8 = 300;
 }
 `),
-		"literal 300 overflows target type 'u8'",
+		"Literal 300 overflows target type 'u8'",
 	);
 });
 
@@ -123,7 +123,7 @@ pub @func main() {
     print(find(5));
 }
 `),
-		"function 'find' must return a value on all control paths",
+		"Function 'find' must return a value on all control paths",
 	);
 });
 
@@ -176,7 +176,7 @@ pub @func main() {
     print(u.name);
 }
 `),
-		"cannot access field 'name' on optional type '?User'; unwrap with '@if' or '.?'",
+		"Cannot access field 'name' on optional type '?User'; unwrap with '@if' or '.?'",
 	);
 });
 
@@ -213,7 +213,7 @@ pub @func main() {
     $u = User{ id: 1 };
 }
 `),
-		"missing required field 'name' in initialization of 'User'",
+		"Missing required field 'name' in initialization of 'User'",
 	);
 });
 
@@ -247,7 +247,7 @@ pub @func main() {
     }
 }
 `),
-		"condition of @if must be boolean ('bool' or 'u1'), got 'i64'",
+		"Condition of @if must be boolean ('bool' or 'u1'), got 'i64'",
 	);
 });
 
@@ -261,7 +261,7 @@ pub @func main() {
     }
 }
 `),
-		"cannot capture from non-container type 'i64'; @if capture requires optional '?T' or error union",
+		"Cannot capture from a non-container type 'i64'; @if capture requires an optional '?T' or an error union",
 	);
 });
 
@@ -307,7 +307,7 @@ pub @func main() {
     }
 }
 `),
-		"condition of @for must be boolean ('bool' or 'u1'), got 'i64'",
+		"Condition of @for must be boolean ('bool' or 'u1'), got 'i64'",
 	);
 });
 

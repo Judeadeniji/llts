@@ -9,7 +9,7 @@ pub fn setLogLevel(ctx: zli.CommandContext) void {
         if (io.Level.parse(str)) |l| {
             io.log.setLevel(l);
         } else {
-            failExit("Invalid log level: {s}\n", .{str});
+            failExit("Invalid log level \"{s}\"; expected trace, debug, info, warn, or error", .{str});
         }
     }
 }
@@ -130,13 +130,31 @@ pub fn getZigArgs(allocator: std.mem.Allocator, ctx: zli.CommandContext) ![]cons
     return try args.toOwnedSlice(allocator);
 }
 
+/// Print a fatal CLI error and exit 1.
+/// The `Error:` label and trailing newline belong to this helper: callers pass
+/// the body only, with no `\n`.
 pub fn failExit(comptime format: []const u8, args: anytype) noreturn {
-    io.printStderr(format, args);
+    io.printStderr("Error: " ++ format ++ "\n", args);
     std.process.exit(1);
+}
+
+/// Human-readable reason for a host error: `error.FileNotFound` → `file not found`.
+/// Anything unmapped keeps its Zig error name.
+pub fn reason(err: anyerror) []const u8 {
+    return switch (err) {
+        error.FileNotFound => "file not found",
+        error.AccessDenied => "permission denied",
+        error.NotDir => "not a directory",
+        error.IsDir => "is a directory",
+        error.NoSpaceLeft => "no space left on device",
+        error.ReadOnlyFileSystem => "read-only file system",
+        error.NameTooLong => "path too long",
+        else => @errorName(err),
+    };
 }
 
 pub fn readSourceOrExit(allocator: std.mem.Allocator, path: []const u8) []const u8 {
     return std.fs.cwd().readFileAlloc(allocator, path, 16 * 1024 * 1024) catch |err| {
-        failExit("Failed to read {s}: {}\n", .{ path, err });
+        failExit("Cannot read \"{s}\": {s}", .{ path, reason(err) });
     };
 }

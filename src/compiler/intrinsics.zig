@@ -168,6 +168,15 @@ pub fn typecheck(state: *CompilerState, env: *typecheck_root.Env, ta: ir.TypeAll
                     }
                     break :blk try typecheck_root.inferExpr(state, env, ta, v);
                 },
+                .member => blk: {
+                    // Qualified struct type (`mod.Type`).
+                    if (from_ast.resolveStructName(state, v)) |sn| {
+                        if (state.structs.contains(sn) or state.typedefs.contains(sn)) {
+                            break :blk ir.namedType(sn);
+                        }
+                    }
+                    break :blk try typecheck_root.inferExpr(state, env, ta, v);
+                },
                 else => try typecheck_root.inferExpr(state, env, ta, v),
             };
             // Heap-allocated structs / distinct `@type` values are pointers (handles).
@@ -273,7 +282,7 @@ pub fn compile(state: *CompilerState, intr: Intrinsic, node: *ast.Node, c: *cons
         },
         .nameOf => {
             const plan = state.name_of_plans.get(node) orelse {
-                return compile_errors.compileFailFmt(state, "@nameOf missing type plan", .{});
+                return compile_errors.compileFailFmt(state, "Internal error: @nameOf missing type plan", .{});
             };
             switch (plan) {
                 .fold => |spelling| {
@@ -553,5 +562,5 @@ pub fn checkAsCast(state: *CompilerState, src: ir.Type, target: ir.Type) !void {
     if (ir.typeEquals(su, tu) or ir.isSubtype(su, tu) or ir.isSubtype(tu, su)) return;
     const ds = try typecheck_root.ownDisplay(state, src);
     const dt = try typecheck_root.ownDisplay(state, target);
-    return compile_errors.compileFailFmt(state, "cannot cast to '{s}' from '{s}'", .{ dt, ds });
+    return compile_errors.compileFailFmt(state, "Cannot cast to '{s}' from '{s}'", .{ dt, ds });
 }

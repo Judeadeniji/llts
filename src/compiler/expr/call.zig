@@ -26,7 +26,7 @@ pub fn compileCall(state: *CompilerState, c: *const ast.Call, node: *ast.Node) !
             try intrinsics.compile(state, i, node, c);
             return;
         }
-        return @import("../../errors/compile.zig").compileFailFmt(state, "unknown intrinsic '{s}'", .{name});
+        return @import("../../errors/compile.zig").compileFailFmt(state, "Unknown intrinsic '{s}'", .{name});
     }
 
     // `T(x)` cast sugar ≡ `@as(T, x)`.
