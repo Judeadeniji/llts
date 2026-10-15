@@ -19,7 +19,7 @@ pub fn compileStatement(state: *CompilerState, node: *ast.Node) anyerror!void {
         .struct_decl => |*s| try decl.compileStruct(state, s),
         .enum_decl => |*e| try decl.compileEnum(state, e),
         .error_decl => |*e| try decl.compileErrorDecl(state, e),
-        .type_decl => |*t| try decl.compileTypeDecl(state, t),
+        .type_decl => |*t| if (!state.local_type_decls.contains(t)) try decl.compileTypeDecl(state, t),
         .block => |*b| try func.compileBlock(state, b),
         .defer_stmt => |*d| try func.compileDefer(state, d),
         .return_expr => |*r| try func.compileReturn(state, r),

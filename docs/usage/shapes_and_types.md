@@ -113,6 +113,17 @@ Shape fields with type `@func(…): R` can hold first-class function values (sto
 | `@alias Name = T` | Transparent rename; `Name` ≡ `T`. |
 
 `@typeOf` prints the distinct name for `@type` values. `@sizeOf(Name)` matches the underlying layout.
+
+Both may also appear inside a function body. A local type is visible anywhere in that function and nowhere else; two functions may each declare their own `T`. Within one function a local type name must be unique and cannot also name a variable or parameter.
+
+```llts
+@func area(w: i64, h: i64): i64 {
+    @alias Len = i64;
+    $a: Len = w * h;
+    return a;
+}
+```
+
 `T` may be a width, pointer, array, optional, union (`|`), tuple (`[T, U]`), function type (`@func(…): R`), literal type, or **object shape**. `@struct` / `@enum` remain their own declarations; `@type` names and composes them (e.g. `@type Expr = Literal | Add`).
 
 ## Types as compile-time values

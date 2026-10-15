@@ -1,0 +1,4 @@
+# expect: Unknown type 'T'
+@func f() { @type T = i64; }
+@func g() { $x: T = 1; }
+pub @func main() { f(); g(); }

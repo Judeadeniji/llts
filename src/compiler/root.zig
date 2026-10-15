@@ -6,6 +6,7 @@ const ast = @import("../ast/root.zig");
 const chunk_mod = @import("../bytecode/chunk.zig");
 const emit = @import("emit.zig");
 const modules = @import("modules.zig");
+const local_types = @import("local_types.zig");
 const scope = @import("scope.zig");
 pub const state_mod = @import("state.zig");
 const stmt = @import("stmt/root.zig");
@@ -59,6 +60,7 @@ pub fn analyze(
     for (doc.statements) |s| {
         if (s.* == .struct_decl or s.* == .enum_decl or s.* == .error_decl or s.* == .type_decl) try stmt.compileStatement(&state, s);
     }
+    try local_types.hoist(&state, doc.statements);
 
     try typecheck.typecheck(&state, doc);
     try requireEntryMain(&state, doc);
@@ -91,6 +93,7 @@ pub fn prepareForTypecheck(state: *state_mod.CompilerState, doc: *ast.Document) 
     for (doc.statements) |s| {
         if (s.* == .struct_decl or s.* == .enum_decl or s.* == .error_decl or s.* == .type_decl) try stmt.compileStatement(state, s);
     }
+    try local_types.hoist(state, doc.statements);
 }
 
 pub fn emitBytecode(state: *state_mod.CompilerState, doc: *ast.Document) !chunk_mod.Chunk {

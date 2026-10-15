@@ -1028,7 +1028,7 @@ pub fn resolveType(state: *state_mod.CompilerState, node: *ast.Node) ?[]const u8
                 defer scratch.deinit();
                 const ta_cast = ir.TypeAlloc{ .allocator = scratch.allocator() };
                 if (typeFromAst(c.args[0], state, ta_cast)) |target| {
-                    if (ir.displayTypeAlloc(state.allocator, target)) |disp| {
+                    if (ir.displayTypeQualifiedAlloc(state.allocator, target)) |disp| {
                         state.owned.append(state.allocator, disp) catch {};
                         break :blk disp;
                     } else |_| {}
@@ -1044,7 +1044,7 @@ pub fn resolveType(state: *state_mod.CompilerState, node: *ast.Node) ?[]const u8
                     defer scratch.deinit();
                     const ta_cast = ir.TypeAlloc{ .allocator = scratch.allocator() };
                     if (resolveNamedType(name, state, ta_cast)) |target| {
-                        if (ir.displayTypeAlloc(state.allocator, target)) |disp| {
+                        if (ir.displayTypeQualifiedAlloc(state.allocator, target)) |disp| {
                             state.owned.append(state.allocator, disp) catch {};
                             break :blk disp;
                         } else |_| {}

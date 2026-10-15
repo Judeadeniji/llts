@@ -138,6 +138,10 @@ pub const CompilerState = struct {
     enums: std.StringHashMap(EnumDef),
     error_sets: std.StringHashMap(ErrorSetDef),
     typedefs: std.StringHashMap(TypeDef),
+    /// `@type` / `@alias` declared inside a function body. Registered ahead of
+    /// typecheck under a function-scoped key (see `local_types.zig`), so the
+    /// statement itself compiles to nothing.
+    local_type_decls: std.AutoHashMap(*const ast.TypeDecl, void),
     loops: std.ArrayList(LoopTracker) = .empty,
     exprs: std.ArrayList(ExprTracker) = .empty,
     defer_stacks: std.AutoHashMap(i32, std.ArrayListUnmanaged(DeferEntry)),
@@ -210,6 +214,7 @@ pub fn create(allocator: std.mem.Allocator) !CompilerState {
         .enums = std.StringHashMap(EnumDef).init(allocator),
         .error_sets = std.StringHashMap(ErrorSetDef).init(allocator),
         .typedefs = std.StringHashMap(TypeDef).init(allocator),
+        .local_type_decls = std.AutoHashMap(*const ast.TypeDecl, void).init(allocator),
         .defer_stacks = std.AutoHashMap(i32, std.ArrayListUnmanaged(DeferEntry)).init(allocator),
         .global_vars = std.StringHashMap(void).init(allocator),
         .global_types = std.StringHashMap([]const u8).init(allocator),
@@ -324,6 +329,7 @@ pub fn deinit(self: *CompilerState) void {
     }
     self.error_sets.deinit();
     self.typedefs.deinit();
+    self.local_type_decls.deinit();
     var dit = self.defer_stacks.iterator();
     while (dit.next()) |e| e.value_ptr.deinit(self.allocator);
     self.defer_stacks.deinit();
