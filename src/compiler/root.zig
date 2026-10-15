@@ -134,7 +134,7 @@ pub fn emitBytecode(state: *state_mod.CompilerState, doc: *ast.Document) !chunk_
             if (addr > 0xffff) {
                 return compile_errors.compileFailFmt(
                     state,
-                    "function '{s}' address {d} exceeds CALL_STATIC u16 limit (forward ref)",
+                    "Function '{s}' address {d} exceeds CALL_STATIC u16 limit (forward ref)",
                     .{ name, addr },
                 );
             }
@@ -207,7 +207,7 @@ fn requireEntryMain(state: *state_mod.CompilerState, doc: *ast.Document) !void {
             doc.source,
             loc.line,
             loc.column,
-            "missing entry point 'main'",
+            "Missing entry point 'main'",
         );
     };
 
@@ -219,7 +219,7 @@ fn requireEntryMain(state: *state_mod.CompilerState, doc: *ast.Document) !void {
             doc.source,
             eof.line,
             eof.column,
-            "missing entry point 'main'",
+            "Missing entry point 'main'",
         );
     }
 
@@ -230,7 +230,7 @@ fn requireEntryMain(state: *state_mod.CompilerState, doc: *ast.Document) !void {
             sourceTextForPath(state, if (loc.path.len > 0) loc.path else doc.path),
             if (loc.line > 0) loc.line else 1,
             if (loc.column > 0) loc.column else 1,
-            "entry point 'main' must be pub",
+            "Entry point 'main' must be pub",
             .{},
         );
     }
