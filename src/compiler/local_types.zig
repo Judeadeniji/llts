@@ -17,12 +17,13 @@ const CompilerState = state_mod.CompilerState;
 const Error = error{ CompileError, OutOfMemory, TooManyConstants };
 
 /// Bare local type name → function-scoped key.
-const Renames = std.StringHashMap([]const u8);
+pub const Renames = std.StringHashMap([]const u8);
 
 pub fn hoist(state: *CompilerState, statements: []*ast.Node) !void {
     for (statements) |s| {
         switch (s.*) {
-            .function_decl => |*f| try hoistFunction(state, f, f.name),
+            // Template bodies are hoisted per instance (see `generics.zig`).
+            .function_decl => |*f| if (!state.templates.contains(f.name)) try hoistFunction(state, f, f.name),
             .struct_decl => |st| {
                 for (st.methods) |m| {
                     if (m.* != .function_decl) continue;
@@ -36,7 +37,7 @@ pub fn hoist(state: *CompilerState, statements: []*ast.Node) !void {
     }
 }
 
-fn hoistFunction(state: *CompilerState, f: *ast.FunctionDecl, owner: []const u8) !void {
+pub fn hoistFunction(state: *CompilerState, f: *ast.FunctionDecl, owner: []const u8) !void {
     var decls: std.ArrayList(*ast.TypeDecl) = .empty;
     defer decls.deinit(state.allocator);
     collectTypeDecls(f.body, &decls, state.allocator) catch return error.OutOfMemory;
@@ -99,7 +100,7 @@ fn collectTypeDecls(node: *ast.Node, out: *std.ArrayList(*ast.TypeDecl), gpa: st
 }
 
 /// A variable sharing a local type's name would be renamed along with it.
-fn checkNoValueClash(state: *CompilerState, node: *ast.Node, renames: *const Renames) Error!void {
+pub fn checkNoValueClash(state: *CompilerState, node: *ast.Node, renames: *const Renames) Error!void {
     switch (node.*) {
         .declaration => |d| if (renames.contains(d.name)) {
             noteLoc(state, d.loc);
@@ -124,11 +125,11 @@ fn checkNoValueClash(state: *CompilerState, node: *ast.Node, renames: *const Ren
     }
 }
 
-fn renameOpt(node: ?*ast.Node, renames: *const Renames) void {
+pub fn renameOpt(node: ?*ast.Node, renames: *const Renames) void {
     if (node) |n| rename(n, renames);
 }
 
-fn rename(node: *ast.Node, renames: *const Renames) void {
+pub fn rename(node: *ast.Node, renames: *const Renames) void {
     switch (node.*) {
         .primary => |*p| if (p.kind == .identifier) {
             if (renames.get(p.name)) |key| p.name = key;

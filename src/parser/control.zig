@@ -3,6 +3,7 @@ const ctx = @import("ctx.zig");
 const ast = @import("../ast/root.zig");
 const stmt_mod = @import("stmt.zig");
 const expr = @import("expr.zig");
+const types = @import("types.zig");
 
 const Parser = ctx.Parser;
 const ParseError = ctx.ParseError;
@@ -188,7 +189,7 @@ pub fn parseReturnStatement(self: *Parser) ParseError!*Node {
     const keyword = try self.consume(.keyword, "Expected 'return'", "return");
     var return_value: ?*Node = null;
     if (!self.checkDelim(";")) {
-        return_value = try expr.parseExpression(self);
+        return_value = if (self.in_type_fn) try types.parseType(self) else try expr.parseExpression(self);
     }
     _ = try self.consume(.delimiter, "Expected ';'", ";");
     return self.create(.{ .return_expr = .{

@@ -1,0 +1,3 @@
+# expect: Type function instantiation too deep
+@func Deep(T: type): type { return Deep(?T); }
+pub @func main() { $x: Deep(i64) = 1; }

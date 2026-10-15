@@ -236,7 +236,7 @@ pub fn compileNew(state: *CompilerState, c: *const ast.Call) !void {
             try zeroFillStruct(state, struct_def);
         },
         .call => {
-            const denoted = if (types.isTypeCall(value)) state.type_call_results.get(value) else null;
+            const denoted = if (types.isTypeCall(state, value)) state.type_call_results.get(value) else null;
             const disp = denoted orelse {
                 return compiler_errors.compileFailFmt(state, "@new expects a type name — value literals are not accepted", .{});
             };

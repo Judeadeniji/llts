@@ -212,6 +212,25 @@ fn parseTypeAtom(self: *Parser) ParseError!*Node {
             .loc = node.loc(),
         } });
     }
+    // `Opt(i64)` / `mod.Opt(?i64)`: a type-function call. Its arguments are
+    // types (type functions take only `type` params), so composites parse here.
+    if (self.checkDelim("(")) {
+        const open = self.advance().?;
+        var args: std.ArrayList(*Node) = .empty;
+        if (!self.checkDelim(")")) {
+            while (true) {
+                try args.append(self.arena, try parseType(self));
+                if (!self.checkDelim(",")) break;
+                _ = self.advance();
+            }
+        }
+        _ = try self.consume(.delimiter, "Expected ')' after type arguments", ")");
+        return self.create(.{ .call = .{
+            .callee = node,
+            .args = try args.toOwnedSlice(self.arena),
+            .loc = self.locOf(open),
+        } });
+    }
     return node;
 }
 

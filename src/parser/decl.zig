@@ -111,6 +111,9 @@ pub fn parseCompilerFunc(self: *Parser) ParseError!*Node {
         return_type = try types.parseType(self);
     }
 
+    const saved_in_type_fn = self.in_type_fn;
+    self.in_type_fn = if (return_type) |rt| rt.* == .primary and std.mem.eql(u8, rt.primary.name, "type") else false;
+    defer self.in_type_fn = saved_in_type_fn;
     const body = try control.parseBlock(self);
     return self.create(.{ .function_decl = .{
         .name = try self.dupe(name.value),

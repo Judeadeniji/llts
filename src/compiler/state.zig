@@ -44,6 +44,20 @@ pub const FunctionDef = struct {
     source_index: u16 = 0,
 };
 
+pub const GenericCall = struct {
+    instance: []const u8,
+    /// The template's `function_decl` node (its params mark which call
+    /// arguments are types and so are dropped at codegen).
+    template: *ast.Node,
+};
+
+pub const PendingInstance = struct {
+    name: []const u8,
+    depth: u32,
+    /// The call that created the instance (reported under errors inside it).
+    site: ast.Location,
+};
+
 pub const StructDef = struct {
     name: []const u8,
     size: i32,
@@ -142,6 +156,24 @@ pub const CompilerState = struct {
     /// typecheck under a function-scoped key (see `local_types.zig`), so the
     /// statement itself compiles to nothing.
     local_type_decls: std.AutoHashMap(*const ast.TypeDecl, void),
+    /// Functions with a `type` param or `: type` return (see `generics.zig`).
+    /// Never typechecked or emitted; only their instances are.
+    templates: std.StringHashMap(*ast.Node),
+    /// `template(qualified type args)` → type display (type functions) or
+    /// instance function name (generic functions).
+    instances: std.StringHashMap([]const u8),
+    /// Generic function instances registered in `functions`.
+    instance_fns: std.StringHashMap(void),
+    /// Call to a generic function → its instance.
+    generic_calls: std.AutoHashMap(*ast.Node, GenericCall),
+    /// Instances created during typecheck, checked before typecheck ends.
+    pending_instances: std.ArrayList(PendingInstance) = .empty,
+    /// Instantiation nesting of the code being checked (0 = not in an instance).
+    instance_depth: u32 = 0,
+    /// Makes type-parameter alias keys unique per instantiation.
+    instance_counter: u32 = 0,
+    /// Owns the AST copies made for instances.
+    generic_arena: std.heap.ArenaAllocator,
     loops: std.ArrayList(LoopTracker) = .empty,
     exprs: std.ArrayList(ExprTracker) = .empty,
     defer_stacks: std.AutoHashMap(i32, std.ArrayListUnmanaged(DeferEntry)),
@@ -215,6 +247,11 @@ pub fn create(allocator: std.mem.Allocator) !CompilerState {
         .error_sets = std.StringHashMap(ErrorSetDef).init(allocator),
         .typedefs = std.StringHashMap(TypeDef).init(allocator),
         .local_type_decls = std.AutoHashMap(*const ast.TypeDecl, void).init(allocator),
+        .templates = std.StringHashMap(*ast.Node).init(allocator),
+        .instances = std.StringHashMap([]const u8).init(allocator),
+        .instance_fns = std.StringHashMap(void).init(allocator),
+        .generic_calls = std.AutoHashMap(*ast.Node, GenericCall).init(allocator),
+        .generic_arena = std.heap.ArenaAllocator.init(allocator),
         .defer_stacks = std.AutoHashMap(i32, std.ArrayListUnmanaged(DeferEntry)).init(allocator),
         .global_vars = std.StringHashMap(void).init(allocator),
         .global_types = std.StringHashMap([]const u8).init(allocator),
@@ -330,6 +367,12 @@ pub fn deinit(self: *CompilerState) void {
     self.error_sets.deinit();
     self.typedefs.deinit();
     self.local_type_decls.deinit();
+    self.templates.deinit();
+    self.instances.deinit();
+    self.instance_fns.deinit();
+    self.generic_calls.deinit();
+    self.pending_instances.deinit(self.allocator);
+    self.generic_arena.deinit();
     var dit = self.defer_stacks.iterator();
     while (dit.next()) |e| e.value_ptr.deinit(self.allocator);
     self.defer_stacks.deinit();

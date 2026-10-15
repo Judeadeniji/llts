@@ -122,7 +122,7 @@ Packed byte heap + honest numeric widths. See [`docs/memory-model.md`](docs/memo
 - [x] **`@typeOf(expr)`** — returns a compile-time `type` value; operand never evaluated.
 - [x] **`@sizeOf(T_or_expr)`** — static sizes for types / typed values; runtime `OP_SIZEOF` fallback (`tests/26_sizeof.test.ts`).
 - [x] **Types as compile-time values** — meta type `type`; `@typeOf(...)` usable anywhere a type is (annotations, params, returns, struct fields, `@alias`, composites, `@as`, `@new`, `@sizeOf`); type `==`/`!=` folded at compile time; type values rejected in runtime slots (`tests/50_type_values.test.ts`, `docs/usage/shapes_and_types.md`).
-- [ ] **User-defined type functions** — `@func f(): type` and `T: type` params (comptime generics); follow-up to type values.
+- [x] **User-defined type functions and generics** — `@func Opt(T: type): type { return ?T; }` evaluated at compile time; `@func max(T: type, a: T, b: T): T` monomorphized per type argument (`src/compiler/generics.zig`, `tests/52_type_functions.test.ts`). Not yet: type params on struct methods, value params on type functions, anonymous struct types.
 - [x] **Local `@type` / `@alias` inside function bodies** — function-scoped; hoisted under a `<fn>::Name` key (`src/compiler/local_types.zig`, `tests/51_local_types.test.ts`).
 - [x] **`@nameOf(enum_or_error)`** — variant/member spelling as declared (`tests/15_enums.test.ts`, `tests/37_error_sets.test.ts`).
 - [x] **`pub` for user files** — private decls stay in-module; relative `./` / `../` imports.
@@ -264,6 +264,6 @@ Preferred tagged-data spelling with `@type`:
 
 - `@while` loops: removed completely (use `@for` with a condition instead).
 - C-style `@for ($i=0; i<N; i=i+1)`: not planned; use `@for (0..N) |i|`.
-- **Generics / symbolic `[N]T` type params** — not planned; array lengths stay numeric literals only. Use interfaces or concrete `Arena` + `[]T` instead.
+- **Symbolic `[N]T` length params** — not planned; array lengths stay numeric literals only. Type parameters (`T: type`) are supported; see type functions above.
 - **Tracing GC** — not planned; use allocators + `defer` instead.
 - **More `@` directives** — not until pointers / remaining language surface needs them.

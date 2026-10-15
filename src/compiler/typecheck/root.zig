@@ -8,6 +8,8 @@ const intrinsics = @import("../intrinsics.zig");
 const compiler_errors = @import("../../errors/compile.zig");
 const widths = @import("../widths.zig");
 const layout = @import("../layout.zig");
+const generics = @import("../generics.zig");
+const report = @import("../../errors/report.zig");
 const cfg_mod = @import("cfg.zig");
 const flow_mod = @import("flow.zig");
 
@@ -1111,6 +1113,9 @@ fn inferExprInner(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, 
                     break :blk try from_ast.parseDisplayType(state, ta, gt, null);
                 }
                 if (try funcTypeOfName(state, ta, p.name)) |ft| break :blk ft;
+                if (state.templates.contains(p.name)) {
+                    return compiler_errors.compileFailFmt(state, "Generic function '{s}' cannot be used as a value; call it with type arguments", .{ir.cleanTypeName(p.name)});
+                }
             }
             break :blk ir.TUnknown;
         },
@@ -1804,6 +1809,15 @@ fn inferCall(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, call_
         return compiler_errors.compileFailFmt(state, "Unknown intrinsic '{s}'", .{name});
     }
 
+    if (resolveCalleeName(state, c)) |callee_name| {
+        if (state.templates.get(callee_name)) |template| {
+            if (generics.returnsType(&template.function_decl)) {
+                return try inferTypeFunctionCall(state, env, ta, call_node, c, callee_name, template);
+            }
+            return try inferGenericCall(state, env, ta, call_node, c, callee_name, template);
+        }
+    }
+
     // `T(x)` cast sugar ≡ `@as(T, x)` when T is a type and not a function.
     if (try intrinsics.tryTypeCastCall(state, c)) |type_node| {
         return try intrinsics.typecheckCast(state, env, ta, type_node, c.args[0]);
@@ -1912,6 +1926,167 @@ fn inferCall(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, call_
     }
     for (c.args) |a| _ = try inferExpr(state, env, ta, a);
     return ir.TUnknown;
+}
+
+/// Denote the arguments in a template's `type` param positions.
+fn collectTypeArgs(
+    state: *state_mod.CompilerState,
+    env: *Env,
+    ta: ir.TypeAlloc,
+    c: *const ast.Call,
+    name: []const u8,
+    template: *ast.Node,
+    qualified: *std.ArrayList([]const u8),
+    clean: *std.ArrayList([]const u8),
+) TypecheckError!void {
+    const ps = generics.params(&template.function_decl);
+    const shown = ir.cleanTypeName(name);
+    if (c.args.len != ps.len) {
+        return compiler_errors.compileFailFmt(state, "Function '{s}' expected {d} arguments, got {d}", .{ shown, ps.len, c.args.len });
+    }
+    for (ps, c.args, 0..) |p, a, i| {
+        if (!generics.isTypeParam(p)) continue;
+        noteDiag(state, a);
+        if (!intrinsics.isTypeValueNode(state, env, a)) {
+            return compiler_errors.compileFailFmt(state, "Argument {d} of '{s}' must be a type", .{ i + 1, shown });
+        }
+        const t = try intrinsics.denotedType(state, env, ta, a);
+        if (ir.involvesUnknown(t)) {
+            return compiler_errors.compileFailFmt(state, "Argument {d} of '{s}': the type is not known here", .{ i + 1, shown });
+        }
+        try qualified.append(ta.allocator, try ownDisplayQualified(state, t));
+        try clean.append(ta.allocator, try ownDisplay(state, t));
+    }
+}
+
+/// `Opt(i64)`: evaluate the type function at compile time (memoized per
+/// argument list) and record the resulting type for the call node.
+fn inferTypeFunctionCall(
+    state: *state_mod.CompilerState,
+    env: *Env,
+    ta: ir.TypeAlloc,
+    call_node: *ast.Node,
+    c: *const ast.Call,
+    name: []const u8,
+    template: *ast.Node,
+) TypecheckError!ir.Type {
+    var qualified: std.ArrayList([]const u8) = .empty;
+    defer qualified.deinit(ta.allocator);
+    var clean: std.ArrayList([]const u8) = .empty;
+    defer clean.deinit(ta.allocator);
+    try collectTypeArgs(state, env, ta, c, name, template, &qualified, &clean);
+
+    const memo = try generics.memoKey(state, name, qualified.items);
+    const disp = state.instances.get(memo) orelse blk: {
+        if (state.instance_depth >= generics.max_depth) {
+            return compiler_errors.compileFailFmt(state, "Type function instantiation too deep (instantiating '{s}')", .{memo});
+        }
+        const copy = try generics.bindCopy(state, template, name, qualified.items);
+        state.instance_depth += 1;
+        defer state.instance_depth -= 1;
+        var fenv = Env.init(ta.allocator);
+        defer fenv.deinit();
+        fenv.decl_globals = env.decl_globals;
+        const result = (try evalTypeBody(state, &fenv, ta, copy.function_decl.body, name)) orelse {
+            noteDiag(state, template);
+            return compiler_errors.compileFailFmt(state, "Type function '{s}' did not return a type", .{ir.cleanTypeName(name)});
+        };
+        const d = try ownDisplayQualified(state, result);
+        try state.instances.put(memo, d);
+        break :blk d;
+    };
+    try state.type_call_results.put(call_node, disp);
+    return ir.TType;
+}
+
+/// First `return` reached in a type function body. Only `return <type>`,
+/// `@if` on folded type comparisons, and local typedefs are allowed.
+fn evalTypeBody(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node: *ast.Node, name: []const u8) TypecheckError!?ir.Type {
+    noteDiag(state, node);
+    const shown = ir.cleanTypeName(name);
+    switch (node.*) {
+        .block => |b| {
+            for (b.statements) |s| {
+                if (try evalTypeBody(state, env, ta, s, name)) |t| return t;
+            }
+            return null;
+        },
+        .type_decl => return null,
+        .return_expr => |r| {
+            const v = r.return_value orelse {
+                return compiler_errors.compileFailFmt(state, "Type function '{s}' must return a type", .{shown});
+            };
+            try intrinsics.resolveTypeExprs(state, env, ta, v);
+            if (!intrinsics.isTypeValueNode(state, env, v)) {
+                return compiler_errors.compileFailFmt(state, "Type function '{s}' must return a type", .{shown});
+            }
+            const t = try intrinsics.denotedType(state, env, ta, v);
+            if (ir.involvesUnknown(t)) {
+                return compiler_errors.compileFailFmt(state, "Type function '{s}' returned a type that is not known here", .{shown});
+            }
+            return t;
+        },
+        .if_expr => |i| {
+            _ = try inferExpr(state, env, ta, i.condition);
+            const taken: ?bool = switch (i.condition.*) {
+                .binary => |b| state.type_eq_folds.get(b.left),
+                .literal => |l| if (l.literal_type == .boolean) std.mem.eql(u8, l.value, "true") else null,
+                else => null,
+            };
+            const go = taken orelse {
+                noteDiag(state, i.condition);
+                return compiler_errors.compileFailFmt(state, "Type function '{s}': an @if condition must compare types", .{shown});
+            };
+            if (go) return try evalTypeBody(state, env, ta, i.body, name);
+            if (i.else_body) |e| return try evalTypeBody(state, env, ta, e, name);
+            return null;
+        },
+        else => return compiler_errors.compileFailFmt(
+            state,
+            "Type function '{s}' may only contain 'return', '@if' on types, and '@alias'/'@type'",
+            .{shown},
+        ),
+    }
+}
+
+/// `max(i64, a, b)`: instantiate for the type arguments, then check the value
+/// arguments against the instance's signature.
+fn inferGenericCall(
+    state: *state_mod.CompilerState,
+    env: *Env,
+    ta: ir.TypeAlloc,
+    call_node: *ast.Node,
+    c: *const ast.Call,
+    name: []const u8,
+    template: *ast.Node,
+) TypecheckError!ir.Type {
+    var qualified: std.ArrayList([]const u8) = .empty;
+    defer qualified.deinit(ta.allocator);
+    var clean: std.ArrayList([]const u8) = .empty;
+    defer clean.deinit(ta.allocator);
+    try collectTypeArgs(state, env, ta, c, name, template, &qualified, &clean);
+
+    const inst = try generics.instantiateFunction(state, name, template, qualified.items, clean.items, call_node.loc());
+    try state.generic_calls.put(call_node, .{ .instance = inst, .template = template });
+
+    var params: std.ArrayList(ir.Type) = .empty;
+    defer params.deinit(ta.allocator);
+    var rest: ?ir.Type = null;
+    var variadic = false;
+    _ = try fnParamTypes(state, ta, inst, &params, &rest, &variadic);
+
+    var vi: usize = 0;
+    for (generics.params(&template.function_decl), c.args, 0..) |p, a, i| {
+        if (generics.isTypeParam(p)) continue;
+        const at = try inferExpr(state, env, ta, a);
+        if (vi < params.items.len) {
+            var ctx_buf: [96]u8 = undefined;
+            const ctx = std.fmt.bufPrint(&ctx_buf, "argument {d} of '{s}'", .{ i + 1, ir.cleanTypeName(name) }) catch "argument";
+            try requireAssignFrom(state, at, params.items[vi], ctx, a);
+        }
+        vi += 1;
+    }
+    return try fnReturnType(state, ta, inst);
 }
 
 fn checkFuncValueCall(
@@ -2713,6 +2888,7 @@ pub fn typecheck(state: *state_mod.CompilerState, doc: *ast.Document) TypecheckE
 
     for (doc.statements) |s| {
         if (s.* == .function_decl) {
+            if (state.templates.contains(s.function_decl.name)) continue;
             try resolveSignatureTypes(state, &decl_env, ta, &s.function_decl);
         } else if (s.* == .struct_decl) {
             for (s.struct_decl.methods) |m| {
@@ -2732,6 +2908,7 @@ pub fn typecheck(state: *state_mod.CompilerState, doc: *ast.Document) TypecheckE
 
     for (doc.statements) |s| {
         if (s.* == .function_decl) {
+            if (state.templates.contains(s.function_decl.name)) continue;
             try checkFunction(state, ta, &s.function_decl, &top_consts, &decl_env.globals);
         } else if (s.* == .struct_decl) {
             for (s.struct_decl.methods) |m| {
@@ -2784,4 +2961,22 @@ pub fn typecheck(state: *state_mod.CompilerState, doc: *ast.Document) TypecheckE
             else => _ = try checkStmt(state, &env, ta, s),
         }
     }
+
+    // Generic instances queued by the calls above (and by each other).
+    while (state.pending_instances.items.len > 0) {
+        const p = state.pending_instances.orderedRemove(0);
+        const f = &state.functions.get(p.name).?.node.function_decl;
+        const saved_depth = state.instance_depth;
+        state.instance_depth = p.depth;
+        defer state.instance_depth = saved_depth;
+        resolveSignatureTypes(state, &decl_env, ta, f) catch |e| return instantiationFailed(p, e);
+        checkFunction(state, ta, f, &top_consts, &decl_env.globals) catch |e| return instantiationFailed(p, e);
+    }
+}
+
+fn instantiationFailed(p: state_mod.PendingInstance, err: TypecheckError) TypecheckError {
+    var buf: [256]u8 = undefined;
+    const label = std.fmt.bufPrint(&buf, "instantiation of '{s}'", .{p.name}) catch "instantiation";
+    report.reportLocationFrameCol(p.site.path, p.site.line, p.site.column, label);
+    return err;
 }

@@ -48,6 +48,9 @@ pub fn compute(state: *CompilerState, doc: *ast.Document) !Result {
     if (state.functions.contains("main")) {
         try enqueueFunction(&result, &work, "main");
     }
+    // Generic instances exist only because typecheck saw a call to them.
+    var iit = state.instance_fns.keyIterator();
+    while (iit.next()) |name| try enqueueFunction(&result, &work, name.*);
 
     for (doc.statements) |s| {
         if (s.* == .function_decl or s.* == .struct_decl or s.* == .enum_decl or s.* == .error_decl) continue;

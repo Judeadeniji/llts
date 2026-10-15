@@ -7,6 +7,7 @@ const chunk_mod = @import("../bytecode/chunk.zig");
 const emit = @import("emit.zig");
 const modules = @import("modules.zig");
 const local_types = @import("local_types.zig");
+const generics = @import("generics.zig");
 const scope = @import("scope.zig");
 pub const state_mod = @import("state.zig");
 const stmt = @import("stmt/root.zig");
@@ -502,9 +503,17 @@ fn sourceTextForPath(state: *state_mod.CompilerState, path: []const u8) []const 
     return state.chunk.source;
 }
 
+/// Register a function node built after `registerFunctions` (generic instances).
+pub fn registerFunction(state: *state_mod.CompilerState, node: *ast.Node) anyerror!void {
+    try collectFuncs(state, node, null);
+}
+
 fn collectFuncs(state: *state_mod.CompilerState, node: *ast.Node, struct_name: ?[]const u8) !void {
     switch (node.*) {
         .function_decl => |*fn_decl| {
+            if (generics.isTemplate(fn_decl)) {
+                return generics.registerTemplate(state, node, struct_name != null);
+            }
             if (struct_name) |sn| {
                 if (std.mem.indexOf(u8, fn_decl.name, "::") == null) {
                     const mangled = try std.fmt.allocPrint(state.allocator, "{s}::{s}", .{ sn, fn_decl.name });

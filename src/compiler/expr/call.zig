@@ -6,7 +6,9 @@ const expr = @import("root.zig");
 const path = @import("path.zig");
 
 const types = @import("../typecheck/from_ast.zig");
+const ir = @import("../typecheck/ir.zig");
 const intrinsics = @import("../intrinsics.zig");
+const generics = @import("../generics.zig");
 
 const CompilerState = state_mod.CompilerState;
 
@@ -27,6 +29,28 @@ pub fn compileCall(state: *CompilerState, c: *const ast.Call, node: *ast.Node) !
             return;
         }
         return @import("../../errors/compile.zig").compileFailFmt(state, "Unknown intrinsic '{s}'", .{name});
+    }
+
+    // Generic call: the instance takes only the value arguments.
+    if (state.generic_calls.get(node)) |gc| {
+        var value_args: std.ArrayList(*ast.Node) = .empty;
+        defer value_args.deinit(state.allocator);
+        for (generics.params(&gc.template.function_decl), c.args) |p, a| {
+            if (!generics.isTypeParam(p)) try value_args.append(state.allocator, a);
+        }
+        if (try emitNamedCall(state, gc.instance, value_args.items, false, null)) return;
+        return @import("../../errors/compile.zig").compileFailFmt(state, "Internal error: missing generic instance '{s}'", .{gc.instance});
+    }
+
+    // Type-function call used as a value (`print(Opt(i64))`): its name.
+    if (types.isTypeCall(state, node)) {
+        const disp = state.type_call_results.get(node) orelse "unknown";
+        var arena = std.heap.ArenaAllocator.init(state.allocator);
+        defer arena.deinit();
+        const ta = ir.TypeAlloc{ .allocator = arena.allocator() };
+        const t = try types.parseDisplayType(state, ta, disp, null);
+        try emit.emitString(state, try ir.displayTypeAlloc(arena.allocator(), t));
+        return;
     }
 
     // `T(x)` cast sugar ≡ `@as(T, x)`.

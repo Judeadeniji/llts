@@ -168,7 +168,7 @@ pub fn typecheck(state: *CompilerState, env: *typecheck_root.Env, ta: ir.TypeAll
                     break :blk try from_ast.typeFromAst(v, state, ta);
                 },
                 .call => blk: {
-                    if (!from_ast.isTypeCall(v)) break :blk try typecheck_root.inferExpr(state, env, ta, v);
+                    if (!from_ast.isTypeCall(state, v)) break :blk try typecheck_root.inferExpr(state, env, ta, v);
                     try resolveTypeExprs(state, env, ta, v);
                     break :blk try from_ast.typeFromAst(v, state, ta);
                 },
@@ -324,7 +324,7 @@ fn isEnumOrErrorMember(state: *CompilerState, node: *ast.Node) bool {
 
 /// A node used as a `type` value: a type-returning call or a bare type expression.
 pub fn isTypeValueNode(state: *CompilerState, env: *typecheck_root.Env, node: *ast.Node) bool {
-    return from_ast.isTypeCall(node) or isBareTypeNode(state, env, node);
+    return from_ast.isTypeCall(state, node) or isBareTypeNode(state, env, node);
 }
 
 /// Record the type a type-valued node denotes (read back by `typeFromAst`).
@@ -334,7 +334,7 @@ pub fn recordTypeValue(state: *CompilerState, node: *ast.Node, t: ir.Type) !void
 
 /// The type denoted by a type-valued node (see `isTypeValueNode`).
 pub fn denotedType(state: *CompilerState, env: *typecheck_root.Env, ta: ir.TypeAlloc, node: *ast.Node) !ir.Type {
-    if (from_ast.isTypeCall(node)) {
+    if (from_ast.isTypeCall(state, node)) {
         _ = try typecheck_root.inferExpr(state, env, ta, node);
         const disp = state.type_call_results.get(node) orelse return ir.TUnknown;
         return try from_ast.parseDisplayType(state, ta, disp, null);

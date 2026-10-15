@@ -96,15 +96,24 @@ pub fn typeFromAst(node: ?*ast.Node, state: ?*state_mod.CompilerState, ta: ir.Ty
 /// Intrinsics whose result is a `type` value.
 const type_returning_intrinsics = [_][]const u8{"@typeOf"};
 
-/// `@typeOf(...)` and any other intrinsic call that yields a `type`.
-pub fn isTypeCall(node: *const ast.Node) bool {
+/// `@typeOf(...)`, any other intrinsic call that yields a `type`, or a call to
+/// a user type function (`Opt(i64)`).
+pub fn isTypeCall(state: ?*state_mod.CompilerState, node: *const ast.Node) bool {
     if (node.* != .call) return false;
     const callee = node.call.callee;
-    if (callee.* != .primary) return false;
-    for (type_returning_intrinsics) |name| {
-        if (std.mem.eql(u8, callee.primary.name, name)) return true;
+    if (callee.* == .primary) {
+        for (type_returning_intrinsics) |name| {
+            if (std.mem.eql(u8, callee.primary.name, name)) return true;
+        }
     }
-    return false;
+    const st = state orelse return false;
+    const name = if (callee.* == .primary)
+        callee.primary.name
+    else
+        (expr_path.tryResolveStaticPath(st, callee) catch null) orelse return false;
+    const template = st.templates.get(name) orelse return false;
+    const rt = template.function_decl.return_type orelse return false;
+    return rt.* == .primary and std.mem.eql(u8, rt.primary.name, "type");
 }
 
 /// True when a type AST contains a call node anywhere (e.g. `?@typeOf(x)`).
@@ -1019,7 +1028,10 @@ pub fn resolveType(state: *state_mod.CompilerState, node: *ast.Node) ?[]const u8
             break :blk struct_def.types.get(m.property.primary.name);
         },
         .call => |c| blk: {
-            if (isTypeCall(node)) break :blk "type";
+            if (isTypeCall(state, node)) break :blk "type";
+            if (state.generic_calls.get(node)) |gc| {
+                if (state.functions.get(gc.instance)) |def| break :blk def.return_type;
+            }
             // `@as(T, v)` / `T(v)` cast: the result's static type is T. Member access
             // on the cast result needs this to emit typed field loads (otherwise the
             // value stays `unknown` and falls back to dynamic GET_PROPERTY).

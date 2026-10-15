@@ -163,6 +163,50 @@ $p = @new(arena, @typeOf(proto));      # *N
 - In declarations (struct fields, typedefs, function signatures) the operand must have a statically known type: an annotated global, or one initialized with a literal. Otherwise you get "Cannot resolve this type here"; add an annotation.
 - `print` of a type value prints its name.
 
+## Type functions and generics
+
+A function with a `type` parameter or a `: type` return is evaluated at compile time. There are two kinds.
+
+**Type functions** return a type. They take only `type` parameters, and their body may contain only `return`, `@if` on types, and local `@alias` / `@type`. A call can appear anywhere a type can:
+
+```llts
+@func Opt(T: type): type { return ?T; }
+@func Wide(T: type): type {
+    @if (T == u8) { return u16; }
+    return T;
+}
+
+@alias OI = Opt(i64);
+@struct Holder { v: Wide(u8); w: i64; }
+@func take(o: Opt(i64)): i64 { ... }
+
+$x: Opt(i64) = null;
+print(Wide(u8));             # u16
+print(Opt(u8) == ?u8);       # true
+```
+
+**Generic functions** take one or more `type` parameters next to ordinary ones. Each distinct set of type arguments produces its own compiled copy (monomorphization); the type arguments are passed first-class at the call site and erased at runtime:
+
+```llts
+@func max(T: type, a: T, b: T): T {
+    @if (a > b) { return a; }
+    return b;
+}
+
+print(max(i64, 3, 9));       # 9
+print(max(f64, 2.5, 1.5));   # 2.5
+$m = max(u8, 1, 2);          # m: u8
+```
+
+Inside the body a type parameter behaves like a transparent `@alias`: it can annotate locals, feed `@sizeOf`, and be printed. Value arguments are checked against the instantiated signature, so `max(i64, 1, true)` is a type error.
+
+**Rules:**
+
+- Instances are memoized by type arguments; `Opt(i64)` and `?i64` are the same type.
+- A generic function cannot be used as a value (`$f = max` is an error); call it with type arguments.
+- Struct methods cannot take type parameters yet.
+- Instantiation that never terminates (e.g. `rec([]T, n)` calling itself) stops at depth 64 with an error.
+
 ## When runtime is the same
 
 For a data-only product with no methods:

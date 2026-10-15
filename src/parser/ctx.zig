@@ -20,6 +20,8 @@ pub const Parser = struct {
     source: []const u8,
     arena: std.mem.Allocator,
     diagnostics: ?*std.ArrayList(ast.Diagnostic) = null,
+    /// Inside a function declared `: type`, `return` takes a type expression.
+    in_type_fn: bool = false,
 
     pub fn peek(self: *const Parser, step: usize) ?Token {
         const i = self.current + step;
