@@ -412,3 +412,94 @@ arr[1] = 42;
 print(arr[1]);
 `), "Cannot mutate elements of constant 'arr'");
 });
+
+// ---------------------------------------------------------------------------
+// Method-call receiver constness (P0)
+// ---------------------------------------------------------------------------
+
+test("mutating method call on @const receiver is rejected (unannotated self)", () => {
+  expectError(runSource(`
+@struct Point {
+    x: int;
+
+    @func shift(self, dx: int) {
+        self.x = self.x + dx;
+    }
+}
+
+@const $ORIGIN = Point{x: 0};
+ORIGIN.shift(5);
+print(ORIGIN.x);
+`), "Method might mutate constant 'ORIGIN'");
+});
+
+test("mutating method call on @const receiver is rejected (self: *T)", () => {
+  expectError(runSource(`
+@struct Point {
+    x: int;
+
+    @func shift(self: *Point, dx: int) {
+        self.x = self.x + dx;
+    }
+}
+
+@const $ORIGIN = Point{x: 0};
+ORIGIN.shift(5);
+print(ORIGIN.x);
+`), "Method might mutate constant 'ORIGIN'");
+});
+
+test("by-value self method on @const receiver is allowed", () => {
+  expectOutput(runSource(`
+@struct Point {
+    x: int;
+
+    @func shiftVal(self: Point, dx: int): int {
+        return self.x + dx;
+    }
+}
+
+@const $ORIGIN = Point{x: 5};
+print(ORIGIN.shiftVal(10));
+`), ["15"]);
+});
+
+test("no-self method on @const receiver is allowed", () => {
+  expectOutput(runSource(`
+@struct Point {
+    x: int;
+
+    @func getX(): int {
+        return 42;
+    }
+}
+
+@const $ORIGIN = Point{x: 5};
+print(ORIGIN.getX());
+`), ["42"]);
+});
+
+test("struct assignment copies; alias cannot mutate @const through handle", () => {
+  expectOutput(runSource(`
+@struct Point {
+    x: int;
+}
+@const $ORIGIN = Point{x: 0};
+$a = ORIGIN;
+a.x = 99;
+print(ORIGIN.x);
+print(a.x);
+`), ["0", "99"]);
+});
+
+test("pointer assignment still shares handle", () => {
+  expectOutput(runSource(`
+@struct Point {
+    x: int;
+}
+$p = Point{x: 1};
+$pp = &p;
+pp.x = 42;
+print(p.x);
+`), ["42"]);
+});

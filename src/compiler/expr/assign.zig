@@ -49,6 +49,36 @@ fn isConstBinding(state: *CompilerState, name: []const u8) bool {
     return false;
 }
 
+/// True when the node is a binding reference (primary / member access) whose
+/// resolved type is a bare struct value. Pointers (`*T`) and optionals of
+/// pointers (`?*T`) share handles by design — only struct values clone.
+fn shouldCloneStructValue(state: *CompilerState, node: *ast.Node) bool {
+    switch (node.*) {
+        .primary, .member => {},
+        else => return false,
+    }
+    const tn = types.resolveType(state, node) orelse return false;
+    // Skip pointer and optional types — those share handles.
+    const trimmed = std.mem.trim(u8, tn, " \t");
+    if (trimmed.len > 0 and (trimmed[0] == '*' or trimmed[0] == '?')) return false;
+    if (std.mem.indexOfScalar(u8, trimmed, '*') != null) return false;
+    if (std.mem.indexOf(u8, trimmed, " | null") != null) return false;
+    return types.lookupStruct(state, tn) != null;
+}
+
+/// Emit the RHS of a plain (non-compound) assignment. Struct bindings are
+/// cloned so re-assignment copies; sharing requires explicit `*T` / `&x`.
+fn emitValueRHS(state: *CompilerState, right: *ast.Node) !void {
+    if (shouldCloneStructValue(state, right)) {
+        try emit.emitNameGet(state, .OP_GET_GLOBAL, "__cloneBytes");
+        try expr.compileExpression(state, right);
+        try emit.emitOp(state, .OP_CALL);
+        try emit.emitByte(state, 1);
+    } else {
+        try expr.compileExpression(state, right);
+    }
+}
+
 fn assignIndex(state: *CompilerState, idx: *const ast.Index, right: *ast.Node, arith: ?OpCode) !void {
     if (idx.is_slice) {
         return compile_errors.compileFailFmt(state, "Cannot assign to a slice view", .{});
@@ -154,7 +184,7 @@ fn assignMember(state: *CompilerState, mem: *const ast.Member, node: *ast.Node, 
                     try emit.emitOp(state, op);
                 } else {
                     try expr.compileExpression(state, mem.object);
-                    try expr.compileExpression(state, right);
+                    try emitValueRHS(state, right);
                 }
                 if (layout.widthFromFieldKind(@enumFromInt(kind))) |w| {
                     try emit.emitOp(state, .OP_AS);
@@ -218,7 +248,7 @@ fn assignStaticGlobal(state: *CompilerState, key: []const u8, right: *ast.Node, 
         try expr.compileExpression(state, right);
         try emit.emitOp(state, op);
     } else {
-        try expr.compileExpression(state, right);
+        try emitValueRHS(state, right);
     }
     try emit.emitNameGet(state, .OP_SET_GLOBAL, key);
 }
@@ -236,7 +266,7 @@ fn assignPrimary(state: *CompilerState, prim: *const ast.Primary, right: *ast.No
         try expr.compileExpression(state, right);
         try emit.emitOp(state, op);
     } else {
-        try expr.compileExpression(state, right);
+        try emitValueRHS(state, right);
     }
     if (local_arg != -1) {
         if (state.locals.items[@intCast(local_arg)].type_name) |tn| {

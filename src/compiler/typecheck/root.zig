@@ -874,6 +874,26 @@ fn resolveMethodCallee(
     return .{ .name = method_name, .receiver = mem.object };
 }
 
+/// True when the method's `self` param is a pointer to the struct:
+/// unannotated (defaults to *T) or explicitly `*T`. A by-value `self: T`
+/// (or no self at all) cannot mutate the caller's original.
+fn methodSelfIsPointerLike(state: *state_mod.CompilerState, method_name: []const u8) bool {
+    const def = state.functions.get(method_name) orelse return false;
+    if (def.node.* != .function_decl) return false;
+    const f = &def.node.function_decl;
+    const plist = switch (f.params.*) {
+        .params => |p| p.params,
+        else => return false,
+    };
+    if (plist.len == 0) return false;
+    const self_param = plist[0];
+    if (!std.mem.eql(u8, self_param.name, "self")) return false;
+    // Unannotated self defaults to *T → pointer-like.
+    const ann = self_param.type_annotation orelse return true;
+    const disp = from_ast.typeAstToDisplay(ann, state) catch return true;
+    return disp == null or (disp.?.len > 0 and disp.?[0] == '*');
+}
+
 fn fnParamTypes(state: *state_mod.CompilerState, ta: ir.TypeAlloc, func_name: []const u8, out_params: *std.ArrayList(ir.Type), out_rest: *?ir.Type, out_variadic: *bool) !bool {
     const def = state.functions.get(func_name) orelse return false;
     if (def.node.* != .function_decl) return false;
@@ -1438,7 +1458,7 @@ fn inferExprInner(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, 
                 }
                 if (a.left.index.object.* == .primary) {
                     const obj_name = a.left.index.object.primary.name;
-                    if (env.hasConstName(obj_name) or (obj_name.len > 0 and obj_name[0] == '$' and env.hasConstName(obj_name[1..]))) {
+                    if (!env.isLocalBinding(obj_name) and (env.hasConstName(obj_name) or (obj_name.len > 0 and obj_name[0] == '$' and env.hasConstName(obj_name[1..])))) {
                         return compiler_errors.compileFailFmt(state, "Cannot mutate elements of constant '{s}'", .{obj_name});
                     }
                 }
@@ -1770,6 +1790,17 @@ fn inferCall(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, call_
                 break :blk false;
             };
             if (method) |m| {
+                // Const-receiver check: a pointer-like self (unannotated or *T)
+                // can mutate the receiver. By-value self (T) clones; no self
+                // has no receiver handle and can't mutate.
+                if (m.receiver.* == .primary) {
+                    const recv_name = m.receiver.primary.name;
+                    if (!env.isLocalBinding(recv_name) and env.hasConstName(recv_name)) {
+                        if (methodSelfIsPointerLike(state, m.name)) {
+                            return compiler_errors.compileFailFmt(state, "Method might mutate constant '{s}'", .{ recv_name });
+                        }
+                    }
+                }
                 // Receiver is prepended; user args must match params after self.
                 const expected_user = if (named_count > 0) named_count - 1 else 0;
                 if (!variadic and rest == null and any_annotated and c.args.len != expected_user) {

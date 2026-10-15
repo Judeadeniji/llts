@@ -59,6 +59,13 @@ pub fn compileDeclaration(state: *CompilerState, decl: *const ast.Declaration) !
 
     if (comptime_value) |cval| {
         try const_eval.emitConstValue(state, cval);
+    } else if (shouldCloneStructValue(state, decl.value)) {
+        // Struct binding reference — clone so the declaration copies;
+        // sharing requires explicit `*T` / `&x`.
+        try emit.emitNameGet(state, .OP_GET_GLOBAL, "__cloneBytes");
+        try expr.compileExpression(state, decl.value);
+        try emit.emitOp(state, .OP_CALL);
+        try emit.emitByte(state, 1);
     } else {
         try expr.compileExpression(state, decl.value);
     }
@@ -463,4 +470,21 @@ fn widthCastKind(node: *ast.Node) ?u8 {
         return @intFromEnum(w);
     }
     return null;
+}
+
+/// True when the node is a binding reference (primary / member access) whose
+/// resolved type is a bare struct value. Pointers (`*T`) and optionals of
+/// pointers (`?*T`) share handles by design — only struct values clone.
+fn shouldCloneStructValue(state: *CompilerState, node: *ast.Node) bool {
+    switch (node.*) {
+        .primary, .member => {},
+        else => return false,
+    }
+    const tn = types.resolveType(state, node) orelse return false;
+    // Skip pointer and optional types — those share handles.
+    const trimmed = std.mem.trim(u8, tn, " \t");
+    if (trimmed.len > 0 and (trimmed[0] == '*' or trimmed[0] == '?')) return false;
+    if (std.mem.indexOfScalar(u8, trimmed, '*') != null) return false;
+    if (std.mem.indexOf(u8, trimmed, " | null") != null) return false;
+    return types.lookupStruct(state, tn) != null;
 }

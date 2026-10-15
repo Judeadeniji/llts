@@ -99,6 +99,14 @@ fn arrayElemDisplay(disp: []const u8) ?[]const u8 {
 }
 
 fn emitMethodCall(state: *CompilerState, name: []const u8, self_obj: *ast.Node, args: []*ast.Node) !void {
+    // Const-receiver check: pointer-like self (unannotated or *T) can mutate
+    // the receiver. By-value self (T) clones; no self has no receiver handle.
+    if (self_obj.* == .primary) {
+        const recv_name = self_obj.primary.name;
+        if (isConstBinding(state, recv_name) and methodSelfIsPointerLike(state, name)) {
+            return @import("../../errors/compile.zig").compileFailFmt(state, "Method might mutate constant '{s}'", .{ recv_name });
+        }
+    }
     const argc: u8 = @intCast(args.len + 1);
     const addr: ?u32 = if (state.functions.getPtr(name)) |def|
         def.address
@@ -141,6 +149,35 @@ fn methodSelfIsByValue(state: *CompilerState, name: []const u8) !bool {
     const ann = self_param.type_annotation orelse return false;
     const disp = (try types.typeAstToDisplay(ann, state)) orelse return false;
     return disp.len == 0 or disp[0] != '*';
+}
+
+/// True when `name` is a const binding (global const, not a function local).
+fn isConstBinding(state: *CompilerState, name: []const u8) bool {
+    const local_arg = @import("../scope.zig").resolveLocal(state, name);
+    if (local_arg != -1) {
+        return state.locals.items[@intCast(local_arg)].is_const;
+    }
+    if (state.global_consts.contains(name)) return true;
+    if (name.len > 0 and name[0] == '$' and state.global_consts.contains(name[1..])) return true;
+    return false;
+}
+
+/// True when the method's `self` is a pointer (unannotated or *T).
+fn methodSelfIsPointerLike(state: *CompilerState, name: []const u8) bool {
+    const def = state.functions.get(name) orelse return false;
+    if (def.node.* != .function_decl) return false;
+    const f = &def.node.function_decl;
+    const plist = switch (f.params.*) {
+        .params => |p| p.params,
+        else => return false,
+    };
+    if (plist.len == 0) return false;
+    const self_param = plist[0];
+    if (!std.mem.eql(u8, self_param.name, "self")) return false;
+    // Unannotated self defaults to *T → pointer-like.
+    const ann = self_param.type_annotation orelse return true;
+    const disp = types.typeAstToDisplay(ann, state) catch return true;
+    return disp == null or (disp.?.len > 0 and disp.?[0] == '*');
 }
 
 fn emitNamedCall(state: *CompilerState, name: []const u8, args: []*ast.Node, _: bool, _: ?*ast.Node) !bool {
