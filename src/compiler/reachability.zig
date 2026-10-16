@@ -3,6 +3,9 @@ const ast = @import("../ast/root.zig");
 const state_mod = @import("state.zig");
 const path = @import("expr/path.zig");
 const types = @import("typecheck/from_ast.zig");
+const scanner = @import("../scanner/root.zig");
+const parser = @import("../parser/root.zig");
+const compiler = @import("root.zig");
 
 const CompilerState = state_mod.CompilerState;
 
@@ -442,10 +445,6 @@ test "reachability keeps only called std/slog function" {
         \\
     ;
 
-    const scanner = @import("../scanner/root.zig");
-    const parser = @import("../parser/root.zig");
-    const compiler = @import("root.zig");
-
     var scan_result = try scanner.scan(allocator, source, "test.lls");
     defer scanner.deinitScanResult(&scan_result);
 
@@ -467,10 +466,6 @@ test "native print does not pull in std/io print" {
         \\pub @func main() {}
         \\
     ;
-
-    const scanner = @import("../scanner/root.zig");
-    const parser = @import("../parser/root.zig");
-    const compiler = @import("root.zig");
 
     var scan_result = try scanner.scan(allocator, source, "test.lls");
     defer scanner.deinitScanResult(&scan_result);

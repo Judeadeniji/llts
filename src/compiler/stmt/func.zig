@@ -6,9 +6,11 @@ const state_mod = @import("../state.zig");
 const expr = @import("../expr/root.zig");
 const stmt = @import("root.zig");
 const layout = @import("../layout.zig");
+const escape = @import("../escape.zig");
+const compile_errors = @import("../../errors/compile.zig");
+const from_ast = @import("../typecheck/from_ast.zig");
 
 const CompilerState = state_mod.CompilerState;
-const from_ast = @import("../typecheck/from_ast.zig");
 
 pub fn compileBlock(state: *CompilerState, block: *const ast.Block) !void {
     try scope.beginScope(state);
@@ -22,7 +24,6 @@ pub fn compileDefer(state: *CompilerState, def: *const ast.Defer) !void {
 
 pub fn compileReturn(state: *CompilerState, ret: *const ast.Return) !void {
     if (ret.return_value) |v| {
-        const escape = @import("../escape.zig");
         try escape.checkReturnValue(state, v);
         // Bare `return Foo{…}` / `[…]` → immortal (same as module init), not frame bump.
         const prev_immortal = state.alloc_immortal;
@@ -83,7 +84,6 @@ fn emitDeepClone(state: *CompilerState, v: *ast.Node, tn: []const u8) !void {
 /// Emit deep clone of the struct in local `src_idx` of type `tn`.
 /// Leaves the clone handle on the stack.
 fn emitDeepCloneFromLocal(state: *CompilerState, src_idx: u8, tn: []const u8) !void {
-    const escape = @import("../escape.zig");
     // Save compiler locals length so temp slots don't leak into subsequent code.
     const saved_len = state.locals.items.len;
     defer state.locals.shrinkRetainingCapacity(saved_len);
@@ -212,5 +212,5 @@ fn pushParam(state: *CompilerState, p: ast.Param, method_struct: ?[]const u8) !v
 }
 
 fn fail(state: *CompilerState, msg: []const u8) error{CompileError} {
-    return @import("../../errors/compile.zig").compileFailFmt(state, "{s}", .{msg});
+    return compile_errors.compileFailFmt(state, "{s}", .{msg});
 }

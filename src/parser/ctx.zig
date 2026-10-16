@@ -1,6 +1,7 @@
 const std = @import("std");
 const tokens_mod = @import("../scanner/tokens.zig");
 const ast = @import("../ast/root.zig");
+const report = @import("../errors/report.zig");
 
 pub const Token = tokens_mod.Token;
 pub const TokenType = tokens_mod.TokenType;
@@ -104,7 +105,6 @@ pub const Parser = struct {
             return error.ParseFailed;
         }
 
-        const report = @import("../errors/report.zig");
         report.reportSourceError(self.path, self.source, token.line, token.column, message);
         report.reportLocationFrameCol(self.path, token.line, token.column, "<parse>");
         return error.ParseFailed;

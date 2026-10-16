@@ -3,6 +3,8 @@ const ast = @import("../ast/root.zig");
 const state_mod = @import("state.zig");
 const widths = @import("widths.zig");
 
+const compile_errors = @import("../errors/compile.zig");
+
 const CompilerState = state_mod.CompilerState;
 const AllocRegion = state_mod.AllocRegion;
 
@@ -99,7 +101,7 @@ fn failEscape(state: *CompilerState, value: *ast.Node, comptime msg: []const u8)
         }
         break :blk state.chunk.source;
     };
-    return @import("../errors/compile.zig").compileFailAt(
+    return compile_errors.compileFailAt(
         state,
         path,
         source,
