@@ -45,6 +45,9 @@ pub fn analyze(
 
     state.debug = opts.debug;
     state.strict = opts.strict;
+    // Bytecode builds typecheck what they emit; strict/native builds stay
+    // whole-program so soundness never depends on reachability.
+    state.typecheck_reachable_only = !opts.strict;
     if (opts.comptime_max_loop_iterations) |lim| {
         state.comptime_max_loop_iterations = lim;
     }
@@ -330,6 +333,8 @@ fn registerFunctions(state: *state_mod.CompilerState, doc: *ast.Document) !void 
     // `fail`'s refined type).
     try refineErrorReturns(state);
 
+    try buildMethodIndex(state);
+
     var visited = std.StringHashMap(void).init(state.allocator);
     defer visited.deinit();
     var stack = std.StringHashMap(void).init(state.allocator);
@@ -340,6 +345,20 @@ fn registerFunctions(state: *state_mod.CompilerState, doc: *ast.Document) !void 
         if (!visited.contains(name.*)) {
             _ = try dfsRecursive(state, name.*, &visited, &stack);
         }
+    }
+}
+
+/// Bare name → every `Type::name` / `module::name` function key.
+/// Built once before the call-graph walk so an unqualified edge resolves in
+/// O(matches) instead of rescanning the whole function table per edge.
+fn buildMethodIndex(state: *state_mod.CompilerState) !void {
+    var it = state.functions.keyIterator();
+    while (it.next()) |full| {
+        const idx = std.mem.lastIndexOf(u8, full.*, "::") orelse continue;
+        const bare = full.*[idx + 2 ..];
+        const gop = try state.method_index.getOrPut(bare);
+        if (!gop.found_existing) gop.value_ptr.* = .empty;
+        try gop.value_ptr.append(state.allocator, full.*);
     }
 }
 
@@ -700,6 +719,13 @@ fn analyzeBody(
     }
 }
 
+fn markRecursive(state: *state_mod.CompilerState, stack: *std.StringHashMap(void)) void {
+    var sit = stack.keyIterator();
+    while (sit.next()) |s| {
+        if (state.functions.getPtr(s.*)) |d| d.is_recursive = true;
+    }
+}
+
 fn dfsRecursive(
     state: *state_mod.CompilerState,
     func_name: []const u8,
@@ -718,25 +744,12 @@ fn dfsRecursive(
 
     var cit = def.calls.keyIterator();
     while (cit.next()) |call_name| {
-        var targets: std.ArrayList([]const u8) = .empty;
-        defer targets.deinit(state.allocator);
-        if (state.functions.contains(call_name.*)) try targets.append(state.allocator, call_name.*);
-        var kit = state.functions.keyIterator();
-        while (kit.next()) |k| {
-            if (std.mem.endsWith(u8, k.*, call_name.*)) {
-                const prefix_len = k.*.len - call_name.*.len;
-                if (prefix_len >= 2 and std.mem.eql(u8, k.*[prefix_len - 2 .. prefix_len], "::")) {
-                    try targets.append(state.allocator, k.*);
-                }
-            }
+        if (state.functions.contains(call_name.*)) {
+            if (try dfsRecursive(state, call_name.*, visited, stack)) markRecursive(state, stack);
         }
-        for (targets.items) |target| {
-            if (try dfsRecursive(state, target, visited, stack)) {
-                def.is_recursive = true;
-                var sit = stack.keyIterator();
-                while (sit.next()) |s| {
-                    if (state.functions.getPtr(s.*)) |d| d.is_recursive = true;
-                }
+        if (state.method_index.get(call_name.*)) |matches| {
+            for (matches.items) |mangled| {
+                if (try dfsRecursive(state, mangled, visited, stack)) markRecursive(state, stack);
             }
         }
     }

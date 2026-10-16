@@ -13,6 +13,7 @@ const generics = @import("../generics.zig");
 const report = @import("../../errors/report.zig");
 const cfg_mod = @import("cfg.zig");
 const flow_mod = @import("flow.zig");
+const reachability = @import("../reachability.zig");
 
 pub const typeAstToDisplay = from_ast.typeAstToDisplay;
 pub const typeAstToDisplayQualified = from_ast.typeAstToDisplayQualified;
@@ -50,6 +51,10 @@ pub const Env = struct {
     /// Module globals with statically known types (see `seedDeclEnv`), consulted
     /// after `globals`. Shared across function envs, never copied.
     decl_globals: ?*const std.StringHashMap(ir.Type) = null,
+    /// Module-level `@const` / `@import` names of the whole compilation unit.
+    /// Shared across function envs, never copied: the set is fixed before any
+    /// function is checked, so re-seeding it per function was pure overhead.
+    top_consts: ?*const std.StringHashMap(void) = null,
     allocator: std.mem.Allocator,
 
     fn init(allocator: std.mem.Allocator) Env {
@@ -108,7 +113,9 @@ pub const Env = struct {
             i -= 1;
             if (self.const_scopes.items[i].contains(name)) return true;
         }
-        return self.const_names.contains(name);
+        if (self.const_names.contains(name)) return true;
+        if (self.top_consts) |tc| return tc.contains(name);
+        return false;
     }
 
     /// Module-level `@const` at the root of a place expression (`C`, `C.a.b`, `C[i].x`).
@@ -2419,22 +2426,11 @@ fn checkFunction(
     defer env.deinit();
     env.decl_globals = decl_globals;
 
-    var cit = top_consts.keyIterator();
-    while (cit.next()) |n| try env.putConstName(n.*);
-
-    var git = state.global_types.iterator();
-    while (git.next()) |e| {
-        const k = e.key_ptr.*;
-        const v = e.value_ptr.*;
-        if (std.mem.startsWith(u8, k, "$")) continue;
-        if (std.mem.startsWith(u8, v, "module:")) {
-            try env.globals.put(k, .{ .struct_ = v });
-        } else {
-            try env.globals.put(k, try from_ast.parseDisplayType(state, ta, v, null));
-        }
-    }
-    var nit = state.native_globals.keyIterator();
-    while (nit.next()) |n| try env.globals.put(n.*, ir.TUnknown);
+    // Both tables are fixed before the first function is checked and are already
+    // reachable through the shared pointers below — copying them per function
+    // cost ~2 hash inserts per (function × module-level name) and dominated
+    // compile time on any unit that imports the stdlib.
+    env.top_consts = top_consts;
 
     const annotated: ?ir.Type = if (f.return_type) |rt| try from_ast.typeFromAst(rt, state, ta) else null;
     // Two different contracts:
@@ -2875,6 +2871,17 @@ fn resolveSignatureTypes(state: *state_mod.CompilerState, env: *Env, ta: ir.Type
 
 /// Gradual typecheck: validate annotated returns/params when present; Unknown otherwise.
 pub fn typecheck(state: *state_mod.CompilerState, doc: *ast.Document) TypecheckError!void {
+    // Mirrors the emission gate: if `emitBytecode` would never emit a function,
+    // typechecking its body only costs time. Signatures, struct fields and
+    // top-level statements are still checked in full — they feed callers.
+    var reach: ?reachability.Result = null;
+    defer if (reach) |*r| r.deinit();
+    if (state.typecheck_reachable_only) {
+        reach = reachability.compute(state, doc) catch |err| {
+            if (err == error.OutOfMemory) return error.OutOfMemory;
+            return error.CompileError;
+        };
+    }
     var arena = std.heap.ArenaAllocator.init(state.allocator);
     defer arena.deinit();
     const ta = ir.TypeAlloc{ .allocator = arena.allocator() };
@@ -2913,10 +2920,13 @@ pub fn typecheck(state: *state_mod.CompilerState, doc: *ast.Document) TypecheckE
     for (doc.statements) |s| {
         if (s.* == .function_decl) {
             if (state.templates.contains(s.function_decl.name)) continue;
+            if (reach) |*r| if (!r.isFunctionReachable(s.function_decl.name)) continue;
             try checkFunction(state, ta, &s.function_decl, &top_consts, &decl_env.globals);
         } else if (s.* == .struct_decl) {
             for (s.struct_decl.methods) |m| {
-                if (m.* == .function_decl) try checkFunction(state, ta, &m.function_decl, &top_consts, &decl_env.globals);
+                if (m.* != .function_decl) continue;
+                if (reach) |*r| if (!r.isFunctionReachable(m.function_decl.name)) continue;
+                try checkFunction(state, ta, &m.function_decl, &top_consts, &decl_env.globals);
             }
         }
     }

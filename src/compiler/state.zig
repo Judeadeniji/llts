@@ -166,10 +166,20 @@ pub const CompilerState = struct {
     instance_fns: std.StringHashMap(void),
     /// Call to a generic function → its instance.
     generic_calls: std.AutoHashMap(*ast.Node, GenericCall),
+    /// Bare name → every `Type::name` / `module::name` function key. Built once
+    /// before the call-graph walk so unqualified edges resolve in O(matches)
+    /// instead of rescanning the whole function table per edge.
+    method_index: std.StringHashMap(std.ArrayList([]const u8)),
     /// Instances created during typecheck, checked before typecheck ends.
     pending_instances: std.ArrayList(PendingInstance) = .empty,
     /// Instantiation nesting of the code being checked (0 = not in an instance).
     instance_depth: u32 = 0,
+    /// Typecheck only functions reachable from `main` / exported top-level code.
+    /// `emitBytecode` already skips unreachable functions, so checking them was
+    /// wasted work — a 2-line file importing the stdlib pulled in ~420 dead
+    /// functions. Off for strict (native) builds and for the LSP, which must
+    /// still diagnose code nobody calls yet.
+    typecheck_reachable_only: bool = false,
     /// Makes type-parameter alias keys unique per instantiation.
     instance_counter: u32 = 0,
     /// Owns the AST copies made for instances.
@@ -251,6 +261,7 @@ pub fn create(allocator: std.mem.Allocator) !CompilerState {
         .instances = std.StringHashMap([]const u8).init(allocator),
         .instance_fns = std.StringHashMap(void).init(allocator),
         .generic_calls = std.AutoHashMap(*ast.Node, GenericCall).init(allocator),
+        .method_index = std.StringHashMap(std.ArrayList([]const u8)).init(allocator),
         .generic_arena = std.heap.ArenaAllocator.init(allocator),
         .defer_stacks = std.AutoHashMap(i32, std.ArrayListUnmanaged(DeferEntry)).init(allocator),
         .global_vars = std.StringHashMap(void).init(allocator),
@@ -342,6 +353,11 @@ pub fn deinit(self: *CompilerState) void {
         ex.break_jumps.deinit(self.allocator);
     }
     self.exprs.deinit(self.allocator);
+    var mit = self.method_index.iterator();
+    while (mit.next()) |e| {
+        e.value_ptr.deinit(self.allocator);
+    }
+    self.method_index.deinit();
     var fit = self.functions.iterator();
     while (fit.next()) |e| {
         e.value_ptr.calls.deinit();

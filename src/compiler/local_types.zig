@@ -52,10 +52,102 @@ pub fn hoist(state: *CompilerState, statements: []*ast.Node) !void {
 }
 
 pub fn hoistFunction(state: *CompilerState, f: *ast.FunctionDecl, owner: []const u8) !void {
+    // With no local type declarations the rename set is always empty and no
+    // type/value-clash error can fire, so the full scope walk is a no-op.
+    // Skipping it avoids a scope push/pop (two hash maps) per block, which
+    // dominated compile time once every imported function is hoisted.
+    if (!bodyHasLocalType(f.body)) return;
     var ctx = Scoped{ .state = state, .owner = owner, .params = f.params.params.params };
     defer ctx.deinit();
     try walk(f.body, &ctx);
     try ctx.finish();
+}
+
+/// Does `node` contain a `.type_decl` anywhere inside it?
+fn bodyHasLocalType(node: ?*ast.Node) bool {
+    const n = node orelse return false;
+    switch (n.*) {
+        .type_decl => return true,
+        .function_decl, .struct_decl, .enum_decl, .error_decl, .extern_decl, .literal, .params, .continue_expr => return false,
+        .primary, .declaration, .binary, .unary, .assignment, .call, .member, .index, .array_literal, .block, .return_expr, .if_expr, .switch_expr, .for_expr, .break_expr, .defer_stmt, .struct_init, .try_expr, .unwrap_expr, .error_expr, .comptime_expr, .array_type, .pointer_type, .tuple_type, .union_type, .intersection_type, .func_type, .shape_type => {},
+    }
+    return nodeChildrenHaveLocalType(n);
+}
+
+fn nodeChildrenHaveLocalType(n: *ast.Node) bool {
+    switch (n.*) {
+        .primary => return false,
+        .declaration => |d| return bodyHasLocalType(d.type_annotation) or bodyHasLocalType(d.value),
+        .binary => |b| return bodyHasLocalType(b.left) or bodyHasLocalType(b.right),
+        .unary => |u| return bodyHasLocalType(u.arg),
+        .assignment => |a| return bodyHasLocalType(a.left) or bodyHasLocalType(a.right),
+        .call => |c| {
+            if (bodyHasLocalType(c.callee)) return true;
+            for (c.args) |a| if (bodyHasLocalType(a)) return true;
+            return false;
+        },
+        .member => |m| return bodyHasLocalType(m.object),
+        .index => |ix| {
+            if (bodyHasLocalType(ix.object)) return true;
+            if (bodyHasLocalType(ix.index)) return true;
+            if (bodyHasLocalType(ix.end)) return true;
+            return bodyHasLocalType(ix.type_annotation);
+        },
+        .array_literal => |a| {
+            for (a.elements) |e| if (bodyHasLocalType(e)) return true;
+            return false;
+        },
+        .block => |b| {
+            for (b.statements) |s| if (bodyHasLocalType(s)) return true;
+            return false;
+        },
+        .return_expr => |r| return bodyHasLocalType(r.return_value),
+        .if_expr => |i| {
+            if (bodyHasLocalType(i.condition)) return true;
+            if (bodyHasLocalType(i.body)) return true;
+            return bodyHasLocalType(i.else_body);
+        },
+        .switch_expr => |sw| {
+            if (bodyHasLocalType(sw.condition)) return true;
+            for (sw.prongs) |p| {
+                for (p.patterns) |pat| if (bodyHasLocalType(pat)) return true;
+                if (bodyHasLocalType(p.body)) return true;
+            }
+            return false;
+        },
+        .for_expr => |f| return bodyHasLocalType(f.expr) or bodyHasLocalType(f.body),
+        .break_expr => |br| return bodyHasLocalType(br.value),
+        .defer_stmt => |d| return bodyHasLocalType(d.body),
+        .struct_init => |si| {
+            if (bodyHasLocalType(si.type_expr)) return true;
+            for (si.fields) |f| if (bodyHasLocalType(f.value)) return true;
+            return false;
+        },
+        .try_expr => |t| return bodyHasLocalType(t.expression),
+        .unwrap_expr => |u| return bodyHasLocalType(u.expression),
+        .error_expr => |e| {
+            for (e.args) |a| if (bodyHasLocalType(a)) return true;
+            return false;
+        },
+        .comptime_expr => |c| return bodyHasLocalType(c.expr),
+        .array_type => |a| return bodyHasLocalType(a.elem),
+        .pointer_type => |p| return bodyHasLocalType(p.elem),
+        .tuple_type => |t| {
+            for (t.elems) |e| if (bodyHasLocalType(e)) return true;
+            return false;
+        },
+        .union_type => |u| return bodyHasLocalType(u.left) or bodyHasLocalType(u.right),
+        .intersection_type => |ix| return bodyHasLocalType(ix.left) or bodyHasLocalType(ix.right),
+        .func_type => |ft| {
+            for (ft.params) |p| if (bodyHasLocalType(p)) return true;
+            return bodyHasLocalType(ft.return_type);
+        },
+        .shape_type => |st| {
+            for (st.fields) |f| if (bodyHasLocalType(f.type_annotation)) return true;
+            return false;
+        },
+        .type_decl, .function_decl, .struct_decl, .enum_decl, .error_decl, .extern_decl, .literal, .params, .continue_expr => return false,
+    }
 }
 
 const Scope = struct {
