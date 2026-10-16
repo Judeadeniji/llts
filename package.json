@@ -4,7 +4,9 @@
 	"type": "module",
 	"scripts": {
 		"build": "zig build",
-		"test": "zig build && bun test tests/",
+	"build:release": "zig build release",
+		"test": "zig build release && bun test tests/",
+	"test:debug": "zig build && bun test tests/",
 		"test:zig": "zig build test",
 		"test:suite": "bun test tests/",
 		"bench:loop": "bun benchmarks/run.ts"

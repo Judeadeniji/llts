@@ -27,6 +27,19 @@ zig build
 
 Binary: `zig-out/bin/llts`
 
+`zig build` produces a Debug binary — better panics while hacking on the
+compiler itself, but ~20x slower to run. For everyday use install a ReleaseSafe
+build instead:
+
+```bash
+zig build release   # or: bun run build:release
+```
+
+This overwrites `zig-out/bin/llts` (and `llts-lsp` / `llts-tokenize-zig`) with
+ReleaseSafe builds. A file that imports the stdlib compiles in ~0.03s instead
+of ~1.3s. `zig build test` and `bun run test` both install these binaries, so
+zig-out stays on the fast path after you run the tests.
+
 ## Run
 
 ```bash
@@ -42,8 +55,9 @@ Binary: `zig-out/bin/llts`
 zig build test
 
 # Language suite (Bun runner → zig-out/bin/llts)
-zig build && bun test tests/
-# or: bun run test
+zig build release && bun test tests/
+# or: bun run test            (ReleaseSafe binaries, ~7s)
+# or: bun run test:debug      (Debug binaries, ~70s)
 ```
 
 ## Example
