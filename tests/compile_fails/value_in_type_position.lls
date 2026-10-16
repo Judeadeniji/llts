@@ -1,0 +1,4 @@
+# expect: Expected a type, found a value of type
+pub @func main() {
+    $x: @sizeOf(i64) = 1;
+}

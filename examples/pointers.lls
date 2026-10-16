@@ -42,7 +42,9 @@ print(p.manhattan());
 # Arena-backed @new yields *Point.
 $arena = mem.create(0);
 defer arena.deinit();
-$r = @new(arena, Point{ x: 10, y: 20 });
+$r = @new(arena, Point);
+r.x = 10;
+r.y = 20;
 print(@typeOf(r));
 r.move(5, 0);
 print(r.x);

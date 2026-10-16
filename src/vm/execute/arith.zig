@@ -14,6 +14,14 @@ fn fail(vm: *VMState, msg: []const u8) ArithError {
     return runtime.runtimeFail(vm, msg);
 }
 
+/// Format a runtime diagnostic, then report it. `runtimeFail` prints
+/// synchronously, so the scratch buffer is safe for the whole call.
+fn failFmt(vm: *VMState, comptime fmt: []const u8, args: anytype) ArithError {
+    var buf: [256]u8 = undefined;
+    const msg = std.fmt.bufPrint(&buf, fmt, args) catch return runtime.runtimeFail(vm, "runtime diagnostic too long");
+    return runtime.runtimeFail(vm, msg);
+}
+
 const ArithOp = enum { add, sub, mul, div, mod, pow };
 
 /// Human-readable verb for an arithmetic op, used in overflow diagnostics.
@@ -38,11 +46,12 @@ fn overflowFail(vm: *VMState, kind: ArithOp, width_name: []const u8) ArithError 
         .mul => "*%",
         else => "",
     };
-    const msg = std.fmt.bufPrint(
-        &buf,
-        "integer overflow: {s} exceeds '{s}'; use '{s}' if wraparound is intended",
-        .{ opVerb(kind), width_name, wrap },
-    ) catch "integer overflow";
+    // Only `+%`/`-%`/`*%` have a wrapping alternative — division, remainder,
+    // and exponentiation have no candidate to suggest.
+    const msg = (if (wrap.len == 0)
+        std.fmt.bufPrint(&buf, "Integer overflow: {s} exceeds '{s}'", .{ opVerb(kind), width_name })
+    else
+        std.fmt.bufPrint(&buf, "Integer overflow: {s} exceeds '{s}'; did you mean '{s}'?", .{ opVerb(kind), width_name, wrap })) catch return fail(vm, "Integer overflow");
     return fail(vm, msg);
 }
 
@@ -77,7 +86,7 @@ pub fn binArith(vm: *VMState, op: OpCode, checked: bool) ArithError!void {
         .OP_DIV => .div,
         .OP_MOD => .mod,
         .OP_POW => .pow,
-        else => return fail(vm, "Bad arith op"),
+        else => return fail(vm, "Internal error: unknown arithmetic operator"),
     };
     if (vm.sp >= 2) {
         const a_val = vm.stack_buf[vm.sp - 2];
@@ -108,7 +117,7 @@ pub fn binArith(vm: *VMState, op: OpCode, checked: bool) ArithError!void {
         try stack.push(vm, b);
         heap.stringAdd(vm) catch |err| switch (err) {
             error.OutOfMemory, error.NoSpaceLeft => return error.OutOfMemory,
-            else => return fail(vm, "String concatenation failed"),
+            else => return fail(vm, "Internal error: string concatenation failed"),
         };
         return;
     }
@@ -129,8 +138,8 @@ pub fn binArith(vm: *VMState, op: OpCode, checked: bool) ArithError!void {
     }
     const use_float = a == .f64 or b == .f64 or a == .f32 or b == .f32;
     if (use_float) {
-        const af = asFloat(a) orelse return fail(vm, "Operands must be numbers");
-        const bf = asFloat(b) orelse return fail(vm, "Operands must be numbers");
+        const af = asFloat(a) orelse return failFmt(vm, "Arithmetic operands must be numbers, got '{s}'", .{a.kindName()});
+        const bf = asFloat(b) orelse return failFmt(vm, "Arithmetic operands must be numbers, got '{s}'", .{b.kindName()});
         const result: f64 = switch (kind) {
             .add => af + bf,
             .sub => af - bf,
@@ -142,8 +151,8 @@ pub fn binArith(vm: *VMState, op: OpCode, checked: bool) ArithError!void {
         try stack.push(vm, .{ .f64 = result });
         return;
     }
-    const ai = asInt(a) orelse return fail(vm, "Operands must be numbers");
-    const bi = asInt(b) orelse return fail(vm, "Operands must be numbers");
+    const ai = asInt(a) orelse return failFmt(vm, "Arithmetic operands must be numbers, got '{s}'", .{a.kindName()});
+    const bi = asInt(b) orelse return failFmt(vm, "Arithmetic operands must be numbers, got '{s}'", .{b.kindName()});
     const is_ptr = (kind == .add and (a == .ptr or b == .ptr)) or
         (kind == .sub and a == .ptr and b == .ptr);
     const result: i64 = switch (kind) {
@@ -193,8 +202,8 @@ pub inline fn binArithTyped(vm: *VMState, kind: TypedOp, width_byte: u8, checked
     }
     const b = stack.pop(vm);
     const a = stack.pop(vm);
-    const bi = widths.valueAsI64(b) orelse return fail(vm, "Operands must be ints");
-    const ai = widths.valueAsI64(a) orelse return fail(vm, "Operands must be ints");
+    const bi = widths.valueAsI64(b) orelse return failFmt(vm, "Operands must be integers, got '{s}'", .{b.kindName()});
+    const ai = widths.valueAsI64(a) orelse return failFmt(vm, "Operands must be integers, got '{s}'", .{a.kindName()});
     // Widen to i128 so the true product/sum is representable, then either trap
     // when it leaves the declared range or truncate for wrapping semantics.
     const wide: i128 = switch (kind) {
@@ -218,8 +227,8 @@ pub fn ltTyped(vm: *VMState, width_byte: u8) ArithError!void {
     _ = width_byte; // The width helps with semantic intent but not the raw comparison since values are extended
     const b = stack.pop(vm);
     const a = stack.pop(vm);
-    const bi = widths.valueAsI64(b) orelse return fail(vm, "Operands must be ints");
-    const ai = widths.valueAsI64(a) orelse return fail(vm, "Operands must be ints");
+    const bi = widths.valueAsI64(b) orelse return failFmt(vm, "Operands must be integers, got '{s}'", .{b.kindName()});
+    const ai = widths.valueAsI64(a) orelse return failFmt(vm, "Operands must be integers, got '{s}'", .{a.kindName()});
     try stack.push(vm, .{ .u1 = if (ai < bi) 1 else 0 });
 }
 
@@ -245,7 +254,7 @@ pub fn negate(vm: *VMState) ArithError!void {
         .u8 => |n| try stack.push(vm, .{ .i64 = -@as(i64, n) }),
         .f32 => |n| try stack.push(vm, .{ .f32 = -n }),
         .f64 => |n| try stack.push(vm, .{ .f64 = -n }),
-        else => return fail(vm, "Operand must be a number"),
+        else => return failFmt(vm, "Operand must be a number, got '{s}'", .{a.kindName()}),
     }
 }
 
@@ -264,23 +273,23 @@ pub fn binBitwise(vm: *VMState, op: OpCode) ArithError!void {
         .OP_BIT_XOR => .bxor,
         .OP_SHL => .shl,
         .OP_SHR => .shr,
-        else => return fail(vm, "Bad bitwise op"),
+        else => return fail(vm, "Internal error: unknown bitwise operator"),
     };
     const b = stack.pop(vm);
     const a = stack.pop(vm);
-    if (a == .f64 or b == .f64) return fail(vm, "Bitwise operands must be integers");
-    const ai = asInt(a) orelse return fail(vm, "Bitwise operands must be integers");
-    const bi = asInt(b) orelse return fail(vm, "Bitwise operands must be integers");
+    if (a == .f64 or b == .f64) return failFmt(vm, "Bitwise operands must be integers, got '{s}' and '{s}'", .{ a.kindName(), b.kindName() });
+    const ai = asInt(a) orelse return failFmt(vm, "Bitwise operands must be integers, got '{s}'", .{a.kindName()});
+    const bi = asInt(b) orelse return failFmt(vm, "Bitwise operands must be integers, got '{s}'", .{b.kindName()});
     const result: i64 = switch (kind) {
         .band => ai & bi,
         .bor => ai | bi,
         .bxor => ai ^ bi,
         .shl => blk: {
-            if (bi < 0 or bi >= 64) return fail(vm, "Shift amount out of range");
+            if (bi < 0 or bi >= 64) return failFmt(vm, "Shift amount out of range 0..63 (got {d})", .{bi});
             break :blk ai << @intCast(bi);
         },
         .shr => blk: {
-            if (bi < 0 or bi >= 64) return fail(vm, "Shift amount out of range");
+            if (bi < 0 or bi >= 64) return failFmt(vm, "Shift amount out of range 0..63 (got {d})", .{bi});
             break :blk ai >> @intCast(bi);
         },
     };
@@ -289,7 +298,7 @@ pub fn binBitwise(vm: *VMState, op: OpCode) ArithError!void {
 
 pub fn bitNot(vm: *VMState) ArithError!void {
     const a = stack.pop(vm);
-    if (a == .f64) return fail(vm, "Bitwise operand must be an integer");
-    const n = asInt(a) orelse return fail(vm, "Bitwise operand must be an integer");
+    if (a == .f64) return failFmt(vm, "Bitwise operand must be an integer, got '{s}'", .{a.kindName()});
+    const n = asInt(a) orelse return failFmt(vm, "Bitwise operand must be an integer, got '{s}'", .{a.kindName()});
     try stack.push(vm, .{ .i64 = ~n });
 }

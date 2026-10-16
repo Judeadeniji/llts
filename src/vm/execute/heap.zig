@@ -3,6 +3,8 @@ const state_mod = @import("../state.zig");
 const stack = @import("../stack.zig");
 const runtime = @import("../../errors/runtime.zig");
 const mem_mod = @import("../builtins/mem.zig");
+const widths = @import("../../compiler/widths.zig");
+const layout = @import("../../compiler/layout.zig");
 
 const VMState = state_mod.VMState;
 const Value = state_mod.Value;
@@ -12,6 +14,18 @@ pub const HeapError = error{ RuntimeError, OutOfMemory, IndexOutOfBounds, TypeEr
 
 fn fail(vm: *VMState, msg: []const u8) HeapError {
     return runtime.runtimeFail(vm, msg);
+}
+
+/// Format a runtime diagnostic, then report it. `runtimeFail` prints
+/// synchronously, so the scratch buffer is safe for the whole call.
+fn failFmt(vm: *VMState, comptime fmt: []const u8, args: anytype) HeapError {
+    var buf: [256]u8 = undefined;
+    const msg = std.fmt.bufPrint(&buf, fmt, args) catch return runtime.runtimeFail(vm, "runtime diagnostic too long");
+    return runtime.runtimeFail(vm, msg);
+}
+
+fn checkWritable(vm: *VMState, at: u32) HeapError!void {
+    if (vm.isFrozen(at)) return fail(vm, "Cannot mutate a constant");
 }
 
 /// Validate the arena lifetime of a packed handle before dereferencing it.
@@ -32,7 +46,7 @@ pub fn getIndex(vm: *VMState) HeapError!void {
     try checkValueArena(vm, ptr);
     const i = switch (idx) {
         .i64 => |x| x,
-        else => return fail(vm, "Index must be int"),
+        else => return failFmt(vm, "Index must be an integer, got '{s}'", .{idx.kindName()}),
     };
     switch (ptr) {
         .bytes => |b| {
@@ -76,8 +90,8 @@ pub fn getIndex(vm: *VMState) HeapError!void {
             try stack.push(vm, vm.slot(p + @as(i32, @intCast(i))).*);
             return;
         },
-        .null => return fail(vm, "Cannot access field of null"),
-        else => return fail(vm, "Indexing non-pointer"),
+        .null => return fail(vm, "Cannot index null"),
+        else => return failFmt(vm, "Cannot index {s}; expected a string, array, or pointer", .{ptr.kindName()}),
     }
 }
 
@@ -89,7 +103,7 @@ pub fn getIndexOrNull(vm: *VMState) HeapError!void {
     try checkValueArena(vm, ptr);
     const i = switch (idx) {
         .i64 => |x| x,
-        else => return fail(vm, "Index must be int"),
+        else => return failFmt(vm, "Index must be an integer, got '{s}'", .{idx.kindName()}),
     };
     switch (ptr) {
         .bytes => |b| {
@@ -112,7 +126,7 @@ pub fn getIndexOrNull(vm: *VMState) HeapError!void {
         // Pointers carry no length; treat the index as valid (no bounds info).
         .ptr => |p| return stack.push(vm, vm.slot(p + @as(i32, @intCast(i))).*),
         .null => return stack.push(vm, .null),
-        else => return fail(vm, "Indexing non-pointer"),
+        else => return failFmt(vm, "Cannot index {s}; expected a string, array, or pointer", .{ptr.kindName()}),
     }
 }
 
@@ -123,7 +137,7 @@ pub fn setIndex(vm: *VMState) HeapError!void {
     try checkValueArena(vm, ptr);
     const i = switch (idx) {
         .i64 => |x| x,
-        else => return fail(vm, "Index must be int"),
+        else => return failFmt(vm, "Index must be an integer, got '{s}'", .{idx.kindName()}),
     };
     switch (ptr) {
         .bytes => |b| {
@@ -135,10 +149,11 @@ pub fn setIndex(vm: *VMState) HeapError!void {
             const n = switch (val) {
                 .u8 => |x| @as(i64, x),
                 .i64 => |x| x,
-                else => return fail(vm, "Byte store requires u8 or int"),
+                else => return failFmt(vm, "Byte store expects an integer, got '{s}'", .{val.kindName()}),
             };
-            if (n < 0 or n > 255) return fail(vm, "Byte value out of range 0..255");
+            if (n < 0 or n > 255) return failFmt(vm, "Byte value {d} is out of range 0..255", .{n});
             const bval: u8 = @intCast(n);
+            try checkWritable(vm, b.offset + @as(u32, @intCast(i)));
             vm.bytes.items[b.offset + @as(u32, @intCast(i))] = bval;
             try stack.push(vm, .{ .u8 = bval });
             return;
@@ -149,6 +164,7 @@ pub fn setIndex(vm: *VMState) HeapError!void {
                 const msg = std.fmt.bufPrint(&buf, "Array index out of bounds: {d} (len {d}); use len(arr)", .{ i, a.count }) catch "Array index out of bounds";
                 return fail(vm, msg);
             }
+            try checkWritable(vm, a.offset + @as(u32, @intCast(i)) * @as(u32, @intCast(VMState.value_size)));
             vm.arrayElemPtr(a, @intCast(i)).* = val;
             try stack.push(vm, val);
             return;
@@ -158,8 +174,8 @@ pub fn setIndex(vm: *VMState) HeapError!void {
             try stack.push(vm, val);
             return;
         },
-        .null => return fail(vm, "Cannot access field of null"),
-        else => return fail(vm, "Indexing non-pointer"),
+        .null => return fail(vm, "Cannot index null"),
+        else => return failFmt(vm, "Cannot index {s}; expected a string, array, or pointer", .{ptr.kindName()}),
     }
 }
 
@@ -180,7 +196,7 @@ pub fn getArray(vm: *VMState) HeapError!void {
     try checkValueArena(vm, ptr);
     const i = switch (idx) {
         .i64 => |x| x,
-        else => return fail(vm, "Index must be int"),
+        else => return failFmt(vm, "Index must be an integer, got '{s}'", .{idx.kindName()}),
     };
     if (ptr == .bytes) {
         const b = ptr.bytes;
@@ -202,7 +218,7 @@ pub fn getArray(vm: *VMState) HeapError!void {
         try stack.push(vm, vm.arrayElemConst(a, @intCast(i)));
         return;
     }
-    const p = asArrayPtr(vm, ptr) orelse return fail(vm, "Indexing non-array");
+    const p = asArrayPtr(vm, ptr) orelse return failFmt(vm, "Cannot index {s}; expected an array", .{ptr.kindName()});
     const len_val = vm.slot(p - 1).*;
     const len = len_val.i64;
     if (i < 0 or i >= len) {
@@ -220,14 +236,13 @@ pub fn sliceView(vm: *VMState) HeapError!void {
     const lo_v = stack.pop(vm);
     const obj = stack.pop(vm);
     try checkValueArena(vm, obj);
-    const widths = @import("../../compiler/widths.zig");
-    const lo = widths.valueAsI64(lo_v) orelse return fail(vm, "Slice start must be int");
+    const lo = widths.valueAsI64(lo_v) orelse return failFmt(vm, "Slice start must be an integer, got '{s}'", .{lo_v.kindName()});
 
     if (obj == .name) {
         const data = vm.chunk.stringAt(obj.name);
         const hi: i64 = switch (hi_v) {
             .null => @intCast(data.len),
-            else => widths.valueAsI64(hi_v) orelse return fail(vm, "Slice end must be int"),
+            else => widths.valueAsI64(hi_v) orelse return failFmt(vm, "Slice end must be an integer, got '{s}'", .{hi_v.kindName()}),
         };
         if (lo < 0 or hi < lo or hi > data.len) {
             var buf: [96]u8 = undefined;
@@ -243,11 +258,11 @@ pub fn sliceView(vm: *VMState) HeapError!void {
     const offset: u32, const len: u32, const as_bytes: bool, const actrl: i32, const agen: i32 = switch (obj) {
         .bytes => |b| .{ b.offset, b.len, true, b.arena_ctrl, b.arena_gen },
         .slice => |s| .{ s.offset, s.len, false, s.arena_ctrl, s.arena_gen },
-        else => return fail(vm, "Slice requires []byte or string"),
+        else => return failFmt(vm, "Cannot slice {s}; expected []byte or string", .{obj.kindName()}),
     };
     const hi: i64 = switch (hi_v) {
         .null => @intCast(len),
-        else => widths.valueAsI64(hi_v) orelse return fail(vm, "Slice end must be int"),
+        else => widths.valueAsI64(hi_v) orelse return failFmt(vm, "Slice end must be an integer, got '{s}'", .{hi_v.kindName()}),
     };
     if (lo < 0 or hi < lo or hi > len) {
         var buf: [96]u8 = undefined;
@@ -270,7 +285,7 @@ pub fn setArray(vm: *VMState) HeapError!void {
     try checkValueArena(vm, ptr);
     const i = switch (idx) {
         .i64 => |x| x,
-        else => return fail(vm, "Index must be int"),
+        else => return failFmt(vm, "Index must be an integer, got '{s}'", .{idx.kindName()}),
     };
     if (ptr == .bytes) {
         const b = ptr.bytes;
@@ -282,10 +297,11 @@ pub fn setArray(vm: *VMState) HeapError!void {
         const n = switch (val) {
             .u8 => |x| @as(i64, x),
             .i64 => |x| x,
-            else => return fail(vm, "Byte store requires u8 or int"),
+            else => return failFmt(vm, "Byte store expects an integer, got '{s}'", .{val.kindName()}),
         };
-        if (n < 0 or n > 255) return fail(vm, "Byte value out of range 0..255");
+        if (n < 0 or n > 255) return failFmt(vm, "Byte value {d} is out of range 0..255", .{n});
         const bval: u8 = @intCast(n);
+        try checkWritable(vm, b.offset + @as(u32, @intCast(i)));
         vm.bytes.items[b.offset + @as(u32, @intCast(i))] = bval;
         try stack.push(vm, .{ .u8 = bval });
         return;
@@ -297,11 +313,12 @@ pub fn setArray(vm: *VMState) HeapError!void {
             const msg = std.fmt.bufPrint(&buf, "Array index out of bounds: {d} (len {d}); use len(arr)", .{ i, a.count }) catch "Array index out of bounds";
             return fail(vm, msg);
         }
+        try checkWritable(vm, a.offset + @as(u32, @intCast(i)) * @as(u32, @intCast(VMState.value_size)));
         vm.arrayElemPtr(a, @intCast(i)).* = val;
         try stack.push(vm, val);
         return;
     }
-    const p = asArrayPtr(vm, ptr) orelse return fail(vm, "Indexing non-array");
+    const p = asArrayPtr(vm, ptr) orelse return failFmt(vm, "Cannot index {s}; expected an array", .{ptr.kindName()});
     const len_val = vm.slot(p - 1).*;
     const len = len_val.i64;
     if (i < 0 or i >= len) {
@@ -316,15 +333,15 @@ pub fn setArray(vm: *VMState) HeapError!void {
 fn baseBytesOffset(vm: *VMState, base: Value) HeapError!u32 {
     return switch (base) {
         .bytes => |b| b.offset,
-        .null => return fail(vm, "Null pointer dereference"),
-        .module => |m| {
+        .null => return fail(vm, "Cannot dereference null"),
+        .module => {
             var buf: [256]u8 = undefined;
-            const msg = std.fmt.bufPrint(&buf, "Packed field access requires a byte object, got .module (name={s})", .{m.name}) catch "Packed field access on module";
+            const msg = std.fmt.bufPrint(&buf, "Packed field access requires a byte object, got '{s}'", .{base.kindName()}) catch "Packed field access on module";
             return fail(vm, msg);
         },
         else => {
             var buf: [128]u8 = undefined;
-            const msg = std.fmt.bufPrint(&buf, "Packed field access requires a byte object, got {}", .{std.meta.activeTag(base)}) catch "Packed field access error";
+            const msg = std.fmt.bufPrint(&buf, "Packed field access requires a byte object, got '{s}'", .{base.kindName()}) catch "Packed field access error";
             return fail(vm, msg);
         },
     };
@@ -429,7 +446,7 @@ pub fn loadField(vm: *VMState, byte_offset: u16, kind: u8) HeapError!void {
         10 => .{ .u16 = readU16(vm, at) },
         11 => .{ .u32 = readU32(vm, at) },
         12 => .{ .u64 = readU64(vm, at) },
-        else => return fail(vm, "Unknown field kind"),
+        else => return fail(vm, "Internal error: unknown field kind"),
     };
     try stack.push(vm, val);
 }
@@ -441,11 +458,11 @@ pub fn storeField(vm: *VMState, byte_offset: u16, kind: u8) HeapError!void {
     try checkValueArena(vm, base);
     const base_off = try baseBytesOffset(vm, base);
     const at = base_off + byte_offset;
-    const widths = @import("../../compiler/widths.zig");
+    try checkWritable(vm, at);
     switch (kind) {
         0, 5, 7, 8, 9, 10, 11, 12 => {
-            const w = @import("../../compiler/layout.zig").widthFromFieldKind(@enumFromInt(kind)).?;
-            const casted = widths.castValue(val, w) catch return fail(vm, "Field store width mismatch / out of range");
+            const w = layout.widthFromFieldKind(@enumFromInt(kind)).?;
+            const casted = widths.castValue(val, w) catch return fail(vm, "Field value does not fit the field's declared width");
             switch (casted) {
                 .i8 => |x| writeI8(vm, at, x),
                 .i16 => |x| writeI16(vm, at, x),
@@ -455,15 +472,15 @@ pub fn storeField(vm: *VMState, byte_offset: u16, kind: u8) HeapError!void {
                 .u16 => |x| writeU16(vm, at, x),
                 .u32 => |x| writeU32(vm, at, x),
                 .u64 => |x| writeU64(vm, at, x),
-                else => return fail(vm, "Field store expects integer"),
+                else => return failFmt(vm, "Field expects an integer, got '{s}'", .{val.kindName()}),
             }
         },
         1 => {
-            const casted = widths.castValue(val, .f64) catch return fail(vm, "Field store expects f64");
+            const casted = widths.castValue(val, .f64) catch return failFmt(vm, "Field expects 'f64', got '{s}'", .{val.kindName()});
             writeF64(vm, at, casted.f64);
         },
         6 => {
-            const casted = widths.castValue(val, .f32) catch return fail(vm, "Field store expects f32");
+            const casted = widths.castValue(val, .f32) catch return failFmt(vm, "Field expects 'f32', got '{s}'", .{val.kindName()});
             writeF32(vm, at, casted.f32);
         },
         2 => {
@@ -471,7 +488,7 @@ pub fn storeField(vm: *VMState, byte_offset: u16, kind: u8) HeapError!void {
                 .u1 => |x| x != 0,
                 .i64 => |x| x != 0,
                 .null => false,
-                else => return fail(vm, "Field store expects u1"),
+                else => return failFmt(vm, "Field expects 'u1', got '{s}'", .{val.kindName()}),
             };
             vm.bytes.items[at] = if (b) 1 else 0;
         },
@@ -493,13 +510,15 @@ pub fn storeField(vm: *VMState, byte_offset: u16, kind: u8) HeapError!void {
                     off = try vm.appendImmortal(data);
                     len = @intCast(data.len);
                 },
-                .function, .native, .list, .map, .buffer, .i64, .ptr, .module, .array => {
+                // Scalars / objects boxed into an immortal slot (optional fields,
+                // nested structs, etc.).
+                .function, .native, .list, .map, .buffer, .ptr, .module, .array,
+                .u1, .i8, .i16, .i32, .i64, .u8, .u16, .u32, .u64, .f32, .f64 => {
                     const slot = try vm.allocImmortal(1);
                     vm.slot(slot).* = val;
                     off = @intCast(slot);
                     len = HANDLE_BOXED_VALUE;
                 },
-                else => return fail(vm, "Field store expects object handle"),
             }
             writeU32(vm, at, off);
             writeU32(vm, at + 4, len);
@@ -509,11 +528,11 @@ pub fn storeField(vm: *VMState, byte_offset: u16, kind: u8) HeapError!void {
                 .ptr => |x| x,
                 .null => 0,
                 .i64 => |x| x,
-                else => return fail(vm, "Field store expects ptr"),
+                else => return failFmt(vm, "Field expects a pointer, got '{s}'", .{val.kindName()}),
             };
             writeI64(vm, at, p);
         },
-        else => return fail(vm, "Unknown field kind"),
+        else => return fail(vm, "Internal error: unknown field kind"),
     }
     try stack.push(vm, val);
 }
@@ -552,10 +571,10 @@ pub fn errorName(vm: *VMState) HeapError!void {
     const val = stack.pop(vm);
     const p: i32 = switch (val) {
         .ptr => |x| x,
-        else => return fail(vm, "@nameOf expects an error value"),
+        else => return failFmt(vm, "@nameOf expects an error value, got '{s}'", .{val.kindName()}),
     };
     if (p < state_mod.HEAP_START or !vm.isValidHeapPtr(p - 1) or vm.slot(p - 1).* != .i64 or vm.slot(p - 1).*.i64 != ERROR_TAG) {
-        return fail(vm, "@nameOf expects an error value");
+        return failFmt(vm, "@nameOf expects an error value, got '{s}'", .{val.kindName()});
     }
     try stack.push(vm, vm.slot(p).*);
 }

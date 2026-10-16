@@ -1,5 +1,48 @@
 const std = @import("std");
 
+/// Builds each tool a second time in ReleaseSafe and registers the `release`
+/// step that installs them over zig-out/. Modules are separate instances from
+/// the Debug ones because optimize mode is baked into a module at creation time.
+/// Returns the install step so test runners can reuse the fast binaries.
+fn addReleaseTools(b: *std.Build, target: std.Build.ResolvedTarget) *std.Build.Step {
+    const opt: std.builtin.OptimizeMode = .ReleaseSafe;
+    const release = b.step("release", "Build llts, llts-lsp and llts-tokenize-zig in ReleaseSafe and install");
+
+    const zli = b.dependency("zli", .{ .target = target, .optimize = opt });
+
+    const llts_mod = b.addModule("llts-rel", .{
+        .root_source_file = b.path("src/root.zig"),
+        .target = target,
+        .optimize = opt,
+    });
+    llts_mod.link_libc = true;
+
+    const tools = [_]struct { name: []const u8, root: []const u8 }{
+        .{ .name = "llts", .root = "src/main.zig" },
+        .{ .name = "llts-tokenize-zig", .root = "self_hosted/tools/dump_zig_tokens.zig" },
+        .{ .name = "llts-lsp", .root = "src/lsp/server.zig" },
+    };
+
+    for (tools) |t| {
+        const exe = b.addExecutable(.{
+            .name = t.name,
+            .root_module = b.createModule(.{
+                .root_source_file = b.path(t.root),
+                .target = target,
+                .optimize = opt,
+                .imports = &.{
+                    .{ .name = "llts", .module = llts_mod },
+                    .{ .name = "zli", .module = zli.module("zli") },
+                },
+            }),
+        });
+        exe.root_module.link_libc = true;
+        const install = b.addInstallArtifact(exe, .{});
+        release.dependOn(&install.step);
+    }
+    return release;
+}
+
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
@@ -69,6 +112,12 @@ pub fn build(b: *std.Build) void {
     const run_step = b.step("run", "Run llts");
     run_step.dependOn(&run_cmd.step);
 
+    // `zig build release` — same three tools built in ReleaseSafe and installed
+    // over zig-out/. A Debug compiler spends ~40x longer in the typechecker than
+    // a ReleaseSafe one, so this is the mode you want for everyday `llts build`.
+    // `zig build` still produces Debug (better panics/traces while hacking on it).
+    const release_install = addReleaseTools(b, target);
+
     // const mod_tests = b.addTest(.{
     //     .root_module = llts_mod,
     // });
@@ -82,7 +131,7 @@ pub fn build(b: *std.Build) void {
         }),
     });
     const run_integration = b.addRunArtifact(integration_tests);
-    run_integration.step.dependOn(b.getInstallStep());
+    run_integration.step.dependOn(release_install);
     run_integration.setCwd(b.path("."));
 
     const lsp_e2e_tests = b.addTest(.{
@@ -93,7 +142,7 @@ pub fn build(b: *std.Build) void {
         }),
     });
     const run_lsp_e2e = b.addRunArtifact(lsp_e2e_tests);
-    run_lsp_e2e.step.dependOn(b.getInstallStep());
+    run_lsp_e2e.step.dependOn(release_install);
     run_lsp_e2e.setCwd(b.path("."));
 
     const lsp_unit_tests = b.addTest(.{

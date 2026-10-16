@@ -32,7 +32,7 @@ test("without main is a compile error", () => {
 		runSourceAsWritten(`
 print(99);
 `),
-		"missing entry point 'main'",
+		"Missing entry point 'main'",
 	);
 });
 
@@ -43,7 +43,7 @@ test("private main is a compile error", () => {
     print(1);
 }
 `),
-		"entry point 'main' must be pub",
+		"Entry point 'main' must be pub",
 	);
 });
 

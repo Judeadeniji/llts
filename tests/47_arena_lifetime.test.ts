@@ -16,7 +16,8 @@ test("use-after-deinit on an arena struct field traps", () => {
 $mem = @import("std/mem");
 @struct Box { n: int; }
 $arena = mem.create(0);
-$p = @new(arena, Box { n: 1 });
+$p = @new(arena, Box);
+p.n = 1;
 arena.deinit();
 print(p.n);
 `),
@@ -46,7 +47,8 @@ test("use-after-reset on an arena struct field traps", () => {
 $mem = @import("std/mem");
 @struct Box { n: int; }
 $arena = mem.create(0);
-$p = @new(arena, Box { n: 7 });
+$p = @new(arena, Box);
+p.n = 7;
 arena.reset();
 print(p.n);
 `),
@@ -76,7 +78,8 @@ test("arena memory is usable before deinit", () => {
 $mem = @import("std/mem");
 @struct Box { n: int; }
 $arena = mem.create(0);
-$p = @new(arena, Box { n: 42 });
+$p = @new(arena, Box);
+p.n = 42;
 print(p.n);
 arena.deinit();
 `),

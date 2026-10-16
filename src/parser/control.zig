@@ -3,6 +3,7 @@ const ctx = @import("ctx.zig");
 const ast = @import("../ast/root.zig");
 const stmt_mod = @import("stmt.zig");
 const expr = @import("expr.zig");
+const types = @import("types.zig");
 
 const Parser = ctx.Parser;
 const ParseError = ctx.ParseError;
@@ -31,9 +32,9 @@ pub fn parseLabeledBlock(self: *Parser, label: []const u8) ParseError!*Node {
 
 pub fn parseSwitchExpression(self: *Parser) ParseError!*Node {
     const switch_token = self.previous() orelse return error.ParseFailed;
-    _ = try self.consume(.delimiter, "Expects \"(\"", "(");
+    _ = try self.consume(.delimiter, "Expected '('", "(");
     const cond = try expr.parseExpression(self);
-    _ = try self.consume(.delimiter, "Expects \")\"", ")");
+    _ = try self.consume(.delimiter, "Expected ')'", ")");
     _ = try self.consume(.delimiter, "Expected '{' before switch body", "{");
 
     var prongs: std.ArrayList(ast.SwitchProng) = .empty;
@@ -99,15 +100,15 @@ pub fn parseSwitchExpression(self: *Parser) ParseError!*Node {
 
 pub fn parseIfExpression(self: *Parser) ParseError!*Node {
     const if_token = self.previous() orelse return error.ParseFailed;
-    _ = try self.consume(.delimiter, "Expects \"(\"", "(");
+    _ = try self.consume(.delimiter, "Expected '('", "(");
     const cond = try expr.parseExpression(self);
-    _ = try self.consume(.delimiter, "Expects \")\"", ")");
+    _ = try self.consume(.delimiter, "Expected ')'", ")");
 
     var pipe_value: ?*Node = null;
     if (self.checkDelim("|")) {
         _ = self.advance();
         pipe_value = try expr.parsePrimary(self);
-        _ = try self.consume(.delimiter, "Expected \"|\" after pipe capture", "|");
+        _ = try self.consume(.delimiter, "Expected '|' after pipe capture", "|");
     }
 
     const body = try parseBlock(self);
@@ -144,11 +145,11 @@ pub fn parseIfExpression(self: *Parser) ParseError!*Node {
 
 pub fn parseForExpression(self: *Parser) ParseError!*Node {
     const for_token = self.previous() orelse return error.ParseFailed;
-    _ = try self.consume(.delimiter, "Expects \"(\"", "(");
+    _ = try self.consume(.delimiter, "Expected '('", "(");
     const expr1 = try expr.parseExpression(self);
 
     if (self.checkDelim(";")) {
-        return self.failTok(for_token, "C-style for loops are not supported. Use '@for (0..N) |i|' for range loops or '@for (condition)' for condition loops.", .{});
+        return self.failTok(for_token, "C-style 'for' loops are not supported; use '@for (0..N) |i|' for ranges or '@for (condition)' for conditions", .{});
     }
 
     if (self.checkDelim(",")) {
@@ -157,7 +158,7 @@ pub fn parseForExpression(self: *Parser) ParseError!*Node {
         _ = try self.consume(.bin_op, "Expected '..' for array index range", "..");
     }
 
-    _ = try self.consume(.delimiter, "Expects \")\"", ")");
+    _ = try self.consume(.delimiter, "Expected ')'", ")");
 
     var captures: std.ArrayList(ast.Capture) = .empty;
     if (self.checkDelim("|")) {
@@ -185,12 +186,12 @@ pub fn parseForExpression(self: *Parser) ParseError!*Node {
 }
 
 pub fn parseReturnStatement(self: *Parser) ParseError!*Node {
-    const keyword = try self.consume(.keyword, "Expected \"return\"", "return");
+    const keyword = try self.consume(.keyword, "Expected 'return'", "return");
     var return_value: ?*Node = null;
     if (!self.checkDelim(";")) {
-        return_value = try expr.parseExpression(self);
+        return_value = if (self.in_type_fn) try types.parseType(self) else try expr.parseExpression(self);
     }
-    _ = try self.consume(.delimiter, "Expected \";\"", ";");
+    _ = try self.consume(.delimiter, "Expected ';'", ";");
     return self.create(.{ .return_expr = .{
         .return_value = return_value,
         .loc = self.locOf(keyword),
@@ -204,14 +205,14 @@ pub fn parseDeferStatement(self: *Parser, is_errdefer: bool) ParseError!*Node {
         try parseBlock(self)
     else blk: {
         const e = try expr.parseExpression(self);
-        _ = try self.consume(.delimiter, "Expected \";\" after defer", ";");
+        _ = try self.consume(.delimiter, "Expected ';' after defer", ";");
         break :blk e;
     };
     return self.create(.{ .defer_stmt = .{ .body = body, .is_errdefer = is_errdefer, .loc = self.locOf(keyword) } });
 }
 
 pub fn parseBreakStatement(self: *Parser) ParseError!*Node {
-    const keyword = try self.consume(.keyword, "Expected \"break\"", "break");
+    const keyword = try self.consume(.keyword, "Expected 'break'", "break");
     var label: ?[]const u8 = null;
     if (self.checkDelim(":")) {
         _ = self.advance();
@@ -222,7 +223,7 @@ pub fn parseBreakStatement(self: *Parser) ParseError!*Node {
     if (!self.checkDelim(";")) {
         value = try expr.parseExpression(self);
     }
-    _ = try self.consume(.delimiter, "Expected \";\"", ";");
+    _ = try self.consume(.delimiter, "Expected ';'", ";");
     return self.create(.{ .break_expr = .{
         .label = label,
         .value = value,
@@ -231,13 +232,13 @@ pub fn parseBreakStatement(self: *Parser) ParseError!*Node {
 }
 
 pub fn parseContinueStatement(self: *Parser) ParseError!*Node {
-    const keyword = try self.consume(.keyword, "Expected \"continue\"", "continue");
+    const keyword = try self.consume(.keyword, "Expected 'continue'", "continue");
     var label: ?[]const u8 = null;
     if (self.checkDelim(":")) {
         _ = self.advance();
         const lab = try self.consume(.identifier, "Expected label after ':' in continue statement", null);
         label = try self.dupe(lab.value);
     }
-    _ = try self.consume(.delimiter, "Expected \";\"", ";");
+    _ = try self.consume(.delimiter, "Expected ';'", ";");
     return self.create(.{ .continue_expr = .{ .label = label, .loc = self.locOf(keyword) } });
 }

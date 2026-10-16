@@ -1,0 +1,65 @@
+# Allocator interface experiment in current LLTS style.
+
+# Current allocator (concrete, library-side):
+#   std/mem.Arena { handle: int; alloc(n): int; reset(); deinit() }
+# Standard collections accept `arena: mem.Arena` in their create(...).
+
+# Option A — structural shape interface, zero nominal type.
+# A value satisfies `Allocator` if it provides the same call surface.
+# Library code can accept any allocator struct without knowing the concrete type.
+#
+# pub @type Allocator = {
+#     alloc: @func(n: int): int;
+#     reset: @func();
+#     deinit: @func();
+# };
+
+# Option B — struct-of-callables interface.
+# No methods, just function fields. Explicit and easy to lower.
+#
+# pub @struct AllocatorVtable {
+#     alloc: @func(n: int): int;
+#     reset: @func();
+#     deinit: @func();
+# }
+
+# Option C — minimal contract focused on allocation + optional cleanup.
+# Smaller surface, more future-proof against richer allocators.
+#
+# pub @func alloc(n: int): int
+# pub @func free(ptr: int)   # optional
+# pub @func reset()
+
+# Concrete example: arena-backed list using a generic allocator parameter.
+# Without generics, this is either:
+#   - accept mem.Arena directly (today's approach)
+#   - accept *AllocatorVtable (function-pointer struct)
+#   - accept a shape-typed value (structural interface)
+
+# Sample library API with a structural Allocator shape:
+# pub @func list_create(arena: Allocator): *List
+# pub @func list_push(lst: *List, item: unknown): *List
+
+# Concrete allocator implementations:
+#   - mem.Arena (bump region)
+#   - PooledArena { blocks: []Block } with a freelist
+#   - StickyArena { primary: Arena; sticky: []int } for long-lived allocations
+
+# Trade-offs explored:
+#   - Structural shape interface: flexible, no inheritance, but needs receiver
+#     flexibility so method dispatch on heterogeneous values works.
+#   - Struct-of-callables: very concrete, no dynamic dispatch machinery needed,
+#     but more boilerplate per concrete allocator.
+#   - Minimal contract: safer evolution, but may lose semantic details like
+#     capacity, reset semantics, or deallocation ordering.
+
+# Bottom line for a no-generics LLTS:
+# Interfaces are possible. The natural forms are a structural shape interface,
+# a struct-of-callables interface, or a minimal contract focused on allocation
+# plus optional cleanup. The choice is about structural vs nominal, dynamic
+# dispatch vs vtable-of-callables, and how small the contract should be to stay
+# safely reusable.
+
+# Next step if we want to prototype this: pick Option A or Option B, add a
+# small Allocator interface to the standard library, and update one collection
+# (e.g. list or map) to accept that interface instead of mem.Arena directly.

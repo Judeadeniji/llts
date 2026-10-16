@@ -1,64 +1,87 @@
 # Arena-backed byte buffer. Reclaimed with `arena.reset()` / `deinit()`.
 # `createImmortal` is process-lifetime only (fs/io escape hatch) — prefer `create(arena)`.
+#
+# `Buffer` is the runtime handle (mirrors the VM's BufferObject layout). Pass it
+# by pointer between calls; it is invalid after the owning arena is reset.
 
-@const $mem = @import("std/mem.lls");
+@const $mem = @import("./mem.lls");
 
-pub @func alloc(arena: mem.Arena, size) {
-    return __bufferAlloc(arena, size);
+# Growable packed byte view living in the VM byte heap.
+pub @type BytesRef = {
+    offset: u32;
+    len: u32;
+    capacity: u32;
+};
+
+pub @struct Buffer {
+    arena_ctrl: i32;
+    arena_gen: i32;
+    data: BytesRef;
+
+    @func deinit(self: *Buffer, allocator: mem.Arena) {
+        _ = self;
+        _ = allocator;
+    }
 }
 
-pub @func create(arena: mem.Arena) {
-    return __bufferCreate(arena);
+pub @func alloc(arena: mem.Arena, size: int): *Buffer {
+    return @as(*Buffer, __bufferAlloc(arena, size));
 }
 
-pub @func createImmortal() {
-    return __bufferCreateImmortal();
+pub @func create(arena: mem.Arena): *Buffer {
+    return @as(*Buffer, __bufferCreate(arena));
 }
 
-pub @func fromString(arena: mem.Arena, str) {
-    return __bufferFromString(arena, str);
+pub @func createImmortal(): *Buffer {
+    return @as(*Buffer, __bufferCreateImmortal());
 }
 
-pub @func writeString(buf, offset, str) {
-    return __bufferWriteString(buf, offset, str);
+pub @func fromString(arena: mem.Arena, str: string): *Buffer {
+    return @as(*Buffer, __bufferFromString(arena, str));
 }
 
-pub @func appendString(buf, str) {
-    return __bufferAppendString(buf, str);
+# Write `str` at `offset`; returns the number of bytes written.
+pub @func writeString(buf: *Buffer, offset: int, str: string): int {
+    return @as(int, __bufferWriteString(buf, offset, str));
 }
 
-pub @func readString(buf, offset, len) {
-    return __bufferReadString(buf, offset, len);
+# Append `str`; returns the number of bytes appended.
+pub @func appendString(buf: *Buffer, str: string): int {
+    return @as(int, __bufferAppendString(buf, str));
 }
 
-pub @func len(buf) {
-    return __bufferLen(buf);
+pub @func readString(buf: *Buffer, offset: int, len: int): string {
+    return @as(string, __bufferReadString(buf, offset, len));
 }
 
-pub @func get(buf, index) {
-    return __bufferGet(buf, index);
+pub @func len(buf: *Buffer): int {
+    return @as(int, __bufferLen(buf));
 }
 
-pub @func set(buf, index, val) {
-    return __bufferSet(buf, index, val);
+pub @func get(buf: *Buffer, index: int): int {
+    return @as(int, __bufferGet(buf, index));
 }
 
-pub @func push(buf, val) {
-    return __bufferPush(buf, val);
+pub @func set(buf: *Buffer, index: int, val: int) {
+    __bufferSet(buf, index, val);
 }
 
-pub @func copy(dst, dst_off, src, src_off, len) {
-    return __bufferCopy(dst, dst_off, src, src_off, len);
+pub @func push(buf: *Buffer, val: int) {
+    __bufferPush(buf, val);
 }
 
-pub @func fill(buf, val) {
-    return __bufferFill(buf, val);
+pub @func copy(dst: *Buffer, dst_off: int, src: *Buffer, src_off: int, len: int) {
+    __bufferCopy(dst, dst_off, src, src_off, len);
 }
 
-pub @func fillRange(buf, val, start, len) {
-    return __bufferFillRange(buf, val, start, len);
+pub @func fill(buf: *Buffer, val: int) {
+    __bufferFill(buf, val);
 }
 
-pub @func resize(buf, new_len) {
-    return __bufferResize(buf, new_len);
+pub @func fillRange(buf: *Buffer, val: int, start: int, len: int) {
+    __bufferFillRange(buf, val, start, len);
+}
+
+pub @func resize(buf: *Buffer, new_len: int) {
+    __bufferResize(buf, new_len);
 }

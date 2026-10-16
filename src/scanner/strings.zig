@@ -15,10 +15,10 @@ pub fn scanString(self: *ctx.Scanner) ctx.ScanError!void {
 
     while (self.peek(0)) |c| {
         if (c == quote) break;
-        if (c == '\n') return fail(self, error.MultilineString, "Multiline string literal");
+        if (c == '\n') return fail(self, error.MultilineString, "Multiline strings are not supported; write '\\n' escapes instead");
         if (c == '\\') {
             _ = self.advance();
-            const esc = self.peek(0) orelse return fail(self, error.UnterminatedString, "Unterminated string");
+            const esc = self.peek(0) orelse return fail(self, error.UnterminatedString, "Unterminated string literal; add a closing quote");
             switch (esc) {
                 'n' => try buf.append(self.allocator, '\n'),
                 'r' => try buf.append(self.allocator, '\r'),
@@ -34,7 +34,7 @@ pub fn scanString(self: *ctx.Scanner) ctx.ScanError!void {
         try buf.append(self.allocator, c);
         _ = self.advance();
     }
-    if (self.peek(0) == null) return fail(self, error.UnterminatedString, "Unterminated string");
+    if (self.peek(0) == null) return fail(self, error.UnterminatedString, "Unterminated string literal; add a closing quote");
     _ = self.advance();
     const final_str = try buf.toOwnedSlice(self.allocator);
     try self.pushToken(.string, final_str, col, line);

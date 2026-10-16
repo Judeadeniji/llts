@@ -6,7 +6,11 @@ const expr = @import("root.zig");
 const path = @import("path.zig");
 
 const types = @import("../typecheck/from_ast.zig");
+const ir = @import("../typecheck/ir.zig");
 const intrinsics = @import("../intrinsics.zig");
+const generics = @import("../generics.zig");
+const scope = @import("../scope.zig");
+const compile_errors = @import("../../errors/compile.zig");
 
 const CompilerState = state_mod.CompilerState;
 
@@ -26,7 +30,29 @@ pub fn compileCall(state: *CompilerState, c: *const ast.Call, node: *ast.Node) !
             try intrinsics.compile(state, i, node, c);
             return;
         }
-        return @import("../../errors/compile.zig").compileFailFmt(state, "unknown intrinsic '{s}'", .{name});
+        return compile_errors.compileFailFmt(state, "Unknown intrinsic '{s}'", .{name});
+    }
+
+    // Generic call: the instance takes only the value arguments.
+    if (state.generic_calls.get(node)) |gc| {
+        var value_args: std.ArrayList(*ast.Node) = .empty;
+        defer value_args.deinit(state.allocator);
+        for (generics.params(&gc.template.function_decl), c.args) |p, a| {
+            if (!generics.isTypeParam(p)) try value_args.append(state.allocator, a);
+        }
+        if (try emitNamedCall(state, gc.instance, value_args.items, false, null)) return;
+        return compile_errors.compileFailFmt(state, "Internal error: missing generic instance '{s}'", .{gc.instance});
+    }
+
+    // Type-function call used as a value (`print(Opt(i64))`): its name.
+    if (types.isTypeCall(state, node)) {
+        const disp = state.type_call_results.get(node) orelse "unknown";
+        var arena = std.heap.ArenaAllocator.init(state.allocator);
+        defer arena.deinit();
+        const ta = ir.TypeAlloc{ .allocator = arena.allocator() };
+        const t = try types.parseDisplayType(state, ta, disp, null);
+        try emit.emitString(state, try ir.displayTypeAlloc(arena.allocator(), t));
+        return;
     }
 
     // `T(x)` cast sugar ≡ `@as(T, x)`.
@@ -76,7 +102,7 @@ pub fn compileCall(state: *CompilerState, c: *const ast.Call, node: *ast.Node) !
                 const mem = &c.callee.member;
                 const mod_name = if (mem.object.* == .primary) mem.object.primary.name else "Module";
                 const prop_name = if (mem.property.* == .primary) mem.property.primary.name else "property";
-                                return @import("../../errors/compile.zig").compileFailFmt(state, "'{s}' has no export '{s}'", .{ mod_name, prop_name });
+                                return compile_errors.compileFailFmt(state, "'{s}' has no export '{s}'", .{ mod_name, prop_name });
             }
         }
         if (try emitNamedCall(state, name, c.args, false, null)) return;
@@ -99,13 +125,20 @@ fn arrayElemDisplay(disp: []const u8) ?[]const u8 {
 }
 
 fn emitMethodCall(state: *CompilerState, name: []const u8, self_obj: *ast.Node, args: []*ast.Node) !void {
+    // Const-receiver check: pointer-like self (unannotated or *T) can mutate
+    // the receiver. By-value self (T) clones; no self has no receiver handle.
+    if (scope.constPlaceRoot(state, self_obj)) |recv_name| {
+        if (methodSelfIsPointerLike(state, name)) {
+            return compile_errors.compileFailFmt(state, "Method might mutate constant '{s}'", .{recv_name});
+        }
+    }
     const argc: u8 = @intCast(args.len + 1);
     const addr: ?u32 = if (state.functions.getPtr(name)) |def|
         def.address
     else if (state.chunk.functions.get(name)) |fn_info|
         fn_info.address
     else
-        return @import("../../errors/compile.zig").compileFailFmt(state, "Unknown method {s}", .{name});
+        return compile_errors.compileFailFmt(state, "Unknown method {s}", .{name});
 
     // OP_CALL expects [callee, self, ...args]. GET_FUNCTION must precede args.
     // CALL_STATIC only needs [self, ...args] (no callee value).
@@ -141,6 +174,24 @@ fn methodSelfIsByValue(state: *CompilerState, name: []const u8) !bool {
     const ann = self_param.type_annotation orelse return false;
     const disp = (try types.typeAstToDisplay(ann, state)) orelse return false;
     return disp.len == 0 or disp[0] != '*';
+}
+
+/// True when the method's `self` is a pointer (unannotated or *T).
+fn methodSelfIsPointerLike(state: *CompilerState, name: []const u8) bool {
+    const def = state.functions.get(name) orelse return false;
+    if (def.node.* != .function_decl) return false;
+    const f = &def.node.function_decl;
+    const plist = switch (f.params.*) {
+        .params => |p| p.params,
+        else => return false,
+    };
+    if (plist.len == 0) return false;
+    const self_param = plist[0];
+    if (!std.mem.eql(u8, self_param.name, "self")) return false;
+    // Unannotated self defaults to *T → pointer-like.
+    const ann = self_param.type_annotation orelse return true;
+    const disp = types.typeAstToDisplay(ann, state) catch return true;
+    return disp == null or (disp.?.len > 0 and disp.?[0] == '*');
 }
 
 fn emitNamedCall(state: *CompilerState, name: []const u8, args: []*ast.Node, _: bool, _: ?*ast.Node) !bool {

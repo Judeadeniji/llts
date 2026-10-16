@@ -1,0 +1,5 @@
+# expect: Cannot compare 'type' with a value of type
+pub @func main() {
+    $x: i64 = 1;
+    print(@typeOf(x) == "i64");
+}

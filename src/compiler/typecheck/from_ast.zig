@@ -83,7 +83,62 @@ pub fn typeFromAst(node: ?*ast.Node, state: ?*state_mod.CompilerState, ta: ir.Ty
             break :blk ir.TUnknown;
         },
         .member => try resolveImportedType(n, state, ta),
+        // Type-returning expression (`@typeOf(x)`): typecheck resolved it in context.
+        .call => blk: {
+            const st = state orelse break :blk ir.TUnknown;
+            const disp = st.type_call_results.get(n) orelse break :blk ir.TUnknown;
+            break :blk try parseDisplayType(st, ta, disp, null);
+        },
         else => ir.TUnknown,
+    };
+}
+
+/// Intrinsics whose result is a `type` value.
+const type_returning_intrinsics = [_][]const u8{"@typeOf"};
+
+/// `@typeOf(...)`, any other intrinsic call that yields a `type`, or a call to
+/// a user type function (`Opt(i64)`).
+pub fn isTypeCall(state: ?*state_mod.CompilerState, node: *const ast.Node) bool {
+    if (node.* != .call) return false;
+    const callee = node.call.callee;
+    if (callee.* == .primary) {
+        for (type_returning_intrinsics) |name| {
+            if (std.mem.eql(u8, callee.primary.name, name)) return true;
+        }
+    }
+    const st = state orelse return false;
+    const name = if (callee.* == .primary)
+        callee.primary.name
+    else
+        (expr_path.tryResolveStaticPath(st, callee) catch null) orelse return false;
+    const template = st.templates.get(name) orelse return false;
+    const rt = template.function_decl.return_type orelse return false;
+    return rt.* == .primary and std.mem.eql(u8, rt.primary.name, "type");
+}
+
+/// True when a type AST contains a call node anywhere (e.g. `?@typeOf(x)`).
+pub fn typeNodeHasCall(node: ?*ast.Node) bool {
+    const n = node orelse return false;
+    return switch (n.*) {
+        .call => true,
+        .array_type => |a| typeNodeHasCall(a.elem),
+        .tuple_type => |t| blk: {
+            for (t.elems) |e| if (typeNodeHasCall(e)) break :blk true;
+            break :blk false;
+        },
+        .pointer_type => |p| typeNodeHasCall(p.elem),
+        .func_type => |f| blk: {
+            for (f.params) |p| if (typeNodeHasCall(p)) break :blk true;
+            break :blk typeNodeHasCall(f.return_type);
+        },
+        .shape_type => |s| blk: {
+            for (s.fields) |f| if (typeNodeHasCall(f.type_annotation)) break :blk true;
+            break :blk false;
+        },
+        .union_type => |u| typeNodeHasCall(u.left) or typeNodeHasCall(u.right),
+        .intersection_type => |ix| typeNodeHasCall(ix.left) or typeNodeHasCall(ix.right),
+        .binary => |b| typeNodeHasCall(b.left) or typeNodeHasCall(b.right),
+        else => false,
     };
 }
 
@@ -127,7 +182,7 @@ fn mergeErrorSets(state: *state_mod.CompilerState, left: []const u8, right: []co
             if (!std.mem.eql(u8, l_origin, r_origin)) {
                 return compile_error.compileFailFmt(
                     state,
-                    "conflicting error member '{s}' in '{s}' & '{s}' (from '{s}' and '{s}')",
+                    "Conflicting error member '{s}' in '{s}' & '{s}' (from '{s}' and '{s}')",
                     .{ name, left, right, l_origin, r_origin },
                 );
             }
@@ -187,7 +242,7 @@ fn intersectShapes(
                         defer st.allocator.free(rt);
                         return compile_error.compileFailFmt(
                             st,
-                            "conflicting types for field '{s}' in shape intersection ('{s}' vs '{s}')",
+                            "Conflicting types for field '{s}' in shape intersection ('{s}' vs '{s}')",
                             .{ rfield.name, lt, rt },
                         );
                     }
@@ -275,60 +330,56 @@ fn resolveTypedef(
     return try ta.definedType(td.name, under);
 }
 
-pub fn findStructKey(state: *const state_mod.CompilerState, name: []const u8) ?[]const u8 {
-    if (state.structs.contains(name)) return name;
-    var kit = state.structs.keyIterator();
+/// Resolve a bare name to a `module::Name` table key by suffix match.
+///
+/// Several modules can declare the same bare name (e.g. `Logger` in both
+/// `log.lls` and `log/slog.lls`), so a bare name can match more than one key.
+/// Among the matches we prefer a key whose module prefix equals the current
+/// `module_hint` (the module of the declaration being resolved); failing that
+/// we prefer the shortest module prefix so resolution is deterministic.  Only
+/// returns null when nothing matches at all.
+fn uniqueSuffixKey(state: *const state_mod.CompilerState, map_keys: anytype, name: []const u8) ?[]const u8 {
+    var hinted: ?[]const u8 = null;
+    var shortest: ?[]const u8 = null;
+    var shortest_prefix_len: usize = std.math.maxInt(usize);
+    var kit = map_keys;
     while (kit.next()) |k| {
-        if (std.mem.endsWith(u8, k.*, name)) {
-            const prefix_len = k.*.len - name.len;
-            if (prefix_len >= 2 and std.mem.eql(u8, k.*[prefix_len - 2 .. prefix_len], "::")) {
-                return k.*;
+        if (!std.mem.endsWith(u8, k.*, name)) continue;
+        const prefix_len = k.*.len - name.len;
+        if (prefix_len < 2 or !std.mem.eql(u8, k.*[prefix_len - 2 .. prefix_len], "::")) continue;
+        const module_prefix = k.*[0 .. prefix_len - 2];
+        if (state.module_hint) |hint| {
+            if (std.mem.eql(u8, module_prefix, hint)) {
+                hinted = k.*; // the current module's own declaration wins outright
+                break;
             }
         }
+        if (module_prefix.len < shortest_prefix_len) {
+            shortest = k.*;
+            shortest_prefix_len = module_prefix.len;
+        }
     }
-    return null;
+    return hinted orelse shortest;
+}
+
+pub fn findStructKey(state: *const state_mod.CompilerState, name: []const u8) ?[]const u8 {
+    if (state.structs.contains(name)) return name;
+    return uniqueSuffixKey(state, state.structs.keyIterator(), name);
 }
 
 pub fn findEnumKey(state: *const state_mod.CompilerState, name: []const u8) ?[]const u8 {
     if (state.enums.contains(name)) return name;
-    var kit = state.enums.keyIterator();
-    while (kit.next()) |k| {
-        if (std.mem.endsWith(u8, k.*, name)) {
-            const prefix_len = k.*.len - name.len;
-            if (prefix_len >= 2 and std.mem.eql(u8, k.*[prefix_len - 2 .. prefix_len], "::")) {
-                return k.*;
-            }
-        }
-    }
-    return null;
+    return uniqueSuffixKey(state, state.enums.keyIterator(), name);
 }
 
 pub fn findErrorSetKey(state: *const state_mod.CompilerState, name: []const u8) ?[]const u8 {
     if (state.error_sets.contains(name)) return name;
-    var kit = state.error_sets.keyIterator();
-    while (kit.next()) |k| {
-        if (std.mem.endsWith(u8, k.*, name)) {
-            const prefix_len = k.*.len - name.len;
-            if (prefix_len >= 2 and std.mem.eql(u8, k.*[prefix_len - 2 .. prefix_len], "::")) {
-                return k.*;
-            }
-        }
-    }
-    return null;
+    return uniqueSuffixKey(state, state.error_sets.keyIterator(), name);
 }
 
 pub fn findTypedefKey(state: *const state_mod.CompilerState, name: []const u8) ?[]const u8 {
     if (state.typedefs.contains(name)) return name;
-    var kit = state.typedefs.keyIterator();
-    while (kit.next()) |k| {
-        if (std.mem.endsWith(u8, k.*, name)) {
-            const prefix_len = k.*.len - name.len;
-            if (prefix_len >= 2 and std.mem.eql(u8, k.*[prefix_len - 2 .. prefix_len], "::")) {
-                return k.*;
-            }
-        }
-    }
-    return null;
+    return uniqueSuffixKey(state, state.typedefs.keyIterator(), name);
 }
 
 /// Like `ir.parseDisplayType` but resolves `@type` / `@alias` / structs / enums via `state`.
@@ -624,7 +675,7 @@ pub fn ensureShapeLayoutFromDisplayAs(
     defer field_list.deinit(state.allocator);
 
     for (t.shape) |f| {
-        const field_disp = try ir.displayTypeAlloc(state.allocator, f.ty);
+        const field_disp = try ir.displayTypeQualifiedAlloc(state.allocator, f.ty);
         try state.owned.append(state.allocator, field_disp);
         const name_owned = try state.allocator.dupe(u8, f.name);
         try state.owned.append(state.allocator, name_owned);
@@ -787,6 +838,23 @@ pub fn typeAstToDisplay(node: ?*ast.Node, state: ?*state_mod.CompilerState) From
     const t = try typeFromAst(n, state, ta);
     if (state) |st| {
         const s = try ir.displayTypeAlloc(st.allocator, t);
+        try st.owned.append(st.allocator, s);
+        return s;
+    }
+    return ir.displayTypeSimple(t);
+}
+
+/// Like `typeAstToDisplay`, but keeps `mod.lls::Name` qualifiers so the stored
+/// display round-trips through `parseDisplayType` without ambiguous bare-name
+/// resolution.  Use for struct layouts / typedefs / param types.
+pub fn typeAstToDisplayQualified(node: ?*ast.Node, state: ?*state_mod.CompilerState) FromAstError!?[]const u8 {
+    const n = node orelse return null;
+    var arena = std.heap.ArenaAllocator.init(if (state) |st| st.allocator else std.heap.page_allocator);
+    defer arena.deinit();
+    const ta = ir.TypeAlloc{ .allocator = arena.allocator() };
+    const t = try typeFromAst(n, state, ta);
+    if (state) |st| {
+        const s = try ir.displayTypeQualifiedAlloc(st.allocator, t);
         try st.owned.append(st.allocator, s);
         return s;
     }
@@ -960,13 +1028,19 @@ pub fn resolveType(state: *state_mod.CompilerState, node: *ast.Node) ?[]const u8
             break :blk struct_def.types.get(m.property.primary.name);
         },
         .call => |c| blk: {
+            if (isTypeCall(state, node)) break :blk "type";
+            if (state.generic_calls.get(node)) |gc| {
+                if (state.functions.get(gc.instance)) |def| break :blk def.return_type;
+            }
             // `@as(T, v)` / `T(v)` cast: the result's static type is T. Member access
             // on the cast result needs this to emit typed field loads (otherwise the
             // value stays `unknown` and falls back to dynamic GET_PROPERTY).
             if (c.callee.* == .primary and std.mem.eql(u8, c.callee.primary.name, "@as") and c.args.len == 2) {
-                const ta_cast = ir.TypeAlloc{ .allocator = state.allocator };
+                var scratch = std.heap.ArenaAllocator.init(state.allocator);
+                defer scratch.deinit();
+                const ta_cast = ir.TypeAlloc{ .allocator = scratch.allocator() };
                 if (typeFromAst(c.args[0], state, ta_cast)) |target| {
-                    if (ir.displayTypeAlloc(state.allocator, target)) |disp| {
+                    if (ir.displayTypeQualifiedAlloc(state.allocator, target)) |disp| {
                         state.owned.append(state.allocator, disp) catch {};
                         break :blk disp;
                     } else |_| {}
@@ -978,9 +1052,11 @@ pub fn resolveType(state: *state_mod.CompilerState, node: *ast.Node) ?[]const u8
                     state.chunk.functions.contains(name) or
                     state.native_globals.contains(name);
                 if (!is_callable) {
-                    const ta_cast = ir.TypeAlloc{ .allocator = state.allocator };
+                    var scratch = std.heap.ArenaAllocator.init(state.allocator);
+                    defer scratch.deinit();
+                    const ta_cast = ir.TypeAlloc{ .allocator = scratch.allocator() };
                     if (resolveNamedType(name, state, ta_cast)) |target| {
-                        if (ir.displayTypeAlloc(state.allocator, target)) |disp| {
+                        if (ir.displayTypeQualifiedAlloc(state.allocator, target)) |disp| {
                             state.owned.append(state.allocator, disp) catch {};
                             break :blk disp;
                         } else |_| {}

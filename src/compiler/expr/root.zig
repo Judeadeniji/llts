@@ -12,6 +12,8 @@ const path = @import("path.zig");
 const control = @import("../stmt/control.zig");
 const const_eval = @import("../const_eval.zig");
 const compile_errors = @import("../../errors/compile.zig");
+const types = @import("../typecheck/from_ast.zig");
+const ir = @import("../typecheck/ir.zig");
 
 const CompilerState = state_mod.CompilerState;
 
@@ -67,6 +69,13 @@ fn compilePrimary(state: *CompilerState, prim: *const ast.Primary, node: *ast.No
     if (prim.kind != .identifier and prim.kind != .register) return;
     if (state.functions.contains(prim.name) or state.chunk.functions.contains(prim.name)) {
         try emit.emitNameGet(state, .OP_GET_FUNCTION, prim.name);
+        return;
+    }
+    if (std.mem.indexOf(u8, prim.name, "::") != null and state.typedefs.contains(prim.name) and scope.resolveLocal(state, prim.name) == -1) {
+        var arena = std.heap.ArenaAllocator.init(state.allocator);
+        defer arena.deinit();
+        const t = try types.parseDisplayType(state, .{ .allocator = arena.allocator() }, prim.name, null);
+        try emit.emitString(state, try ir.displayTypeAlloc(arena.allocator(), t));
         return;
     }
     try scope.resolveVariable(state, prim.name);

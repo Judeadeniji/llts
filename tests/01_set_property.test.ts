@@ -33,7 +33,7 @@ test("rejects dynamic property set on non-struct", () => {
 $x = 42;
 x.foo = 1;
 `);
-	expectError(result, "cannot assign field 'foo'");
+	expectError(result, "Cannot assign field 'foo'");
 });
 
 test("rejects assignment to undeclared struct field", () => {

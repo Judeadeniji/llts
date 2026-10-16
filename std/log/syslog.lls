@@ -1,8 +1,8 @@
 # Package syslog provides a simple interface to the system log service.
 # It can send messages to the syslog daemon using UNIX domain sockets, UDP, or TCP.
 
-@const $fmt = @import("std/fmt.lls");
-@const $log = @import("std/log.lls");
+@const $fmt = @import("../fmt.lls");
+@const $log = @import("../log.lls");
 
 # Severity
 pub @const $LOG_EMERG = 0;
@@ -198,10 +198,10 @@ pub @struct Writer {
             $dayStr = fmt.sprintf("%2d", tp[2]);
             $timeStr = fmt.sprintf("%02d:%02d:%02d", tp[3], tp[4], tp[5]);
             $timestamp = mon + " " + dayStr + " " + timeStr;
-            $formatted = fmt.sprintf("<%d>%s %s[%d]: %s%s", p, timestamp, self.tag, pid, msg, nl);
+            formatted = fmt.sprintf("<%d>%s %s[%d]: %s%s", p, timestamp, self.tag, pid, msg, nl);
         } @else {
             $timestamp = fmt.sprintf("%04d-%02d-%02dT%02d:%02d:%02dZ", tp[0], tp[1], tp[2], tp[3], tp[4], tp[5]);
-            $formatted = fmt.sprintf("<%d>%s %s %s[%d]: %s%s", p, timestamp, self.hostname, self.tag, pid, msg, nl);
+            formatted = fmt.sprintf("<%d>%s %s %s[%d]: %s%s", p, timestamp, self.hostname, self.tag, pid, msg, nl);
         }
         $res = __fprint(self.fd, [formatted]);
         @if (@isError(res)) {

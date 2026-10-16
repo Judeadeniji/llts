@@ -6,6 +6,8 @@ const types = @import("types.zig");
 const control = @import("control.zig");
 const structs = @import("structs.zig");
 const enums = @import("enums.zig");
+const expr = @import("expr.zig");
+const errors_mod = @import("errors.zig");
 
 const Parser = ctx.Parser;
 const ParseError = ctx.ParseError;
@@ -25,9 +27,8 @@ pub fn parseDeclaration(self: *Parser, is_const: bool) ParseError!*Node {
     }
 
     var msg_buf: [128]u8 = undefined;
-    const eq_msg = std.fmt.bufPrint(&msg_buf, "Expected \"=\" after \"{s}\"", .{register.value}) catch "Expected \"=\" after register";
+    const eq_msg = std.fmt.bufPrint(&msg_buf, "Expected '=' after '{s}'", .{register.value}) catch "Expected '=' after register";
     _ = try self.consume(.assign_op, eq_msg, "=");
-    const expr = @import("expr.zig");
     // `$p: Point = { x: 1, y: 2 }` — annotated bare object init (not a block).
     const value = if (type_node != null and expr.looksLikeFieldInitObject(self))
         try expr.parseStructInitWithType(self, type_node.?)
@@ -58,7 +59,7 @@ pub fn parseCompilerKeyword(self: *Parser) ParseError!*Node {
     if (std.mem.eql(u8, keyword.value, "switch")) return control.parseSwitchExpression(self);
     if (std.mem.eql(u8, keyword.value, "struct")) return structs.parseCompilerStruct(self);
     if (std.mem.eql(u8, keyword.value, "enum")) return enums.parseCompilerEnum(self);
-    if (std.mem.eql(u8, keyword.value, "error")) return @import("errors.zig").parseCompilerError(self);
+    if (std.mem.eql(u8, keyword.value, "error")) return errors_mod.parseCompilerError(self);
     if (std.mem.eql(u8, keyword.value, "type")) return parseTypeDecl(self, true);
     if (std.mem.eql(u8, keyword.value, "alias")) return parseTypeDecl(self, false);
     if (std.mem.eql(u8, keyword.value, "extern")) return parseCompilerExtern(self);
@@ -94,7 +95,7 @@ fn parseTypeDecl(self: *Parser, distinct: bool) ParseError!*Node {
 pub fn parseCompilerFunc(self: *Parser) ParseError!*Node {
     const name = self.advance() orelse return error.ParseFailed;
     if (name.type != .identifier) {
-        return self.failTok(name, "Expected a valid function name but found \"{s}\" instead.", .{name.value});
+        return self.failTok(name, "Invalid function name '{s}'", .{name.value});
     }
 
     _ = try self.consume(.delimiter, "Expected '(' after function name", "(");
@@ -111,6 +112,9 @@ pub fn parseCompilerFunc(self: *Parser) ParseError!*Node {
         return_type = try types.parseType(self);
     }
 
+    const saved_in_type_fn = self.in_type_fn;
+    self.in_type_fn = if (return_type) |rt| rt.* == .primary and std.mem.eql(u8, rt.primary.name, "type") else false;
+    defer self.in_type_fn = saved_in_type_fn;
     const body = try control.parseBlock(self);
     return self.create(.{ .function_decl = .{
         .name = try self.dupe(name.value),

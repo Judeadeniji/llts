@@ -1,6 +1,7 @@
 const std = @import("std");
 const tokens_mod = @import("../scanner/tokens.zig");
 const ast = @import("../ast/root.zig");
+const report = @import("../errors/report.zig");
 
 pub const Token = tokens_mod.Token;
 pub const TokenType = tokens_mod.TokenType;
@@ -20,6 +21,8 @@ pub const Parser = struct {
     source: []const u8,
     arena: std.mem.Allocator,
     diagnostics: ?*std.ArrayList(ast.Diagnostic) = null,
+    /// Inside a function declared `: type`, `return` takes a type expression.
+    in_type_fn: bool = false,
 
     pub fn peek(self: *const Parser, step: usize) ?Token {
         const i = self.current + step;
@@ -102,7 +105,6 @@ pub const Parser = struct {
             return error.ParseFailed;
         }
 
-        const report = @import("../errors/report.zig");
         report.reportSourceError(self.path, self.source, token.line, token.column, message);
         report.reportLocationFrameCol(self.path, token.line, token.column, "<parse>");
         return error.ParseFailed;

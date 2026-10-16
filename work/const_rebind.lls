@@ -1,0 +1,12 @@
+# Case 4: rebinding a const struct binding
+@struct Point {
+    x: int;
+    y: int;
+}
+
+@const $ORIGIN = Point { x: 0, y: 0 };
+
+pub @func main() {
+    $ORIGIN = Point { x: 1, y: 1 };
+    print(ORIGIN.x);
+}

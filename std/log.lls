@@ -1,12 +1,12 @@
 # Package log implements a simple logging package analogous to Go's log package.
 # LLTS standard library is pro-camelCase.
 
-@const $fmt = @import("std/fmt.lls");
-@const $internal = @import("std/log/internal.lls");
+@const $fmt = @import("./fmt.lls");
+@const $internal = @import("./log/internal.lls");
 
 # --- Submodules ---
-pub @const $slog = @import("std/log/slog.lls");
-pub @const $syslog = @import("std/log/syslog.lls");
+pub @const $slog = @import("./log/slog.lls");
+pub @const $syslog = @import("./log/syslog.lls");
 
 # --- Log flags (camelCase) ---
 pub @const $ldate = 1;         # 1 << 0: the date in the local time zone: 2009/01/23
@@ -20,39 +20,39 @@ pub @const $lstdFlags = ldate | ltime;
 pub @const $discard = "discard";
 
 # --- In-memory Buffer (compatible with bytes.Buffer / strings.Builder) ---
-pub @struct Buffer {
+pub @struct LogBuffer {
     str: string;
 
-    @func write(self: *Buffer, s: string) {
+    @func write(self: *LogBuffer, s: string) {
         self.str = self.str + s;
     }
 
-    @func writeString(self: *Buffer, s: string) {
+    @func writeString(self: *LogBuffer, s: string) {
         self.str = self.str + s;
     }
 
-    @func string(self: *Buffer): string {
+    @func string(self: *LogBuffer): string {
         return self.str;
     }
 
-    @func bytes(self: *Buffer): string {
+    @func bytes(self: *LogBuffer): string {
         return self.str;
     }
 
-    @func reset(self: *Buffer) {
+    @func reset(self: *LogBuffer) {
         self.str = "";
     }
 }
 
-pub @func newBuffer(): Buffer {
-    return Buffer { str: "" };
+pub @func newBuffer(): LogBuffer {
+    return LogBuffer { str: "" };
 }
 
 # --- LogWriter abstraction ---
 pub @struct LogWriter {
     kind: string; # "fd", "buffer", "func", "discard"
     fd: int;
-    buf: ?*Buffer;
+    buf: ?*LogBuffer;
     write_fn: unknown;
 
     @func write(self: *LogWriter, s: string) {

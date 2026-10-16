@@ -163,6 +163,28 @@ pub const Value = union(enum) {
             .native, .function, .name, .module, .list, .map, .buffer => true,
         };
     }
+
+    /// Spelling of a runtime kind for diagnostics: `got 'string'`,
+    /// `expected an integer, got 'null'`. Matches the language's type names
+    /// (`null`, not `nil`). Errors are the caller's business — they probe
+    /// `VMState.isErrorValue` and report `error` themselves.
+    pub fn kindName(self: Value) []const u8 {
+        return switch (self) {
+            .null => "null",
+            .u1 => "bool",
+            .i8, .i16, .i32, .i64, .u8, .u16, .u32, .u64 => "int",
+            .f32, .f64 => "float",
+            .name, .slice => "string",
+            .bytes => "bytes",
+            .array => "array",
+            .ptr => "pointer",
+            .native, .function => "func",
+            .module => "module",
+            .list => "list",
+            .map => "map",
+            .buffer => "buffer",
+        };
+    }
 };
 
 test "value truthiness" {
@@ -170,4 +192,13 @@ test "value truthiness" {
     try std.testing.expect(Value.fromBool(true).isTruthy());
     try std.testing.expect(!Value.fromBool(false).isTruthy());
     try std.testing.expect(!(Value{ .i64 = 0 }).isTruthy());
+}
+
+test "kindName spells the language's type names" {
+    try std.testing.expectEqualStrings("null", (Value{ .null = {} }).kindName());
+    try std.testing.expectEqualStrings("bool", Value.fromBool(true).kindName());
+    try std.testing.expectEqualStrings("int", (Value{ .i64 = 7 }).kindName());
+    try std.testing.expectEqualStrings("float", (Value{ .f64 = 1.5 }).kindName());
+    try std.testing.expectEqualStrings("array", (Value{ .array = .{ .offset = 0, .count = 0 } }).kindName());
+    try std.testing.expectEqualStrings("pointer", (Value{ .ptr = 0 }).kindName());
 }

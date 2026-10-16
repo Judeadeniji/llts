@@ -1,6 +1,7 @@
 const std = @import("std");
 const ctx = @import("ctx.zig");
 const ast = @import("../ast/root.zig");
+const expr = @import("expr.zig");
 
 const Parser = ctx.Parser;
 const ParseError = ctx.ParseError;
@@ -136,6 +137,21 @@ fn parseTypeAtom(self: *Parser) ParseError!*Node {
         return self.failMsg("Expected '(' after @func in type position");
     }
 
+    // `@typeOf(x)` or any other intrinsic call: typecheck requires it to yield a `type`.
+    if (peek.type == .compiler_keyword) {
+        if (self.peek(1)) |next| {
+            if (next.type == .delimiter and std.mem.eql(u8, next.value, "(")) {
+                _ = self.advance();
+                const callee = try self.create(.{ .primary = .{
+                    .kind = .identifier,
+                    .name = try std.fmt.allocPrint(self.arena, "@{s}", .{peek.value}),
+                    .loc = self.locOf(peek),
+                } });
+                return expr.finishCall(self, callee);
+            }
+        }
+    }
+
     // Literal types: `"a"`, `0`, `0x10`, `true`, `false`
     if (peek.type == .string) {
         const tok = self.advance().?;
@@ -194,6 +210,25 @@ fn parseTypeAtom(self: *Parser) ParseError!*Node {
             .object = node,
             .property = prop_node,
             .loc = node.loc(),
+        } });
+    }
+    // `Opt(i64)` / `mod.Opt(?i64)`: a type-function call. Its arguments are
+    // types (type functions take only `type` params), so composites parse here.
+    if (self.checkDelim("(")) {
+        const open = self.advance().?;
+        var args: std.ArrayList(*Node) = .empty;
+        if (!self.checkDelim(")")) {
+            while (true) {
+                try args.append(self.arena, try parseType(self));
+                if (!self.checkDelim(",")) break;
+                _ = self.advance();
+            }
+        }
+        _ = try self.consume(.delimiter, "Expected ')' after type arguments", ")");
+        return self.create(.{ .call = .{
+            .callee = node,
+            .args = try args.toOwnedSlice(self.arena),
+            .loc = self.locOf(open),
         } });
     }
     return node;

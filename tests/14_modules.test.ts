@@ -314,3 +314,70 @@ pub @func main() {}
 	expect(res.stderr).toContain("ParamsResult");
 	expect(res.stderr).not.toContain("decl.lls::ParamsResult");
 });
+
+test("importer @const does not poison imported module function-local of same name (member assign)", () => {
+	const { entry } = withTempModules(
+		{
+			"lib.lls": `
+pub @struct Box {
+    n: int;
+}
+
+pub @func bump(): int {
+    $b = Box{n: 1};
+    b.n = b.n + 1;
+    return b.n;
+}
+`,
+			"main.lls": `
+@const $lib = @import("./lib.lls");
+@const $b = 99;
+print(lib.bump());
+pub @func main() {}
+`,
+		},
+		"main.lls",
+	);
+	expectOutput(runFile(entry), ["2"]);
+});
+
+test("importer @const does not poison imported module function-local of same name (index assign)", () => {
+	const { entry } = withTempModules(
+		{
+			"lib.lls": `
+pub @func setFirst(): int {
+    $arr: [3]int = [0, 0, 0];
+    arr[0] = 42;
+    return arr[0];
+}
+`,
+			"main.lls": `
+@const $lib = @import("./lib.lls");
+@const $arr = 7;
+print(lib.setFirst());
+pub @func main() {}
+`,
+		},
+		"main.lls",
+	);
+	expectOutput(runFile(entry), ["42"]);
+});
+
+test("genuine @const member mutation still errors", () => {
+	const { entry } = withTempModules(
+		{
+			"main.lls": `
+@struct Point {
+    x: int;
+}
+@const $ORIGIN = Point{x: 0};
+ORIGIN.x = 99;
+pub @func main() {}
+`,
+		},
+		"main.lls",
+	);
+	const res = runFile(entry);
+	expect(res.exitCode).not.toBe(0);
+	expect(res.stderr).toContain("Cannot mutate field of constant");
+});

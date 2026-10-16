@@ -114,7 +114,98 @@ Shape fields with type `@func(…): R` can hold first-class function values (sto
 
 `@typeOf` prints the distinct name for `@type` values. `@sizeOf(Name)` matches the underlying layout.
 
+Both may also appear inside any block: a function body, a nested `@if` / `@for` / `{ }` block, a labeled block expression, or a `@comptime { … }` body (including blocks among top-level statements). Scope is lexical, like `$` variables: a local type is visible anywhere in its block, including nested blocks, and nowhere after it. Sibling blocks may each declare their own `T`, and an inner block may shadow an outer or global type. Within one block a type name must be unique, and it cannot also name a parameter or a variable visible in that block.
+
+```llts
+@func area(w: i64, h: i64): i64 {
+    @alias Len = i64;
+    $a: Len = w * h;
+    return a;
+}
+```
+
 `T` may be a width, pointer, array, optional, union (`|`), tuple (`[T, U]`), function type (`@func(…): R`), literal type, or **object shape**. `@struct` / `@enum` remain their own declarations; `@type` names and composes them (e.g. `@type Expr = Literal | Add`).
+
+## Types as compile-time values
+
+Types are values of the meta type `type`. They exist only at compile time: the typechecker resolves them and nothing about them reaches the VM except the code they shape.
+
+`@typeOf(expr)` returns the **static** type of `expr` as a `type` value. The operand is never evaluated, so `@typeOf(f())` does not call `f`. Applied to a type itself, it returns `type`:
+
+```llts
+$x: i64 = 42;
+print(@typeOf(x));          # i64
+print(@typeOf(i64));        # type
+print(@typeOf(@typeOf(x))); # type
+```
+
+Anything that returns a type can be used wherever a type can be written:
+
+```llts
+$g: u8 = 7;
+@alias G = @typeOf(g);                 # name a type (the only way; no `@const $T = …`)
+@struct Holder { v: @typeOf(g); w: i64; }
+
+@func twice(a: i64, b: @typeOf(a)): @typeOf(a) { return a + b; }
+
+$y: ?@typeOf(x) = null;                # composites: ?T, []T, T | U, *T
+$c = @as(@typeOf(g), 9);
+print(@sizeOf(@typeOf(x)));            # 8
+$p = @new(arena, @typeOf(proto));      # *N
+```
+
+**Rules:**
+
+- `==` / `!=` between two type values fold to a constant `true` / `false` at compile time. `@type` names compare nominally (`@typeOf(m) == Meters` is true, `== i64` is false). Other operators on types are errors.
+- A type value cannot occupy a runtime slot: `$t = @typeOf(x)`, `return @typeOf(x)`, assignments, and `type`-annotated fields/params/returns are rejected. Use `@alias` to name a type.
+- Comparing a type with a string (`@typeOf(x) == "i64"`) is an error. For the runtime tag of a value, use `__type(v)` (returns a string such as `"struct"`).
+- A value in type position (`$x: @sizeOf(i64)`) is an error.
+- In declarations (struct fields, typedefs, function signatures) the operand must have a statically known type: an annotated global, or one initialized with a literal. Otherwise you get "Cannot resolve this type here"; add an annotation.
+- `print` of a type value prints its name.
+
+## Type functions and generics
+
+A function with a `type` parameter or a `: type` return is evaluated at compile time. There are two kinds.
+
+**Type functions** return a type. They take only `type` parameters, and their body may contain only `return`, `@if` on types, and local `@alias` / `@type`. A call can appear anywhere a type can:
+
+```llts
+@func Opt(T: type): type { return ?T; }
+@func Wide(T: type): type {
+    @if (T == u8) { return u16; }
+    return T;
+}
+
+@alias OI = Opt(i64);
+@struct Holder { v: Wide(u8); w: i64; }
+@func take(o: Opt(i64)): i64 { ... }
+
+$x: Opt(i64) = null;
+print(Wide(u8));             # u16
+print(Opt(u8) == ?u8);       # true
+```
+
+**Generic functions** take one or more `type` parameters next to ordinary ones. Each distinct set of type arguments produces its own compiled copy (monomorphization); the type arguments are passed first-class at the call site and erased at runtime:
+
+```llts
+@func max(T: type, a: T, b: T): T {
+    @if (a > b) { return a; }
+    return b;
+}
+
+print(max(i64, 3, 9));       # 9
+print(max(f64, 2.5, 1.5));   # 2.5
+$m = max(u8, 1, 2);          # m: u8
+```
+
+Inside the body a type parameter behaves like a transparent `@alias`: it can annotate locals, feed `@sizeOf`, and be printed. Value arguments are checked against the instantiated signature, so `max(i64, 1, true)` is a type error.
+
+**Rules:**
+
+- Instances are memoized by type arguments; `Opt(i64)` and `?i64` are the same type.
+- A generic function cannot be used as a value (`$f = max` is an error); call it with type arguments.
+- Struct methods cannot take type parameters yet.
+- Instantiation that never terminates (e.g. `rec([]T, n)` calling itself) stops at depth 64 with an error.
 
 ## When runtime is the same
 

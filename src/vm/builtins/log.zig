@@ -61,13 +61,15 @@ fn logFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
         try print_fmt.writeValue(vm, &code_buf, vm.slot(p).*);
 
         const payload = vm.slot(p + 1).*;
+        // Scope stays empty: these lines are the *program's* log output, not a
+        // compiler subsystem, so they render as `ERROR: code` / `  payload: …`.
         if (payload == .null) {
-            io_log.log(.err, "llts", "{s}", .{code_buf.items});
+            io_log.log(.err, "", "{s}", .{code_buf.items});
         } else {
             var pay_buf: std.ArrayList(u8) = .empty;
             defer pay_buf.deinit(vm.allocator);
             try print_fmt.writeValue(vm, &pay_buf, payload);
-            io_log.log(.err, "llts", "{s}\n  payload: {s}", .{ code_buf.items, pay_buf.items });
+            io_log.log(.err, "", "{s}\n  payload: {s}", .{ code_buf.items, pay_buf.items });
         }
         return .null;
     }
@@ -80,7 +82,7 @@ fn logFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
         try writeLogArg(vm, &msg_buf, args[i]);
     }
 
-    io_log.log(level, "llts", "{s}", .{msg_buf.items});
+    io_log.log(level, "", "{s}", .{msg_buf.items});
     return .null;
 }
 

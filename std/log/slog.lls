@@ -1,8 +1,8 @@
 # Package slog implements structured logging with severity levels and key-value attributes,
 # analogous to Go's log/slog package.
 
-@const $fmt = @import("std/fmt.lls");
-@const $internal = @import("std/log/internal.lls");
+@const $fmt = @import("../fmt.lls");
+@const $internal = @import("./internal.lls");
 
 # --- Severity Levels ---
 pub @const $levelDebug = -4;

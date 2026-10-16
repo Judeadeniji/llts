@@ -1,0 +1,16 @@
+# Auto-clone on return: flat scalar struct bound to a local
+@struct Point {
+    x: int;
+    y: int;
+}
+
+@func origin() {
+    $p = Point { x: 3, y: 4 };
+    return p;
+}
+
+pub @func main() {
+    $o = origin();
+    print(o.x);
+    print(o.y);
+}

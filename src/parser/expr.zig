@@ -229,7 +229,7 @@ pub fn parseStructInitWithType(self: *Parser, type_expr: *Node) ParseError!*Node
     return finishStructInit(self, type_expr, tok);
 }
 
-fn finishCall(self: *Parser, callee: *Node) ParseError!*Node {
+pub fn finishCall(self: *Parser, callee: *Node) ParseError!*Node {
     _ = try self.consume(.delimiter, "Expected '('", "(");
     var args: std.ArrayList(*Node) = .empty;
     if (!self.checkDelim(")")) {
@@ -357,7 +357,7 @@ pub fn parsePrimary(self: *Parser) ParseError!*Node {
         },
         else => {},
     }
-    return self.failTok(token, "Unexpected token in expression: {s} at line {d}", .{ token.value, token.line });
+    return self.failTok(token, "Unexpected token in expression: '{s}'", .{token.value});
 }
 
 /// `[` … `]` in expression position: array type (`[]T`, `[N]T`) or array literal (`[1, 2]`).
@@ -423,7 +423,7 @@ fn parseLiteral(self: *Parser) ParseError!*Node {
         .binary => .binary,
         .octal => .octal,
         .number => .number,
-        else => return self.failTok(token, "Invalid literal \"{s}\"", .{token.value}),
+        else => return self.failTok(token, "Invalid literal '{s}'", .{token.value}),
     };
     return self.create(.{ .literal = .{
         .literal_type = kind,

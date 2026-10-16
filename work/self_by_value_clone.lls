@@ -1,0 +1,23 @@
+# self: T (by value) should clone — mutations must NOT affect the caller's struct.
+@struct Point {
+    x: int;
+    y: int;
+
+    @func bump_by_value(self: Point) {
+        self.x = self.x + 100;
+    }
+
+    @func bump_by_ptr(self: *Point) {
+        self.x = self.x + 100;
+    }
+}
+
+pub @func main() {
+    $a = Point { x: 1, y: 2 };
+    a.bump_by_value();
+    print(a.x);
+
+    $b = Point { x: 1, y: 2 };
+    b.bump_by_ptr();
+    print(b.x);
+}

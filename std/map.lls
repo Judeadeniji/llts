@@ -1,27 +1,46 @@
 # Arena-backed map (string keys). Reclaimed with `arena.reset()` / `deinit()`.
+#
+# Values are dynamically typed (`unknown`): a map may hold any value, so `get`
+# returns `unknown` (and `null` when the key is absent).
 
-@const $mem = @import("std/mem.lls");
+@const $mem = @import("./mem.lls");
 
-pub @func create(arena: mem.Arena) {
-    return __mapCreate(arena);
+# Handle for a packed value array living in the VM byte heap.
+pub @type ArrayRef = {
+    offset: u32;
+    count: u32;
+    capacity: u32;
+    arena_ctrl: i32;
+    arena_gen: i32;
+};
+
+pub @struct Map {
+    arena_ctrl: i32;
+    arena_gen: i32;
+    keys: ArrayRef;
+    values: ArrayRef;
 }
 
-pub @func set(mp, key, value) {
+pub @func create(arena: mem.Arena): *Map {
+    return @as(*Map, __mapCreate(arena));
+}
+
+pub @func set(mp: *Map, key: string, value: unknown): unknown {
     return __mapSet(mp, key, value);
 }
 
-pub @func get(mp, key) {
+pub @func get(mp: *Map, key: string): unknown {
     return __mapGet(mp, key);
 }
 
-pub @func has(mp, key) {
-    return __mapHas(mp, key);
+pub @func has(mp: *Map, key: string): bool {
+    return @as(bool, __mapHas(mp, key));
 }
 
-pub @func delete(mp, key) {
-    return __mapDelete(mp, key);
+pub @func delete(mp: *Map, key: string): bool {
+    return @as(bool, __mapDelete(mp, key));
 }
 
-pub @func size(mp) {
-    return __mapSize(mp);
+pub @func size(mp: *Map): int {
+    return @as(int, __mapSize(mp));
 }

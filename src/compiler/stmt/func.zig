@@ -5,9 +5,12 @@ const scope = @import("../scope.zig");
 const state_mod = @import("../state.zig");
 const expr = @import("../expr/root.zig");
 const stmt = @import("root.zig");
+const layout = @import("../layout.zig");
+const escape = @import("../escape.zig");
+const compile_errors = @import("../../errors/compile.zig");
+const from_ast = @import("../typecheck/from_ast.zig");
 
 const CompilerState = state_mod.CompilerState;
-const from_ast = @import("../typecheck/from_ast.zig");
 
 pub fn compileBlock(state: *CompilerState, block: *const ast.Block) !void {
     try scope.beginScope(state);
@@ -21,13 +24,29 @@ pub fn compileDefer(state: *CompilerState, def: *const ast.Defer) !void {
 
 pub fn compileReturn(state: *CompilerState, ret: *const ast.Return) !void {
     if (ret.return_value) |v| {
-        const escape = @import("../escape.zig");
         try escape.checkReturnValue(state, v);
         // Bare `return Foo{…}` / `[…]` → immortal (same as module init), not frame bump.
         const prev_immortal = state.alloc_immortal;
         if (escape.canPromoteReturnLiteral(state, v)) state.alloc_immortal = true;
         defer state.alloc_immortal = prev_immortal;
-        try expr.compileExpression(state, v);
+        // Frame-bound deep-cloneable struct → copy into immortal storage so the
+        // value outlives the frame without an allocator. Flat scalar structs
+        // need only a shallow byte copy; nested value-structs get an unrolled
+        // post-order deep clone (children first, then patch parent handles).
+        if (escape.canAutoCloneReturn(state, v)) {
+            const tn = localTypeOf(state, v).?;
+            if (escape.hasNestedStructFields(state, tn)) {
+                try emitDeepClone(state, v, tn);
+            } else {
+                // Flat scalar struct — shallow-copy into immortal.
+                try emit.emitNameGet(state, .OP_GET_GLOBAL, "__cloneBytesImmortal");
+                try expr.compileExpression(state, v);
+                try emit.emitOp(state, .OP_CALL);
+                try emit.emitByte(state, 1);
+            }
+        } else {
+            try expr.compileExpression(state, v);
+        }
     } else {
         try emit.emitOp(state, .OP_NULL);
     }
@@ -39,6 +58,81 @@ pub fn compileReturn(state: *CompilerState, ret: *const ast.Return) !void {
     } else {
         try emit.emitOp(state, .OP_RETURN);
     }
+}
+
+/// Type display of a local identifier/register expression, or null.
+fn localTypeOf(state: *CompilerState, node: *ast.Node) ?[]const u8 {
+    if (node.* != .primary) return null;
+    const p = node.primary;
+    if (p.kind != .identifier and p.kind != .register) return null;
+    const idx = scope.resolveLocal(state, p.name);
+    if (idx < 0) return null;
+    return state.locals.items[@intCast(idx)].type_name;
+}
+
+/// Emit a deep clone of the frame-bound local named by `v` (type `tn`) into
+/// immortal storage. Nested value-struct fields are cloned post-order: each
+/// child is loaded from the *source*, deep-cloned, then stored into the
+/// parent's shallow-clone shell. Pointer/slice fields never reach here —
+/// `canAutoCloneReturn` rejects them.
+fn emitDeepClone(state: *CompilerState, v: *ast.Node, tn: []const u8) !void {
+    const p = v.primary;
+    const src_idx: u8 = @intCast(scope.resolveLocal(state, p.name));
+    try emitDeepCloneFromLocal(state, src_idx, tn);
+}
+
+/// Emit deep clone of the struct in local `src_idx` of type `tn`.
+/// Leaves the clone handle on the stack.
+fn emitDeepCloneFromLocal(state: *CompilerState, src_idx: u8, tn: []const u8) !void {
+    // Save compiler locals length so temp slots don't leak into subsequent code.
+    const saved_len = state.locals.items.len;
+    defer state.locals.shrinkRetainingCapacity(saved_len);
+
+    // Shallow-clone the struct shell into immortal storage → temp .dc_shell.
+    try emit.emitNameGet(state, .OP_GET_GLOBAL, "__cloneBytesImmortal");
+    try emit.emitOp(state, .OP_GET_LOCAL);
+    try emit.emitByte(state, src_idx);
+    try emit.emitOp(state, .OP_CALL);
+    try emit.emitByte(state, 1);
+    const shell_idx: u8 = @intCast(state.locals.items.len);
+    try state.locals.append(state.allocator, .{ .name = ".dc_shell", .depth = state.scope_depth });
+
+    // For each nested value-struct field: load child from SOURCE, deep-clone,
+    // store new handle into the shell.
+    const sd = state.structs.get(tn).?;
+    var it = sd.types.iterator();
+    while (it.next()) |e| {
+        const field_name = e.key_ptr.*;
+        const field_ty = e.value_ptr.*;
+        if (!state.structs.contains(field_ty)) continue;
+        if (!escape.isDeepCloneableStruct(state, field_ty, 1)) continue;
+
+        const offset = sd.offsets.get(field_name).?;
+        const kind: u8 = @intFromEnum(layout.fieldKind(state, field_ty));
+
+        // Load child handle from SOURCE (not the clone — clone has stale handles).
+        try emit.emitOp(state, .OP_GET_LOCAL);
+        try emit.emitByte(state, src_idx);
+        try emit.emitLoadField(state, offset, kind);
+        const child_src_idx: u8 = @intCast(state.locals.items.len);
+        try state.locals.append(state.allocator, .{ .name = ".dc_csrc", .depth = state.scope_depth });
+
+        // Deep-clone child (recursively; leaves handle on stack).
+        try emitDeepCloneFromLocal(state, child_src_idx, field_ty);
+        const child_clone_idx: u8 = @intCast(state.locals.items.len);
+        try state.locals.append(state.allocator, .{ .name = ".dc_cclone", .depth = state.scope_depth });
+
+        // Patch: shell.field = child_clone.
+        try emit.emitOp(state, .OP_GET_LOCAL);
+        try emit.emitByte(state, shell_idx);
+        try emit.emitOp(state, .OP_GET_LOCAL);
+        try emit.emitByte(state, child_clone_idx);
+        try emit.emitStoreField(state, offset, kind);
+    }
+
+    // Leave shell on stack for return.
+    try emit.emitOp(state, .OP_GET_LOCAL);
+    try emit.emitByte(state, shell_idx);
 }
 
 pub fn compileFunction(state: *CompilerState, node: *ast.FunctionDecl, ast_node: *ast.Node) !void {
@@ -105,7 +199,7 @@ fn pushParam(state: *CompilerState, p: ast.Param, method_struct: ?[]const u8) !v
         }
     }
     if (p.type_annotation) |ta| {
-        p_type = (try from_ast.typeAstToDisplay(ta, state));
+        p_type = (try from_ast.typeAstToDisplayQualified(ta, state));
     }
     try state.locals.append(state.allocator, .{
         .name = p.name,
@@ -118,5 +212,5 @@ fn pushParam(state: *CompilerState, p: ast.Param, method_struct: ?[]const u8) !v
 }
 
 fn fail(state: *CompilerState, msg: []const u8) error{CompileError} {
-    return @import("../../errors/compile.zig").compileFailFmt(state, "{s}", .{msg});
+    return compile_errors.compileFailFmt(state, "{s}", .{msg});
 }

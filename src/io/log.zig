@@ -59,21 +59,59 @@ pub fn enabled(level: Level) bool {
     return @intFromEnum(level) >= @intFromEnum(min_level);
 }
 
-pub fn log(level: Level, scope: []const u8, comptime fmt: []const u8, args: anytype) void {
-    _ = scope;
-    if (!enabled(level)) return;
+/// Scopes that say nothing — the empty scope and Zig's `.default` — are omitted
+/// so ordinary lines stay `INFO: msg`.
+pub fn displayScope(scope: []const u8) []const u8 {
+    if (std.mem.eql(u8, scope, "default")) return "";
+    return scope;
+}
+
+/// Render one complete log line: `LEVEL: body\n`, or `LEVEL [scope]: body\n`
+/// when the scope has something to say. Pure — safe to unit test.
+pub fn formatLine(buf: []u8, level: Level, scope: []const u8, body: []const u8) error{NoSpaceLeft}![]const u8 {
     const c_lvl = color.paint(level.ansi());
     const r = color.r();
+    const sc = displayScope(scope);
+    if (sc.len == 0) {
+        return std.fmt.bufPrint(buf, "{s}{s}{s}: {s}\n", .{ c_lvl, level.name(), r, body });
+    }
+    return std.fmt.bufPrint(buf, "{s}{s}{s} {s}[{s}]{s}: {s}\n", .{ c_lvl, level.name(), r, color.paint(color.dim), sc, r, body });
+}
+
+fn writeLine(level: Level, scope: []const u8, body: []const u8) void {
+    var buf: [4352]u8 = undefined;
+    if (formatLine(&buf, level, scope, body)) |line| {
+        out.writeStderr(line);
+        return;
+    } else |_| {}
+    // Body longer than the scratch buffer — same line, heap-allocated.
+    const c_lvl = color.paint(level.ansi());
+    const r = color.r();
+    const sc = displayScope(scope);
+    const owned = if (sc.len == 0)
+        std.fmt.allocPrint(std.heap.page_allocator, "{s}{s}{s}: {s}\n", .{ c_lvl, level.name(), r, body })
+    else
+        std.fmt.allocPrint(std.heap.page_allocator, "{s}{s}{s} {s}[{s}]{s}: {s}\n", .{ c_lvl, level.name(), r, color.paint(color.dim), sc, r, body });
+    const rendered = owned catch {
+        out.writeStderr("(log format failed)\n");
+        return;
+    };
+    defer std.heap.page_allocator.free(rendered);
+    out.writeStderr(rendered);
+}
+
+pub fn log(level: Level, scope: []const u8, comptime fmt: []const u8, args: anytype) void {
+    if (!enabled(level)) return;
     var buf: [4096]u8 = undefined;
     if (std.fmt.bufPrint(&buf, fmt, args)) |body| {
-        out.printStderr("{s}{s}{s}: {s}\n", .{ c_lvl, level.name(), r, body });
+        writeLine(level, scope, body);
     } else |_| {
         const owned = std.fmt.allocPrint(std.heap.page_allocator, fmt, args) catch {
-            out.printStderr("{s}{s}{s}: (log format failed)\n", .{ c_lvl, level.name(), r });
+            writeLine(level, scope, "(log format failed)");
             return;
         };
         defer std.heap.page_allocator.free(owned);
-        out.printStderr("{s}{s}{s}: {s}\n", .{ c_lvl, level.name(), r, owned });
+        writeLine(level, scope, owned);
     }
 }
 
@@ -91,4 +129,24 @@ pub fn warn(scope: []const u8, comptime fmt: []const u8, args: anytype) void {
 }
 pub fn err(scope: []const u8, comptime fmt: []const u8, args: anytype) void {
     log(.err, scope, fmt, args);
+}
+
+test "formatLine: no scope keeps the plain `LEVEL: body` shape" {
+    color.setEnabled(false);
+    var buf: [256]u8 = undefined;
+    const line = try formatLine(&buf, .warn, "", "disk almost full");
+    try std.testing.expectEqualStrings("WARN: disk almost full\n", line);
+}
+
+test "formatLine: a scope renders as LEVEL [scope]: body" {
+    color.setEnabled(false);
+    var buf: [256]u8 = undefined;
+    const line = try formatLine(&buf, .err, "vm", "stack overflow");
+    try std.testing.expectEqualStrings("ERROR [vm]: stack overflow\n", line);
+}
+
+test "displayScope drops the empty and default scopes" {
+    try std.testing.expectEqualStrings("", displayScope(""));
+    try std.testing.expectEqualStrings("", displayScope("default"));
+    try std.testing.expectEqualStrings("compiler", displayScope("compiler"));
 }

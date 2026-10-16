@@ -44,6 +44,20 @@ pub const FunctionDef = struct {
     source_index: u16 = 0,
 };
 
+pub const GenericCall = struct {
+    instance: []const u8,
+    /// The template's `function_decl` node (its params mark which call
+    /// arguments are types and so are dropped at codegen).
+    template: *ast.Node,
+};
+
+pub const PendingInstance = struct {
+    name: []const u8,
+    depth: u32,
+    /// The call that created the instance (reported under errors inside it).
+    site: ast.Location,
+};
+
 pub const StructDef = struct {
     name: []const u8,
     size: i32,
@@ -138,6 +152,38 @@ pub const CompilerState = struct {
     enums: std.StringHashMap(EnumDef),
     error_sets: std.StringHashMap(ErrorSetDef),
     typedefs: std.StringHashMap(TypeDef),
+    /// `@type` / `@alias` declared inside a function body. Registered ahead of
+    /// typecheck under a function-scoped key (see `local_types.zig`), so the
+    /// statement itself compiles to nothing.
+    local_type_decls: std.AutoHashMap(*const ast.TypeDecl, void),
+    /// Functions with a `type` param or `: type` return (see `generics.zig`).
+    /// Never typechecked or emitted; only their instances are.
+    templates: std.StringHashMap(*ast.Node),
+    /// `template(qualified type args)` → type display (type functions) or
+    /// instance function name (generic functions).
+    instances: std.StringHashMap([]const u8),
+    /// Generic function instances registered in `functions`.
+    instance_fns: std.StringHashMap(void),
+    /// Call to a generic function → its instance.
+    generic_calls: std.AutoHashMap(*ast.Node, GenericCall),
+    /// Bare name → every `Type::name` / `module::name` function key. Built once
+    /// before the call-graph walk so unqualified edges resolve in O(matches)
+    /// instead of rescanning the whole function table per edge.
+    method_index: std.StringHashMap(std.ArrayList([]const u8)),
+    /// Instances created during typecheck, checked before typecheck ends.
+    pending_instances: std.ArrayList(PendingInstance) = .empty,
+    /// Instantiation nesting of the code being checked (0 = not in an instance).
+    instance_depth: u32 = 0,
+    /// Typecheck only functions reachable from `main` / exported top-level code.
+    /// `emitBytecode` already skips unreachable functions, so checking them was
+    /// wasted work — a 2-line file importing the stdlib pulled in ~420 dead
+    /// functions. Off for strict (native) builds and for the LSP, which must
+    /// still diagnose code nobody calls yet.
+    typecheck_reachable_only: bool = false,
+    /// Makes type-parameter alias keys unique per instantiation.
+    instance_counter: u32 = 0,
+    /// Owns the AST copies made for instances.
+    generic_arena: std.heap.ArenaAllocator,
     loops: std.ArrayList(LoopTracker) = .empty,
     exprs: std.ArrayList(ExprTracker) = .empty,
     defer_stacks: std.AutoHashMap(i32, std.ArrayListUnmanaged(DeferEntry)),
@@ -151,10 +197,22 @@ pub const CompilerState = struct {
     global_slots: std.StringHashMap(u16),
     inline_return_jumps: std.ArrayList(std.ArrayList(usize)) = .empty,
     owned: std.ArrayList([]const u8) = .empty,
+    /// Module prefix (`std/log.lls`) of the declaration currently being
+    /// resolved. Used to disambiguate bare type names that suffix-match
+    /// structs from several modules (e.g. `Logger` in both `log` and `slog`).
+    module_hint: ?[]const u8 = null,
     /// Imported module ASTs (own their arenas). Freed in `deinit`.
     module_docs: std.ArrayList(*ast.Document) = .empty,
     type_of_results: std.AutoHashMap(*ast.Node, []const u8),
-    type_of_is_type: std.AutoHashMap(*ast.Node, void),
+    /// Type-valued node (`@typeOf(x)`, or a type name used as a value) → qualified
+    /// display of the type it denotes. Filled by typecheck; read by `typeFromAst`
+    /// so type-returning expressions work in every type position.
+    type_call_results: std.AutoHashMap(*ast.Node, []const u8),
+    /// `T == U` / `T != U` between types, folded at typecheck. Keyed by the
+    /// binary's left operand node.
+    type_eq_folds: std.AutoHashMap(*ast.Node, bool),
+    /// `@sizeOf(...)` resolved statically at typecheck (call node → bytes).
+    size_of_results: std.AutoHashMap(*ast.Node, i32),
     /// `@nameOf` lowering plan per call node (variant spelling as declared).
     name_of_plans: std.AutoHashMap(*ast.Node, NameOfPlan),
     for_is_cond: std.AutoHashMap(*const ast.For, void),
@@ -198,6 +256,13 @@ pub fn create(allocator: std.mem.Allocator) !CompilerState {
         .enums = std.StringHashMap(EnumDef).init(allocator),
         .error_sets = std.StringHashMap(ErrorSetDef).init(allocator),
         .typedefs = std.StringHashMap(TypeDef).init(allocator),
+        .local_type_decls = std.AutoHashMap(*const ast.TypeDecl, void).init(allocator),
+        .templates = std.StringHashMap(*ast.Node).init(allocator),
+        .instances = std.StringHashMap([]const u8).init(allocator),
+        .instance_fns = std.StringHashMap(void).init(allocator),
+        .generic_calls = std.AutoHashMap(*ast.Node, GenericCall).init(allocator),
+        .method_index = std.StringHashMap(std.ArrayList([]const u8)).init(allocator),
+        .generic_arena = std.heap.ArenaAllocator.init(allocator),
         .defer_stacks = std.AutoHashMap(i32, std.ArrayListUnmanaged(DeferEntry)).init(allocator),
         .global_vars = std.StringHashMap(void).init(allocator),
         .global_types = std.StringHashMap([]const u8).init(allocator),
@@ -207,7 +272,9 @@ pub fn create(allocator: std.mem.Allocator) !CompilerState {
         .native_globals = std.StringHashMap(void).init(allocator),
         .global_slots = std.StringHashMap(u16).init(allocator),
         .type_of_results = std.AutoHashMap(*ast.Node, []const u8).init(allocator),
-        .type_of_is_type = std.AutoHashMap(*ast.Node, void).init(allocator),
+        .type_call_results = std.AutoHashMap(*ast.Node, []const u8).init(allocator),
+        .type_eq_folds = std.AutoHashMap(*ast.Node, bool).init(allocator),
+        .size_of_results = std.AutoHashMap(*ast.Node, i32).init(allocator),
         .name_of_plans = std.AutoHashMap(*ast.Node, NameOfPlan).init(allocator),
         .for_is_cond = std.AutoHashMap(*const ast.For, void).init(allocator),
         .import_from = std.StringHashMap(ImportFrame).init(allocator),
@@ -286,6 +353,11 @@ pub fn deinit(self: *CompilerState) void {
         ex.break_jumps.deinit(self.allocator);
     }
     self.exprs.deinit(self.allocator);
+    var mit = self.method_index.iterator();
+    while (mit.next()) |e| {
+        e.value_ptr.deinit(self.allocator);
+    }
+    self.method_index.deinit();
     var fit = self.functions.iterator();
     while (fit.next()) |e| {
         e.value_ptr.calls.deinit();
@@ -310,6 +382,13 @@ pub fn deinit(self: *CompilerState) void {
     }
     self.error_sets.deinit();
     self.typedefs.deinit();
+    self.local_type_decls.deinit();
+    self.templates.deinit();
+    self.instances.deinit();
+    self.instance_fns.deinit();
+    self.generic_calls.deinit();
+    self.pending_instances.deinit(self.allocator);
+    self.generic_arena.deinit();
     var dit = self.defer_stacks.iterator();
     while (dit.next()) |e| e.value_ptr.deinit(self.allocator);
     self.defer_stacks.deinit();
@@ -325,7 +404,9 @@ pub fn deinit(self: *CompilerState) void {
     self.native_globals.deinit();
     self.global_slots.deinit();
     self.type_of_results.deinit();
-    self.type_of_is_type.deinit();
+    self.type_call_results.deinit();
+    self.type_eq_folds.deinit();
+    self.size_of_results.deinit();
     self.name_of_plans.deinit();
     self.for_is_cond.deinit();
     self.import_stack.deinit(self.allocator);

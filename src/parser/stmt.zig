@@ -51,7 +51,7 @@ pub fn parseStatement(self: *Parser) ParseError!*Node {
             if (std.mem.eql(u8, token.value, "true") or std.mem.eql(u8, token.value, "false") or
                 std.mem.eql(u8, token.value, "error") or std.mem.eql(u8, token.value, "null"))
                 return parseExpressionStatement(self);
-            return self.failTok(token, "Unexpected keyword: {s}", .{token.value});
+            return self.failTok(token, "Unexpected keyword '{s}'", .{token.value});
         },
         .compiler_keyword => return decl.parseCompilerKeyword(self),
         .delimiter => {
@@ -59,9 +59,9 @@ pub fn parseStatement(self: *Parser) ParseError!*Node {
                 return parseExpressionStatement(self);
             if (std.mem.eql(u8, token.value, "{"))
                 return control.parseBlock(self);
-            return self.failTok(token, "Unexpected token: {s} at line {d}", .{ token.value, token.line });
+            return self.failTok(token, "Unexpected token '{s}'", .{token.value});
         },
-        else => return self.failTok(token, "Unexpected token: {s} at line {d}", .{ token.value, token.line }),
+        else => return self.failTok(token, "Unexpected token '{s}'", .{token.value}),
     }
 }
 

@@ -3,6 +3,8 @@
 const std = @import("std");
 const state_mod = @import("state.zig");
 const widths = @import("widths.zig");
+const ir = @import("typecheck/ir.zig");
+const from_ast = @import("typecheck/from_ast.zig");
 
 /// Packed field storage kinds. Numeric kinds 10+ match `widths.Width` + offset.
 pub const FieldKind = enum(u8) {
@@ -28,7 +30,17 @@ pub fn alignUp(offset: i32, alignment: i32) i32 {
     return (offset + a) & ~a;
 }
 
+/// Packed optional fields (`?T` / `T | null`) are stored as handles so `null`
+/// has a representation; value-level `@sizeOf(?T)` still uses the payload size.
+pub fn isOptionalTypeName(type_name: []const u8) bool {
+    if (type_name.len > 0 and type_name[0] == '?') return true;
+    if (std.mem.indexOf(u8, type_name, " | null") != null) return true;
+    if (std.mem.startsWith(u8, type_name, "null | ")) return true;
+    return false;
+}
+
 pub fn sizeOfTypeName(type_name: []const u8) i32 {
+    if (isOptionalTypeName(type_name)) return 8;
     const bare = unwrapTypeName(type_name);
     if (bare.len > 0 and bare[0] == '*') return 8; // pointer / heap handle
     if (std.mem.startsWith(u8, bare, "@func(")) return 8; // function value / handle
@@ -51,7 +63,34 @@ pub fn sizeOfNamedType(state: *state_mod.CompilerState, type_name: []const u8) i
     return sizeOfTypeName(type_name);
 }
 
+/// Static `@sizeOf` for a resolved type. Null when the type has no static size
+/// (`unknown`, `never`, `type`).
+pub fn sizeOfType(state: *state_mod.CompilerState, t: ir.Type) !?i32 {
+    return switch (t) {
+        .u1, .i8, .i16, .i32, .i64, .u8, .u16, .u32, .u64, .f32, .f64, .isize, .usize, .fsize => ir.widthOf(t).?.size(),
+        .int_lit => 8,
+        .bool_lit => widths.Width.u1.size(),
+        .null => 0,
+        .defined => |d| try sizeOfType(state, d.underlying.*),
+        .struct_ => |name| blk: {
+            if (state.enums.contains(name)) break :blk 8;
+            if (from_ast.lookupStruct(state, name)) |sd| break :blk sd.size;
+            break :blk 8;
+        },
+        .shape => blk: {
+            const disp = try ir.displayTypeQualifiedAlloc(state.allocator, t);
+            try state.owned.append(state.allocator, disp);
+            if (from_ast.lookupStruct(state, disp)) |sd| break :blk sd.size;
+            break :blk 8;
+        },
+        .union_ => if (ir.optionalPayload(t)) |payload| try sizeOfType(state, payload) else 8,
+        .enum_, .enum_lit, .str_lit, .array, .tuple, .ptr, .func, .error_, .error_set, .error_lit => 8,
+        .unknown, .never, .type_ => null,
+    };
+}
+
 pub fn alignOfTypeName(type_name: []const u8) i32 {
+    if (isOptionalTypeName(type_name)) return 8;
     const bare = unwrapTypeName(type_name);
     if (bare.len > 0 and bare[0] == '*') return 8;
     if (widths.fromName(bare)) |w| return w.alignment();
@@ -61,6 +100,7 @@ pub fn alignOfTypeName(type_name: []const u8) i32 {
 }
 
 pub fn fieldKind(state: ?*state_mod.CompilerState, type_name: []const u8) FieldKind {
+    if (isOptionalTypeName(type_name)) return .handle;
     const bare = unwrapTypeName(type_name);
     if (bare.len > 0 and bare[0] == '*') return .handle;
     if (std.mem.startsWith(u8, bare, "@func(")) return .handle;

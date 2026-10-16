@@ -6,6 +6,33 @@ This document outlines the error reporting and stack trace formatting capabiliti
 
 The `src/errors` module is responsible for formatting, logging, and dispatching diagnostic information. It is heavily inspired by TypeScript's error reporting style (e.g. `Error: message` and `--> path:line:col`). The module separates the concerns of visual output (source printing, stack traces) from the VM execution logic.
 
+## Message style (house rules)
+
+Diagnostics read like good TypeScript/JavaScript errors: verb first, the
+offending thing named, and — where a fix exists — the fix visible without
+leaving the terminal.
+
+1. **Sentence case, verb first.** `Cannot assign to constant 'ORIGIN'`,
+   `Expected '{' after function name`, `Unknown identifier 'foo'`. Never start
+   a body with the label and never start it lowercase.
+2. **No trailing period** on a single-clause message.
+3. **Quote code with `'…'`.** Identifiers, types, literals, and tokens all take
+   single quotes: `'i64'`, `'@switch'`, `'='`. Backticks are reserved for a
+   command the reader can type: ``; rebuild it with `llts build` ``.
+4. **Name the actual value when you have it.** `got 'i64'`,
+   `expected 2 arguments, got 3`, `index 5 out of bounds for array of length 2`.
+5. **Put the fix after `;`, in lowercase.** `…; use @as(int, x) to convert`,
+   `…; compare explicitly (e.g. 'x != 0')`,
+   `…; narrow with @switch on .kind`.
+6. **One label vocabulary.** `Error:` for anything fatal, `Warning:` for
+   non-fatal — printed only by the reporters (`src/errors/report.zig`) and by
+   `cli/common.zig:failExit`. Bodies never repeat a label.
+7. **`failExit` owns the newline.** Fatal CLI helpers take a body with no `\n`
+   and render `Error: <body>\n` themselves.
+8. **Logs carry a scope, when they have one.** `io.log` renders
+   `LEVEL [scope]: body`; the empty scope and Zig's `.default` scope stay
+   unscoped so ordinary lines remain `INFO: body`.
+
 ## Diagnostic fix hints (Phase 5.2)
 
 Every soundness rejection is phrased so the fix is visible without leaving the
@@ -36,7 +63,7 @@ Handles the visual formatting of diagnostics and source context.
   - **Purpose**: Prints a single stack frame entry in the format `    at name (path:line:col)`.
 
 - **`reportCompileMessage(message: []const u8) void`**
-  - **Purpose**: A simplified error printer used primarily for compilation/parsing errors before VM execution.
+  - **Purpose**: Prints a location-less `Error: <message>` line for compilation failures that carry no source location.
 
 - **`diag.zig` Tracking**
   - **Purpose**: Uses `diag.markEmitted()` to track if a rich error was shown, preventing duplicate `Error:` lines in the CLI upon exit.

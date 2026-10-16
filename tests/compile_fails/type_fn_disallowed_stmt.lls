@@ -1,0 +1,3 @@
+# expect: Type function 'Bad' may only contain 'return', '@if' on types, and '@alias'/'@type'
+@func Bad(T: type): type { $y = 1; return T; }
+pub @func main() { $x: Bad(i64) = 1; }

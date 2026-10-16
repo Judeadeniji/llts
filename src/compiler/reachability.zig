@@ -3,6 +3,9 @@ const ast = @import("../ast/root.zig");
 const state_mod = @import("state.zig");
 const path = @import("expr/path.zig");
 const types = @import("typecheck/from_ast.zig");
+const scanner = @import("../scanner/root.zig");
+const parser = @import("../parser/root.zig");
+const compiler = @import("root.zig");
 
 const CompilerState = state_mod.CompilerState;
 
@@ -48,6 +51,9 @@ pub fn compute(state: *CompilerState, doc: *ast.Document) !Result {
     if (state.functions.contains("main")) {
         try enqueueFunction(&result, &work, "main");
     }
+    // Generic instances exist only because typecheck saw a call to them.
+    var iit = state.instance_fns.keyIterator();
+    while (iit.next()) |name| try enqueueFunction(&result, &work, name.*);
 
     for (doc.statements) |s| {
         if (s.* == .function_decl or s.* == .struct_decl or s.* == .enum_decl or s.* == .error_decl) continue;
@@ -439,10 +445,6 @@ test "reachability keeps only called std/slog function" {
         \\
     ;
 
-    const scanner = @import("../scanner/root.zig");
-    const parser = @import("../parser/root.zig");
-    const compiler = @import("root.zig");
-
     var scan_result = try scanner.scan(allocator, source, "test.lls");
     defer scanner.deinitScanResult(&scan_result);
 
@@ -464,10 +466,6 @@ test "native print does not pull in std/io print" {
         \\pub @func main() {}
         \\
     ;
-
-    const scanner = @import("../scanner/root.zig");
-    const parser = @import("../parser/root.zig");
-    const compiler = @import("root.zig");
 
     var scan_result = try scanner.scan(allocator, source, "test.lls");
     defer scanner.deinitScanResult(&scan_result);

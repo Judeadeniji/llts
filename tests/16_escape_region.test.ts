@@ -33,17 +33,17 @@ print(p.loc.line);
 	);
 });
 
-test("returning local bound to frame struct is a compile error", () => {
-	expectError(
+test("returning local bound to flat scalar struct auto-clones", () => {
+	expectOutput(
 		runSource(`
 @struct Point { x: int; }
 @func make() {
     $p = Point { x: 1 };
     return p;
 }
-print(make());
+print(make().x);
 `),
-		"escapes its frame region",
+		["1"],
 	);
 });
 
@@ -69,7 +69,10 @@ $mem = @import("std/mem");
 @struct Point { x: int; y: int; }
 
 @func make(a): *Point {
-    return @new(a, Point { x: 3, y: 4 });
+    $p = @new(a, Point);
+    p.x = 3;
+    p.y = 4;
+    return p;
 }
 
 pub @func main() {
@@ -92,7 +95,8 @@ $mem = @import("std/mem");
 
 @func make(): *Box {
     $a = mem.create(0);
-    $p = @new(a, Box { n: 1 });
+    $p = @new(a, Box);
+    p.n = 1;
     return p;
 }
 
@@ -112,7 +116,9 @@ $mem = @import("std/mem");
 
 @func make(): *Box {
     $a = mem.create(0);
-    return @new(a, Box { n: 1 });
+    $p = @new(a, Box);
+    p.n = 1;
+    return p;
 }
 
 pub @func main() {
@@ -130,7 +136,9 @@ $mem = @import("std/mem");
 @struct Box { n: int; }
 
 @func make(a: mem.Arena): *Box {
-    return @new(a, Box { n: 7 });
+    $p = @new(a, Box);
+    p.n = 7;
+    return p;
 }
 
 pub @func main() {
@@ -151,7 +159,9 @@ $mem = @import("std/mem");
 $heap = mem.create(0);
 
 @func make(): *Box {
-    return @new(heap, Box { n: 9 });
+    $p = @new(heap, Box);
+    p.n = 9;
+    return p;
 }
 
 pub @func main() {

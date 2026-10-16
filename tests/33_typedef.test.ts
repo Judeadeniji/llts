@@ -66,7 +66,7 @@ test("T(x) rejects impossible cast", () => {
 $n: i64 = 1;
 $u = UUID(n);
 `),
-		"cannot cast",
+		"Cannot cast",
 	);
 });
 
@@ -247,8 +247,13 @@ test("*Arm assigns to *Union field (covariant pointers)", () => {
 @type Expr = Lit | Bin;
 @const $mem = @import("std/mem");
 $a = mem.create(0);
-$l = @new(a, Lit { kind: Kind.Lit, value: 9 });
-$b = @new(a, Bin { kind: Kind.Bin, left: l, right: l });
+$l = @new(a, Lit);
+l.kind = Kind.Lit;
+l.value = 9;
+$b = @new(a, Bin);
+b.kind = Kind.Bin;
+b.left = l;
+b.right = l;
 print(b.kind);
 print(l.value);
 a.deinit();
@@ -266,8 +271,13 @@ test("forward-ref: struct fields may name @type declared later", () => {
 @type Expr = Lit | Bin;
 @const $mem = @import("std/mem");
 $a = mem.create(0);
-$l = @new(a, Lit { kind: Kind.Lit, value: 3 });
-$b = @new(a, Bin { kind: Kind.Bin, left: l, right: l });
+$l = @new(a, Lit);
+l.kind = Kind.Lit;
+l.value = 3;
+$b = @new(a, Bin);
+b.kind = Kind.Bin;
+b.left = l;
+b.right = l;
 print(l.value);
 print(@typeOf(b));
 a.deinit();
@@ -285,7 +295,10 @@ test("@as(*Union, *Arm) is allowed", () => {
 @type Expr = Lit | Bin;
 @const $mem = @import("std/mem");
 $a = mem.create(0);
-$l: *Expr = @as(*Expr, @new(a, Lit { kind: Kind.Lit, value: 4 }));
+$tmp = @new(a, Lit);
+tmp.kind = Kind.Lit;
+tmp.value = 4;
+$l: *Expr = @as(*Expr, tmp);
 print(@typeOf(l));
 print(l.kind);
 a.deinit();
@@ -312,8 +325,13 @@ pub @type Node = Lit | Bin;
 @const $n = @import("./node.lls");
 @const $mem = @import("std/mem");
 $a = mem.create(0);
-$l = @new(a, n.Lit { kind: n.Kind.Lit, value: 7 });
-$b = @new(a, n.Bin { kind: n.Kind.Bin, left: l, right: l });
+$l = @new(a, n.Lit);
+l.kind = n.Kind.Lit;
+l.value = 7;
+$b = @new(a, n.Bin);
+b.kind = n.Kind.Bin;
+b.left = l;
+b.right = l;
 print(b.kind);
 print(l.value);
 pub @func main() {}

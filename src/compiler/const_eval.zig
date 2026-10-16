@@ -327,7 +327,7 @@ pub fn evalBinaryOp(state: *CompilerState, op: []const u8, left_val: ConstValue,
     if (std.mem.eql(u8, op, "+")) {
         if (left_val == .i64 and right_val == .i64) {
             const r = @addWithOverflow(left_val.i64, right_val.i64);
-            if (r[1] != 0) return compile_errors.compileFailFmt(state, "integer overflow in constant expression", .{});
+            if (r[1] != 0) return compile_errors.compileFailFmt(state, "Integer overflow in constant expression", .{});
             return .{ .i64 = r[0] };
         }
         if (left_val == .f64 and right_val == .f64) return .{ .f64 = left_val.f64 + right_val.f64 };
@@ -344,7 +344,7 @@ pub fn evalBinaryOp(state: *CompilerState, op: []const u8, left_val: ConstValue,
     if (std.mem.eql(u8, op, "-")) {
         if (left_val == .i64 and right_val == .i64) {
             const r = @subWithOverflow(left_val.i64, right_val.i64);
-            if (r[1] != 0) return compile_errors.compileFailFmt(state, "integer overflow in constant expression", .{});
+            if (r[1] != 0) return compile_errors.compileFailFmt(state, "Integer overflow in constant expression", .{});
             return .{ .i64 = r[0] };
         }
         if (left_val == .f64 and right_val == .f64) return .{ .f64 = left_val.f64 - right_val.f64 };
@@ -357,7 +357,7 @@ pub fn evalBinaryOp(state: *CompilerState, op: []const u8, left_val: ConstValue,
     if (std.mem.eql(u8, op, "*")) {
         if (left_val == .i64 and right_val == .i64) {
             const r = @mulWithOverflow(left_val.i64, right_val.i64);
-            if (r[1] != 0) return compile_errors.compileFailFmt(state, "integer overflow in constant expression", .{});
+            if (r[1] != 0) return compile_errors.compileFailFmt(state, "Integer overflow in constant expression", .{});
             return .{ .i64 = r[0] };
         }
         if (left_val == .f64 and right_val == .f64) return .{ .f64 = left_val.f64 * right_val.f64 };
@@ -370,13 +370,13 @@ pub fn evalBinaryOp(state: *CompilerState, op: []const u8, left_val: ConstValue,
     if (std.mem.eql(u8, op, "/")) {
         if (left_val == .i64 and right_val == .i64) {
             if (right_val.i64 == 0) {
-                return compile_errors.compileFailFmt(state, "division by zero in constant expression", .{});
+                return compile_errors.compileFailFmt(state, "Division by zero in constant expression", .{});
             }
             return .{ .i64 = @divTrunc(left_val.i64, right_val.i64) };
         }
         if (left_val == .f64 and right_val == .f64) {
             if (right_val.f64 == 0.0) {
-                return compile_errors.compileFailFmt(state, "division by zero in constant expression", .{});
+                return compile_errors.compileFailFmt(state, "Division by zero in constant expression", .{});
             }
             return .{ .f64 = left_val.f64 / right_val.f64 };
         }
@@ -385,7 +385,7 @@ pub fn evalBinaryOp(state: *CompilerState, op: []const u8, left_val: ConstValue,
     if (std.mem.eql(u8, op, "%")) {
         if (left_val == .i64 and right_val == .i64) {
             if (right_val.i64 == 0) {
-                return compile_errors.compileFailFmt(state, "division by zero in constant expression", .{});
+                return compile_errors.compileFailFmt(state, "Division by zero in constant expression", .{});
             }
             return .{ .i64 = @rem(left_val.i64, right_val.i64) };
         }
@@ -508,7 +508,7 @@ fn evalExprInner(state: *CompilerState, scope: ?*ComptimeScope, n: *ast.Node) an
             if (std.mem.eql(u8, u.operator, "-")) {
                 return switch (arg_val) {
                     .i64 => |v| blk: {
-                        if (v == std.math.minInt(i64)) return compile_errors.compileFailFmt(state, "integer overflow in constant expression", .{});
+                        if (v == std.math.minInt(i64)) return compile_errors.compileFailFmt(state, "Integer overflow in constant expression", .{});
                         break :blk .{ .i64 = -v };
                     },
                     .f64 => |v| .{ .f64 = -v },
@@ -570,19 +570,19 @@ fn evalExprInner(state: *CompilerState, scope: ?*ComptimeScope, n: *ast.Node) an
             switch (obj_val) {
                 .array => |a| {
                     if (i < 0 or i >= a.elements.items.len) {
-                        return compile_errors.compileFailFmt(state, "index {d} out of bounds for array of length {d}", .{ i, a.elements.items.len });
+                        return compile_errors.compileFailFmt(state, "Index {d} out of bounds for array of length {d}", .{ i, a.elements.items.len });
                     }
                     return a.elements.items[@intCast(i)];
                 },
                 .tuple => |t| {
                     if (i < 0 or i >= t.len) {
-                        return compile_errors.compileFailFmt(state, "index {d} out of bounds for tuple of length {d}", .{ i, t.len });
+                        return compile_errors.compileFailFmt(state, "Index {d} out of bounds for tuple of length {d}", .{ i, t.len });
                     }
                     return t[@intCast(i)];
                 },
                 .string => |s| {
                     if (i < 0 or i >= s.len) {
-                        return compile_errors.compileFailFmt(state, "index {d} out of bounds for string of length {d}", .{ i, s.len });
+                        return compile_errors.compileFailFmt(state, "Index {d} out of bounds for string of length {d}", .{ i, s.len });
                     }
                     return .{ .i64 = @intCast(s[@intCast(i)]) };
                 },
@@ -612,7 +612,7 @@ fn evalExprInner(state: *CompilerState, scope: ?*ComptimeScope, n: *ast.Node) an
                     if (s.fields.get(prop_name)) |fval| {
                         return fval;
                     }
-                    return compile_errors.compileFailFmt(state, "field '{s}' does not exist on '{s}'", .{ prop_name, s.type_name });
+                    return compile_errors.compileFailFmt(state, "Field '{s}' does not exist on '{s}'", .{ prop_name, s.type_name });
                 },
                 .tuple => |t| {
                     const idx = std.fmt.parseInt(usize, prop_name, 10) catch return null;
@@ -729,12 +729,12 @@ pub fn evalComptimeBlock(state: *CompilerState, parent_scope: ?*ComptimeScope, b
                     const obj_val = (try evalExpr(state, &bscope, a.left.index.object)) orelse return compile_errors.compileFailFmt(state, "Cannot index assignment target in comptime", .{});
                     const start_expr = a.left.index.index orelse return compile_errors.compileFailFmt(state, "Expected index expression in comptime assignment", .{});
                     const idx_val = (try evalExpr(state, &bscope, start_expr)) orelse return compile_errors.compileFailFmt(state, "Index expression must evaluate to constant", .{});
-                    if (idx_val != .i64) return compile_errors.compileFailFmt(state, "Index must be integer", .{});
+                    if (idx_val != .i64) return compile_errors.compileFailFmt(state, "Index must be an integer", .{});
                     const idx = idx_val.i64;
                     if (obj_val == .array) {
                         const a_obj = obj_val.array;
                         if (idx < 0 or idx >= a_obj.elements.items.len) {
-                            return compile_errors.compileFailFmt(state, "index {d} out of bounds for array of length {d}", .{ idx, a_obj.elements.items.len });
+                            return compile_errors.compileFailFmt(state, "Index {d} out of bounds for array of length {d}", .{ idx, a_obj.elements.items.len });
                         }
                         var final_val = right_val;
                         if (compound_op) |cop| {
@@ -763,12 +763,12 @@ pub fn evalComptimeBlock(state: *CompilerState, parent_scope: ?*ComptimeScope, b
                         const s = obj_val.struct_val;
                         if (state.structs.get(s.type_name)) |sd| {
                             if (!sd.offsets.contains(prop_name)) {
-                                return compile_errors.compileFailFmt(state, "field '{s}' does not exist on '{s}'", .{ prop_name, s.type_name });
+                                return compile_errors.compileFailFmt(state, "Field '{s}' does not exist on '{s}'", .{ prop_name, s.type_name });
                             }
                         }
                         var final_val = right_val;
                         if (compound_op) |cop| {
-                            const cur_val = s.fields.get(prop_name) orelse return compile_errors.compileFailFmt(state, "field '{s}' not initialized on '{s}'", .{ prop_name, s.type_name });
+                            const cur_val = s.fields.get(prop_name) orelse return compile_errors.compileFailFmt(state, "Field '{s}' not initialized on '{s}'", .{ prop_name, s.type_name });
                             final_val = (try evalBinaryOp(state, cop, cur_val, right_val)) orelse return null;
                         }
                         try s.fields.put(prop_name, final_val);
@@ -806,9 +806,9 @@ pub fn evalComptimeBlock(state: *CompilerState, parent_scope: ?*ComptimeScope, b
             },
             .for_expr => |f| {
                 if (f.expr.* == .binary and std.mem.eql(u8, f.expr.binary.operator, "..")) {
-                    const start_val = (try evalExpr(state, &bscope, f.expr.binary.left)) orelse return compile_errors.compileFailFmt(state, "for loop start bound must be constant in comptime", .{});
-                    const end_val = (try evalExpr(state, &bscope, f.expr.binary.right)) orelse return compile_errors.compileFailFmt(state, "for loop end bound must be constant in comptime", .{});
-                    if (start_val != .i64 or end_val != .i64) return compile_errors.compileFailFmt(state, "for loop bounds must be integers in comptime", .{});
+                    const start_val = (try evalExpr(state, &bscope, f.expr.binary.left)) orelse return compile_errors.compileFailFmt(state, "@for start bound must be constant in comptime", .{});
+                    const end_val = (try evalExpr(state, &bscope, f.expr.binary.right)) orelse return compile_errors.compileFailFmt(state, "@for end bound must be constant in comptime", .{});
+                    if (start_val != .i64 or end_val != .i64) return compile_errors.compileFailFmt(state, "@for bounds must be integers in comptime", .{});
 
                     const capture_name = if (f.captures.len > 0) f.captures[0].name else null;
                     var cur = start_val.i64;
@@ -818,7 +818,7 @@ pub fn evalComptimeBlock(state: *CompilerState, parent_scope: ?*ComptimeScope, b
                     while (cur < end) : (cur += 1) {
                         iters += 1;
                         if (iters > state.comptime_max_loop_iterations) {
-                            return compile_errors.compileFailFmt(state, "comptime loop exceeded maximum iteration limit of {d}", .{state.comptime_max_loop_iterations});
+                            return compile_errors.compileFailFmt(state, "Comptime loop exceeded the iteration limit of {d}; raise LLTS_COMPTIME_MAX_LOOP_ITERATIONS to increase it", .{state.comptime_max_loop_iterations});
                         }
                         var loop_scope = ComptimeScope.initLoop(state.allocator, &bscope);
                         defer loop_scope.deinit();
@@ -846,10 +846,10 @@ pub fn evalComptimeBlock(state: *CompilerState, parent_scope: ?*ComptimeScope, b
                     while (true) {
                         iters += 1;
                         if (iters > state.comptime_max_loop_iterations) {
-                            return compile_errors.compileFailFmt(state, "comptime loop exceeded maximum iteration limit of {d}", .{state.comptime_max_loop_iterations});
+                            return compile_errors.compileFailFmt(state, "Comptime loop exceeded the iteration limit of {d}; raise LLTS_COMPTIME_MAX_LOOP_ITERATIONS to increase it", .{state.comptime_max_loop_iterations});
                         }
                         const cond_val = (try evalExpr(state, &bscope, f.expr)) orelse
-                            return compile_errors.compileFailFmt(state, "for loop condition must be constant in comptime", .{});
+                            return compile_errors.compileFailFmt(state, "@for condition must be constant in comptime", .{});
                         if (!cond_val.isTruthy()) break;
 
                         var loop_scope = ComptimeScope.initLoop(state.allocator, &bscope);
@@ -871,7 +871,7 @@ pub fn evalComptimeBlock(state: *CompilerState, parent_scope: ?*ComptimeScope, b
                     }
                 } else {
                     const first_val = (try evalExpr(state, &bscope, f.expr)) orelse
-                        return compile_errors.compileFailFmt(state, "for loop expression must be constant in comptime", .{});
+                        return compile_errors.compileFailFmt(state, "@for expression must be constant in comptime", .{});
 
                     switch (first_val) {
                         .array => |a_obj| {
@@ -879,7 +879,7 @@ pub fn evalComptimeBlock(state: *CompilerState, parent_scope: ?*ComptimeScope, b
                             for (a_obj.elements.items, 0..) |item, idx| {
                                 iters += 1;
                                 if (iters > state.comptime_max_loop_iterations) {
-                                    return compile_errors.compileFailFmt(state, "comptime loop exceeded maximum iteration limit of {d}", .{state.comptime_max_loop_iterations});
+                                    return compile_errors.compileFailFmt(state, "Comptime loop exceeded the iteration limit of {d}; raise LLTS_COMPTIME_MAX_LOOP_ITERATIONS to increase it", .{state.comptime_max_loop_iterations});
                                 }
                                 var loop_scope = ComptimeScope.initLoop(state.allocator, &bscope);
                                 defer loop_scope.deinit();
@@ -909,7 +909,7 @@ pub fn evalComptimeBlock(state: *CompilerState, parent_scope: ?*ComptimeScope, b
                             for (t_obj, 0..) |item, idx| {
                                 iters += 1;
                                 if (iters > state.comptime_max_loop_iterations) {
-                                    return compile_errors.compileFailFmt(state, "comptime loop exceeded maximum iteration limit of {d}", .{state.comptime_max_loop_iterations});
+                                    return compile_errors.compileFailFmt(state, "Comptime loop exceeded the iteration limit of {d}; raise LLTS_COMPTIME_MAX_LOOP_ITERATIONS to increase it", .{state.comptime_max_loop_iterations});
                                 }
                                 var loop_scope = ComptimeScope.initLoop(state.allocator, &bscope);
                                 defer loop_scope.deinit();
@@ -939,7 +939,7 @@ pub fn evalComptimeBlock(state: *CompilerState, parent_scope: ?*ComptimeScope, b
                             for (s_obj, 0..) |byte, idx| {
                                 iters += 1;
                                 if (iters > state.comptime_max_loop_iterations) {
-                                    return compile_errors.compileFailFmt(state, "comptime loop exceeded maximum iteration limit of {d}", .{state.comptime_max_loop_iterations});
+                                    return compile_errors.compileFailFmt(state, "Comptime loop exceeded the iteration limit of {d}; raise LLTS_COMPTIME_MAX_LOOP_ITERATIONS to increase it", .{state.comptime_max_loop_iterations});
                                 }
                                 var loop_scope = ComptimeScope.initLoop(state.allocator, &bscope);
                                 defer loop_scope.deinit();
@@ -970,7 +970,7 @@ pub fn evalComptimeBlock(state: *CompilerState, parent_scope: ?*ComptimeScope, b
                             while (cur_val != .null and cur_val.isTruthy()) {
                                 iters += 1;
                                 if (iters > state.comptime_max_loop_iterations) {
-                                    return compile_errors.compileFailFmt(state, "comptime loop exceeded maximum iteration limit of {d}", .{state.comptime_max_loop_iterations});
+                                    return compile_errors.compileFailFmt(state, "Comptime loop exceeded the iteration limit of {d}; raise LLTS_COMPTIME_MAX_LOOP_ITERATIONS to increase it", .{state.comptime_max_loop_iterations});
                                 }
                                 var loop_scope = ComptimeScope.initLoop(state.allocator, &bscope);
                                 defer loop_scope.deinit();
@@ -998,7 +998,7 @@ pub fn evalComptimeBlock(state: *CompilerState, parent_scope: ?*ComptimeScope, b
                 }
             },
             .if_expr => |ife| {
-                const cond_val = (try evalExpr(state, &bscope, ife.condition)) orelse return compile_errors.compileFailFmt(state, "if condition must be constant in comptime", .{});
+                const cond_val = (try evalExpr(state, &bscope, ife.condition)) orelse return compile_errors.compileFailFmt(state, "@if condition must be constant in comptime", .{});
                 if (cond_val.isTruthy()) {
                     if (ife.body.* == .block) {
                         last_val = (try evalComptimeBlock(state, &bscope, &ife.body.block)) orelse return null;
@@ -1017,7 +1017,7 @@ pub fn evalComptimeBlock(state: *CompilerState, parent_scope: ?*ComptimeScope, b
             },
             .switch_expr => |sw| {
                 const cond_val = (try evalExpr(state, &bscope, sw.condition)) orelse
-                    return compile_errors.compileFailFmt(state, "switch condition must be constant in comptime", .{});
+                    return compile_errors.compileFailFmt(state, "@switch condition must be constant in comptime", .{});
                 for (sw.prongs) |prong| {
                     var is_match = prong.is_else;
                     if (!is_match) {
@@ -1160,7 +1160,7 @@ fn emitArrayValue(state: *CompilerState, elems: []const ConstValue) anyerror!voi
 
 fn emitStructValue(state: *CompilerState, s: *ConstStruct) anyerror!void {
     const sd = state.structs.get(s.type_name) orelse {
-        return compile_errors.compileFailFmt(state, "cannot emit value of unknown comptime struct type '{s}'", .{s.type_name});
+        return compile_errors.compileFailFmt(state, "Cannot emit value of unknown comptime struct type '{s}'", .{s.type_name});
     };
     const alloc = if (state.alloc_immortal) "__allocImmortalBytes" else "__allocBytes";
     try emit.emitNameGet(state, .OP_GET_GLOBAL, alloc);

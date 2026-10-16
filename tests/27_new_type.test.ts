@@ -61,20 +61,25 @@ pub @func main() {
 	);
 });
 
-test("@new still accepts struct and array literals", () => {
-	expectOutput(
+test("@new rejects struct and array literals (type form only)", () => {
+	expectError(
 		runSource(`
 @const $mem = @import("std/mem");
 @struct Point { x: int; y: int; }
 $a = mem.create(0);
 $p = @new(a, Point { x: 3, y: 4 });
-$arr = @new(a, [1, 2, 3]);
 print(p.x);
-print(len(arr));
-print(arr[2]);
-a.deinit();
 `),
-		["3", "3", "3"],
+		"@new takes a type, not a value",
+	);
+	expectError(
+		runSource(`
+@const $mem = @import("std/mem");
+$a = mem.create(0);
+$arr = @new(a, [1, 2, 3]);
+print(len(arr));
+`),
+		"@new takes a type, not a value",
 	);
 });
 

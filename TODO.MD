@@ -85,6 +85,13 @@ Packed byte heap + honest numeric widths. See [`docs/memory-model.md`](docs/memo
 - [x] **Hex / binary / octal literals**
 - [x] **`^` / `**` exponent**
 - [x] **Unary `+`** — identity operator.
+- [x] **`@const` holes** — const values are immutable end-to-end:
+  - [x] `ORIGIN.x = 99` — rejected (`Cannot mutate field of constant`)
+  - [x] **Mutating method call on const** — `ORIGIN.shift(5)` now errors `"Method might mutate constant 'ORIGIN'"` at both typecheck (`inferCall` after `resolveMethodCallee`) and emit (`emitMethodCall`). Allowed: `self: T` (caller clones via `__cloneBytes`), no `self` param (skippable — no receiver handle). Pointer-like `self` (unannotated or `*T`) on a const receiver is rejected. Tests: `tests/07_const.test.ts` (4 cases).
+  - [x] **Const rebind shadows instead of erroring** — not a bug; shadowing a const binding with a new declaration is by design (warning only, asserted by `tests/07_const.test.ts`). Warning says `'{s}' shadows constant '{s}' declared at line {d}` at the hiding decl (no misleading `unused constant`); see `tests/40_unused.test.ts`. Assignment form (`ORIGIN = …`) errors correctly.
+  - [x] **Aliasing hole** — fixed: struct value assignment/declaration now emits `__cloneBytes` when the RHS is a bare-struct binding (`shouldCloneStructValue` in `expr/assign.zig` + `stmt/decl.zig`), giving value semantics. Pointers (`*T` / `&x` / `?*T`) skip the clone and keep sharing. Covers declaration (`$a = ORIGIN`), plain assignment (`a = b`), field store (`box.val = other`), and static global assign. Compound ops (`+=`) unchanged. Method receivers unchanged (`self: T` clones, `self: *T` shares).
+  - [x] **Const-ness through pointers / nested places** — `&ORIGIN` is rejected (`Cannot take the address of constant`); nested writes (`O.i.v = …`) and method calls on nested const places use `placeRoot` / `constPlaceRoot`.
+  - [x] **Array / string aliasing** — `@const` globals and locals emit `__freeze` so packed storage traps on write (`Cannot mutate a constant`), including through aliases and parameters (`$r = A; r[0] = 9`, `poke(A)`).
 
 ### P1 — Missing Language Features
 
@@ -113,8 +120,11 @@ Packed byte heap + honest numeric widths. See [`docs/memory-model.md`](docs/memo
 - [x] **`const` literal modifier** — `const "x"` / `@const $k = "x"` keep singleton type `"x"` (and deep tuples for `const […]`); bare `"x"` still `[N]byte`.
 - [x] **Structs as types** — including imported `mod.Name` (e.g. `mem.Arena`).
 - [x] **Debug type asserts**; strip with `--release`.
-- [x] **`@typeOf(expr)`**
+- [x] **`@typeOf(expr)`** — returns a compile-time `type` value; operand never evaluated.
 - [x] **`@sizeOf(T_or_expr)`** — static sizes for types / typed values; runtime `OP_SIZEOF` fallback (`tests/26_sizeof.test.ts`).
+- [x] **Types as compile-time values** — meta type `type`; `@typeOf(...)` usable anywhere a type is (annotations, params, returns, struct fields, `@alias`, composites, `@as`, `@new`, `@sizeOf`); type `==`/`!=` folded at compile time; type values rejected in runtime slots (`tests/50_type_values.test.ts`, `docs/usage/shapes_and_types.md`).
+- [x] **User-defined type functions and generics** — `@func Opt(T: type): type { return ?T; }` evaluated at compile time; `@func max(T: type, a: T, b: T): T` monomorphized per type argument (`src/compiler/generics.zig`, `tests/52_type_functions.test.ts`). Not yet: type params on struct methods, value params on type functions, anonymous struct types.
+- [x] **Local `@type` / `@alias` inside blocks** — lexically block-scoped (nested blocks, `@comptime`, block expressions, top-level blocks; shadowing allowed); hoisted under a `<fn>[::<n>]::Name` key (`src/compiler/local_types.zig`, `tests/51_local_types.test.ts`).
 - [x] **`@nameOf(enum_or_error)`** — variant/member spelling as declared (`tests/15_enums.test.ts`, `tests/37_error_sets.test.ts`).
 - [x] **`pub` for user files** — private decls stay in-module; relative `./` / `../` imports.
 
@@ -124,8 +134,8 @@ Packed byte heap + honest numeric widths. See [`docs/memory-model.md`](docs/memo
 - [x] **`defer` / `errdefer`** — LIFO scope-exit cleanup; `errdefer` on error path only (`?` / error returns).
 - [x] **No tracing GC** — ownership is explicit (allocator + defer).
 - [x] **Frame regions** — VM rewinds heap bump on return; bare `Foo{}` / `[…]` are frame-local.
-- [x] **Escape = compile error** — cannot return frame-local heap; use `@new(allocator, …)`.
-- [x] **`@new`** — compiler intrinsic (Go `make`-style); Allocator comes from `std.mem`.
+- [x] **Escape = compile error** — cannot return frame-local heap (except flat scalar structs, which auto-clone into immortal storage on return); use `@new(allocator, …)` for arena-managed values.
+- [x] **`@new`** — compiler intrinsic (Go `make`-style); type-directed only: `@new(allocator, T)` zero-fills and yields `*T`; literal value forms are rejected (return the literal directly — flat scalar structs clone automatically).
 
 ### P6 — Language (make the low-level story honest)
 
@@ -255,6 +265,6 @@ Preferred tagged-data spelling with `@type`:
 
 - `@while` loops: removed completely (use `@for` with a condition instead).
 - C-style `@for ($i=0; i<N; i=i+1)`: not planned; use `@for (0..N) |i|`.
-- **Generics / symbolic `[N]T` type params** — not planned; array lengths stay numeric literals only. Use interfaces or concrete `Arena` + `[]T` instead.
+- **Symbolic `[N]T` length params** — not planned; array lengths stay numeric literals only. Type parameters (`T: type`) are supported; see type functions above.
 - **Tracing GC** — not planned; use allocators + `defer` instead.
 - **More `@` directives** — not until pointers / remaining language surface needs them.

@@ -1,0 +1,13 @@
+# @new with a literal value should now error
+@const $mem = @import("std/mem");
+
+@struct Point {
+    x: int;
+    y: int;
+}
+
+pub @func main() {
+    $a = mem.create(0);
+    $p = @new(a, Point { x: 1, y: 2 });
+    print(p.x);
+}

@@ -15,23 +15,51 @@ pub const DeclKind = enum {
     type_alias,
 };
 
+fn kindName(kind: DeclKind) []const u8 {
+    return switch (kind) {
+        .variable => "variable",
+        .constant => "constant",
+        .parameter => "parameter",
+        .import => "import",
+        .function => "function",
+        .struct_type => "struct",
+        .enum_type => "enum",
+        .error_set => "error set",
+        .type_alias => "type",
+    };
+}
+
 pub const UnusedDecl = struct {
     name: []const u8,
     kind: DeclKind,
     loc: ast.Location,
 
     pub fn formatMessage(self: UnusedDecl, buf: []u8) []const u8 {
-        return switch (self.kind) {
-            .variable => std.fmt.bufPrint(buf, "unused variable '{s}'", .{self.name}) catch "unused variable",
-            .constant => std.fmt.bufPrint(buf, "unused constant '{s}'", .{self.name}) catch "unused constant",
-            .parameter => std.fmt.bufPrint(buf, "unused parameter '{s}'", .{self.name}) catch "unused parameter",
-            .import => std.fmt.bufPrint(buf, "unused import '{s}'", .{self.name}) catch "unused import",
-            .function => std.fmt.bufPrint(buf, "unused function '{s}'", .{self.name}) catch "unused function",
-            .struct_type => std.fmt.bufPrint(buf, "unused struct '{s}'", .{self.name}) catch "unused struct",
-            .enum_type => std.fmt.bufPrint(buf, "unused enum '{s}'", .{self.name}) catch "unused enum",
-            .error_set => std.fmt.bufPrint(buf, "unused error set '{s}'", .{self.name}) catch "unused error set",
-            .type_alias => std.fmt.bufPrint(buf, "unused type '{s}'", .{self.name}) catch "unused type",
-        };
+        return std.fmt.bufPrint(buf, "unused {s} '{s}'", .{ kindName(self.kind), self.name }) catch "unused declaration";
+    }
+};
+
+/// A local declaration that hides an outer binding of the same name
+/// (outer local, parameter, or top-level declaration).
+pub const ShadowDecl = struct {
+    name: []const u8,
+    shadowed_kind: DeclKind,
+    shadowed_line: u32,
+    loc: ast.Location,
+
+    pub fn formatMessage(self: ShadowDecl, buf: []u8) []const u8 {
+        if (self.shadowed_line > 0) {
+            return std.fmt.bufPrint(
+                buf,
+                "'{s}' shadows {s} '{s}' declared at line {d}",
+                .{ self.name, kindName(self.shadowed_kind), self.name, self.shadowed_line },
+            ) catch "shadows an earlier declaration";
+        }
+        return std.fmt.bufPrint(
+            buf,
+            "'{s}' shadows {s} '{s}'",
+            .{ self.name, kindName(self.shadowed_kind), self.name },
+        ) catch "shadows an earlier declaration";
     }
 };
 
@@ -62,6 +90,7 @@ const Context = struct {
     top_map: std.StringHashMap(usize),
     scopes: std.ArrayList(Scope) = .empty,
     unused_list: std.ArrayList(UnusedDecl) = .empty,
+    shadow_list: std.ArrayList(ShadowDecl) = .empty,
     collect_unused: bool = false,
 
     fn init(allocator: std.mem.Allocator, doc_path: []const u8) Context {
@@ -72,6 +101,7 @@ const Context = struct {
             .top_map = std.StringHashMap(usize).init(allocator),
             .scopes = .empty,
             .unused_list = .empty,
+            .shadow_list = .empty,
             .collect_unused = false,
         };
     }
@@ -82,6 +112,7 @@ const Context = struct {
         for (self.scopes.items) |*s| s.vars.deinit(self.allocator);
         self.scopes.deinit(self.allocator);
         self.unused_list.deinit(self.allocator);
+        self.shadow_list.deinit(self.allocator);
     }
 
     fn isFromDoc(self: *const Context, loc: ast.Location) bool {
@@ -123,9 +154,61 @@ const Context = struct {
         scope.vars.deinit(self.allocator);
     }
 
-    fn addLocal(self: *Context, name: []const u8, kind: DeclKind, loc: ast.Location) !void {
+    fn addLocal(
+        self: *Context,
+        name: []const u8,
+        kind: DeclKind,
+        loc: ast.Location,
+        worklist: ?*std.ArrayList(usize),
+    ) !void {
         if (name.len == 0 or name[0] == '_') return;
         if (self.scopes.items.len == 0) return;
+
+        // Shadowing: an outer local/param or a top-level decl with the same
+        // name. Mark the shadowed binding used (the shadow explains why it
+        // looks unread — a wrong "unused" warning helps nobody) and record a
+        // shadow warning at the hiding declaration instead.
+        var shadowed_kind: ?DeclKind = null;
+        var shadowed_line: u32 = 0;
+        var i = self.scopes.items.len;
+        while (i > 0) {
+            i -= 1;
+            const scope = &self.scopes.items[i];
+            var j = scope.vars.items.len;
+            while (j > 0) {
+                j -= 1;
+                const v = &scope.vars.items[j];
+                if (std.mem.eql(u8, v.name, name)) {
+                    v.is_used = true;
+                    shadowed_kind = v.kind;
+                    shadowed_line = v.loc.line;
+                    break;
+                }
+            }
+            if (shadowed_kind != null) break;
+        }
+        if (shadowed_kind == null) {
+            if (self.top_map.get(name)) |top_idx| {
+                const decl = &self.top_decls.items[top_idx];
+                if (!decl.is_used) {
+                    decl.is_used = true;
+                    if (worklist) |wl| {
+                        wl.append(self.allocator, top_idx) catch {};
+                    }
+                }
+                shadowed_kind = decl.kind;
+                shadowed_line = decl.loc.line;
+            }
+        }
+        if (shadowed_kind != null and self.collect_unused) {
+            try self.shadow_list.append(self.allocator, .{
+                .name = name,
+                .shadowed_kind = shadowed_kind.?,
+                .shadowed_line = shadowed_line,
+                .loc = loc,
+            });
+        }
+
         const current = &self.scopes.items[self.scopes.items.len - 1];
         try current.vars.append(self.allocator, .{
             .name = name,
@@ -268,7 +351,7 @@ fn walkNode(ctx: *Context, node: *ast.Node, worklist: ?*std.ArrayList(usize)) vo
             if (d.type_annotation) |ta| walkTypeNode(ctx, ta, worklist);
             walkNode(ctx, d.value, worklist);
             // Local variable added to current scope
-            ctx.addLocal(d.name, if (d.is_const) .constant else .variable, d.loc) catch {};
+            ctx.addLocal(d.name, if (d.is_const) .constant else .variable, d.loc, worklist) catch {};
         },
         .block => |b| {
             ctx.pushScope() catch return;
@@ -300,7 +383,7 @@ fn walkNode(ctx: *Context, node: *ast.Node, worklist: ?*std.ArrayList(usize)) vo
             walkNode(ctx, f.expr, worklist);
             ctx.pushScope() catch return;
             for (f.captures) |c| {
-                ctx.addLocal(c.name, .variable, f.loc) catch {};
+                ctx.addLocal(c.name, .variable, f.loc, worklist) catch {};
             }
             walkNode(ctx, f.body, worklist);
             ctx.popScope() catch return;
@@ -322,6 +405,8 @@ fn walkNode(ctx: *Context, node: *ast.Node, worklist: ?*std.ArrayList(usize)) vo
         .enum_decl => {},
         .error_decl => {},
         .type_decl => |t| walkTypeNode(ctx, t.type_expr, worklist),
+        .comptime_expr => |ce| walkNode(ctx, ce.expr, worklist),
+        .pointer_type, .array_type, .union_type, .intersection_type, .tuple_type, .func_type, .shape_type => walkTypeNode(ctx, node, worklist),
         else => {},
     }
 }
@@ -336,7 +421,7 @@ fn walkFunctionDecl(ctx: *Context, f: ast.FunctionDecl, is_struct_method: bool, 
             if (p.type_annotation) |ta| walkTypeNode(ctx, ta, worklist);
             // Skip `self` receiver in struct methods
             if (is_struct_method and idx == 0 and std.mem.eql(u8, p.name, "self")) continue;
-            ctx.addLocal(p.name, .parameter, p.loc) catch {};
+            ctx.addLocal(p.name, .parameter, p.loc, worklist) catch {};
         }
     }
 
@@ -354,7 +439,17 @@ fn lessThan(_: void, a: UnusedDecl, b: UnusedDecl) bool {
     return a.loc.column < b.loc.column;
 }
 
-pub fn detect(allocator: std.mem.Allocator, doc: *const ast.Document) ![]UnusedDecl {
+fn lessThanShadow(_: void, a: ShadowDecl, b: ShadowDecl) bool {
+    if (a.loc.line != b.loc.line) return a.loc.line < b.loc.line;
+    return a.loc.column < b.loc.column;
+}
+
+pub const DetectResult = struct {
+    unused: []UnusedDecl,
+    shadows: []ShadowDecl,
+};
+
+pub fn detect(allocator: std.mem.Allocator, doc: *const ast.Document) !DetectResult {
     var ctx = Context.init(allocator, doc.path);
     defer ctx.deinit();
 
@@ -481,15 +576,29 @@ pub fn detect(allocator: std.mem.Allocator, doc: *const ast.Document) ![]UnusedD
 
     // Sort results deterministically by source location (line, column)
     std.mem.sort(UnusedDecl, ctx.unused_list.items, {}, lessThan);
+    std.mem.sort(ShadowDecl, ctx.shadow_list.items, {}, lessThanShadow);
 
-    return allocator.dupe(UnusedDecl, ctx.unused_list.items);
+    return .{
+        .unused = try allocator.dupe(UnusedDecl, ctx.unused_list.items),
+        .shadows = try allocator.dupe(ShadowDecl, ctx.shadow_list.items),
+    };
 }
 
 pub fn detectAndWarn(state: *state_mod.CompilerState, doc: *const ast.Document) void {
-    const list = detect(state.allocator, doc) catch return;
-    defer state.allocator.free(list);
+    const result = detect(state.allocator, doc) catch return;
+    defer state.allocator.free(result.unused);
+    defer state.allocator.free(result.shadows);
 
-    for (list) |unused| {
+    for (result.shadows) |shadow| {
+        var msg_buf: [256]u8 = undefined;
+        const msg = shadow.formatMessage(&msg_buf);
+        const file_path = if (shadow.loc.path.len > 0) shadow.loc.path else doc.path;
+        const line = if (shadow.loc.line > 0) shadow.loc.line else 1;
+        const col = if (shadow.loc.column > 0) shadow.loc.column else 1;
+        compile_errors.compileWarnAt(state, file_path, doc.source, line, col, "{s}", .{msg});
+    }
+
+    for (result.unused) |unused| {
         var msg_buf: [256]u8 = undefined;
         const msg = unused.formatMessage(&msg_buf);
         const file_path = if (unused.loc.path.len > 0) unused.loc.path else doc.path;

@@ -1,0 +1,5 @@
+# expect: Cannot resolve this type here
+@func make(): i64 { return 1; }
+$g = make();
+@struct Holder { v: @typeOf(g); }
+pub @func main() { print(g); }

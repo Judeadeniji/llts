@@ -12,6 +12,7 @@ const const_eval = @import("../const_eval.zig");
 const compile_errors = @import("../../errors/compile.zig");
 const layout = @import("../layout.zig");
 const widths = @import("../widths.zig");
+const escape = @import("../escape.zig");
 
 const CompilerState = state_mod.CompilerState;
 
@@ -59,6 +60,13 @@ pub fn compileDeclaration(state: *CompilerState, decl: *const ast.Declaration) !
 
     if (comptime_value) |cval| {
         try const_eval.emitConstValue(state, cval);
+    } else if (shouldCloneStructValue(state, decl.value)) {
+        // Struct binding reference — clone so the declaration copies;
+        // sharing requires explicit `*T` / `&x`.
+        try emit.emitNameGet(state, .OP_GET_GLOBAL, "__cloneBytes");
+        try expr.compileExpression(state, decl.value);
+        try emit.emitOp(state, .OP_CALL);
+        try emit.emitByte(state, 1);
     } else {
         try expr.compileExpression(state, decl.value);
     }
@@ -76,7 +84,7 @@ pub fn compileDeclaration(state: *CompilerState, decl: *const ast.Declaration) !
         if (state.global_types.get(decl.name)) |gt| {
             type_name = gt;
         } else {
-            type_name = try from_ast.typeAstToDisplay(ta, state);
+            type_name = try from_ast.typeAstToDisplayQualified(ta, state);
         }
         // Assignability is enforced in typecheck; keep a defensive check for emit-only paths.
         if (types.resolveType(state, decl.value)) |got| {
@@ -119,17 +127,34 @@ pub fn compileDeclaration(state: *CompilerState, decl: *const ast.Declaration) !
             .depth = state.scope_depth,
             .type_name = type_name,
             .is_const = decl.is_const,
-            .alloc_region = @import("../escape.zig").regionOfRhs(state, decl.value),
+            .alloc_region = escape.regionOfRhs(state, decl.value),
         });
         if (decl.is_const) {
+            const slot: u8 = @intCast(state.locals.items.len - 1);
             try emit.emitOp(state, .OP_MARK_CONST);
-            try emit.emitByte(state, @intCast(state.locals.items.len - 1));
+            try emit.emitByte(state, slot);
+            // Freeze packed storage so aliases cannot write through the constant.
+            try emit.emitNameGet(state, .OP_GET_GLOBAL, "__freeze");
+            try emit.emitOp(state, .OP_GET_LOCAL);
+            try emit.emitByte(state, slot);
+            try emit.emitOp(state, .OP_CALL);
+            try emit.emitByte(state, 1);
+            try emit.emitOp(state, .OP_POP);
         }
     } else {
         if (type_name) |tn| try state.global_types.put(decl.name, tn);
         try emit.emitNameGet(state, .OP_SET_GLOBAL, decl.name);
         try emit.emitOp(state, .OP_POP);
-        if (decl.is_const) try state.ready_global_consts.put(decl.name, {});
+        if (decl.is_const) {
+            // Arrays and strings are shared handles; freeze the storage so
+            // aliases (`$r = A`, `f(A)`) cannot write through to the constant.
+            try emit.emitNameGet(state, .OP_GET_GLOBAL, "__freeze");
+            try emit.emitNameGet(state, .OP_GET_GLOBAL, decl.name);
+            try emit.emitOp(state, .OP_CALL);
+            try emit.emitByte(state, 1);
+            try emit.emitOp(state, .OP_POP);
+            try state.ready_global_consts.put(decl.name, {});
+        }
     }
 }
 
@@ -287,7 +312,7 @@ pub fn compileStruct(state: *CompilerState, s: *const ast.StructDecl) !void {
     for (s.fields) |field| {
         var disp: []const u8 = "int";
         if (field.type_annotation) |ta| {
-            disp = (try from_ast.typeAstToDisplay(ta, state)) orelse "unknown";
+            disp = (try from_ast.typeAstToDisplayQualified(ta, state)) orelse "unknown";
         }
         try type_map.put(field.name, disp);
         try field_list.append(state.allocator, .{ .name = field.name, .type_name = disp });
@@ -408,7 +433,7 @@ pub fn compileTypeDecl(state: *CompilerState, td: *const ast.TypeDecl) !void {
     if (ir.isBuiltinTypeName(td.name)) {
         return compile_errors.compileFailFmt(state, "Cannot redefine builtin type '{s}'", .{td.name});
     }
-    const disp = (try from_ast.typeAstToDisplay(td.type_expr, state)) orelse {
+    const disp = (try from_ast.typeAstToDisplayQualified(td.type_expr, state)) orelse {
         return compile_errors.compileFailFmt(state, "Invalid type expression for '{s}'", .{td.name});
     };
     try state.typedefs.put(td.name, .{
@@ -442,7 +467,7 @@ fn registerShapeLayout(state: *CompilerState, key: []const u8, shape: *const ast
     for (shape.fields) |field| {
         var field_disp: []const u8 = "int";
         if (field.type_annotation) |ta| {
-            field_disp = (try from_ast.typeAstToDisplay(ta, state)) orelse "unknown";
+            field_disp = (try from_ast.typeAstToDisplayQualified(ta, state)) orelse "unknown";
         }
         try type_map.put(field.name, field_disp);
         try field_list.append(state.allocator, .{ .name = field.name, .type_name = field_disp });
@@ -463,4 +488,21 @@ fn widthCastKind(node: *ast.Node) ?u8 {
         return @intFromEnum(w);
     }
     return null;
+}
+
+/// True when the node is a binding reference (primary / member access) whose
+/// resolved type is a bare struct value. Pointers (`*T`) and optionals of
+/// pointers (`?*T`) share handles by design — only struct values clone.
+fn shouldCloneStructValue(state: *CompilerState, node: *ast.Node) bool {
+    switch (node.*) {
+        .primary, .member => {},
+        else => return false,
+    }
+    const tn = types.resolveType(state, node) orelse return false;
+    // Skip pointer and optional types — those share handles.
+    const trimmed = std.mem.trim(u8, tn, " \t");
+    if (trimmed.len > 0 and (trimmed[0] == '*' or trimmed[0] == '?')) return false;
+    if (std.mem.indexOfScalar(u8, trimmed, '*') != null) return false;
+    if (std.mem.indexOf(u8, trimmed, " | null") != null) return false;
+    return types.lookupStruct(state, tn) != null;
 }

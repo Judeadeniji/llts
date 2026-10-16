@@ -1,0 +1,17 @@
+# Aliasing hole: does struct assignment copy the handle or clone?
+@struct Point {
+    x: int;
+    y: int;
+
+    @func shift(self, dx: int) {
+        self.x = self.x + dx;
+    }
+}
+
+@const $ORIGIN = Point { x: 0, y: 0 };
+
+pub @func main() {
+    $alias = ORIGIN;
+    alias.shift(5);
+    print(ORIGIN.x);
+}

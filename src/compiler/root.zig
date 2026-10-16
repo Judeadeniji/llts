@@ -6,6 +6,8 @@ const ast = @import("../ast/root.zig");
 const chunk_mod = @import("../bytecode/chunk.zig");
 const emit = @import("emit.zig");
 const modules = @import("modules.zig");
+const local_types = @import("local_types.zig");
+const generics = @import("generics.zig");
 const scope = @import("scope.zig");
 pub const state_mod = @import("state.zig");
 const stmt = @import("stmt/root.zig");
@@ -43,6 +45,9 @@ pub fn analyze(
 
     state.debug = opts.debug;
     state.strict = opts.strict;
+    // Bytecode builds typecheck what they emit; strict/native builds stay
+    // whole-program so soundness never depends on reachability.
+    state.typecheck_reachable_only = !opts.strict;
     if (opts.comptime_max_loop_iterations) |lim| {
         state.comptime_max_loop_iterations = lim;
     }
@@ -59,6 +64,7 @@ pub fn analyze(
     for (doc.statements) |s| {
         if (s.* == .struct_decl or s.* == .enum_decl or s.* == .error_decl or s.* == .type_decl) try stmt.compileStatement(&state, s);
     }
+    try local_types.hoist(&state, doc.statements);
 
     try typecheck.typecheck(&state, doc);
     try requireEntryMain(&state, doc);
@@ -91,6 +97,7 @@ pub fn prepareForTypecheck(state: *state_mod.CompilerState, doc: *ast.Document) 
     for (doc.statements) |s| {
         if (s.* == .struct_decl or s.* == .enum_decl or s.* == .error_decl or s.* == .type_decl) try stmt.compileStatement(state, s);
     }
+    try local_types.hoist(state, doc.statements);
 }
 
 pub fn emitBytecode(state: *state_mod.CompilerState, doc: *ast.Document) !chunk_mod.Chunk {
@@ -134,7 +141,7 @@ pub fn emitBytecode(state: *state_mod.CompilerState, doc: *ast.Document) !chunk_
             if (addr > 0xffff) {
                 return compile_errors.compileFailFmt(
                     state,
-                    "function '{s}' address {d} exceeds CALL_STATIC u16 limit (forward ref)",
+                    "Function '{s}' address {d} exceeds CALL_STATIC u16 limit (forward ref)",
                     .{ name, addr },
                 );
             }
@@ -207,7 +214,7 @@ fn requireEntryMain(state: *state_mod.CompilerState, doc: *ast.Document) !void {
             doc.source,
             loc.line,
             loc.column,
-            "missing entry point 'main'",
+            "Missing entry point 'main'",
         );
     };
 
@@ -219,7 +226,7 @@ fn requireEntryMain(state: *state_mod.CompilerState, doc: *ast.Document) !void {
             doc.source,
             eof.line,
             eof.column,
-            "missing entry point 'main'",
+            "Missing entry point 'main'",
         );
     }
 
@@ -230,7 +237,7 @@ fn requireEntryMain(state: *state_mod.CompilerState, doc: *ast.Document) !void {
             sourceTextForPath(state, if (loc.path.len > 0) loc.path else doc.path),
             if (loc.line > 0) loc.line else 1,
             if (loc.column > 0) loc.column else 1,
-            "entry point 'main' must be pub",
+            "Entry point 'main' must be pub",
             .{},
         );
     }
@@ -326,6 +333,8 @@ fn registerFunctions(state: *state_mod.CompilerState, doc: *ast.Document) !void 
     // `fail`'s refined type).
     try refineErrorReturns(state);
 
+    try buildMethodIndex(state);
+
     var visited = std.StringHashMap(void).init(state.allocator);
     defer visited.deinit();
     var stack = std.StringHashMap(void).init(state.allocator);
@@ -336,6 +345,20 @@ fn registerFunctions(state: *state_mod.CompilerState, doc: *ast.Document) !void 
         if (!visited.contains(name.*)) {
             _ = try dfsRecursive(state, name.*, &visited, &stack);
         }
+    }
+}
+
+/// Bare name → every `Type::name` / `module::name` function key.
+/// Built once before the call-graph walk so an unqualified edge resolves in
+/// O(matches) instead of rescanning the whole function table per edge.
+fn buildMethodIndex(state: *state_mod.CompilerState) !void {
+    var it = state.functions.keyIterator();
+    while (it.next()) |full| {
+        const idx = std.mem.lastIndexOf(u8, full.*, "::") orelse continue;
+        const bare = full.*[idx + 2 ..];
+        const gop = try state.method_index.getOrPut(bare);
+        if (!gop.found_existing) gop.value_ptr.* = .empty;
+        try gop.value_ptr.append(state.allocator, full.*);
     }
 }
 
@@ -499,9 +522,17 @@ fn sourceTextForPath(state: *state_mod.CompilerState, path: []const u8) []const 
     return state.chunk.source;
 }
 
+/// Register a function node built after `registerFunctions` (generic instances).
+pub fn registerFunction(state: *state_mod.CompilerState, node: *ast.Node) anyerror!void {
+    try collectFuncs(state, node, null);
+}
+
 fn collectFuncs(state: *state_mod.CompilerState, node: *ast.Node, struct_name: ?[]const u8) !void {
     switch (node.*) {
         .function_decl => |*fn_decl| {
+            if (generics.isTemplate(fn_decl)) {
+                return generics.registerTemplate(state, node, struct_name != null);
+            }
             if (struct_name) |sn| {
                 if (std.mem.indexOf(u8, fn_decl.name, "::") == null) {
                     const mangled = try std.fmt.allocPrint(state.allocator, "{s}::{s}", .{ sn, fn_decl.name });
@@ -515,7 +546,7 @@ fn collectFuncs(state: *state_mod.CompilerState, node: *ast.Node, struct_name: ?
             var has_return = false;
             var return_type: ?[]const u8 = null;
             if (fn_decl.return_type) |rt| {
-                return_type = typecheck.typeAstToDisplay(rt, state) catch null;
+                return_type = typecheck.typeAstToDisplayQualified(rt, state) catch null;
             }
             try analyzeBody(state, fn_decl.body, &calls, &has_loop, &has_return, &return_type, fn_decl.name);
             const loc = node.loc();
@@ -688,6 +719,13 @@ fn analyzeBody(
     }
 }
 
+fn markRecursive(state: *state_mod.CompilerState, stack: *std.StringHashMap(void)) void {
+    var sit = stack.keyIterator();
+    while (sit.next()) |s| {
+        if (state.functions.getPtr(s.*)) |d| d.is_recursive = true;
+    }
+}
+
 fn dfsRecursive(
     state: *state_mod.CompilerState,
     func_name: []const u8,
@@ -706,25 +744,12 @@ fn dfsRecursive(
 
     var cit = def.calls.keyIterator();
     while (cit.next()) |call_name| {
-        var targets: std.ArrayList([]const u8) = .empty;
-        defer targets.deinit(state.allocator);
-        if (state.functions.contains(call_name.*)) try targets.append(state.allocator, call_name.*);
-        var kit = state.functions.keyIterator();
-        while (kit.next()) |k| {
-            if (std.mem.endsWith(u8, k.*, call_name.*)) {
-                const prefix_len = k.*.len - call_name.*.len;
-                if (prefix_len >= 2 and std.mem.eql(u8, k.*[prefix_len - 2 .. prefix_len], "::")) {
-                    try targets.append(state.allocator, k.*);
-                }
-            }
+        if (state.functions.contains(call_name.*)) {
+            if (try dfsRecursive(state, call_name.*, visited, stack)) markRecursive(state, stack);
         }
-        for (targets.items) |target| {
-            if (try dfsRecursive(state, target, visited, stack)) {
-                def.is_recursive = true;
-                var sit = stack.keyIterator();
-                while (sit.next()) |s| {
-                    if (state.functions.getPtr(s.*)) |d| d.is_recursive = true;
-                }
+        if (state.method_index.get(call_name.*)) |matches| {
+            for (matches.items) |mangled| {
+                if (try dfsRecursive(state, mangled, visited, stack)) markRecursive(state, stack);
             }
         }
     }

@@ -78,6 +78,8 @@ pub const VMState = struct {
     /// Immortal high-water; frame rewind cannot go below this.
     bytes_immortal_floor: u32 = 0,
     free_byte_chunks: i32 = 0,
+    /// `[start, end)` ranges of `bytes` owned by global `@const` values (see `__freeze`).
+    frozen: std.ArrayList([2]u32) = .empty,
     chunk: *Chunk,
     current_line: u32 = 0,
     current_column: u32 = 0,
@@ -202,6 +204,7 @@ pub const VMState = struct {
         self.memory.deinit(self.allocator);
         self.immortal.deinit(self.allocator);
         self.bytes.deinit(self.allocator);
+        self.frozen.deinit(self.allocator);
         self.pc_table.deinit(self.allocator);
     }
 
@@ -380,6 +383,12 @@ pub const VMState = struct {
 
     pub fn allocImmortalArray(self: *VMState, count: u32) !Value {
         return self.allocArrayStorage(count, true);
+    }
+
+    pub inline fn isFrozen(self: *const VMState, at: u32) bool {
+        if (self.frozen.items.len == 0) return false;
+        for (self.frozen.items) |r| if (at >= r[0] and at < r[1]) return true;
+        return false;
     }
 
     pub fn arrayElemPtr(self: *VMState, arr: value.ArrayRef, index: u32) *Value {

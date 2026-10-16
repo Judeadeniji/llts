@@ -328,8 +328,14 @@ pub @func main() {
     $a = mem.create(0);
     defer a.deinit();
     $head: ?*Node = null;
-    head = @new(a, Node { value: 1, next: head });
-    head = @new(a, Node { value: 2, next: head });
+    $n1 = @new(a, Node);
+    n1.value = 1;
+    n1.next = head;
+    head = n1;
+    $n2 = @new(a, Node);
+    n2.value = 2;
+    n2.next = head;
+    head = n2;
     print(@typeOf(head));
     print(@typeOf(@new(a, Node)));
     print(head.value);
@@ -341,7 +347,7 @@ pub @func main() {
 	);
 });
 
-test("@typeOf supports bare types statically", () => {
+test("@typeOf of a bare type is `type`", () => {
 	expectOutput(
 		runSource(`
 @struct Point { x: i64; y: i64; }
@@ -365,19 +371,19 @@ print(@sizeOf([]i64));
 print(@sizeOf([10]i64));
 `),
 		[
+			"type",
+			"type",
+			"type",
+			"type",
+			"type",
+			"type",
+			"type",
+			"type",
+			"type",
+			"type",
 			"i64",
-			"u8",
-			"i64",
-			"[]byte",
 			"Point",
-			"*Point",
-			"?Point",
-			"[]byte",
-			"[10]i64",
-			"i64 | []byte",
-			"i64",
-			"Point",
-			"[]byte",
+			"type",
 			"8",
 			"8",
 		],

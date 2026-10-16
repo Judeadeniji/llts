@@ -10,11 +10,11 @@ test("unannotated method self is *T", () => {
 @struct Counter {
     value: i64;
     @func kind(self) {
-        return @typeOf(self);
+        print(@typeOf(self));
     }
 }
 $c = Counter { value: 1 };
-print(c.kind());
+c.kind();
 `),
 		["*Counter"],
 	);
@@ -87,11 +87,11 @@ test("self: T @typeOf is T not *T", () => {
 @struct Box {
     n: i64;
     @func kind(self: Box) {
-        return @typeOf(self);
+        print(@typeOf(self));
     }
 }
 $b = Box { n: 1 };
-print(b.kind());
+b.kind();
 `),
 		["Box"],
 	);
@@ -256,7 +256,7 @@ test("invalid self annotation is rejected", () => {
 $p = Point { x: 1 };
 print(p.bad());
 `),
-		"method self must be",
+		"Method self must be",
 	);
 });
 
@@ -275,7 +275,7 @@ test("self typed as a different struct is rejected", () => {
 $b = B { y: 1 };
 print(b.bad());
 `),
-		"method self must be",
+		"Method self must be",
 	);
 });
 

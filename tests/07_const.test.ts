@@ -187,7 +187,7 @@ test("@const requires an initializer", () => {
   expectError(runSource(`
 @const $a;
 print(a);
-`), "Expected \"=\" after \"a\"");
+`), "Expected '=' after 'a'");
 });
 
 test("cannot redeclare the same @const twice in the same scope", () => {
@@ -262,14 +262,20 @@ print(arr[2]);
 `), ["1"]);
 });
 
-test("@const @import and @typeOf are allowed", () => {
+test("@const @import is allowed", () => {
   expectOutput(runSource(`
 @const $mem = @import("std/mem");
 @const $a = 1;
-@const $t = @typeOf(a);
-print(t);
+print(@typeOf(a));
 print(mem.alloc(1) > 0);
 `), ["1", "true"]);
+});
+
+test("@const of a type value is rejected (use @alias)", () => {
+  expectError(runSource(`
+@const $a = 1;
+@const $t = @typeOf(a);
+`), "Cannot use a 'type' value as a variable's value");
 });
 
 test("@const string and bool literals are allowed", () => {
@@ -411,4 +417,135 @@ test("@const array element assignment is rejected", () => {
 arr[1] = 42;
 print(arr[1]);
 `), "Cannot mutate elements of constant 'arr'");
+});
+
+// ---------------------------------------------------------------------------
+// Method-call receiver constness (P0)
+// ---------------------------------------------------------------------------
+
+test("mutating method call on @const receiver is rejected (unannotated self)", () => {
+  expectError(runSource(`
+@struct Point {
+    x: int;
+
+    @func shift(self, dx: int) {
+        self.x = self.x + dx;
+    }
+}
+
+@const $ORIGIN = Point{x: 0};
+ORIGIN.shift(5);
+print(ORIGIN.x);
+`), "Method might mutate constant 'ORIGIN'");
+});
+
+test("mutating method call on @const receiver is rejected (self: *T)", () => {
+  expectError(runSource(`
+@struct Point {
+    x: int;
+
+    @func shift(self: *Point, dx: int) {
+        self.x = self.x + dx;
+    }
+}
+
+@const $ORIGIN = Point{x: 0};
+ORIGIN.shift(5);
+print(ORIGIN.x);
+`), "Method might mutate constant 'ORIGIN'");
+});
+
+test("by-value self method on @const receiver is allowed", () => {
+  expectOutput(runSource(`
+@struct Point {
+    x: int;
+
+    @func shiftVal(self: Point, dx: int): int {
+        return self.x + dx;
+    }
+}
+
+@const $ORIGIN = Point{x: 5};
+print(ORIGIN.shiftVal(10));
+`), ["15"]);
+});
+
+test("no-self method on @const receiver is allowed", () => {
+  expectOutput(runSource(`
+@struct Point {
+    x: int;
+
+    @func getX(): int {
+        return 42;
+    }
+}
+
+@const $ORIGIN = Point{x: 5};
+print(ORIGIN.getX());
+`), ["42"]);
+});
+
+test("struct assignment copies; alias cannot mutate @const through handle", () => {
+  expectOutput(runSource(`
+@struct Point {
+    x: int;
+}
+@const $ORIGIN = Point{x: 0};
+$a = ORIGIN;
+a.x = 99;
+print(ORIGIN.x);
+print(a.x);
+`), ["0", "99"]);
+});
+
+test("pointer assignment still shares handle", () => {
+  expectOutput(runSource(`
+@struct Point {
+    x: int;
+}
+$p = Point{x: 1};
+$pp = &p;
+pp.x = 42;
+print(p.x);
+`), ["42"]);
+});
+
+test("taking the address of a @const is rejected", () => {
+  expectError(runSource(`
+@struct Point { x: i64; }
+@const $ORIGIN = Point { x: 0 };
+pub @func main() {
+    $r = &ORIGIN;
+    r.x = 5;
+}
+`), "Cannot take the address of constant 'ORIGIN'");
+});
+
+test("nested field write on @const is rejected", () => {
+  expectError(runSource(`
+@struct In { v: i64; }
+@struct Out { i: In; }
+@const $O = Out { i: In { v: 1 } };
+pub @func main() {
+    O.i.v = 7;
+}
+`), "Cannot mutate field of constant 'O'");
+});
+
+test("@const array cannot be mutated through an alias or parameter", () => {
+  expectError(runSource(`
+@const $A = [1, 2, 3];
+@func poke(a: []i64) { a[0] = 9; }
+pub @func main() { poke(A); }
+`), "Cannot mutate a constant");
+});
+
+test("@const array alias write is rejected at runtime", () => {
+  expectError(runSource(`
+@const $A = [1, 2, 3];
+pub @func main() {
+    $r = A;
+    r[0] = 9;
+}
+`), "Cannot mutate a constant");
 });

@@ -27,7 +27,17 @@ To build the project:
 ```bash
 zig build
 ```
-This produces the main executable at `zig-out/bin/llts`.
+This produces the main executable at `zig-out/bin/llts` in Debug mode — useful
+while working on the compiler itself (better panics), but roughly 40x slower at
+runtime than an optimizing build.
+
+For everyday use (and for the test suites) install ReleaseSafe builds:
+```bash
+zig build release
+```
+This rebuilds `llts`, `llts-lsp` and `llts-tokenize-zig` in ReleaseSafe into the
+same `zig-out/bin/`, which takes a stdlib-importing program from ~1.3s to
+~0.03s of compile time.
 
 To run an LLTS program:
 ```bash
@@ -54,8 +64,12 @@ This command runs tests across modules, specifically targeting tests defined wit
 A comprehensive test suite of the language surface is maintained in TypeScript (`tests/*.test.ts`). This external suite invokes the compiled `zig-out/bin/llts` binary using Bun to test end-to-end language execution, correct standard error reporting, and output verification.
 ```bash
 # Ensure the binary is built, then run the Bun test suite
-zig build && bun test tests/
+zig build release && bun test tests/    # ~7s (also what `bun run test` does)
+zig build && bun test tests/            # ~75s, exercises the Debug binaries
 ```
+Both suites assert on the language surface only, so the compiler's optimize
+mode does not change what passes.
+
 
 ### 4.3 Diagnostics and Safety
 - **Diagnostics API (`src/errors/`)**: A dedicated subsystem provides rich, source-contextual error reporting for compile-time failures, runtime panics, and stack traces.

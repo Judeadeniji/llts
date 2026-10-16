@@ -66,6 +66,9 @@ pub const Type = union(enum) {
     error_set: []const u8,
     /// Singleton error member used as a type (`IoError.NotFound`).
     error_lit: struct { set_name: []const u8, variant: []const u8 },
+    /// The type of types (`@typeOf(x)`, `i64` used as a value). Compile-time only;
+    /// the denoted type of a type-valued node lives in `state.type_call_results`.
+    type_,
 };
 
 pub const ShapeField = struct {
@@ -97,6 +100,7 @@ pub const TFSize: Type = .{ .fsize = {} };
 pub const TNull: Type = .{ .null = {} };
 pub const TError: Type = .{ .error_ = {} };
 pub const TNever: Type = .{ .never = {} };
+pub const TType: Type = .{ .type_ = {} };
 
 var byte_elem: Type = .{ .u8 = {} };
 pub const TString: Type = .{ .array = .{ .elem = &byte_elem, .length = null } };
@@ -233,6 +237,7 @@ pub fn namedType(name: []const u8) Type {
     if (std.mem.eql(u8, name, "error")) return TError;
     if (std.mem.eql(u8, name, "string")) return TString;
     if (std.mem.eql(u8, name, "unknown")) return TUnknown;
+    if (std.mem.eql(u8, name, "type")) return TType;
     return .{ .struct_ = name };
 }
 
@@ -263,20 +268,37 @@ pub fn cleanTypeName(name: []const u8) []const u8 {
 }
 
 pub fn displayTypeAlloc(allocator: std.mem.Allocator, t: Type) ![]const u8 {
+    return displayTypeAllocFlags(allocator, t, false);
+}
+
+/// Like `displayTypeAlloc`, but keeps module-qualified names (`mod.lls::Struct`)
+/// intact.  Use for displays that are *stored and re-parsed* (struct field
+/// layouts, typedef underlyings, param types) — stripping the qualifier there
+/// makes same-named types from different modules indistinguishable.
+pub fn displayTypeQualifiedAlloc(allocator: std.mem.Allocator, t: Type) ![]const u8 {
+    return displayTypeAllocFlags(allocator, t, true);
+}
+
+fn dispNamed(allocator: std.mem.Allocator, n: []const u8, qualified: bool) ![]const u8 {
+    return try allocator.dupe(u8, if (qualified) n else cleanTypeName(n));
+}
+
+fn displayTypeAllocFlags(allocator: std.mem.Allocator, t: Type, qualified: bool) ![]const u8 {
     return switch (t) {
         .u1, .i8, .i16, .i32, .i64, .u8, .u16, .u32, .u64, .f32, .f64, .isize, .usize, .fsize => try allocator.dupe(u8, displayWidth(t)),
         .null => try allocator.dupe(u8, "null"),
         .error_ => try allocator.dupe(u8, "error"),
         .unknown => try allocator.dupe(u8, "unknown"),
         .never => try allocator.dupe(u8, "never"),
-        .struct_ => |n| try allocator.dupe(u8, cleanTypeName(n)),
-        .enum_ => |n| try allocator.dupe(u8, cleanTypeName(n)),
-        .enum_lit => |e| try std.fmt.allocPrint(allocator, "{s}.{s}", .{ cleanTypeName(e.enum_name), e.variant }),
+        .type_ => try allocator.dupe(u8, "type"),
+        .struct_ => |n| try dispNamed(allocator, n, qualified),
+        .enum_ => |n| try dispNamed(allocator, n, qualified),
+        .enum_lit => |e| try std.fmt.allocPrint(allocator, "{s}.{s}", .{ if (qualified) e.enum_name else cleanTypeName(e.enum_name), e.variant }),
         .str_lit => |s| try std.fmt.allocPrint(allocator, "\"{s}\"", .{s}),
         .int_lit => |n| try std.fmt.allocPrint(allocator, "{d}", .{n}),
         .bool_lit => |b| try allocator.dupe(u8, if (b) "true" else "false"),
         .array => |a| blk: {
-            const elem = try displayTypeAlloc(allocator, a.elem.*);
+            const elem = try displayTypeAllocFlags(allocator, a.elem.*, qualified);
             defer allocator.free(elem);
             // Prefer `[]byte` spelling for u8 slices (string ≡ []byte).
             const elem_disp = if (a.elem.* == .u8) "byte" else elem;
@@ -291,7 +313,7 @@ pub fn displayTypeAlloc(allocator: std.mem.Allocator, t: Type) ![]const u8 {
                 for (parts.items) |p| allocator.free(p);
                 parts.deinit(allocator);
             }
-            for (elems) |e| try parts.append(allocator, try displayTypeAlloc(allocator, e));
+            for (elems) |e| try parts.append(allocator, try displayTypeAllocFlags(allocator, e, qualified));
             var total: usize = 2; // []
             for (parts.items, 0..) |p, i| {
                 total += p.len;
@@ -312,7 +334,7 @@ pub fn displayTypeAlloc(allocator: std.mem.Allocator, t: Type) ![]const u8 {
             break :blk out;
         },
         .ptr => |p| blk: {
-            const inner = try displayTypeAlloc(allocator, p.*);
+            const inner = try displayTypeAllocFlags(allocator, p.*, qualified);
             defer allocator.free(inner);
             break :blk try std.fmt.allocPrint(allocator, "*{s}", .{inner});
         },
@@ -323,7 +345,7 @@ pub fn displayTypeAlloc(allocator: std.mem.Allocator, t: Type) ![]const u8 {
                 parts.deinit(allocator);
             }
             for (f.params, 0..) |p, i| {
-                const d = try displayTypeAlloc(allocator, p);
+                const d = try displayTypeAllocFlags(allocator, p, qualified);
                 if (f.variadic and i + 1 == f.params.len) {
                     const with_dots = try std.fmt.allocPrint(allocator, "...{s}", .{d});
                     allocator.free(d);
@@ -348,7 +370,7 @@ pub fn displayTypeAlloc(allocator: std.mem.Allocator, t: Type) ![]const u8 {
                 @memcpy(params_s[poff .. poff + p.len], p);
                 poff += p.len;
             }
-            const ret = try displayTypeAlloc(allocator, f.ret.*);
+            const ret = try displayTypeAllocFlags(allocator, f.ret.*, qualified);
             defer allocator.free(ret);
             break :blk try std.fmt.allocPrint(allocator, "@func({s}): {s}", .{ params_s, ret });
         },
@@ -359,7 +381,7 @@ pub fn displayTypeAlloc(allocator: std.mem.Allocator, t: Type) ![]const u8 {
                 parts.deinit(allocator);
             }
             for (fields) |f| {
-                const ty = try displayTypeAlloc(allocator, f.ty);
+                const ty = try displayTypeAllocFlags(allocator, f.ty, qualified);
                 defer allocator.free(ty);
                 try parts.append(allocator, try std.fmt.allocPrint(allocator, "{s}: {s}", .{ f.name, ty }));
             }
@@ -382,12 +404,12 @@ pub fn displayTypeAlloc(allocator: std.mem.Allocator, t: Type) ![]const u8 {
             out[offset] = '}';
             break :blk out;
         },
-        .error_set => |n| try allocator.dupe(u8, cleanTypeName(n)),
-        .error_lit => |e| try std.fmt.allocPrint(allocator, "{s}.{s}", .{ cleanTypeName(e.set_name), e.variant }),
-        .defined => |d| try allocator.dupe(u8, cleanTypeName(d.name)),
+        .error_set => |n| try dispNamed(allocator, n, qualified),
+        .error_lit => |e| try std.fmt.allocPrint(allocator, "{s}.{s}", .{ if (qualified) e.set_name else cleanTypeName(e.set_name), e.variant }),
+        .defined => |d| try dispNamed(allocator, d.name, qualified),
         .union_ => |arms| blk: {
             if (optionalPayload(t)) |payload| {
-                const inner = try displayTypeAlloc(allocator, payload);
+                const inner = try displayTypeAllocFlags(allocator, payload, qualified);
                 defer allocator.free(inner);
                 break :blk try std.fmt.allocPrint(allocator, "?{s}", .{inner});
             }
@@ -396,7 +418,7 @@ pub fn displayTypeAlloc(allocator: std.mem.Allocator, t: Type) ![]const u8 {
                 for (parts.items) |p| allocator.free(p);
                 parts.deinit(allocator);
             }
-            for (arms) |arm| try parts.append(allocator, try displayTypeAlloc(allocator, arm));
+            for (arms) |arm| try parts.append(allocator, try displayTypeAllocFlags(allocator, arm, qualified));
             var total: usize = 0;
             for (parts.items, 0..) |p, i| {
                 total += p.len;
@@ -424,6 +446,7 @@ pub fn displayTypeSimple(t: Type) ?[]const u8 {
         .error_ => "error",
         .unknown => "unknown",
         .never => "never",
+        .type_ => "type",
         .struct_ => |n| cleanTypeName(n),
         .enum_ => |n| cleanTypeName(n),
         .enum_lit => null,
@@ -490,7 +513,7 @@ pub fn typeEquals(a: Type, b: Type) bool {
         .error_set => |n| b == .error_set and std.mem.eql(u8, n, b.error_set),
         .error_lit => |e| b == .error_lit and std.mem.eql(u8, e.set_name, b.error_lit.set_name) and std.mem.eql(u8, e.variant, b.error_lit.variant),
         .defined => |d| (b == .defined and std.mem.eql(u8, d.name, b.defined.name)) or typeEquals(d.underlying.*, b),
-        .u1, .i8, .i16, .i32, .i64, .u8, .u16, .u32, .u64, .f32, .f64, .isize, .usize, .fsize, .null, .error_, .unknown, .never => true,
+        .u1, .i8, .i16, .i32, .i64, .u8, .u16, .u32, .u64, .f32, .f64, .isize, .usize, .fsize, .null, .error_, .unknown, .never, .type_ => std.meta.activeTag(a) == std.meta.activeTag(b),
         .union_ => |arms| blk: {
             if (b != .union_) break :blk false;
             if (arms.len != b.union_.len) break :blk false;

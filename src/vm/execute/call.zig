@@ -14,6 +14,14 @@ fn fail(vm: *VMState, msg: []const u8) CallError {
     return runtime.runtimeFail(vm, msg);
 }
 
+/// Format a runtime diagnostic, then report it. `runtimeFail` prints
+/// synchronously, so the scratch buffer is safe for the whole call.
+fn failFmt(vm: *VMState, comptime fmt: []const u8, args: anytype) CallError {
+    var buf: [256]u8 = undefined;
+    const msg = std.fmt.bufPrint(&buf, fmt, args) catch return runtime.runtimeFail(vm, "runtime diagnostic too long");
+    return runtime.runtimeFail(vm, msg);
+}
+
 pub fn callStatic(vm: *VMState, ip: *usize, addr: u32, argc: u8) CallError!void {
     if (vm.frame_count >= state_mod.MAX_FRAMES) return error.TooManyFrames;
     const frame = &vm.frames[vm.frame_count];
@@ -40,13 +48,13 @@ pub fn callStatic(vm: *VMState, ip: *usize, addr: u32, argc: u8) CallError!void 
 pub fn callDynamic(vm: *VMState, ip: *usize, argc: u8) CallError!void {
     const depth = stack.depth(vm);
     const callee_idx = depth - argc - 1;
-    if (callee_idx >= depth) return fail(vm, "Stack underflow on call");
+    if (callee_idx >= depth) return fail(vm, "Internal error: stack underflow on call");
     const callee = vm.stack_buf[callee_idx];
     switch (callee) {
         .native => |n| {
             const args = stack.slice(vm, callee_idx + 1);
             if (n.arity >= 0 and args.len != @as(usize, @intCast(n.arity))) {
-                return fail(vm, "Wrong arity for native");
+                return failFmt(vm, "'{s}' expects {d} argument(s), got {d}", .{ n.name, n.arity, args.len });
             }
             const result = n.func(vm, args) catch |err| {
                 var buf: [256]u8 = undefined;
@@ -64,13 +72,13 @@ pub fn callDynamic(vm: *VMState, ip: *usize, argc: u8) CallError!void {
             stack.setTop(vm, callee_idx + argc);
             try callStatic(vm, ip, f.address, argc);
         },
-        else => return fail(vm, "Can only call functions"),
+        else => return failFmt(vm, "Cannot call {s}; expected a function", .{callee.kindName()}),
     }
 }
 
 pub fn doReturn(vm: *VMState, ip: *usize) CallError!bool {
     const result = if (vm.sp > 0) vm.stack_buf[vm.sp - 1] else Value.null;
-    if (vm.frame_count == 0) return fail(vm, "Return with no frame");
+    if (vm.frame_count == 0) return fail(vm, "Internal error: return with no VM frame");
     vm.frame_count -= 1;
     const frame = &vm.frames[vm.frame_count];
     const ret_ip = frame.return_ip;

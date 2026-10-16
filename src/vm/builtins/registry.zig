@@ -156,7 +156,7 @@ fn moduleNeeded(needed: *const std.StringHashMap(void), module: Module) bool {
         .print_ln => wants(needed, &.{}, &.{ "__printLn" }),
         .log => wants(needed, &.{}, &.{ "__hostLog", "__caller", "__callerPC", "__timeParts", "__type", "__syslogDial", "__hostname" }),
         .len => wants(needed, &.{}, &.{ "len" }),
-        .mem => wants(needed, &.{ "__alloc", "__arena_" }, &.{ "__allocImmortal", "__allocBytes", "__allocImmortalBytes", "__allocArray", "__allocImmortalArray" }),
+        .mem => wants(needed, &.{ "__alloc", "__arena_", "__clone", "__freeze" }, &.{ "__allocImmortal", "__allocBytes", "__allocImmortalBytes", "__allocArray", "__allocImmortalArray", "__cloneBytes", "__cloneBytesImmortal", "__freeze" }),
         .string => wants(needed, &.{
             "__str", "__sub", "__index", "__split", "__toU", "__toL", "__trim", "__replace",
             "__concat", "__repeat", "__starts", "__ends", "__char", "__parse", "__fromC",

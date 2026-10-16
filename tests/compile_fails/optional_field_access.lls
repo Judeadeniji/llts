@@ -1,4 +1,4 @@
-# expect: cannot access field 'name' on optional type
+# expect: Cannot access field 'name' on optional type
 # mode: strict
 @struct User { name: string; }
 @func maybe(): ?User { return User { name: "x" }; }

@@ -99,3 +99,55 @@ pub @func main() {
 	expect(res.stdout).toContain("7");
 	expect(res.stderr).not.toContain("Warning: unused");
 });
+
+test("shadowed const warns 'shadows', not the misleading 'unused constant'", () => {
+	const res = runSource(`
+@const $ORIGIN = 0;
+
+pub @func main() {
+    $ORIGIN = 1;
+    print(ORIGIN);
+}
+`);
+	expect(res.exitCode).toBe(0);
+	expect(res.stdout).toContain("1");
+	expect(res.stderr).toContain(
+		"Warning: 'ORIGIN' shadows constant 'ORIGIN' declared at line 2",
+	);
+	expect(res.stderr).not.toContain("unused constant 'ORIGIN'");
+});
+
+test("shadow warning points at the shadowing declaration", () => {
+	const res = runSource(`
+@const $a = 1;
+
+pub @func main() {
+    $a = 2;
+    print(a);
+}
+`);
+	expect(res.exitCode).toBe(0);
+	expect(res.stderr).toContain("'a' shadows constant 'a' declared at line 2");
+	// source pointer must land on the shadowing decl (line 5), not the shadowed one
+	const m = res.stderr.match(/:(\d+):(\d+)/);
+	expect(m).not.toBeNull();
+	expect(Number(m![1])).toBe(5);
+});
+
+test("parameter shadowing a top-level const is reported as shadowing", () => {
+	const res = runSource(`
+@const $a = "global";
+
+@func show(a: string) {
+    print(a);
+}
+
+pub @func main() {
+    show("local");
+}
+`);
+	expect(res.exitCode).toBe(0);
+	expect(res.stdout).toContain("local");
+	expect(res.stderr).toContain("'a' shadows constant 'a'");
+	expect(res.stderr).not.toContain("unused constant 'a'");
+});

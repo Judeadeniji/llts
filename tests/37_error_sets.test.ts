@@ -169,7 +169,7 @@ test("merge & conflicting member names", () => {
 
 pub @func main() {}
 `),
-		"conflicting error member",
+		"Conflicting error member",
 	);
 });
 
@@ -249,7 +249,7 @@ test("open error not assignable to set", () => {
   return error("Nope");
 }
 
-pub @func main() {}
+pub @func main() { f(); }
 `),
 		"not assignable",
 	);
@@ -353,7 +353,7 @@ test("cannot return set member from pure i64 function", () => {
   return IoError.NotFound;
 }
 
-pub @func main() {}
+pub @func main() { bad(); }
 `),
 		"not assignable",
 	);
@@ -372,7 +372,7 @@ test("? inside pure function is rejected", () => {
   return fail()?;
 }
 
-pub @func main() {}
+pub @func main() { pure(); }
 `),
 		"does not allow error",
 	);
@@ -389,7 +389,7 @@ test("? on non-error value is rejected", () => {
   return get()?;
 }
 
-pub @func main() {}
+pub @func main() { wrap(); }
 `),
 		"non-error-union",
 	);

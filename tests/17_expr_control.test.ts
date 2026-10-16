@@ -38,7 +38,7 @@ $x = @if (true) {
     break 2;
 };
 `),
-		"must `break` a value",
+		"must 'break' a value",
 	);
 });
 
@@ -151,7 +151,7 @@ $x = blk: {
     print(1);
 };
 `),
-		"must `break` a value",
+		"must 'break' a value",
 	);
 });
 
@@ -221,6 +221,6 @@ pub @func main() {
     break 1;
 }
 `),
-		"break with value",
+		"Break with a value",
 	);
 });

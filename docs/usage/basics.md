@@ -53,8 +53,9 @@ For detailed information on declaring and instantiating structs, see [Structs an
 ```llts
 @const $mem = @import("std/mem");
 $heap = mem.create(0);
-# Allocate a Builder instance onto the heap
-$instance = @new(heap, Builder { value: 10 });
+# Allocate a Builder instance onto the heap (zero-filled; assign fields after)
+$instance = @new(heap, Builder);
+instance.value = 10;
 ```
 
 ## 4. Functions & Methods
@@ -78,7 +79,7 @@ For detailed information on struct methods, see [Structs and Methods](structs_an
 - `@const`: Declares a constant.
 - `@func`: Declares a function.
 - `@struct`: Declares a struct.
-- `@new(heap, instance)`: Allocates an instance on the given heap.
+- `@new(heap, Type)`: Zero-fills a `Type` on the given heap and yields `*Type`.
 - `error(code, payload)`: Creates an error value with an optional payload.
 
 ## 6. Error Handling, Diagnostics, and Logging
@@ -147,7 +148,8 @@ std.fmt.printf("Initial sum: %d\n", sum);
 std.slog.info("Performing heap allocation...");
 
 # Heap allocation and method chaining
-$counter = @new(heap, Counter { value: sum });
+$counter = @new(heap, Counter);
+counter.value = sum;
 $final_val = counter.increment().increment().value;
 
 std.fmt.printf("Final counter value: %d\n", final_val);
@@ -156,7 +158,7 @@ std.fmt.printf("Final counter value: %d\n", final_val);
 ## 8. Key Rules & Constraints for AI Agents
 1. **Declaration vs Usage:** NEVER use the `$` prefix when referencing an already declared variable (e.g., `$x = 10; $y = x + 5;` NOT `$y = $x + 5;`).
 2. **Scoping & Mutability:** Use `@const $name` for imports and immutable values. Use `$name` for standard variable declaration.
-3. **Escaping Local Scope:** Returning a bare `Foo{…}` / `[…]` literal immortalizes it (process-lifetime). Returning a frame-local *variable* (or embedding one) is a compile error — use `@new(arena, …)` when the value should live in a reclaimable arena.
-4. **Method Receivers:** Struct methods MUST explicitly declare `self` as their first parameter.
+3. **Escaping Local Scope:** Returning a bare `Foo{…}` / `[…]` literal immortalizes it (process-lifetime). Returning a flat scalar struct variable auto-clones it into immortal storage. Returning a nested/aggregate frame-local (or embedding one) is a compile error — use `@new(arena, …)` when the value should live in a reclaimable arena.
+4. **Method Receivers:** Struct methods may declare `self` as their first parameter. Omit `self` when the method does not need the receiver handle (calling `m.get()` still works — `self` is skippable by name convention).
 5. **Formatting:** `std.fmt` supports Go-compatible format verbs (e.g. `%d` for integers, `%s` for strings, `%v` for default representation).
 6. **Error Handling & Logging:** Use `error(code, payload)` for structured error objects. Use `std.slog.info()`, `warn()`, and `err()` (or `std.log`) for diagnostic logging.

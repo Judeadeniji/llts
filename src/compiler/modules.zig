@@ -386,7 +386,7 @@ fn loadModule(
 
     const source = std.fs.cwd().readFileAlloc(state.allocator, resolved, 16 * 1024 * 1024) catch {
         var buf: [512]u8 = undefined;
-        const msg = std.fmt.bufPrint(&buf, "cannot read import '{s}'", .{resolved}) catch "cannot read import";
+        const msg = std.fmt.bufPrint(&buf, "Cannot read import '{s}'", .{resolved}) catch "Cannot read import";
         const line = if (import_loc.line > 0) import_loc.line else 1;
         const col = if (import_loc.column > 0) import_loc.column else 1;
         report.reportSourceErrorWithFrame(doc.path, doc.source, line, col, msg, "<compile>");

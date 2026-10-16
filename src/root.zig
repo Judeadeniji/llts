@@ -14,7 +14,8 @@ pub const parser = @import("parser/root.zig");
 pub const pipeline = @import("pipeline.zig");
 pub const io = @import("io/root.zig");
 pub const diag = @import("errors/diag.zig");
-pub const llvm_backend = @import("compiler/llvm/root.zig");
+pub const zig_backend = @import("compiler/zig/root.zig");
+pub const runtime = @import("runtime/root.zig");
 pub const compiler = @import("compiler/root.zig");
 
 pub const OpCode = opcode.OpCode;
@@ -81,4 +82,6 @@ test {
     _ = parser;
     _ = pipeline;
     _ = vm_state;
+    _ = runtime;
+    _ = zig_backend;
 }

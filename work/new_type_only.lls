@@ -1,0 +1,16 @@
+# @new type-only: zeroed struct via type name
+@const $mem = @import("std/mem");
+
+@struct Point {
+    x: int;
+    y: int;
+}
+
+pub @func main() {
+    $a = mem.create(0);
+    $p = @new(a, Point);
+    print(p.x);
+    p.x = 7;
+    print(p.x);
+    a.deinit();
+}

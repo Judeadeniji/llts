@@ -36,7 +36,7 @@ pub inline fn getLocal(vm: *VMState, slot: u8) VarError!void {
 
 pub inline fn setLocal(vm: *VMState, slot: u8) VarError!void {
     const f = vm.frame();
-    if (f.isConst(slot)) return fail(vm, "Cannot assign to @const binding");
+    if (f.isConst(slot)) return fail(vm, "Cannot assign to a @const binding; create a new variable instead");
     const idx = f.base_slot + slot;
     if (idx < vm.sp and vm.sp > 0) {
         vm.stack_buf[idx] = vm.stack_buf[vm.sp - 1];
@@ -72,7 +72,11 @@ pub inline fn setGlobal(vm: *VMState, slot: u16) VarError!void {
 
 pub fn getFunction(vm: *VMState, const_idx: u16) VarError!void {
     const name_val = vm.chunk.constants.items[const_idx];
-    const name = resolveName(vm, name_val) orelse return fail(vm, "Bad function name");
-    const f = vm.chunk.functions.getPtr(name) orelse return fail(vm, "Undefined function");
+    const name = resolveName(vm, name_val) orelse return fail(vm, "Internal error: expected a function-name constant");
+    const f = vm.chunk.functions.getPtr(name) orelse {
+        var buf: [256]u8 = undefined;
+        const msg = std.fmt.bufPrint(&buf, "Undefined function '{s}'", .{name}) catch "Undefined function";
+        return fail(vm, msg);
+    };
     try stack.push(vm, .{ .function = f });
 }

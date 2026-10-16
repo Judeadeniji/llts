@@ -17,7 +17,7 @@ $b: u8 = 250;
 $c = b + 10;
 print(c);
 `),
-		"integer overflow",
+		"Integer overflow",
 	);
 });
 
@@ -38,7 +38,7 @@ test("checked i32 multiplication overflows and traps", () => {
 $x: i32 = 2000000000;
 print(x * x);
 `),
-		"integer overflow",
+		"Integer overflow",
 	);
 });
 
@@ -59,7 +59,7 @@ $b: u8 = 3;
 $c = b - 5;
 print(c);
 `),
-		"integer overflow",
+		"Integer overflow",
 	);
 });
 
@@ -82,7 +82,7 @@ test("checked i64 addition traps at the limit", () => {
 $a = 9223372036854775807;
 print(a + 1);
 `),
-		"integer overflow",
+		"Integer overflow",
 	);
 });
 
@@ -143,7 +143,7 @@ test("constant overflow is rejected at compile time", () => {
 @const $a = 9223372036854775807 + 1;
 print(a);
 `),
-		"integer overflow in constant expression",
+		"Integer overflow in constant expression",
 	);
 });
 
