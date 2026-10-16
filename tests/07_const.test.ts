@@ -509,3 +509,43 @@ pp.x = 42;
 print(p.x);
 `), ["42"]);
 });
+
+test("taking the address of a @const is rejected", () => {
+  expectError(runSource(`
+@struct Point { x: i64; }
+@const $ORIGIN = Point { x: 0 };
+pub @func main() {
+    $r = &ORIGIN;
+    r.x = 5;
+}
+`), "Cannot take the address of constant 'ORIGIN'");
+});
+
+test("nested field write on @const is rejected", () => {
+  expectError(runSource(`
+@struct In { v: i64; }
+@struct Out { i: In; }
+@const $O = Out { i: In { v: 1 } };
+pub @func main() {
+    O.i.v = 7;
+}
+`), "Cannot mutate field of constant 'O'");
+});
+
+test("@const array cannot be mutated through an alias or parameter", () => {
+  expectError(runSource(`
+@const $A = [1, 2, 3];
+@func poke(a: []i64) { a[0] = 9; }
+pub @func main() { poke(A); }
+`), "Cannot mutate a constant");
+});
+
+test("@const array alias write is rejected at runtime", () => {
+  expectError(runSource(`
+@const $A = [1, 2, 3];
+pub @func main() {
+    $r = A;
+    r[0] = 9;
+}
+`), "Cannot mutate a constant");
+});

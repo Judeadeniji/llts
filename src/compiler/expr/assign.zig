@@ -10,6 +10,7 @@ const widths = @import("../widths.zig");
 const compile_errors = @import("../../errors/compile.zig");
 const path = @import("path.zig");
 const layout = @import("../layout.zig");
+const escape = @import("../escape.zig");
 
 const OpCode = opcode.OpCode;
 const CompilerState = state_mod.CompilerState;
@@ -37,16 +38,6 @@ fn compoundOp(op: []const u8) ?OpCode {
     if (std.mem.eql(u8, op, "<<=")) return .OP_SHL;
     if (std.mem.eql(u8, op, ">>=")) return .OP_SHR;
     return null;
-}
-
-fn isConstBinding(state: *CompilerState, name: []const u8) bool {
-    const local_arg = scope.resolveLocal(state, name);
-    if (local_arg != -1) {
-        return state.locals.items[@intCast(local_arg)].is_const;
-    }
-    if (state.global_consts.contains(name)) return true;
-    if (name.len > 0 and name[0] == '$' and state.global_consts.contains(name[1..])) return true;
-    return false;
 }
 
 /// True when the node is a binding reference (primary / member access) whose
@@ -83,11 +74,8 @@ fn assignIndex(state: *CompilerState, idx: *const ast.Index, right: *ast.Node, a
     if (idx.is_slice) {
         return compile_errors.compileFailFmt(state, "Cannot assign to a slice view", .{});
     }
-    if (idx.object.* == .primary) {
-        const name = idx.object.primary.name;
-        if (isConstBinding(state, name)) {
-            return compile_errors.compileFailFmt(state, "Cannot mutate elements of constant '{s}'", .{name});
-        }
+    if (scope.constPlaceRoot(state, idx.object)) |name| {
+        return compile_errors.compileFailFmt(state, "Cannot mutate elements of constant '{s}'", .{name});
     }
     const start = idx.index orelse {
         return compile_errors.compileFailFmt(state, "Expected index expression", .{});
@@ -126,11 +114,8 @@ fn assignMember(state: *CompilerState, mem: *const ast.Member, node: *ast.Node, 
         return;
     }
 
-    if (mem.object.* == .primary) {
-        const name = mem.object.primary.name;
-        if (isConstBinding(state, name)) {
-            return compile_errors.compileFailFmt(state, "Cannot mutate field of constant '{s}'", .{name});
-        }
+    if (scope.constPlaceRoot(state, mem.object)) |name| {
+        return compile_errors.compileFailFmt(state, "Cannot mutate field of constant '{s}'", .{name});
     }
 
     // Tuple field `.0` / `.1`
@@ -284,7 +269,7 @@ fn assignPrimary(state: *CompilerState, prim: *const ast.Primary, right: *ast.No
     const arg = scope.resolveLocal(state, prim.name);
     if (arg != -1) {
         // Track region so `return t` after `$t = Foo{}` vs `@new(a, Foo{})` is checked.
-        state.locals.items[@intCast(arg)].alloc_region = @import("../escape.zig").regionOfRhs(state, right);
+        state.locals.items[@intCast(arg)].alloc_region = escape.regionOfRhs(state, right);
         try emit.emitOp(state, .OP_SET_LOCAL);
         try emit.emitByte(state, @intCast(arg));
     } else {

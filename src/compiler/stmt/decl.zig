@@ -12,6 +12,7 @@ const const_eval = @import("../const_eval.zig");
 const compile_errors = @import("../../errors/compile.zig");
 const layout = @import("../layout.zig");
 const widths = @import("../widths.zig");
+const escape = @import("../escape.zig");
 
 const CompilerState = state_mod.CompilerState;
 
@@ -126,17 +127,34 @@ pub fn compileDeclaration(state: *CompilerState, decl: *const ast.Declaration) !
             .depth = state.scope_depth,
             .type_name = type_name,
             .is_const = decl.is_const,
-            .alloc_region = @import("../escape.zig").regionOfRhs(state, decl.value),
+            .alloc_region = escape.regionOfRhs(state, decl.value),
         });
         if (decl.is_const) {
+            const slot: u8 = @intCast(state.locals.items.len - 1);
             try emit.emitOp(state, .OP_MARK_CONST);
-            try emit.emitByte(state, @intCast(state.locals.items.len - 1));
+            try emit.emitByte(state, slot);
+            // Freeze packed storage so aliases cannot write through the constant.
+            try emit.emitNameGet(state, .OP_GET_GLOBAL, "__freeze");
+            try emit.emitOp(state, .OP_GET_LOCAL);
+            try emit.emitByte(state, slot);
+            try emit.emitOp(state, .OP_CALL);
+            try emit.emitByte(state, 1);
+            try emit.emitOp(state, .OP_POP);
         }
     } else {
         if (type_name) |tn| try state.global_types.put(decl.name, tn);
         try emit.emitNameGet(state, .OP_SET_GLOBAL, decl.name);
         try emit.emitOp(state, .OP_POP);
-        if (decl.is_const) try state.ready_global_consts.put(decl.name, {});
+        if (decl.is_const) {
+            // Arrays and strings are shared handles; freeze the storage so
+            // aliases (`$r = A`, `f(A)`) cannot write through to the constant.
+            try emit.emitNameGet(state, .OP_GET_GLOBAL, "__freeze");
+            try emit.emitNameGet(state, .OP_GET_GLOBAL, decl.name);
+            try emit.emitOp(state, .OP_CALL);
+            try emit.emitByte(state, 1);
+            try emit.emitOp(state, .OP_POP);
+            try state.ready_global_consts.put(decl.name, {});
+        }
     }
 }
 

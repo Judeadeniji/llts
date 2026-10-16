@@ -5,6 +5,9 @@ const state_mod = @import("../state.zig");
 const expr = @import("root.zig");
 const call = @import("call.zig");
 const types = @import("../typecheck/from_ast.zig");
+const widths = @import("../widths.zig");
+const scope = @import("../scope.zig");
+const compile_errors = @import("../../errors/compile.zig");
 
 const CompilerState = state_mod.CompilerState;
 
@@ -94,8 +97,8 @@ fn emitBinOp(state: *CompilerState, bin: *const ast.Binary) !void {
     const op = bin.operator;
     const l_type = state.type_of_results.get(bin.left) orelse types.resolveType(state, bin.left);
     const r_type = state.type_of_results.get(bin.right) orelse types.resolveType(state, bin.right);
-    const l_width = if (l_type) |t| @import("../widths.zig").fromName(t) else null;
-    const r_width = if (r_type) |t| @import("../widths.zig").fromName(t) else null;
+    const l_width = if (l_type) |t| widths.fromName(t) else null;
+    const r_width = if (r_type) |t| widths.fromName(t) else null;
     const both_int = l_width != null and !l_width.?.isFloat() and r_width != null and !r_width.?.isFloat();
 
     if (std.mem.eql(u8, op, "+")) {
@@ -183,6 +186,11 @@ fn emitBinOp(state: *CompilerState, bin: *const ast.Binary) !void {
 }
 
 pub fn compileUnary(state: *CompilerState, un: *const ast.Unary) !void {
+    if (std.mem.eql(u8, un.operator, "&")) {
+        if (scope.constPlaceRoot(state, un.arg)) |name| {
+            return compile_errors.compileFailFmt(state, "Cannot take the address of constant '{s}'", .{name});
+        }
+    }
     try expr.compileExpression(state, un.arg);
     // `&` is type-level only for struct handles (identity at runtime).
     if (std.mem.eql(u8, un.operator, "-")) try emit.emitOp(state, .OP_NEGATE);

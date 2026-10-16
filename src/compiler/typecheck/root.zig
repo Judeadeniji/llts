@@ -1,5 +1,6 @@
 const std = @import("std");
 const ast = @import("../../ast/root.zig");
+const scope = @import("../scope.zig");
 const state_mod = @import("../state.zig");
 const from_ast = @import("from_ast.zig");
 const ir = @import("ir.zig");
@@ -108,6 +109,15 @@ pub const Env = struct {
             if (self.const_scopes.items[i].contains(name)) return true;
         }
         return self.const_names.contains(name);
+    }
+
+    /// Module-level `@const` at the root of a place expression (`C`, `C.a.b`, `C[i].x`).
+    fn constPlaceRoot(self: *const Env, node: *const ast.Node) ?[]const u8 {
+        const name = scope.placeRoot(node) orelse return null;
+        if (self.isLocalBinding(name)) return null;
+        if (self.hasConstName(name)) return name;
+        if (name.len > 0 and name[0] == '$' and self.hasConstName(name[1..])) return name;
+        return null;
     }
 
     /// True when `name` is bound in a *local* scope (function body / block),
@@ -1129,6 +1139,9 @@ fn inferExprInner(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, 
             const t = try inferExpr(state, env, ta, u.arg);
             if (std.mem.eql(u8, u.operator, "!")) break :blk ir.TBool;
             if (std.mem.eql(u8, u.operator, "&")) {
+                if (env.constPlaceRoot(u.arg)) |name| {
+                    return compiler_errors.compileFailFmt(state, "Cannot take the address of constant '{s}'", .{name});
+                }
                 if (ir.involvesUnknown(t)) break :blk ir.TUnknown;
                 if (t == .ptr) {
                     return compiler_errors.compileFailFmt(state, "Cannot take the address of a pointer (no **T yet)", .{});
@@ -1392,13 +1405,10 @@ fn inferExprInner(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, 
                 }
             } else if (a.left.* == .member) {
                 const mem = a.left.member;
-                if (mem.object.* == .primary) {
-                    const obj_name = mem.object.primary.name;
-                    // A function/block local shadows any module-level const
-                    // with the same name (incl. consts of other modules).
-                    if (!env.isLocalBinding(obj_name) and (env.hasConstName(obj_name) or (obj_name.len > 0 and obj_name[0] == '$' and env.hasConstName(obj_name[1..])))) {
-                        return compiler_errors.compileFailFmt(state, "Cannot mutate field of constant '{s}'", .{obj_name});
-                    }
+                // A function/block local shadows any module-level const
+                // with the same name (incl. consts of other modules).
+                if (env.constPlaceRoot(mem.object)) |obj_name| {
+                    return compiler_errors.compileFailFmt(state, "Cannot mutate field of constant '{s}'", .{obj_name});
                 }
                 const obj = try inferExpr(state, env, ta, mem.object);
                 if (mem.property.* == .primary) {
@@ -1488,11 +1498,8 @@ fn inferExprInner(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, 
                 if (a.left.index.is_slice) {
                     return compiler_errors.compileFailFmt(state, "Cannot assign to a slice view", .{});
                 }
-                if (a.left.index.object.* == .primary) {
-                    const obj_name = a.left.index.object.primary.name;
-                    if (!env.isLocalBinding(obj_name) and (env.hasConstName(obj_name) or (obj_name.len > 0 and obj_name[0] == '$' and env.hasConstName(obj_name[1..])))) {
-                        return compiler_errors.compileFailFmt(state, "Cannot mutate elements of constant '{s}'", .{obj_name});
-                    }
+                if (env.constPlaceRoot(a.left.index.object)) |obj_name| {
+                    return compiler_errors.compileFailFmt(state, "Cannot mutate elements of constant '{s}'", .{obj_name});
                 }
                 const obj_t = try inferExpr(state, env, ta, a.left.index.object);
                 const start_node = a.left.index.index orelse {
@@ -1867,12 +1874,9 @@ fn inferCall(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, call_
                 // Const-receiver check: a pointer-like self (unannotated or *T)
                 // can mutate the receiver. By-value self (T) clones; no self
                 // has no receiver handle and can't mutate.
-                if (m.receiver.* == .primary) {
-                    const recv_name = m.receiver.primary.name;
-                    if (!env.isLocalBinding(recv_name) and env.hasConstName(recv_name)) {
-                        if (methodSelfIsPointerLike(state, m.name)) {
-                            return compiler_errors.compileFailFmt(state, "Method might mutate constant '{s}'", .{ recv_name });
-                        }
+                if (env.constPlaceRoot(m.receiver)) |recv_name| {
+                    if (methodSelfIsPointerLike(state, m.name)) {
+                        return compiler_errors.compileFailFmt(state, "Method might mutate constant '{s}'", .{recv_name});
                     }
                 }
                 // Receiver is prepended; user args must match params after self.

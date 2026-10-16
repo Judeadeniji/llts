@@ -3,6 +3,8 @@ const state_mod = @import("../state.zig");
 const stack = @import("../stack.zig");
 const runtime = @import("../../errors/runtime.zig");
 const mem_mod = @import("../builtins/mem.zig");
+const widths = @import("../../compiler/widths.zig");
+const layout = @import("../../compiler/layout.zig");
 
 const VMState = state_mod.VMState;
 const Value = state_mod.Value;
@@ -20,6 +22,10 @@ fn failFmt(vm: *VMState, comptime fmt: []const u8, args: anytype) HeapError {
     var buf: [256]u8 = undefined;
     const msg = std.fmt.bufPrint(&buf, fmt, args) catch return runtime.runtimeFail(vm, "runtime diagnostic too long");
     return runtime.runtimeFail(vm, msg);
+}
+
+fn checkWritable(vm: *VMState, at: u32) HeapError!void {
+    if (vm.isFrozen(at)) return fail(vm, "Cannot mutate a constant");
 }
 
 /// Validate the arena lifetime of a packed handle before dereferencing it.
@@ -147,6 +153,7 @@ pub fn setIndex(vm: *VMState) HeapError!void {
             };
             if (n < 0 or n > 255) return failFmt(vm, "Byte value {d} is out of range 0..255", .{n});
             const bval: u8 = @intCast(n);
+            try checkWritable(vm, b.offset + @as(u32, @intCast(i)));
             vm.bytes.items[b.offset + @as(u32, @intCast(i))] = bval;
             try stack.push(vm, .{ .u8 = bval });
             return;
@@ -157,6 +164,7 @@ pub fn setIndex(vm: *VMState) HeapError!void {
                 const msg = std.fmt.bufPrint(&buf, "Array index out of bounds: {d} (len {d}); use len(arr)", .{ i, a.count }) catch "Array index out of bounds";
                 return fail(vm, msg);
             }
+            try checkWritable(vm, a.offset + @as(u32, @intCast(i)) * @as(u32, @intCast(VMState.value_size)));
             vm.arrayElemPtr(a, @intCast(i)).* = val;
             try stack.push(vm, val);
             return;
@@ -228,7 +236,6 @@ pub fn sliceView(vm: *VMState) HeapError!void {
     const lo_v = stack.pop(vm);
     const obj = stack.pop(vm);
     try checkValueArena(vm, obj);
-    const widths = @import("../../compiler/widths.zig");
     const lo = widths.valueAsI64(lo_v) orelse return failFmt(vm, "Slice start must be an integer, got '{s}'", .{lo_v.kindName()});
 
     if (obj == .name) {
@@ -294,6 +301,7 @@ pub fn setArray(vm: *VMState) HeapError!void {
         };
         if (n < 0 or n > 255) return failFmt(vm, "Byte value {d} is out of range 0..255", .{n});
         const bval: u8 = @intCast(n);
+        try checkWritable(vm, b.offset + @as(u32, @intCast(i)));
         vm.bytes.items[b.offset + @as(u32, @intCast(i))] = bval;
         try stack.push(vm, .{ .u8 = bval });
         return;
@@ -305,6 +313,7 @@ pub fn setArray(vm: *VMState) HeapError!void {
             const msg = std.fmt.bufPrint(&buf, "Array index out of bounds: {d} (len {d}); use len(arr)", .{ i, a.count }) catch "Array index out of bounds";
             return fail(vm, msg);
         }
+        try checkWritable(vm, a.offset + @as(u32, @intCast(i)) * @as(u32, @intCast(VMState.value_size)));
         vm.arrayElemPtr(a, @intCast(i)).* = val;
         try stack.push(vm, val);
         return;
@@ -449,10 +458,10 @@ pub fn storeField(vm: *VMState, byte_offset: u16, kind: u8) HeapError!void {
     try checkValueArena(vm, base);
     const base_off = try baseBytesOffset(vm, base);
     const at = base_off + byte_offset;
-    const widths = @import("../../compiler/widths.zig");
+    try checkWritable(vm, at);
     switch (kind) {
         0, 5, 7, 8, 9, 10, 11, 12 => {
-            const w = @import("../../compiler/layout.zig").widthFromFieldKind(@enumFromInt(kind)).?;
+            const w = layout.widthFromFieldKind(@enumFromInt(kind)).?;
             const casted = widths.castValue(val, w) catch return fail(vm, "Field value does not fit the field's declared width");
             switch (casted) {
                 .i8 => |x| writeI8(vm, at, x),
@@ -501,13 +510,15 @@ pub fn storeField(vm: *VMState, byte_offset: u16, kind: u8) HeapError!void {
                     off = try vm.appendImmortal(data);
                     len = @intCast(data.len);
                 },
-                .function, .native, .list, .map, .buffer, .i64, .ptr, .module, .array => {
+                // Scalars / objects boxed into an immortal slot (optional fields,
+                // nested structs, etc.).
+                .function, .native, .list, .map, .buffer, .ptr, .module, .array,
+                .u1, .i8, .i16, .i32, .i64, .u8, .u16, .u32, .u64, .f32, .f64 => {
                     const slot = try vm.allocImmortal(1);
                     vm.slot(slot).* = val;
                     off = @intCast(slot);
                     len = HANDLE_BOXED_VALUE;
                 },
-                else => return failFmt(vm, "Field expects a struct, array, or string, got '{s}'", .{val.kindName()}),
             }
             writeU32(vm, at, off);
             writeU32(vm, at + 4, len);

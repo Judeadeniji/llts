@@ -2,6 +2,8 @@ const std = @import("std");
 const ast = @import("../ast/root.zig");
 const emit = @import("emit.zig");
 const state_mod = @import("state.zig");
+const compile_errors = @import("../errors/compile.zig");
+const stmt = @import("stmt/root.zig");
 
 const CompilerState = state_mod.CompilerState;
 
@@ -39,6 +41,33 @@ pub fn resolveLocal(state: *CompilerState, name: []const u8) i32 {
     return -1;
 }
 
+/// True when `name` resolves to a `@const` binding (local or global).
+pub fn isConstBinding(state: *CompilerState, name: []const u8) bool {
+    const local_arg = resolveLocal(state, name);
+    if (local_arg != -1) return state.locals.items[@intCast(local_arg)].is_const;
+    if (state.global_consts.contains(name)) return true;
+    return name.len > 0 and name[0] == '$' and state.global_consts.contains(name[1..]);
+}
+
+/// Binding at the root of a place expression: `a`, `a.b.c`, `a[i].b` → `a`.
+pub fn placeRoot(node: *const ast.Node) ?[]const u8 {
+    var n = node;
+    while (true) {
+        switch (n.*) {
+            .primary => |p| return if (p.kind == .identifier or p.kind == .register) p.name else null,
+            .member => |m| n = m.object,
+            .index => |ix| n = ix.object,
+            else => return null,
+        }
+    }
+}
+
+/// Root `@const` binding of a place expression, if any.
+pub fn constPlaceRoot(state: *CompilerState, node: *const ast.Node) ?[]const u8 {
+    const root = placeRoot(node) orelse return null;
+    return if (isConstBinding(state, root)) root else null;
+}
+
 pub fn resolveVariable(state: *CompilerState, name: []const u8) !void {
     const arg = resolveLocal(state, name);
     if (arg != -1) {
@@ -58,7 +87,7 @@ pub fn resolveVariable(state: *CompilerState, name: []const u8) !void {
         var buf: [256]u8 = undefined;
         const type_key = std.fmt.bufPrint(&buf, "${s}", .{name}) catch "";
         if (!state.global_types.contains(type_key)) {
-                        return @import("../errors/compile.zig").compileFailFmt(state, "Unknown identifier '{s}'", .{name});
+                        return compile_errors.compileFailFmt(state, "Unknown identifier '{s}'", .{name});
         }
     }
     if (state.functions.contains(name)) {
@@ -121,7 +150,6 @@ fn emitPopsAtDepth(state: *CompilerState, depth: i32) !void {
 fn emitScopeDefers(state: *CompilerState, depth: i32, kind: ExitKind) !void {
     const list = state.defer_stacks.getPtr(depth) orelse return;
     if (list.items.len == 0) return;
-    const stmt = @import("stmt/root.zig");
     var i: isize = @intCast(list.items.len);
     i -= 1;
     while (i >= 0) : (i -= 1) {

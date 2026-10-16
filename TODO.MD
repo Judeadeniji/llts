@@ -85,12 +85,13 @@ Packed byte heap + honest numeric widths. See [`docs/memory-model.md`](docs/memo
 - [x] **Hex / binary / octal literals**
 - [x] **`^` / `**` exponent**
 - [x] **Unary `+`** — identity operator.
-- [ ] **`@const` holes (URGENT)** — const structs are only *partially* immutable:
+- [x] **`@const` holes** — const values are immutable end-to-end:
   - [x] `ORIGIN.x = 99` — rejected (`Cannot mutate field of constant`)
   - [x] **Mutating method call on const** — `ORIGIN.shift(5)` now errors `"Method might mutate constant 'ORIGIN'"` at both typecheck (`inferCall` after `resolveMethodCallee`) and emit (`emitMethodCall`). Allowed: `self: T` (caller clones via `__cloneBytes`), no `self` param (skippable — no receiver handle). Pointer-like `self` (unannotated or `*T`) on a const receiver is rejected. Tests: `tests/07_const.test.ts` (4 cases).
   - [x] **Const rebind shadows instead of erroring** — not a bug; shadowing a const binding with a new declaration is by design (warning only, asserted by `tests/07_const.test.ts`). Warning says `'{s}' shadows constant '{s}' declared at line {d}` at the hiding decl (no misleading `unused constant`); see `tests/40_unused.test.ts`. Assignment form (`ORIGIN = …`) errors correctly.
-  - [x] **Aliasing hole** — fixed: struct value assignment/declaration now emits `__cloneBytes` when the RHS is a bare-struct binding (`shouldCloneStructValue` in `expr/assign.zig` + `stmt/decl.zig`), giving value semantics. Pointers (`*T` / `&x` / `?*T`) skip the clone and keep sharing. Covers declaration (`$a = ORIGIN`), plain assignment (`a = b`), field store (`box.val = other`), and static global assign. Compound ops (`+=`) unchanged. Method receivers unchanged (`self: T` clones, `self: *T` shares). No VM immutability flags needed.
-  - Likely related: const-ness through pointers (`@const $P = &x` then `P.field = …`) — may already be rejected by the existing member-assign check (`assign.zig` keys on binding name); verify with a repro.
+  - [x] **Aliasing hole** — fixed: struct value assignment/declaration now emits `__cloneBytes` when the RHS is a bare-struct binding (`shouldCloneStructValue` in `expr/assign.zig` + `stmt/decl.zig`), giving value semantics. Pointers (`*T` / `&x` / `?*T`) skip the clone and keep sharing. Covers declaration (`$a = ORIGIN`), plain assignment (`a = b`), field store (`box.val = other`), and static global assign. Compound ops (`+=`) unchanged. Method receivers unchanged (`self: T` clones, `self: *T` shares).
+  - [x] **Const-ness through pointers / nested places** — `&ORIGIN` is rejected (`Cannot take the address of constant`); nested writes (`O.i.v = …`) and method calls on nested const places use `placeRoot` / `constPlaceRoot`.
+  - [x] **Array / string aliasing** — `@const` globals and locals emit `__freeze` so packed storage traps on write (`Cannot mutate a constant`), including through aliases and parameters (`$r = A; r[0] = 9`, `poke(A)`).
 
 ### P1 — Missing Language Features
 

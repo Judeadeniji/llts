@@ -9,6 +9,8 @@ const types = @import("../typecheck/from_ast.zig");
 const ir = @import("../typecheck/ir.zig");
 const intrinsics = @import("../intrinsics.zig");
 const generics = @import("../generics.zig");
+const scope = @import("../scope.zig");
+const compile_errors = @import("../../errors/compile.zig");
 
 const CompilerState = state_mod.CompilerState;
 
@@ -28,7 +30,7 @@ pub fn compileCall(state: *CompilerState, c: *const ast.Call, node: *ast.Node) !
             try intrinsics.compile(state, i, node, c);
             return;
         }
-        return @import("../../errors/compile.zig").compileFailFmt(state, "Unknown intrinsic '{s}'", .{name});
+        return compile_errors.compileFailFmt(state, "Unknown intrinsic '{s}'", .{name});
     }
 
     // Generic call: the instance takes only the value arguments.
@@ -39,7 +41,7 @@ pub fn compileCall(state: *CompilerState, c: *const ast.Call, node: *ast.Node) !
             if (!generics.isTypeParam(p)) try value_args.append(state.allocator, a);
         }
         if (try emitNamedCall(state, gc.instance, value_args.items, false, null)) return;
-        return @import("../../errors/compile.zig").compileFailFmt(state, "Internal error: missing generic instance '{s}'", .{gc.instance});
+        return compile_errors.compileFailFmt(state, "Internal error: missing generic instance '{s}'", .{gc.instance});
     }
 
     // Type-function call used as a value (`print(Opt(i64))`): its name.
@@ -100,7 +102,7 @@ pub fn compileCall(state: *CompilerState, c: *const ast.Call, node: *ast.Node) !
                 const mem = &c.callee.member;
                 const mod_name = if (mem.object.* == .primary) mem.object.primary.name else "Module";
                 const prop_name = if (mem.property.* == .primary) mem.property.primary.name else "property";
-                                return @import("../../errors/compile.zig").compileFailFmt(state, "'{s}' has no export '{s}'", .{ mod_name, prop_name });
+                                return compile_errors.compileFailFmt(state, "'{s}' has no export '{s}'", .{ mod_name, prop_name });
             }
         }
         if (try emitNamedCall(state, name, c.args, false, null)) return;
@@ -125,10 +127,9 @@ fn arrayElemDisplay(disp: []const u8) ?[]const u8 {
 fn emitMethodCall(state: *CompilerState, name: []const u8, self_obj: *ast.Node, args: []*ast.Node) !void {
     // Const-receiver check: pointer-like self (unannotated or *T) can mutate
     // the receiver. By-value self (T) clones; no self has no receiver handle.
-    if (self_obj.* == .primary) {
-        const recv_name = self_obj.primary.name;
-        if (isConstBinding(state, recv_name) and methodSelfIsPointerLike(state, name)) {
-            return @import("../../errors/compile.zig").compileFailFmt(state, "Method might mutate constant '{s}'", .{ recv_name });
+    if (scope.constPlaceRoot(state, self_obj)) |recv_name| {
+        if (methodSelfIsPointerLike(state, name)) {
+            return compile_errors.compileFailFmt(state, "Method might mutate constant '{s}'", .{recv_name});
         }
     }
     const argc: u8 = @intCast(args.len + 1);
@@ -137,7 +138,7 @@ fn emitMethodCall(state: *CompilerState, name: []const u8, self_obj: *ast.Node, 
     else if (state.chunk.functions.get(name)) |fn_info|
         fn_info.address
     else
-        return @import("../../errors/compile.zig").compileFailFmt(state, "Unknown method {s}", .{name});
+        return compile_errors.compileFailFmt(state, "Unknown method {s}", .{name});
 
     // OP_CALL expects [callee, self, ...args]. GET_FUNCTION must precede args.
     // CALL_STATIC only needs [self, ...args] (no callee value).
@@ -173,17 +174,6 @@ fn methodSelfIsByValue(state: *CompilerState, name: []const u8) !bool {
     const ann = self_param.type_annotation orelse return false;
     const disp = (try types.typeAstToDisplay(ann, state)) orelse return false;
     return disp.len == 0 or disp[0] != '*';
-}
-
-/// True when `name` is a const binding (global const, not a function local).
-fn isConstBinding(state: *CompilerState, name: []const u8) bool {
-    const local_arg = @import("../scope.zig").resolveLocal(state, name);
-    if (local_arg != -1) {
-        return state.locals.items[@intCast(local_arg)].is_const;
-    }
-    if (state.global_consts.contains(name)) return true;
-    if (name.len > 0 and name[0] == '$' and state.global_consts.contains(name[1..])) return true;
-    return false;
 }
 
 /// True when the method's `self` is a pointer (unannotated or *T).

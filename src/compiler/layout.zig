@@ -30,7 +30,17 @@ pub fn alignUp(offset: i32, alignment: i32) i32 {
     return (offset + a) & ~a;
 }
 
+/// Packed optional fields (`?T` / `T | null`) are stored as handles so `null`
+/// has a representation; value-level `@sizeOf(?T)` still uses the payload size.
+pub fn isOptionalTypeName(type_name: []const u8) bool {
+    if (type_name.len > 0 and type_name[0] == '?') return true;
+    if (std.mem.indexOf(u8, type_name, " | null") != null) return true;
+    if (std.mem.startsWith(u8, type_name, "null | ")) return true;
+    return false;
+}
+
 pub fn sizeOfTypeName(type_name: []const u8) i32 {
+    if (isOptionalTypeName(type_name)) return 8;
     const bare = unwrapTypeName(type_name);
     if (bare.len > 0 and bare[0] == '*') return 8; // pointer / heap handle
     if (std.mem.startsWith(u8, bare, "@func(")) return 8; // function value / handle
@@ -80,6 +90,7 @@ pub fn sizeOfType(state: *state_mod.CompilerState, t: ir.Type) !?i32 {
 }
 
 pub fn alignOfTypeName(type_name: []const u8) i32 {
+    if (isOptionalTypeName(type_name)) return 8;
     const bare = unwrapTypeName(type_name);
     if (bare.len > 0 and bare[0] == '*') return 8;
     if (widths.fromName(bare)) |w| return w.alignment();
@@ -89,6 +100,7 @@ pub fn alignOfTypeName(type_name: []const u8) i32 {
 }
 
 pub fn fieldKind(state: ?*state_mod.CompilerState, type_name: []const u8) FieldKind {
+    if (isOptionalTypeName(type_name)) return .handle;
     const bare = unwrapTypeName(type_name);
     if (bare.len > 0 and bare[0] == '*') return .handle;
     if (std.mem.startsWith(u8, bare, "@func(")) return .handle;

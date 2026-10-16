@@ -234,6 +234,24 @@ pub @func main() {
 	);
 });
 
+test("optional scalar struct field accepts null and values", () => {
+	expectOutput(
+		runSource(`
+@struct Holder { v: ?i64; w: i64; }
+pub @func main() {
+    $h = Holder { v: null, w: 2 };
+    print(h.w);
+    @if (h.v) |x| { print(x); } @else { print("none"); }
+    h.v = 7;
+    @if (h.v) |x| { print(x); }
+    $h2 = Holder { v: 3, w: 1 };
+    @if (h2.v) |x| { print(x); }
+}
+`),
+		["2", "none", "7", "3"],
+	);
+});
+
 // =========================================================================
 // Phase 2.3: Strict @if Branching and Container Unwrapping (Option A)
 // =========================================================================
