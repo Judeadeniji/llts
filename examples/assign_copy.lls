@@ -1,0 +1,46 @@
+# Value semantics: `$b = a` copies; sharing requires explicit `*T` / `&x`.
+
+# --- array ---
+$arr = [1, 2, 3];
+$arr2 = arr;
+arr2[0] = 99;
+print("array arr[0]=", arr[0], "arr2[0]=", arr2[0]);
+
+# --- string ---
+$s = "hello";
+$s2 = s;
+print("string s=", s, "s2=", s2);
+s2 = "world";
+print("string after s2 rebind s=", s, "s2=", s2);
+
+# --- struct ---
+@struct Point {
+    x: i64;
+    y: i64;
+}
+$p = Point { x: 1, y: 2 };
+$p2 = p;
+p2.x = 7;
+print("struct p.x=", p.x, "p2.x=", p2.x);
+
+# --- scalar ---
+$n = 10;
+$n2 = n;
+n2 = 20;
+print("scalar n=", n, "n2=", n2);
+
+# --- []byte via @new ---
+@const $mem = @import("std/mem");
+$arena = mem.create(0);
+$buf = @new(arena, []byte, 4);
+$buf2 = buf;
+buf2[0] = 65;
+print("[]byte buf[0]=", buf[0], "buf2[0]=", buf2[0]);
+
+# --- explicit pointer shares ---
+$q = Point { x: 1, y: 2 };
+$qp = &q;
+qp.x = 42;
+print("pointer q.x=", q.x, "qp.x=", qp.x);
+
+pub @func main() {}

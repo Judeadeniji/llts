@@ -59,13 +59,14 @@ a.reset(); # reclaim list storage
 ## 3. Indexing and assignment
 
 - **0-Based indexing**: Elements are accessed and mutated with `array[index]`.
-- **Shared handles**: `$b = a` copies the array pointer; `b[i] = v` updates the same heap block, so `a[i]` changes too. Strings behave differently — see [String semantics](../std/string.md#string-semantics).
+- **Value copy on assign**: `$b = a` shallow-copies the array; `b[i] = v` does **not** change `a`. (Address-of `&` is struct-only today; function parameters still receive a shared handle — pass intentionally if you need to mutate the caller's array.)
 
   ```llts
   $a = [1, 2, 3];
   $b = a;
   b[2] = 99;
-  print(a[2]);  # 99
+  print(a[2]);  # 3
+  print(b[2]);  # 99
 
   arr[0] = 42;
   arr[1] = 1337;

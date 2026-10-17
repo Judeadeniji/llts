@@ -17,14 +17,14 @@ Runtime strings are **byte slices**, not mutable character arrays.
 
 See also [VM value system](../vm.md#2-value-system--stack-representation) and [bytecode `Value`](../bytecode.md#2-runtime-values-value).
 
-### Assignment copies the handle, not the bytes
+### Assignment copies the value
 
 ```llts
 $x = "abc";
 $b = x;
 ```
 
-`$b = x` copies the string **handle** (same interned literal or same arena view). It does **not** duplicate the underlying bytes. Both names refer to the same data until one is reassigned to a different value.
+`$b = x` shallow-copies the string (new packed view with the same bytes). Rebinding `$b` later does not affect `$x`. Strings remain immutable — there is no in-place byte write through either name.
 
 ### Strings are immutable
 
@@ -46,9 +46,9 @@ To change content, produce a **new** string (`string.replaceFirst`, `string.conc
 
 | | **String** | **Array** (`[1, 2, 3]`) |
 |---|---|---|
-| `$b = a` | Shared handle; same bytes | Shared heap block |
-| `b[i] = v` | Not allowed | Updates slot; `a[i]` sees it too |
-| “Change one element” | Build a new string | In-place index assign |
+| `$b = a` | Value copy (new view) | Value copy (new array) |
+| `b[i] = v` | Not allowed | Updates `b` only; `a` unchanged |
+| “Change one element” | Build a new string | In-place index assign on that binding |
 
 Arena-allocated **byte buffers** from `@new(a, []byte, n)` are mutable arrays, not `string` values — see [Arrays — `@new`](../usage/arrays.md).
 

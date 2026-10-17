@@ -510,6 +510,29 @@ print(p.x);
 `), ["42"]);
 });
 
+test("array assignment copies; mutate copy leaves original", () => {
+  expectOutput(runSource(`
+$a = [1, 2, 3];
+$b = a;
+b[0] = 99;
+print(a[0]);
+print(b[0]);
+`), ["1", "99"]);
+});
+
+test("[]byte assignment copies; mutate copy leaves original", () => {
+  expectOutput(runSource(`
+@const $mem = @import("std/mem");
+$arena = mem.create(0);
+$buf = @new(arena, []byte, 4);
+buf[0] = 1;
+$buf2 = buf;
+buf2[0] = 65;
+print(buf[0]);
+print(buf2[0]);
+`), ["1", "65"]);
+});
+
 test("taking the address of a @const is rejected", () => {
   expectError(runSource(`
 @struct Point { x: i64; }
@@ -540,12 +563,14 @@ pub @func main() { poke(A); }
 `), "Cannot mutate a constant");
 });
 
-test("@const array alias write is rejected at runtime", () => {
-  expectError(runSource(`
+test("@const array assign copies; mutating the copy leaves the const intact", () => {
+  expectOutput(runSource(`
 @const $A = [1, 2, 3];
 pub @func main() {
     $r = A;
     r[0] = 9;
+    print(A[0]);
+    print(r[0]);
 }
-`), "Cannot mutate a constant");
+`), ["1", "9"]);
 });

@@ -11,6 +11,7 @@ const compile_errors = @import("../../errors/compile.zig");
 const path = @import("path.zig");
 const layout = @import("../layout.zig");
 const escape = @import("../escape.zig");
+const value_clone = @import("../value_clone.zig");
 
 const OpCode = opcode.OpCode;
 const CompilerState = state_mod.CompilerState;
@@ -40,28 +41,12 @@ fn compoundOp(op: []const u8) ?OpCode {
     return null;
 }
 
-/// True when the node is a binding reference (primary / member access) whose
-/// resolved type is a bare struct value. Pointers (`*T`) and optionals of
-/// pointers (`?*T`) share handles by design — only struct values clone.
-fn shouldCloneStructValue(state: *CompilerState, node: *ast.Node) bool {
-    switch (node.*) {
-        .primary, .member => {},
-        else => return false,
-    }
-    const tn = types.resolveType(state, node) orelse return false;
-    // Skip pointer and optional types — those share handles.
-    const trimmed = std.mem.trim(u8, tn, " \t");
-    if (trimmed.len > 0 and (trimmed[0] == '*' or trimmed[0] == '?')) return false;
-    if (std.mem.indexOfScalar(u8, trimmed, '*') != null) return false;
-    if (std.mem.indexOf(u8, trimmed, " | null") != null) return false;
-    return types.lookupStruct(state, tn) != null;
-}
-
-/// Emit the RHS of a plain (non-compound) assignment. Struct bindings are
-/// cloned so re-assignment copies; sharing requires explicit `*T` / `&x`.
+/// Emit the RHS of a plain (non-compound) assignment. Aggregate values
+/// (structs, arrays, byte spans, strings) are cloned so assignment copies;
+/// sharing requires explicit `*T` / `&x`.
 fn emitValueRHS(state: *CompilerState, right: *ast.Node) !void {
-    if (shouldCloneStructValue(state, right)) {
-        try emit.emitNameGet(state, .OP_GET_GLOBAL, "__cloneBytes");
+    if (value_clone.cloneBuiltin(state, right)) |clone_name| {
+        try emit.emitNameGet(state, .OP_GET_GLOBAL, clone_name);
         try expr.compileExpression(state, right);
         try emit.emitOp(state, .OP_CALL);
         try emit.emitByte(state, 1);

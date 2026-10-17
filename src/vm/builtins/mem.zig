@@ -56,6 +56,7 @@ var arena_deinit_native: NativeFunction = undefined;
 var arena_alloc_bytes_native: NativeFunction = undefined;
 var clone_bytes_native: NativeFunction = undefined;
 var clone_bytes_immortal_native: NativeFunction = undefined;
+var clone_array_native: NativeFunction = undefined;
 var freeze_native: NativeFunction = undefined;
 
 fn fail(vm: *VMState, comptime op: []const u8, comptime msg: []const u8) error{RuntimeError} {
@@ -236,19 +237,47 @@ fn freezeFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
 
 fn cloneBytesFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
-    const src: struct { offset: u32, len: u32 } = switch (args[0]) {
-        .bytes => |b| .{ .offset = b.offset, .len = b.len },
-        .slice => |s| .{ .offset = s.offset, .len = s.len },
+    // Preserve tag: `.bytes` stays mutable; `.slice` / `.name` stay string-like.
+    switch (args[0]) {
+        .bytes => |b| {
+            if (b.len == 0) return .{ .bytes = .{ .offset = 0, .len = 0 } };
+            const off = try vm.allocFrameBytes(@intCast(b.len));
+            @memcpy(vm.bytes.items[@intCast(off)..][0..b.len], vm.bytes.items[b.offset..][0..b.len]);
+            return .{ .bytes = .{ .offset = @intCast(off), .len = b.len } };
+        },
+        .slice => |s| {
+            if (s.len == 0) return .{ .slice = .{ .offset = 0, .len = 0 } };
+            const off = try vm.allocFrameBytes(@intCast(s.len));
+            @memcpy(vm.bytes.items[@intCast(off)..][0..s.len], vm.bytes.items[s.offset..][0..s.len]);
+            return .{ .slice = .{ .offset = @intCast(off), .len = s.len } };
+        },
+        .name => |idx| {
+            const str = vm.chunk.stringAt(idx);
+            if (str.len == 0) return .{ .slice = .{ .offset = 0, .len = 0 } };
+            const off = try vm.allocFrameBytes(@intCast(str.len));
+            @memcpy(vm.bytes.items[@intCast(off)..][0..str.len], str);
+            return .{ .slice = .{ .offset = @intCast(off), .len = @intCast(str.len) } };
+        },
         .null => return fail(vm, "__cloneBytes", "cannot clone null"),
         else => return fail(vm, "__cloneBytes", "expected object handle"),
+    }
+}
+
+/// Shallow-copy a value array (`.array`) into a new frame-local handle.
+fn cloneArrayFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
+    const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
+    const src = switch (args[0]) {
+        .array => |a| a,
+        .null => return fail(vm, "__cloneArray", "cannot clone null"),
+        else => return fail(vm, "__cloneArray", "expected array handle"),
     };
-    if (src.len == 0) return .{ .bytes = .{ .offset = 0, .len = 0 } };
-    const off = try vm.allocFrameBytes(@intCast(src.len));
-    const dst_off: usize = @intCast(off);
-    const src_off: usize = src.offset;
-    const n: usize = src.len;
-    @memcpy(vm.bytes.items[dst_off..][0..n], vm.bytes.items[src_off..][0..n]);
-    return .{ .bytes = .{ .offset = @intCast(off), .len = src.len } };
+    const dst_v = try vm.allocFrameArray(src.count);
+    const dst = dst_v.array;
+    var i: u32 = 0;
+    while (i < src.count) : (i += 1) {
+        vm.arrayElemPtr(dst, i).* = vm.arrayElemConst(src, i);
+    }
+    return dst_v;
 }
 
 /// Shallow-copy a packed object handle into immortal storage.
@@ -668,6 +697,7 @@ pub fn register(vm: *VMState) !void {
     arena_alloc_bytes_native = .{ .name = "__arena_alloc_bytes", .func = arenaAllocBytes, .arity = 2 };
     clone_bytes_native = .{ .name = "__cloneBytes", .func = cloneBytesFn, .arity = 1 };
     clone_bytes_immortal_native = .{ .name = "__cloneBytesImmortal", .func = cloneBytesImmortalFn, .arity = 1 };
+    clone_array_native = .{ .name = "__cloneArray", .func = cloneArrayFn, .arity = 1 };
     freeze_native = .{ .name = "__freeze", .func = freezeFn, .arity = 1 };
     arena_array_push_native = .{ .name = "__arena_array_push", .func = arenaArrayPushFn, .arity = 3 };
 
@@ -685,6 +715,7 @@ pub fn register(vm: *VMState) !void {
     try vm.defineGlobal("__arena_deinit", .{ .native = &arena_deinit_native });
     try vm.defineGlobal("__cloneBytes", .{ .native = &clone_bytes_native });
     try vm.defineGlobal("__cloneBytesImmortal", .{ .native = &clone_bytes_immortal_native });
+    try vm.defineGlobal("__cloneArray", .{ .native = &clone_array_native });
     try vm.defineGlobal("__freeze", .{ .native = &freeze_native });
     try vm.defineGlobal("__arena_array_push", .{ .native = &arena_array_push_native });
 }
