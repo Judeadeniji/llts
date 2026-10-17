@@ -161,4 +161,4 @@ proportionally raises packed value-array storage (`@sizeOf(arr)` = `count ×
 
 ## Relation to language P6
 
-Packed layout and widths are done. `*T` / `?*T`, identity `&struct`, and method `self: *T` landed. Enums stay tag-only (TS-style); tagged data uses structs + `kind`. Remaining: slice polish — see `TODO.MD` §P6.
+Packed layout and widths are done. `*T` / `?*T`, identity `&aggregate` (struct / array / `[]T`), and method `self: *T` landed. Enums stay tag-only (TS-style); tagged data uses structs + `kind`. Remaining: slice polish — see `TODO.MD` §P6.

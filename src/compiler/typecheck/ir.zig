@@ -189,6 +189,33 @@ pub fn peelDefined(t: Type) Type {
     return cur;
 }
 
+/// True when `&x` is allowed: handle-backed aggregates (struct, array/`[]T`,
+/// tuple, shape). Scalars and pointers are not addressable (no stack places /
+/// `**T` yet).
+pub fn isAddressableAggregate(t: Type) bool {
+    return switch (peelDefined(t)) {
+        .struct_, .array, .tuple, .shape => true,
+        else => false,
+    };
+}
+
+/// Peel optional and pointer wrappers so indexing / slicing see the aggregate
+/// (auto-deref for `*T` / `?*T`). Stops at the first non-ptr/non-optional layer.
+pub fn peelForIndex(t: Type) Type {
+    var cur = t;
+    while (true) {
+        if (optionalPayload(cur)) |p| {
+            cur = p;
+            continue;
+        }
+        if (cur == .ptr) {
+            cur = cur.ptr.*;
+            continue;
+        }
+        return peelDefined(cur);
+    }
+}
+
 pub fn typeFromWidth(w: widths.Width) Type {
     return switch (w) {
         .u1 => TU1,

@@ -13,12 +13,14 @@ In `llts-zig`, the memory region model supports different styles of allocation:
 Compiler intrinsic (see also [arrays](../usage/arrays.md)). Type-directed only — no value literals; assign fields after allocation.
 
 ```llts
-$buf = @new(arena, [256]byte);      # packed bytes (1 host byte per element)
-$s = @new(arena, string, n);      # runtime-length packed byte buffer
-$xs = @new(arena, []int, n);      # runtime-length value array
-$p = @new(arena, Point);            # zero-filled struct, yields *Point
+$buf = @new(arena, [256]byte);      # *[256]byte — packed bytes
+$s = @new(arena, string, n);        # *string / *[]byte buffer
+$xs = @new(arena, []int, n);        # *[]int value array
+$p = @new(arena, Point);            # *Point zero-filled struct
 p.x = 1;                            # fields assigned after allocation
 ```
+
+All `@new` forms yield `*T` (arena handle). Indexing / fields auto-deref; assigning the result shares.
 
 Reclaim with `arena.reset()` or `arena.deinit()` — there is no per-object `free`.
 

@@ -1092,7 +1092,10 @@ pub fn resolveType(state: *state_mod.CompilerState, node: *ast.Node) ?[]const u8
             break :blk unwrapped;
         },
         .index => |idx| blk: {
-            const obj = resolveType(state, idx.object) orelse break :blk null;
+            // Auto-deref `*T` / `?*T` so `p[i]` / `p[i].field` resolve element types
+            // the same as on the bare array (emit-side field layout lookup).
+            const obj_raw = resolveType(state, idx.object) orelse break :blk null;
+            const obj = unwrapOptionalDisplay(obj_raw);
             if (idx.is_slice) {
                 // Slice views are unsized `[]T` / `[]byte`.
                 if (std.mem.eql(u8, obj, "string") or std.mem.eql(u8, obj, "[]byte")) break :blk "[]byte";

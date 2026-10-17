@@ -55,4 +55,18 @@ print(maybe.x);
 maybe = null;
 print(maybe == null);
 
+# Arrays / []byte: & yields *T; index through the pointer aliases storage.
+$arr = [1, 2, 3];
+$ap = &arr;
+ap[0] = 99;
+print(arr[0]);
+print(@typeOf(ap));
+
+$bytes = @new(arena, []byte, 4);
+print(@typeOf(bytes));
+bytes[0] = 65;
+$bp = bytes;
+bp[0] = 66;
+print(bytes[0]);
+
 pub @func main() {}

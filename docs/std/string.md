@@ -50,7 +50,7 @@ To change content, produce a **new** string (`string.replaceFirst`, `string.conc
 | `b[i] = v` | Not allowed | Updates `b` only; `a` unchanged |
 | “Change one element” | Build a new string | In-place index assign on that binding |
 
-Arena-allocated **byte buffers** from `@new(a, []byte, n)` are mutable arrays, not `string` values — see [Arrays — `@new`](../usage/arrays.md).
+Arena-allocated **byte buffers** from `@new(a, []byte, n)` have type `*[]byte` (mutable packed bytes), not `string` — see [Arrays — `@new`](../usage/arrays.md).
 
 ## Functions
 

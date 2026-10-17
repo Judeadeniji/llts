@@ -29,18 +29,25 @@ $n2 = n;
 n2 = 20;
 print("scalar n=", n, "n2=", n2);
 
-# --- []byte via @new ---
+# --- @new []byte is *[]byte: assign shares ---
 @const $mem = @import("std/mem");
 $arena = mem.create(0);
 $buf = @new(arena, []byte, 4);
+print("@new type=", @typeOf(buf));
 $buf2 = buf;
 buf2[0] = 65;
-print("[]byte buf[0]=", buf[0], "buf2[0]=", buf2[0]);
+print("*[]byte buf[0]=", buf[0], "buf2[0]=", buf2[0]);
 
-# --- explicit pointer shares ---
+# --- explicit pointer shares (struct) ---
 $q = Point { x: 1, y: 2 };
 $qp = &q;
 qp.x = 42;
 print("pointer q.x=", q.x, "qp.x=", qp.x);
+
+# --- explicit pointer shares (array) ---
+$xs = [1, 2, 3];
+$xp = &xs;
+xp[0] = 7;
+print("pointer xs[0]=", xs[0], "xp[0]=", xp[0]);
 
 pub @func main() {}

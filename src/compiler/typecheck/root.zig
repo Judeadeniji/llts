@@ -1154,11 +1154,11 @@ fn inferExprInner(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, 
                     return compiler_errors.compileFailFmt(state, "Cannot take the address of a pointer (no **T yet)", .{});
                 }
                 if (ir.optionalPayload(t) != null) {
-                    return compiler_errors.compileFailFmt(state, "Cannot take the address of an optional; use a non-optional struct value", .{});
+                    return compiler_errors.compileFailFmt(state, "Cannot take the address of an optional; use a non-optional aggregate", .{});
                 }
-                if (t != .struct_) {
+                if (!ir.isAddressableAggregate(t)) {
                     const d = try ownDisplay(state, t);
-                    return compiler_errors.compileFailFmt(state, "Address-of requires a struct value, got '{s}'", .{d});
+                    return compiler_errors.compileFailFmt(state, "Address-of requires an aggregate value (struct, array, or []T), got '{s}'", .{d});
                 }
                 break :blk try ta.ptrType(t);
             }
@@ -1329,7 +1329,9 @@ fn inferExprInner(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, 
             break :blk ir.TUnknown;
         },
         .index => |idx| blk: {
-            const obj = try inferExpr(state, env, ta, idx.object);
+            const obj_raw = try inferExpr(state, env, ta, idx.object);
+            // Auto-deref `*T` / `?*T` so `p[i]` works like field access on `*Struct`.
+            const obj = ir.peelForIndex(obj_raw);
             if (idx.is_slice) {
                 if (idx.index) |start_node| {
                     const i = try inferExpr(state, env, ta, start_node);
@@ -1343,7 +1345,7 @@ fn inferExprInner(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, 
                     break :blk try ta.arrayType(obj.array.elem.*, null);
                 }
                 if (!ir.involvesUnknown(obj) and obj != .unknown) {
-                    const d = try ownDisplay(state, obj);
+                    const d = try ownDisplay(state, obj_raw);
                     return compiler_errors.compileFailFmt(state, "Cannot slice type '{s}'", .{d});
                 }
                 break :blk ir.TUnknown;
@@ -1365,7 +1367,7 @@ fn inferExprInner(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, 
                 break :blk ir.TUnknown;
             }
             if (!ir.involvesUnknown(obj) and obj != .unknown) {
-                const d = try ownDisplay(state, obj);
+                const d = try ownDisplay(state, obj_raw);
                 return compiler_errors.compileFailFmt(state, "Cannot index type '{s}'", .{d});
             }
             break :blk ir.TUnknown;
@@ -1508,7 +1510,7 @@ fn inferExprInner(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, 
                 if (env.constPlaceRoot(a.left.index.object)) |obj_name| {
                     return compiler_errors.compileFailFmt(state, "Cannot mutate elements of constant '{s}'", .{obj_name});
                 }
-                const obj_t = try inferExpr(state, env, ta, a.left.index.object);
+                const obj_t = ir.peelForIndex(try inferExpr(state, env, ta, a.left.index.object));
                 const start_node = a.left.index.index orelse {
                     return compiler_errors.compileFailFmt(state, "Expected index expression", .{});
                 };
@@ -1849,7 +1851,7 @@ fn inferCall(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, call_
     if (c.callee.* == .member and c.callee.member.property.* == .primary and
         std.mem.eql(u8, c.callee.member.property.primary.name, "get") and c.args.len == 1)
     {
-        const obj_ty = try inferExpr(state, env, ta, c.callee.member.object);
+        const obj_ty = ir.peelForIndex(try inferExpr(state, env, ta, c.callee.member.object));
         _ = try inferExpr(state, env, ta, c.args[0]);
         const disp = try ownDisplay(state, obj_ty);
         if (arrayElemDisplay(disp)) |elem_disp| {

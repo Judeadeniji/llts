@@ -135,7 +135,7 @@ Packed byte heap + honest numeric widths. See [`docs/memory-model.md`](docs/memo
 - [x] **No tracing GC** — ownership is explicit (allocator + defer).
 - [x] **Frame regions** — VM rewinds heap bump on return; bare `Foo{}` / `[…]` are frame-local.
 - [x] **Escape = compile error** — cannot return frame-local heap (except flat scalar structs, which auto-clone into immortal storage on return); use `@new(allocator, …)` for arena-managed values.
-- [x] **`@new`** — compiler intrinsic (Go `make`-style); type-directed only: `@new(allocator, T)` zero-fills and yields `*T`; literal value forms are rejected (return the literal directly — flat scalar structs clone automatically).
+- [x] **`@new`** — compiler intrinsic (Go `make`-style); type-directed only: `@new(allocator, T)` zero-fills and yields `*T` for structs, arrays, `[]T`, and `[]byte` alike; literal value forms are rejected (return the literal directly — flat scalar structs clone automatically).
 
 ### P6 — Language (make the low-level story honest)
 
@@ -143,8 +143,8 @@ Forcing function: keep writing the self-hosted compiler. Whatever that parser ca
 
 #### Pointers vs values
 
-- [x] **`*T` / `?*T` as types** — pointer IR + parse; `@new` of a struct yields `*T`; field access auto-resolves through `*` / `?*`; `?Node` still works as optional struct (compat).
-- [x] **Address-of (`&x`)** — `&struct_value` → `*T` (same packed handle; type-level). Rejects scalars, optionals, and already-`*T` (no `**T` / interiors yet).
+- [x] **`*T` / `?*T` as types** — pointer IR + parse; `@new` yields `*T` for structs and arrays; field/index access auto-resolves through `*` / `?*`; `?Node` still works as optional struct (compat).
+- [x] **Address-of (`&x`)** — `&aggregate` → `*T` for structs, arrays (`[N]T` / `[]T` / `[]byte`), tuples, shapes (same packed handle; type-level). Indexing auto-derefs `*T` / `?*T`. Rejects scalars, optionals, and already-`*T` (no `**T` / interiors / stack scalars yet).
 - [x] **Packed `@sizeOf` layout** — struct/primitive sizes use real field layout (`src/compiler/layout.zig`); `@sizeOf(*T)` is handle-sized (8).
 - [x] **Methods vs pointers** — unannotated method `self` defaults to `*T`; `self: T` / `self: *T` allowed; call sites auto-`&` / auto-deref receivers.
 

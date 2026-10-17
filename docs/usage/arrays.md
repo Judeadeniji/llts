@@ -18,26 +18,25 @@ Allocate into an arena (reclaim with `reset` / `deinit`):
 @const $mem = @import("std/mem");
 $a = mem.create(0);
 
-# Fixed size known at compile time
+# Fixed size — type is *[256]byte
 $buf = @new(a, [256]byte);
 
 # Runtime-sized mutable byte buffer (NOT the same as "hello" / std/string)
+# type is *[]byte
 $n = 64;
 $s = @new(a, []byte, n);
 # equivalent element type:
 $t = @new(a, string, n);
 
-# Runtime-sized value arrays (int, i32, number, named types, ?T / *T)
+# Runtime-sized arrays — type is *[]int
 $xs = @new(a, []int, n);
 $xs[0] = 7;
 
 print(len(s));  # 64
-s[0] = 65;      # OK: mutating an arena []byte buffer
+s[0] = 65;      # OK: mutating through *[]byte (auto-deref on index)
 ```
 
-`[]byte` / `string` / `[N]byte` are **mutable packed byte arrays** on the arena's byte heap (one host byte per element). Other `[]T` use value-slot arrays. Neither is an interned string literal. Plain `"text"` values and `$b = x` string assignment semantics are documented in [String semantics](../std/string.md#string-semantics).
-
-Also: `@new(a, Point)` zero-fills structs (`@new` is type-directed only — assign fields after allocation).
+`@new` always returns a **pointer** (`*T`) — same as `@new(a, Point)` → `*Point`. Indexing and field access auto-deref. Assigning an `@new` result shares the handle; frame-local `[…]` literals still copy on assign. Plain `"text"` strings are documented in [String semantics](../std/string.md#string-semantics).
 
 Growable value arrays: `__arena_array_push(arena, arr, x)` (and `std/list` on top) extend capacity in the arena. Bare `[…]` stays frame-local fixed length.
 
@@ -59,7 +58,8 @@ a.reset(); # reclaim list storage
 ## 3. Indexing and assignment
 
 - **0-Based indexing**: Elements are accessed and mutated with `array[index]`.
-- **Value copy on assign**: `$b = a` shallow-copies the array; `b[i] = v` does **not** change `a`. (Address-of `&` is struct-only today; function parameters still receive a shared handle — pass intentionally if you need to mutate the caller's array.)
+- **Value copy on assign**: `$b = a` shallow-copies the array; `b[i] = v` does **not** change `a`.
+- **Share via pointer**: `$p = &a` yields `*[N]T` / `*[]T` (same handle); `p[i] = v` mutates `a`. Function parameters still receive a shared handle.
 
   ```llts
   $a = [1, 2, 3];
@@ -67,6 +67,10 @@ a.reset(); # reclaim list storage
   b[2] = 99;
   print(a[2]);  # 3
   print(b[2]);  # 99
+
+  $p = &a;
+  p[2] = 7;
+  print(a[2]);  # 7
 
   arr[0] = 42;
   arr[1] = 1337;

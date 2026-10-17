@@ -4,10 +4,10 @@
 #   - Bare `Foo{}` / `[…]` → frame-local bump; dies on return; cannot escape
 #     (flat scalar structs returned by name auto-clone into immortal storage).
 #   - `@new(allocator, Type)` → compiler intrinsic (like Go make); type form
-#     only, zero-fills, yields `*Type`. Allocates into a library Allocator
-#     (today: Arena). Result may be returned.
-#   - `@new(a, []byte, n)` / `[N]byte` → packed bytes (1 byte per element), not
-#     one Value slot per byte.
+#     only, zero-fills, yields `*Type` for structs, arrays, and []byte alike.
+#     Allocates into a library Allocator (today: Arena). Result may be returned.
+#   - `@new(a, []byte, n)` / `[N]byte` → `*[]byte` / `*[N]byte` packed bytes
+#     (1 byte per element), not one Value slot per byte.
 #   - `create` → growable Arena (Zig ArenaAllocator-style chunk list).
 
 pub @func alloc(size: int): int {

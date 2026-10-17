@@ -196,8 +196,10 @@ pub fn typecheck(state: *CompilerState, env: *typecheck_root.Env, ta: ir.TypeAll
                 },
                 else => try typecheck_root.inferExpr(state, env, ta, v),
             };
-            // Heap-allocated structs / distinct `@type` values are pointers (handles).
-            if (base == .struct_ or base == .defined) return try ta.ptrType(base);
+            // Arena/heap allocation always yields a pointer handle (`*T`), matching
+            // `@new(a, Point)` → `*Point`. Arrays / `[]T` / `[]byte` / shapes too.
+            if (base == .struct_ or base == .defined or base == .array or base == .tuple or base == .shape)
+                return try ta.ptrType(base);
             if (base == .ptr) return base;
             return base;
         },

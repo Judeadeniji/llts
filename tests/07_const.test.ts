@@ -520,17 +520,18 @@ print(b[0]);
 `), ["1", "99"]);
 });
 
-test("[]byte assignment copies; mutate copy leaves original", () => {
+test("@new []byte is *[]byte; pointer assign shares", () => {
   expectOutput(runSource(`
 @const $mem = @import("std/mem");
 $arena = mem.create(0);
 $buf = @new(arena, []byte, 4);
+print(@typeOf(buf));
 buf[0] = 1;
 $buf2 = buf;
 buf2[0] = 65;
 print(buf[0]);
 print(buf2[0]);
-`), ["1", "65"]);
+`), ["*[]byte", "65", "65"]);
 });
 
 test("taking the address of a @const is rejected", () => {
