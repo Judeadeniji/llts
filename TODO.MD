@@ -9,7 +9,7 @@ Zig implementation. The TypeScript prototype/reference is [`llts-js`](../llts-js
 - [x] Basic Tokens: Identifiers, Numbers (int, float, hex, binary, octal), Strings, Booleans.
 - [x] Registers: `$a`, `$t0`, etc. (declaration-only sigil; uses omit `$`).
 - [x] Keywords: `return`, `true`, `false`, `break`, `continue`, `pub`, `defer`.
-- [x] Compiler Directives: `@func`, `@import`, `@const`, `@if`, `@for`, `@struct`, `@typeOf`, `@sizeOf`, `@isError`, `@extern`.
+- [x] Compiler Directives: `@func`, `@import`, `@const`, `@if`, `@for`, `@struct`, `@typeOf`, `@sizeOf`, `@addrOf`, `@isError`, `@extern`.
 - [x] Operators: Arithmetic, Assignment (including compound `+=` etc.), Comparison, Logical, Pipe (`|>`), Power (`**` / `^`).
 - [x] Comments: Line comments starting with `#`.
 
@@ -145,6 +145,7 @@ Forcing function: keep writing the self-hosted compiler. Whatever that parser ca
 
 - [x] **`*T` / `?*T` as types** — pointer IR + parse; `@new` yields `*T` for structs and arrays; field/index access auto-resolves through `*` / `?*`; `?Node` still works as optional struct (compat).
 - [x] **Address-of (`&x`)** — `&aggregate` → `*T` for structs, arrays (`[N]T` / `[]T` / `[]byte`), tuples, shapes (same packed handle; type-level). Indexing auto-derefs `*T` / `?*T`. Rejects scalars, optionals, and already-`*T` (no `**T` / interiors / stack scalars yet).
+- [x] **`@addrOf(x)`** — packed-heap identity as `i64` (offset); equal for aliases, diverges after value copy. Exhaustive suite: structs/arrays/`[]byte`/tuples/shapes/`@new`/`@const`/`*T` params; rejects scalars/enums/optionals (`tests/53_addr_of.test.ts`, 37).
 - [x] **Packed `@sizeOf` layout** — struct/primitive sizes use real field layout (`src/compiler/layout.zig`); `@sizeOf(*T)` is handle-sized (8).
 - [x] **Methods vs pointers** — unannotated method `self` defaults to `*T`; `self: T` / `self: *T` allowed; call sites auto-`&` / auto-deref receivers.
 

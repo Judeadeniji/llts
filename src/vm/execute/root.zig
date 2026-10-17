@@ -735,6 +735,26 @@ pub fn execute(vm: *VMState, start_ip: usize) RuntimeError!void {
                 stack_buf[sp] = .{ .i64 = size };
                 sp += 1;
             },
+            .OP_ADDR_OF => {
+                sp -= 1;
+                const val = stack_buf[sp];
+                const addr: i64 = switch (val) {
+                    .bytes => |b| b.offset,
+                    .slice => |s| s.offset,
+                    .array => |a| a.offset,
+                    // Interned string-table id — tagged so it does not collide with
+                    // packed offsets; identity is stable for the same literal.
+                    .name => |idx| @as(i64, @intCast(idx)) | (@as(i64, 1) << 62),
+                    else => {
+                        syncVM(vm, sp);
+                        var buf: [96]u8 = undefined;
+                        const msg = std.fmt.bufPrint(&buf, "@addrOf expects an aggregate or *T handle, got '{s}'", .{val.kindName()}) catch "@addrOf expects an aggregate or *T handle";
+                        return runtime.runtimeFail(vm, msg);
+                    },
+                };
+                stack_buf[sp] = .{ .i64 = addr };
+                sp += 1;
+            },
             .OP_AS => {
                 const kind = readByte(code_ptr, &ip);
                 const w: widths.Width = @enumFromInt(kind);

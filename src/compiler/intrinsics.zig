@@ -26,6 +26,7 @@ pub const Intrinsic = enum {
     nameOf,
     as,
     new,
+    addrOf,
 };
 
 const intrinsics = std.StaticStringMap(Intrinsic).initComptime(.{
@@ -36,6 +37,7 @@ const intrinsics = std.StaticStringMap(Intrinsic).initComptime(.{
     .{ "@nameOf", .nameOf },
     .{ "@as", .as },
     .{ "@new", .new },
+    .{ "@addrOf", .addrOf },
 });
 
 pub fn match(callee: []const u8) ?Intrinsic {
@@ -56,6 +58,7 @@ pub fn arity(intr: Intrinsic) Arity {
         .nameOf => .{ .exact = 1 },
         .as => .{ .exact = 2 },
         .new => .{ .range = .{ .min = 2, .max = 3 } },
+        .addrOf => .{ .exact = 1 },
     };
 }
 
@@ -203,6 +206,19 @@ pub fn typecheck(state: *CompilerState, env: *typecheck_root.Env, ta: ir.TypeAll
             if (base == .ptr) return base;
             return base;
         },
+        .addrOf => {
+            const t = try typecheck_root.inferExpr(state, env, ta, c.args[0]);
+            if (ir.involvesUnknown(t)) return ir.TInt;
+            if (ir.optionalPayload(t) != null) {
+                return compile_errors.compileFailFmt(state, "@addrOf does not accept optionals; unwrap first", .{});
+            }
+            const pointee = if (t == .ptr) t.ptr.* else t;
+            if (!ir.isAddressableAggregate(pointee)) {
+                const d = try typecheck_root.ownDisplay(state, t);
+                return compile_errors.compileFailFmt(state, "@addrOf requires an aggregate or *T, got '{s}'", .{d});
+            }
+            return ir.TInt;
+        },
     }
 }
 
@@ -290,6 +306,10 @@ pub fn compile(state: *CompilerState, intr: Intrinsic, node: *ast.Node, c: *cons
         },
         .new => {
             try aggregate.compileNew(state, c);
+        },
+        .addrOf => {
+            try expr.compileExpression(state, c.args[0]);
+            try emit.emitOp(state, .OP_ADDR_OF);
         },
     }
 }

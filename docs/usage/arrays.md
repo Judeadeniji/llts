@@ -60,6 +60,7 @@ a.reset(); # reclaim list storage
 - **0-Based indexing**: Elements are accessed and mutated with `array[index]`.
 - **Value copy on assign**: `$b = a` shallow-copies the array; `b[i] = v` does **not** change `a`.
 - **Share via pointer**: `$p = &a` yields `*[N]T` / `*[]T` (same handle); `p[i] = v` mutates `a`. Function parameters still receive a shared handle.
+- **`@addrOf(x)`**: packed-heap identity as `i64` (offset). Equal for aliases (`&a` / `*T` assign); diverges after value copy. Works on aggregates and `*T` (not scalars / optionals).
 
   ```llts
   $a = [1, 2, 3];

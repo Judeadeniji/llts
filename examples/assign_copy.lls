@@ -49,5 +49,6 @@ $xs = [1, 2, 3];
 $xp = &xs;
 xp[0] = 7;
 print("pointer xs[0]=", xs[0], "xp[0]=", xp[0]);
+print("addr xs=", @addrOf(xs), "xp=", @addrOf(xp), "eq=", @addrOf(xs) == @addrOf(xp));
 
 pub @func main() {}
