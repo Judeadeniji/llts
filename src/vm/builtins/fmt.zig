@@ -373,6 +373,7 @@ pub const Formatter = struct {
     pub fn formatTypeName(self: *Formatter, v: Value) !void {
         const name = switch (v) {
             .null => "nil",
+            .void => "void",
             .u1 => "bool",
             .i8 => "i8",
             .i16 => "i16",
@@ -520,6 +521,7 @@ pub const Formatter = struct {
 
         switch (v) {
             .null => try self.padBytes(if (self.flags.sharp_v) "nil" else "null"),
+            .void => try self.padBytes("void"),
             .u1 => |b| try self.formatBool(b != 0),
             .i8, .i16, .i32, .i64, .u8, .u16, .u32, .u64 => {
                 const n = widths.valueAsI64(v) orelse 0;

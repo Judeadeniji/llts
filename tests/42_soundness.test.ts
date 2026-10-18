@@ -153,10 +153,10 @@ test("strict: void function without return statement is accepted", () => {
 }
 pub @func main() {
     doNothing();
-    print("ok");
+    print(@typeOf(doNothing()));
 }
 `),
-		["ok"],
+		["void"],
 	);
 });
 

@@ -48,7 +48,7 @@ pub fn compileReturn(state: *CompilerState, ret: *const ast.Return) !void {
             try expr.compileExpression(state, v);
         }
     } else {
-        try emit.emitOp(state, .OP_NULL);
+        try emit.emitOp(state, .OP_VOID);
     }
     try scope.emitFunctionExitDefers(state, .dynamic);
     if (state.inline_return_jumps.items.len > 0) {
@@ -174,7 +174,7 @@ pub fn compileFunction(state: *CompilerState, node: *ast.FunctionDecl, ast_node:
     for (body.statements) |s| try stmt.compileStatement(state, s);
 
     try scope.emitFunctionExitDefers(state, .normal);
-    try emit.emitOp(state, .OP_NULL);
+    try emit.emitOp(state, .OP_VOID);
     try emit.emitOp(state, .OP_RETURN);
 
     // discard function-local state

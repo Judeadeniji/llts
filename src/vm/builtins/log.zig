@@ -196,6 +196,7 @@ fn typeFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const v = args[0];
     const name = switch (v) {
         .null => "nil",
+        .void => "void",
         .u1 => "bool",
         .i8, .i16, .i32, .i64, .u8, .u16, .u32, .u64 => "int",
         .f32, .f64 => "float",

@@ -105,6 +105,8 @@ pub const SpanRef = struct {
 /// Tagged runtime value — numeric tags match Zig-like widths end-to-end.
 pub const Value = union(enum) {
     null,
+    /// Unit result of a `void` function (distinct from optional `null`).
+    void,
     /// 1-bit unsigned (`bool` / `boolean` alias `u1`).
     u1: u1,
     i8: i8,
@@ -144,7 +146,7 @@ pub const Value = union(enum) {
 
     pub fn isTruthy(self: Value) bool {
         return switch (self) {
-            .null => false,
+            .null, .void => false,
             .u1 => |n| n != 0,
             .i8 => |n| n != 0,
             .i16 => |n| n != 0,
@@ -171,6 +173,7 @@ pub const Value = union(enum) {
     pub fn kindName(self: Value) []const u8 {
         return switch (self) {
             .null => "null",
+            .void => "void",
             .u1 => "bool",
             .i8, .i16, .i32, .i64, .u8, .u16, .u32, .u64 => "int",
             .f32, .f64 => "float",

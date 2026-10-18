@@ -428,8 +428,8 @@ fn isBareTypeNode(state: *CompilerState, env: *typecheck_root.Env, node: *ast.No
             if (state.native_globals.contains(name)) return false;
 
             if (widths.fromName(name) != null) return true;
-            if (std.mem.eql(u8, name, "string") or std.mem.eql(u8, name, "[]byte") or
-                std.mem.eql(u8, name, "null") or std.mem.eql(u8, name, "error")) return true;
+            if (ir.isBuiltinTypeName(name)) return true;
+            if (std.mem.eql(u8, name, "string") or std.mem.eql(u8, name, "[]byte")) return true;
             if (state.structs.contains(name) or state.enums.contains(name) or
                 state.typedefs.contains(name) or state.error_sets.contains(name)) return true;
             return false;

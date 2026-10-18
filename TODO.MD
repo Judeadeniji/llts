@@ -146,6 +146,7 @@ Forcing function: keep writing the self-hosted compiler. Whatever that parser ca
 - [x] **`*T` / `?*T` as types** — pointer IR + parse; `@new` yields `*T` for structs and arrays; field/index access auto-resolves through `*` / `?*`; `?Node` still works as optional struct (compat).
 - [x] **Address-of (`&x`)** — `&aggregate` → `*T` for structs, arrays (`[N]T` / `[]T` / `[]byte`), tuples, shapes (same packed handle; type-level). Indexing auto-derefs `*T` / `?*T`. Rejects scalars, optionals, and already-`*T` (no `**T` / interiors / stack scalars yet).
 - [x] **`@addrOf(x)`** — packed-heap identity as `i64` (offset); equal for aliases, diverges after value copy. Exhaustive suite: structs/arrays/`[]byte`/tuples/shapes/`@new`/`@const`/`*T` params; rejects scalars/enums/optionals (`tests/53_addr_of.test.ts`, 37).
+- [x] **`void` / `null` / `never`** — distinct roles: `void` = unit (no result), `null` = optional absence only, `never` = noreturn/bottom. `Value.void` + `OP_VOID`; reject `: null` returns and `void`/`never` in unions. Exhaustive: `tests/54.1_void`, `54.2_null`, `54.3_never`.
 - [x] **Packed `@sizeOf` layout** — struct/primitive sizes use real field layout (`src/compiler/layout.zig`); `@sizeOf(*T)` is handle-sized (8).
 - [x] **Methods vs pointers** — unannotated method `self` defaults to `*T`; `self: T` / `self: *T` allowed; call sites auto-`&` / auto-deref receivers.
 

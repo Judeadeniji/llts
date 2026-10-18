@@ -49,6 +49,35 @@ pub @func main() {
 ## Return Statements
 The `return` keyword is used to return a value from a function. If the function is untyped, it can return values of different types conditionally. If typed, the return value must match the annotated return type.
 
+## `void` / `null` / `never`
+
+These three types have **non-overlapping** roles:
+
+| Type | Meaning | Typical use |
+|------|---------|-------------|
+| **`void`** | Function completed; result is empty | `: void`, bare `return;`, fall-through, `print` |
+| **`null`** | Optional absence only | `?T` / `T \| null`, `return null` from optionals — **not** a function return type |
+| **`never`** | Control never returns | `: never` (e.g. `os.exit`); bottom type — assignable to any `T` because the expression never produces a value |
+
+```llts
+@func log(msg: []byte): void {
+    print(msg);
+    return;   # bare return; is void, not null
+}
+
+@func miss(): ?i64 {
+    return null;   # optional absence
+}
+
+@func die(code: i64): never {
+    __exit(code);  # does not return to the caller
+}
+```
+
+- Empty / `return;`-only unannotated functions infer **`void`**.
+- `?void`, `void | T`, `?never`, and `never | T` are rejected.
+- After a `: never` call, the caller does not resume (`void` calls do).
+
 ## Recursion and Mutual Recursion
 `llts` fully supports recursion and mutual recursion. Functions can reference other functions that are defined later in the file without requiring forward declarations.
 

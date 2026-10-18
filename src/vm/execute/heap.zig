@@ -496,7 +496,7 @@ pub fn storeField(vm: *VMState, byte_offset: u16, kind: u8) HeapError!void {
             var off: u32 = HANDLE_NULL_OFFSET;
             var len: u32 = 0;
             switch (val) {
-                .null => {},
+                .null, .void => {},
                 .bytes => |b| {
                     off = b.offset;
                     len = b.len;

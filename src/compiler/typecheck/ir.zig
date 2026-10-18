@@ -40,6 +40,9 @@ pub const Type = union(enum) {
     usize,
     fsize,
     null,
+    /// Unit: function completed with no result (`(): void`, bare `return;`).
+    /// Distinct from `null` (optional absence) and `never` (noreturn / bottom).
+    void,
     error_,
     unknown,
     never,
@@ -98,6 +101,7 @@ pub const TISize: Type = .{ .isize = {} };
 pub const TUSize: Type = .{ .usize = {} };
 pub const TFSize: Type = .{ .fsize = {} };
 pub const TNull: Type = .{ .null = {} };
+pub const TVoid: Type = .{ .void = {} };
 pub const TError: Type = .{ .error_ = {} };
 pub const TNever: Type = .{ .never = {} };
 pub const TType: Type = .{ .type_ = {} };
@@ -261,11 +265,21 @@ pub fn widthOf(t: Type) ?widths.Width {
 pub fn namedType(name: []const u8) Type {
     if (widths.fromName(name)) |w| return typeFromWidth(w);
     if (std.mem.eql(u8, name, "null")) return TNull;
+    if (std.mem.eql(u8, name, "void")) return TVoid;
+    if (std.mem.eql(u8, name, "never")) return TNever;
     if (std.mem.eql(u8, name, "error")) return TError;
     if (std.mem.eql(u8, name, "string")) return TString;
     if (std.mem.eql(u8, name, "unknown")) return TUnknown;
     if (std.mem.eql(u8, name, "type")) return TType;
     return .{ .struct_ = name };
+}
+
+/// `void` and `never` are not union arms (`?void` / `never | T` rejected).
+pub fn isForbiddenUnionArm(t: Type) bool {
+    return switch (peelDefined(t)) {
+        .void, .never => true,
+        else => false,
+    };
 }
 
 pub fn isBuiltinTypeName(name: []const u8) bool {
@@ -314,6 +328,7 @@ fn displayTypeAllocFlags(allocator: std.mem.Allocator, t: Type, qualified: bool)
     return switch (t) {
         .u1, .i8, .i16, .i32, .i64, .u8, .u16, .u32, .u64, .f32, .f64, .isize, .usize, .fsize => try allocator.dupe(u8, displayWidth(t)),
         .null => try allocator.dupe(u8, "null"),
+        .void => try allocator.dupe(u8, "void"),
         .error_ => try allocator.dupe(u8, "error"),
         .unknown => try allocator.dupe(u8, "unknown"),
         .never => try allocator.dupe(u8, "never"),
@@ -470,6 +485,7 @@ pub fn displayTypeSimple(t: Type) ?[]const u8 {
     return switch (t) {
         .u1, .i8, .i16, .i32, .i64, .u8, .u16, .u32, .u64, .f32, .f64, .isize, .usize, .fsize => displayWidth(t),
         .null => "null",
+        .void => "void",
         .error_ => "error",
         .unknown => "unknown",
         .never => "never",
@@ -540,7 +556,7 @@ pub fn typeEquals(a: Type, b: Type) bool {
         .error_set => |n| b == .error_set and std.mem.eql(u8, n, b.error_set),
         .error_lit => |e| b == .error_lit and std.mem.eql(u8, e.set_name, b.error_lit.set_name) and std.mem.eql(u8, e.variant, b.error_lit.variant),
         .defined => |d| (b == .defined and std.mem.eql(u8, d.name, b.defined.name)) or typeEquals(d.underlying.*, b),
-        .u1, .i8, .i16, .i32, .i64, .u8, .u16, .u32, .u64, .f32, .f64, .isize, .usize, .fsize, .null, .error_, .unknown, .never, .type_ => std.meta.activeTag(a) == std.meta.activeTag(b),
+        .u1, .i8, .i16, .i32, .i64, .u8, .u16, .u32, .u64, .f32, .f64, .isize, .usize, .fsize, .null, .void, .error_, .unknown, .never, .type_ => std.meta.activeTag(a) == std.meta.activeTag(b),
         .union_ => |arms| blk: {
             if (b != .union_) break :blk false;
             if (arms.len != b.union_.len) break :blk false;
@@ -928,12 +944,15 @@ pub fn parseDisplayType(ta: TypeAlloc, s_in: []const u8) !Type {
         var arms: std.ArrayList(Type) = .empty;
         defer arms.deinit(ta.allocator);
         for (union_parts) |part| {
-            try arms.append(ta.allocator, try parseDisplayType(ta, part));
+            const arm = try parseDisplayType(ta, part);
+            if (isForbiddenUnionArm(arm)) return error.CompileError;
+            try arms.append(ta.allocator, arm);
         }
         return try ta.unionType(arms.items);
     }
     if (s.len > 0 and s[0] == '?') {
         const inner = try parseDisplayType(ta, s[1..]);
+        if (isForbiddenUnionArm(inner)) return error.CompileError;
         return try ta.unionType(&.{ inner, TNull });
     }
     if (s.len > 0 and s[0] == '*') {

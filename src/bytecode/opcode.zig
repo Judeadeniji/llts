@@ -94,4 +94,6 @@ pub const OpCode = enum(u8) {
     OP_GET_ARRAY_OR_NULL,
     /// `@addrOf(x)`: pop aggregate / `*T` handle → push packed offset as `i64`.
     OP_ADDR_OF,
+    /// Push the `void` unit value (bare `return;` / void fall-through).
+    OP_VOID,
 };

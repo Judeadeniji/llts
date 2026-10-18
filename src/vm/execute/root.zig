@@ -118,6 +118,12 @@ pub fn execute(vm: *VMState, start_ip: usize) RuntimeError!void {
                     sp += 1;
                 } else return error.OutOfMemory;
             },
+            .OP_VOID => {
+                if (sp < state_mod.STACK_MAX) {
+                    stack_buf[sp] = .void;
+                    sp += 1;
+                } else return error.OutOfMemory;
+            },
             .OP_TRUE => {
                 if (sp < state_mod.STACK_MAX) {
                     stack_buf[sp] = .{ .u1 = 1 };
@@ -719,7 +725,7 @@ pub fn execute(vm: *VMState, start_ip: usize) RuntimeError!void {
                 sp -= 1;
                 const val = stack_buf[sp];
                 const size: i64 = switch (val) {
-                    .null => 0,
+                    .null, .void => 0,
                     .u1 => 1,
                     .i8, .u8 => 1,
                     .i16, .u16 => 2,

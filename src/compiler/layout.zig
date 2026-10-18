@@ -47,7 +47,7 @@ pub fn sizeOfTypeName(type_name: []const u8) i32 {
     if (bare.len > 0 and bare[0] == '{') return 8; // shape / object handle
     if (bare.len > 0 and bare[0] == '[' and std.mem.indexOfScalar(u8, bare, ',') != null) return 8; // tuple
     if (widths.fromName(bare)) |w| return w.size();
-    if (std.mem.eql(u8, bare, "null"))
+    if (std.mem.eql(u8, bare, "null") or std.mem.eql(u8, bare, "void"))
         return 0;
     if (std.mem.eql(u8, bare, "string") or std.mem.eql(u8, bare, "[]byte"))
         return 8;
@@ -70,7 +70,7 @@ pub fn sizeOfType(state: *state_mod.CompilerState, t: ir.Type) !?i32 {
         .u1, .i8, .i16, .i32, .i64, .u8, .u16, .u32, .u64, .f32, .f64, .isize, .usize, .fsize => ir.widthOf(t).?.size(),
         .int_lit => 8,
         .bool_lit => widths.Width.u1.size(),
-        .null => 0,
+        .null, .void => 0,
         .defined => |d| try sizeOfType(state, d.underlying.*),
         .struct_ => |name| blk: {
             if (state.enums.contains(name)) break :blk 8;
@@ -94,7 +94,7 @@ pub fn alignOfTypeName(type_name: []const u8) i32 {
     const bare = unwrapTypeName(type_name);
     if (bare.len > 0 and bare[0] == '*') return 8;
     if (widths.fromName(bare)) |w| return w.alignment();
-    if (std.mem.eql(u8, bare, "null"))
+    if (std.mem.eql(u8, bare, "null") or std.mem.eql(u8, bare, "void"))
         return 1;
     return 8;
 }

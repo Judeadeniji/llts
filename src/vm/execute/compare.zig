@@ -30,6 +30,7 @@ pub fn compareEq(vm: *VMState, invert: bool) CmpError!void {
 fn valuesEqual(vm: *VMState, a: Value, b: Value) bool {
     return switch (a) {
         .null => b == .null,
+        .void => b == .void,
         .u1 => |x| switch (b) {
             .u1 => |y| x == y,
             else => false,

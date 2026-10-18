@@ -10,8 +10,8 @@ pub @func setEnv(key, val) {
     return __setEnv(key, val);
 }
 
-pub @func exit(code) {
-    return __exit(code);
+pub @func exit(code): never {
+    __exit(code);
 }
 
 pub @func cwd() {

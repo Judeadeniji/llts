@@ -1847,6 +1847,19 @@ fn inferCall(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, call_
         return ir.TInt;
     }
 
+    // Native side-effect / noreturn builtins with fixed result types.
+    if (c.callee.* == .primary and !state.functions.contains(c.callee.primary.name)) {
+        const n = c.callee.primary.name;
+        if (std.mem.eql(u8, n, "print") or std.mem.eql(u8, n, "__printLn")) {
+            for (c.args) |a| _ = try inferExpr(state, env, ta, a);
+            return ir.TVoid;
+        }
+        if (std.mem.eql(u8, n, "__exit")) {
+            for (c.args) |a| _ = try inferExpr(state, env, ta, a);
+            return ir.TNever;
+        }
+    }
+
     // `arrayLike.get(i)` → `?T` (null when out of bounds) — Phase 4.4.
     if (c.callee.* == .member and c.callee.member.property.* == .primary and
         std.mem.eql(u8, c.callee.member.property.primary.name, "get") and c.args.len == 1)
@@ -2370,9 +2383,17 @@ fn checkStmt(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node:
             return null;
         },
         .return_expr => |r| {
-            const t = if (r.return_value) |v| try inferExpr(state, env, ta, v) else ir.TNull;
+            const t = if (r.return_value) |v| try inferExpr(state, env, ta, v) else ir.TVoid;
             try rejectTypeValue(state, t, "a return value");
             if (env.expected_return) |er| {
+                if (er == .never) {
+                    if (r.return_value == null) {
+                        return compiler_errors.compileFailFmt(state, "Cannot 'return;' from a ': never' function; ': never' must not return (call another ': never' function or loop forever)", .{});
+                    }
+                    if (t != .never) {
+                        return compiler_errors.compileFailFmt(state, "Cannot return a value from a ': never' function; ': never' must not return", .{});
+                    }
+                }
                 if (r.return_value) |v| {
                     try requireAssignFrom(state, t, er, "return value", v);
                 } else {
@@ -2435,6 +2456,11 @@ fn checkFunction(
     env.top_consts = top_consts;
 
     const annotated: ?ir.Type = if (f.return_type) |rt| try from_ast.typeFromAst(rt, state, ta) else null;
+    if (annotated) |a| {
+        if (a == .null) {
+            return compiler_errors.compileFailFmt(state, "Function return type cannot be 'null'; use 'void' for no result, or '?T' / 'T | null' for optional absence", .{});
+        }
+    }
     // Two different contracts:
     // • `expected_return` (body return checks) uses the refined display from
     //   refineErrorReturns when it widened the annotation — so an annotated `: Box`
@@ -2577,13 +2603,22 @@ fn checkFunction(
                 }
                 def.return_type = final;
             }
+        } else if (def.return_type == null or std.mem.eql(u8, def.return_type.?, "unknown") or std.mem.eql(u8, def.return_type.?, "null")) {
+            // Empty / bare-`return;`-only body → void (not null / unknown).
+            def.return_type = "void";
+        }
+    }
+
+    if (annotated) |a| {
+        if (a == .never and !nodeAlwaysNeverReturns(state, f.body)) {
+            return compiler_errors.compileFailFmt(state, "Function '{s}' is ': never' but can complete normally; every path must call a ': never' function or loop forever", .{f.name});
         }
     }
 
     if (state.strict and !std.mem.eql(u8, f.name, "main")) {
         const ret_disp = if (expected) |a| try ownDisplay(state, a) else if (state.functions.get(f.name)) |def| def.return_type else null;
         if (ret_disp) |rd| {
-            if (!std.mem.eql(u8, rd, "void") and !nodeAlwaysReturns(f.body)) {
+            if (!std.mem.eql(u8, rd, "void") and !std.mem.eql(u8, rd, "never") and !nodeAlwaysReturns(f.body)) {
                 // Point at the fall-through path: the last statement of the body
                 // (or the declaration when the body is empty).
                 var end_line: u32 = f.loc.line;
@@ -2608,6 +2643,52 @@ fn blockAlwaysReturns(block: ast.Block) bool {
         if (nodeAlwaysReturns(s)) return true;
     }
     return false;
+}
+
+fn functionReturnsNever(state: *state_mod.CompilerState, func_name: []const u8) bool {
+    if (std.mem.eql(u8, func_name, "__exit")) return true;
+    const def = state.functions.get(func_name) orelse return false;
+    if (def.return_type) |rt| return std.mem.eql(u8, rt, "never");
+    if (def.node.* == .function_decl) {
+        if (def.node.function_decl.return_type) |rt_node| {
+            if (rt_node.* == .primary and std.mem.eql(u8, rt_node.primary.name, "never")) return true;
+        }
+    }
+    return false;
+}
+
+fn callReturnsNever(state: *state_mod.CompilerState, node: *ast.Node) bool {
+    if (node.* != .call) return false;
+    if (resolveCalleeName(state, &node.call)) |name| {
+        if (functionReturnsNever(state, name)) return true;
+    }
+    if (state.type_of_results.get(node)) |t| return std.mem.eql(u8, t, "never");
+    return false;
+}
+
+fn nodeAlwaysNeverReturns(state: *state_mod.CompilerState, node: *ast.Node) bool {
+    // A `: never` body is OK if every path ends in a never-call or `return neverExpr`.
+    return switch (node.*) {
+        .return_expr => |r| blk: {
+            if (r.return_value) |v| {
+                if (callReturnsNever(state, v)) break :blk true;
+                if (state.type_of_results.get(v)) |t| break :blk std.mem.eql(u8, t, "never");
+            }
+            break :blk false;
+        },
+        .block => |b| blk: {
+            if (b.statements.len == 0) break :blk false;
+            break :blk nodeAlwaysNeverReturns(state, b.statements[b.statements.len - 1]);
+        },
+        .if_expr => |ife| blk: {
+            if (ife.else_body) |eb| {
+                break :blk nodeAlwaysNeverReturns(state, ife.body) and nodeAlwaysNeverReturns(state, eb);
+            }
+            break :blk false;
+        },
+        .call => callReturnsNever(state, node),
+        else => callReturnsNever(state, node),
+    };
 }
 
 fn nodeAlwaysReturns(node: *ast.Node) bool {

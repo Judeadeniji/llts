@@ -9,6 +9,17 @@ const expr_path = @import("../expr/path.zig");
 
 pub const FromAstError = error{ OutOfMemory, CompileError, Overflow, InvalidCharacter };
 
+fn rejectForbiddenUnionArms(state: ?*state_mod.CompilerState, left: ir.Type, right: ir.Type) FromAstError!void {
+    for ([_]ir.Type{ left, right }) |arm| {
+        if (!ir.isForbiddenUnionArm(arm)) continue;
+        const d = ir.displayType(arm);
+        if (state) |st| {
+            return compile_error.compileFailFmt(st, "'{s}' cannot appear in a union (or optional); '{s}' is not a value-carrying union arm", .{ d, d });
+        }
+        return error.CompileError;
+    }
+}
+
 /// Convert AST type node → Type IR. Validates unknown struct names when state is set.
 pub fn typeFromAst(node: ?*ast.Node, state: ?*state_mod.CompilerState, ta: ir.TypeAlloc) FromAstError!ir.Type {
     const n = node orelse return ir.TUnknown;
@@ -59,6 +70,7 @@ pub fn typeFromAst(node: ?*ast.Node, state: ?*state_mod.CompilerState, ta: ir.Ty
         .union_type => |u| blk: {
             const left = try typeFromAst(u.left, state, ta);
             const right = try typeFromAst(u.right, state, ta);
+            try rejectForbiddenUnionArms(state, left, right);
             break :blk try ta.unionType(&.{ left, right });
         },
         .intersection_type => |ix| blk: {
@@ -71,6 +83,7 @@ pub fn typeFromAst(node: ?*ast.Node, state: ?*state_mod.CompilerState, ta: ir.Ty
                 const left = try typeFromAst(b.left, state, ta);
                 const right = try typeFromAst(b.right, state, ta);
                 if (left != .unknown and right != .unknown) {
+                    try rejectForbiddenUnionArms(state, left, right);
                     break :blk try ta.unionType(&.{ left, right });
                 }
             } else if (std.mem.eql(u8, b.operator, "&")) {
@@ -396,12 +409,27 @@ pub fn parseDisplayType(
         var arms: std.ArrayList(ir.Type) = .empty;
         defer arms.deinit(ta.allocator);
         for (union_parts) |part| {
-            try arms.append(ta.allocator, try parseDisplayType(state, ta, part, cycle));
+            const arm = try parseDisplayType(state, ta, part, cycle);
+            if (ir.isForbiddenUnionArm(arm)) {
+                if (state) |st| {
+                    const d = ir.displayType(arm);
+                    return compile_error.compileFailFmt(st, "'{s}' cannot appear in a union (or optional); '{s}' is not a value-carrying union arm", .{ d, d });
+                }
+                return error.CompileError;
+            }
+            try arms.append(ta.allocator, arm);
         }
         return try ta.unionType(arms.items);
     }
     if (s.len > 0 and s[0] == '?') {
         const inner = try parseDisplayType(state, ta, s[1..], cycle);
+        if (ir.isForbiddenUnionArm(inner)) {
+            if (state) |st| {
+                const d = ir.displayType(inner);
+                return compile_error.compileFailFmt(st, "'{s}' cannot appear in a union (or optional); '{s}' is not a value-carrying union arm", .{ d, d });
+            }
+            return error.CompileError;
+        }
         return try ta.unionType(&.{ inner, ir.TNull });
     }
     if (s.len > 0 and s[0] == '*') {
