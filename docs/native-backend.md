@@ -54,6 +54,29 @@ To prevent performance degradation and architectural impedance mismatches, the n
 - **Problem**: Emitting separate Zig files for each LLTS module introduces complicated cross-module build dependencies and inhibits compiler optimizations.
 - **Guarantee**: The emitter processes all reachable modules identified by `reachability.zig` and emits a **single, unified `.zig` compilation unit**. This gives `zig build-exe -O ReleaseFast` full visibility for Whole-Program Optimization (WPO), dead-code stripping, and aggressive interprocedural inlining.
 
+### LLTS-Owned Trap Reporting (Shadow Stack)
+
+Native code runs on Zig's call stack, but LLTS must own failure output: a Zig
+panic handler or Zig error-return trace must never be what the user sees. The
+runtime therefore keeps a fixed **shadow stack** (`src/runtime/trace.zig`,
+`Context.trace_stack`) mirroring LLTS calls, mirroring `VMState.frames`:
+
+- `ctx.enterFunction(name, file)` — watermark + shadow push. At the frame cap
+  (256, matching `MAX_FRAMES`) it traps with
+  `Maximum call stack depth exceeded (256 frames)` (VM `TooManyFrames` parity).
+- `ctx.setLine(line, col)` — `OP_LINE` equivalent; debug builds only.
+- `ctx.leaveFunction(mark)` — shadow pop + watermark rewind, safe on every exit
+  path.
+- `rt.io.fail(...)` / `failMsg(...)` — print `Error: <msg>` then the trace
+  (`    at fn (file:line:col)`, innermost first, VM `formatVmStackTrace`
+  format) **before** returning the internal `error.RuntimeError` unwind signal.
+  The emitted `main` glue is the only sink and exits 1.
+
+The Zig error union is transport only; it is never printed or handled by Zig.
+Release builds strip `setLine` calls exactly like the bytecode compiler strips
+`OP_LINE`, so native traces degrade the same way VM release traces do (`?:?`
+source positions).
+
 ---
 
 ## Technical Architecture

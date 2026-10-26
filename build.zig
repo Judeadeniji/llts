@@ -60,6 +60,13 @@ pub fn build(b: *std.Build) void {
     });
     llts_mod.link_libc = true;
 
+    const runtime_mod = b.addModule("runtime", .{
+        .root_source_file = b.path("src/runtime/root.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    runtime_mod.link_libc = true;
+
     const exe = b.addExecutable(.{
         .name = "llts",
         .root_module = b.createModule(.{
@@ -157,9 +164,26 @@ pub fn build(b: *std.Build) void {
     });
     const run_lsp_unit = b.addRunArtifact(lsp_unit_tests);
 
+    const runtime_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/runtime/tests.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "runtime", .module = runtime_mod },
+            },
+        }),
+    });
+    runtime_tests.root_module.link_libc = true;
+    const run_runtime_tests = b.addRunArtifact(runtime_tests);
+
+    const runtime_test_step = b.step("runtime-test", "Run native runtime unit tests");
+    runtime_test_step.dependOn(&run_runtime_tests.step);
+
     const test_step = b.step("test", "Run unit tests");
     // test_step.dependOn(&run_mod_tests.step);
     test_step.dependOn(&run_integration.step);
     test_step.dependOn(&run_lsp_e2e.step);
     test_step.dependOn(&run_lsp_unit.step);
+    test_step.dependOn(&run_runtime_tests.step);
 }
