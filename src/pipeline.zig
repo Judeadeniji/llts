@@ -7,7 +7,7 @@ const serialize = @import("bytecode/serialize.zig");
 const vm_state = @import("vm/state.zig");
 const execute = @import("vm/execute/root.zig");
 const builtins = @import("vm/builtins/root.zig");
-const zig_backend = @import("compiler/zig/root.zig");
+const zig_backend = @import("compiler/codegen/root.zig");
 const print_fmt = @import("vm/builtins/print.zig");
 const report = @import("errors/report.zig");
 

@@ -95,7 +95,7 @@ flowchart TD
     end
     
     subgraph "Native Path"
-        E -->|"Structured AST Lowering"| I["AOT Zig Emitter (src/compiler/zig/)"]
+        E -->|"Structured AST Lowering"| I["AOT Zig Emitter (src/compiler/codegen/)"]
         I --> J["Monolithic Emitted Source (.zig)"]
         J --> H["Shared Runtime (src/runtime/)"]
         J --> K["zig build-exe -O ReleaseFast"]
@@ -154,17 +154,17 @@ and no longer exists.
 
 ---
 
-### Component: Native Zig Codegen (`src/compiler/zig/`)
+### Component: Native Zig Codegen (`src/compiler/codegen/`)
 
 Lowers analyzed LLTS AST into runtime-driving Zig functions.
 
-#### `src/compiler/zig/root.zig`
+#### `src/compiler/codegen/root.zig`
 Entry point for the native emitter:
 ```zig
 const std = @import("std");
 const ast = @import("../../ast/root.zig");
 const state_mod = @import("../state.zig");
-const emitter = @import("emitter.zig");
+const emitter = @import("emitter/root.zig");
 
 pub const EmitOptions = struct {
     release: bool = false,
@@ -184,15 +184,23 @@ pub fn emitRuntimeZig(
 }
 ```
 
-#### `src/compiler/zig/emitter.zig`
-Translates functions and statements into Zig code that calls `src/runtime/`:
+#### `src/compiler/codegen/emitter/`
+The emitter is split by responsibility:
+- **`root.zig`**: Shared `Emitter` state, diagnostics, naming, scope/binding lookup, type classification, and the emit entry point.
+- **`unit.zig`**: Compilation-unit lowering — globals, function discovery/emission, top-level code, and the `pub fn main()` wrapper.
+- **`prescan.zig`**: Statement termination analysis and the read/assigned pre-scan used for locals and unused-value silencing.
+- **`stmt.zig`**: Statement and control-flow lowering (`@if`, `@switch`, `@for`, `break`, `continue`, assignments, declarations).
+- **`expr.zig`**: Expression lowering, scalar arithmetic/comparisons, string operations, coercions, and calls.
+
+Behavior:
 - **Imports & Setup**: Emits an absolute `@import("<runtime_path>")` and uses `rt.Context`.
 - **Functions**: Each LLTS `@func` becomes `fn lls_fn_*(ctx: *rt.Context, ...) anyerror!RetType`.
 - **Unboxed Variables**: Parameters and local bindings emit as typed native variables (`var x: i64 = ...`).
 - **Watermark RAII**: Wraps every function body with `const mark = try ctx.enterFunction(name, file); defer ctx.leaveFunction(mark);`.
 - **Top-Level Code**: Emits `lls_top_level(ctx)` initializing globals and running top-level statements.
 - **Entry Wrapper**: Emits `pub fn main() void` initializing `rt.Context`, running top-level code and LLTS `main`, and mapping errors to process exit.
-- **Control Flow**: Phase 3 — currently rejected with an explicit `native backend (Phase 3)` diagnostic.
+- **Control Flow**: `@if`, scalar `@switch`, range `@for (start..end) |i|`, and condition `@for (cond)` lower to native structured Zig. Value-producing arms use labeled-block results and `break` payloads; loop `break`/`continue` preserve labels. Switch scrutinees are evaluated once and prongs use the same runtime equality helpers as the VM. Conditions rely on the LLTS typechecker's guarantees; the emitter adds no runtime truthiness or type assertions.
+- **Remaining**: iterable `@for` over arrays/strings, condition-loop captures, labeled block values, and `@defer`.
 
 ---
 
@@ -231,13 +239,16 @@ Cleanly remove the inactive LLVM stub module.
    - The VM continues to function unchanged on its own copy paths.
 
 2. **Phase 2: Emitter Core & `llts emit-zig`** — implemented for the basic subset
-   - `src/compiler/zig/emitter.zig` generates runtime-driving Zig for arithmetic, functions, returns, locals, strings, top-level code, and `print`.
+   - `src/compiler/codegen/emitter/` generates runtime-driving Zig for arithmetic, functions, returns, locals, strings, top-level code, and `print`.
    - `llts emit-zig <file.lls> -o <out.zig>` is wired (strict mode on by default).
    - Generated files are verified by `tests/55_emit_zig.test.ts` (emit → `zig run -lc` → compare against the VM).
-   - Generated Zig must reside inside the repo module root so the absolute runtime import resolves; Phase 3 control flow and Phase 4 `zig build-exe` remain.
+   - Generated Zig must reside inside the repo module root so the absolute runtime import resolves; Phase 4 `zig build-exe` remains.
 
-3. **Phase 3: Control Flow, Loops, and Heap Operations**
-   - Implement structured lowering for `@if`, `@for`, `@switch`.
+3. **Phase 3: Control Flow, Loops, and Heap Operations** — `@if`, scalar `@switch`, and `@for` implemented
+   - Structured `@if` / `@else @if` / `@else` lowering, including value-producing arms via labeled-block results and `break` payloads.
+   - `@switch` on integers, floats, booleans, and strings, including multi-pattern prongs, `@else`, and value-producing arms.
+   - Range `@for (start..end) |i|` and condition `@for (cond)` lowering with labeled `break`/`continue` and wrapping counter increments.
+   - Remaining: iterable `@for` over arrays/strings, condition-loop captures, labeled block values, and `@defer`.
    - Lower packed struct loads/stores (`opLoadField`, `opStoreField`) and slices (`opSlice`).
    - Lower `defer`, `errdefer`, and error propagation (`?`, `error(...)`).
    - Enforce RAII frame watermark cleanup in all emitted functions.

@@ -324,7 +324,7 @@ interleave it with Phase 2 rather than leaving it last.
      is genuinely worth it (e.g. `formatFloat`).
    - Existing stubs at `src/runtime/{root,context,ops}.zig` (49 lines total)
      are placeholders to replace.
-2. **Minimal emitter** (`src/compiler/zig/emitter.zig`, currently a
+2. **Minimal emitter** (`src/compiler/codegen/emitter/`, currently a
    `return error.NotImplemented` stub): arithmetic, functions, returns,
    unboxed locals/params, frame `defer` watermark, top-level → `lls_main`,
    `pub fn main()`. Target: `examples/hello-world.lls` emits Zig that compiles

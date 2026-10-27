@@ -88,7 +88,7 @@ The native backend branches off after the parser, before bytecode emission:
 
 1. **Scan → Parse** (same phases 1–2 as the VM path).
 2. **Strict analysis:** `compiler.analyze` runs with `EmitZigOptions.strict`, which **defaults to `true`** — native compilation assumes strict soundness (Core Principle #1 in [native-backend.md](native-backend.md)); callers may only opt out by passing `false` explicitly.
-3. **Emission:** `zig_backend.emitRuntimeZig` lowers the analyzed, typed AST to a monolithic runtime-driving Zig unit (`src/compiler/zig/emitter.zig` — Phase 2 stub currently returns `error.NotImplemented`).
+3. **Emission:** `zig_backend.emitRuntimeZig` lowers the analyzed, typed AST to a monolithic runtime-driving Zig unit (`src/compiler/codegen/emitter/`).
 4. **Link (Phase 4, pending):** `compileNativeBinary` will spawn `zig build-exe <tmp> -O <mode> -femit-bin=<out>`; today it runs steps 1–3 for their soundness checks and then returns `error.NotImplemented`.
 
 ## Public API (`src/root.zig`)

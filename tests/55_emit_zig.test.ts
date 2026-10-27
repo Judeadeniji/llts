@@ -1,7 +1,7 @@
 /**
- * Phase 2 native emitter: `llts emit-zig` must produce Zig that compiles and
- * matches the bytecode VM for the supported subset (functions, locals,
- * scalar arithmetic, strings, print, top-level code).
+ * Native emitter: `llts emit-zig` must produce Zig that compiles and matches
+ * the bytecode VM for the supported subset (functions, locals, scalar
+ * arithmetic, strings, print, top-level code, @if, @switch, and @for).
  */
 import { test, expect } from "bun:test";
 import { spawnSync } from "bun";
@@ -93,7 +93,9 @@ pub @func main() {
     print(@as(u8, 42));
     print(@as(int, @as(u8, 42)));
 }
-`);
+`, (generated) => {
+	expect(generated).not.toContain("@as([]const u8,");
+});
 }, 60_000);
 
 test("emits top-level globals before main", () => {
@@ -143,19 +145,192 @@ pub @func main() {
 	}
 }, 60_000);
 
-test("unsupported control flow is rejected with a Phase 3 diagnostic", () => {
+test("emits @if, @else @if, and returns inside arms", () => {
+	expectParity(`
+@func sign(a: int): int {
+    @if (a < 0) {
+        return 0 - 1;
+    } @else @if (a > 0) {
+        return 1;
+    }
+    return 0;
+}
+
+pub @func main() {
+    $n = 2;
+    @if (n == 1) {
+        print("one");
+    } @else @if (n == 2) {
+        print("two");
+    } @else {
+        print("other");
+    }
+    @if (false) {
+        print("bad");
+    }
+    print(sign(0 - 5));
+    print(sign(0));
+    print(sign(5));
+}
+`);
+}, 60_000);
+
+test("emits value-producing @if with break payloads", () => {
+	expectParity(`
+$g = @if (true) {
+    break 3;
+} @else {
+    break 4;
+};
+print(g);
+
+pub @func main() {
+    $n = 2;
+    $x = @if (n == 1) {
+        break 10;
+    } @else @if (n == 2) {
+        break 20;
+    } @else {
+        break 30;
+    };
+    print(x);
+
+    $y = @if (n > 0) {
+        @if (n == 2) {
+            break 42;
+        }
+        break 0;
+    } @else {
+        break 0 - 1;
+    };
+    print(y);
+
+    $word: string = @if (true) {
+        break "yes";
+    } @else {
+        break "no";
+    };
+    print(word);
+
+    $dead = @if (true) {
+        $unused = 7;
+        break 1;
+        print(unused);
+    } @else {
+        break 2;
+    };
+    print(dead);
+    print(g);
+}
+`);
+}, 60_000);
+
+test("emits statement and value-producing @switch", () => {
+	expectParity(`
+pub @func main() {
+    $n = 2;
+    @switch (n) {
+        1 => { print("one"); },
+        2, 3 => { print("two-three"); },
+        @else => { print("other"); },
+    }
+    @switch (n) {
+        1 => { print("only-one"); },
+    }
+    $x = @switch (n) {
+        1 => { break 10; },
+        2 => { break 20; },
+        @else => { break 30; },
+    };
+    print(x);
+    $s = @switch ("b") {
+        "a" => { break 1; },
+        "b" => { break 2; },
+        @else => { break 3; },
+    };
+    print(s);
+    $f = @switch (1.5) {
+        1.0 => { break 4; },
+        1.5 => { break 5; },
+        @else => { break 6; },
+    };
+    print(f);
+}
+`, (generated) => {
+	expect(generated).toContain("lls_sw_");
+	expect(generated).toContain("rt.arith.eqStr");
+});
+}, 60_000);
+
+test("emits range and condition @for loops with break/continue", () => {
+	expectParity(`
+pub @func main() {
+    @for (0..3) |i| {
+        print(i);
+    }
+    $n = 4;
+    @for (0..n) |i| {
+        @if (i == 1) {
+            continue;
+        }
+        @if (i == 3) {
+            break;
+        }
+        print(i);
+    }
+    roll: @for (0..5) |i| {
+        @for (0..5) |j| {
+            @if (j == 2) {
+                continue :roll;
+            }
+            @if (i == 2) {
+                break :roll;
+            }
+            print(i * 10 + j);
+        }
+    }
+    unused: @for (0..2) |i| {
+        print(i);
+    }
+    via_value: @for (0..2) |i| {
+        $x = @if (i == 0) {
+            @for (0..2) |j| {
+                @if (j == 0) {
+                    break :via_value;
+                }
+                break;
+            }
+            break 1;
+        } @else {
+            break 2;
+        };
+        print(x);
+    }
+    print("via-value done");
+    $k = 0;
+    @for (k < 3) {
+        print(k);
+        k = k + 1;
+    }
+    @for (false) {
+        print("bad");
+    }
+}
+`);
+}, 60_000);
+
+test("unsupported iterable @for is rejected with a Phase 3 diagnostic", () => {
 	const emitted = emitZig(`
 pub @func main() {
-    $x = 1;
-    @if (x == 1) {
-        print(x);
+    @for ("abc") |c| {
+        print(c);
     }
 }
 `);
 	try {
 		const emit = runCli(["emit-zig", emitted.sourcePath, "-o", emitted.outputPath]);
 		expect(emit.exitCode).not.toBe(0);
-		expect(emit.stderr + emit.stdout).toContain("does not support if_expr");
+		expect(emit.stderr + emit.stdout).toContain("does not support iterable @for");
 		expect(fs.existsSync(emitted.outputPath)).toBe(false);
 	} finally {
 		emitted.cleanup();
