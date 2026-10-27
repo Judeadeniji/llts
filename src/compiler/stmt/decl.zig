@@ -123,12 +123,18 @@ pub fn compileDeclaration(state: *CompilerState, decl: *const ast.Declaration) !
 
     if (state.scope_depth > 0 and !is_module_export) {
         try checkLocalDup(state, decl.name);
+        // When the clone branch above fired (`__cloneBytes` / `__cloneArray`),
+        // the copy was allocated in the *current frame* (`allocFrameBytes`).
+        // The local is therefore frame-bound even when the RHS is a parameter,
+        // global, or other pass-through handle — inheriting the RHS region
+        // would let `return local` hand out a handle the frame rewind frees.
+        const cloned = comptime_value == null and value_clone.cloneBuiltin(state, decl.value) != null;
         try state.locals.append(state.allocator, .{
             .name = decl.name,
             .depth = state.scope_depth,
             .type_name = type_name,
             .is_const = decl.is_const,
-            .alloc_region = escape.regionOfRhs(state, decl.value),
+            .alloc_region = if (cloned) .frame else escape.regionOfRhs(state, decl.value),
         });
         if (decl.is_const) {
             const slot: u8 = @intCast(state.locals.items.len - 1);
