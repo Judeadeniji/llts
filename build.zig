@@ -53,19 +53,19 @@ pub fn build(b: *std.Build) void {
     });
     const zli_mod = zli.module("zli");
 
-    const llts_mod = b.addModule("llts", .{
-        .root_source_file = b.path("src/root.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    llts_mod.link_libc = true;
-
     const runtime_mod = b.addModule("runtime", .{
         .root_source_file = b.path("src/runtime/root.zig"),
         .target = target,
         .optimize = optimize,
     });
     runtime_mod.link_libc = true;
+
+    const llts_mod = b.addModule("llts", .{
+        .root_source_file = b.path("src/root.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    llts_mod.link_libc = true;
 
     const exe = b.addExecutable(.{
         .name = "llts",

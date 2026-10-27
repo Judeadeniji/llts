@@ -1,9 +1,11 @@
 //! Minimal fd I/O and the LLTS trap path for the native runtime.
 //!
 //! Uses the libc `write` / `exit` symbols (build wiring links libc wherever the
-//! runtime is used) instead of `std.posix` / `std.process`. All user-facing
-//! failure output is produced by the runtime — Zig never prints, panics, or
-//! reports an LLTS failure on its own.
+//! runtime is used) instead of `std.posix` / `std.process`, which the
+//! native-stdlib plan bans from runtime code. R4's syscall dispatcher may
+//! replace the `write` path with a raw `@syscall`; the surface stays.
+//! All user-facing failure output is produced by the runtime — Zig never
+//! prints, panics, or reports an LLTS failure on its own.
 
 const std = @import("std");
 const trace = @import("trace.zig");
@@ -17,11 +19,12 @@ pub const STDERR: c_int = 2;
 /// Test hook: suppress stderr writes so trap-path tests stay quiet.
 pub var silence_stderr: bool = false;
 
-/// Test hook: redirect stderr into a buffer instead of the real fd.
+/// Test hook: redirect fd output into a buffer instead of the real fd.
 pub const Capture = struct {
     alloc: std.mem.Allocator,
     buf: *std.ArrayList(u8),
 };
+pub var stdout_capture: ?Capture = null;
 pub var stderr_capture: ?Capture = null;
 
 /// Write all bytes, mirroring `src/io/out.zig`: short writes continue, a
@@ -37,6 +40,10 @@ pub fn writeAll(fd: c_int, bytes: []const u8) void {
 }
 
 pub fn writeStdout(bytes: []const u8) void {
+    if (stdout_capture) |cap| {
+        cap.buf.appendSlice(cap.alloc, bytes) catch {};
+        return;
+    }
     writeAll(STDOUT, bytes);
 }
 
@@ -54,8 +61,9 @@ pub fn writeStderr(bytes: []const u8) void {
 /// Returns `error.RuntimeError` purely as the internal unwind signal; the
 /// emitter's `main` glue catches it and exits 1. No LLTS cleanup runs on this
 /// path (LLTS `defer` is emitted as explicit return-path code, never Zig
-/// `defer`), matching the VM's `runtimeFail`.
-pub fn fail(comptime fmt: []const u8, args: anytype) error{RuntimeError}!noreturn {
+/// `defer`), matching the VM's `runtimeFail`. Callers propagate the error
+/// value; no code after a trap can run because every call site returns.
+pub fn fail(comptime fmt: []const u8, args: anytype) error{RuntimeError} {
     var buf: [512]u8 = undefined;
     const line = std.fmt.bufPrint(&buf, "Error: " ++ fmt ++ "\n", args) catch {
         writeStderr("Error: runtime diagnostic too long\n");
@@ -68,7 +76,7 @@ pub fn fail(comptime fmt: []const u8, args: anytype) error{RuntimeError}!noretur
 }
 
 /// Report a runtime trap with a preformatted message (VM `fail(vm, msg)` parity).
-pub fn failMsg(msg: []const u8) error{RuntimeError}!noreturn {
+pub fn failMsg(msg: []const u8) error{RuntimeError} {
     var buf: [512]u8 = undefined;
     const line = std.fmt.bufPrint(&buf, "Error: {s}\n", .{msg}) catch {
         writeStderr("Error: runtime diagnostic too long\n");
