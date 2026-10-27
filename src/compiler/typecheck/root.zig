@@ -2603,9 +2603,16 @@ fn checkFunction(
                 }
                 def.return_type = final;
             }
-        } else if (def.return_type == null or std.mem.eql(u8, def.return_type.?, "unknown") or std.mem.eql(u8, def.return_type.?, "null")) {
-            // Empty / bare-`return;`-only body → void (not null / unknown).
-            def.return_type = "void";
+        } else if (!bodyHasValuedReturn(f.body)) {
+            // No valued `return expr`: empty body / only bare `return;` → void.
+            // If the body *does* `return <expr>` but inference could not refine
+            // (e.g. thin wrappers around natives), leave unknown — never stamp void.
+            if (def.return_type == null or
+                std.mem.eql(u8, def.return_type.?, "unknown") or
+                std.mem.eql(u8, def.return_type.?, "null"))
+            {
+                def.return_type = "void";
+            }
         }
     }
 
@@ -2655,6 +2662,32 @@ fn functionReturnsNever(state: *state_mod.CompilerState, func_name: []const u8) 
         }
     }
     return false;
+}
+
+/// True when any `return <expr>` appears. Bare `return;` does not count as valued.
+fn bodyHasValuedReturn(node: *ast.Node) bool {
+    return switch (node.*) {
+        .return_expr => |r| r.return_value != null,
+        .block => |b| blk: {
+            for (b.statements) |s| {
+                if (bodyHasValuedReturn(s)) break :blk true;
+            }
+            break :blk false;
+        },
+        .if_expr => |ife| blk: {
+            if (bodyHasValuedReturn(ife.body)) break :blk true;
+            if (ife.else_body) |eb| break :blk bodyHasValuedReturn(eb);
+            break :blk false;
+        },
+        .switch_expr => |sw| blk: {
+            for (sw.prongs) |p| {
+                if (bodyHasValuedReturn(p.body)) break :blk true;
+            }
+            break :blk false;
+        },
+        .for_expr => |f| bodyHasValuedReturn(f.body),
+        else => false,
+    };
 }
 
 fn callReturnsNever(state: *state_mod.CompilerState, node: *ast.Node) bool {
