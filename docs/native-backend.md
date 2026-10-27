@@ -30,7 +30,7 @@ To prevent performance degradation and architectural impedance mismatches, the n
 #### 1. Unboxed Native Locals vs. The "Stack Trap"
 - **Problem**: Naively translating bytecode ops into software operand stack calls (`ctx.push(ctx.opAdd(ctx.pop(), ctx.pop()))`) destroys performance. CPU register allocation is defeated, and excessive memory round-trips occur.
 - **Guarantee**: Since LLTS is strict and statically typed, all local variables and function parameters are lowered to **unboxed native Zig variables** (`var a: i64`, `const b: u8`).
-- Operations on these locals invoke inline runtime helpers (`rt.opAddI64(a, b)`, `rt.opAddTypedWrap(...)`), enforcing exact LLTS arithmetic and bounds semantics while allowing LLVM to place variables in CPU registers (`rax`, `rbx`) and vectorize loops.
+- Operations on these locals invoke inline runtime helpers (`rt.arith.add(a, b)`, `rt.arith.addWrapped(rt.Width.i8, a, b)`), enforcing exact LLTS arithmetic and bounds semantics while allowing LLVM to place variables in CPU registers (`rax`, `rbx`) and vectorize loops.
 
 #### 2. AST-Driven Structured Lowering (Post-Typecheck)
 - **Problem**: Emitting from a flat bytecode `Chunk` forces the emitted Zig code into artificial basic blocks with `while/switch` or jump labels, obstructing LLVM branch optimization and vectorization.
@@ -105,36 +105,52 @@ flowchart TD
 
 ---
 
-### Component: Runtime Architecture (`src/runtime/`)
+### Component: Runtime Architecture (`src/runtime/`) — **implemented (R1)**
 
-Extract and structure the runtime engine into a dedicated folder so both the VM interpreter and emitted native Zig code execute identical logic.
+The runtime is a **typed Zig API** — the native counterpart of the VM's
+memory model, not a shared `Value` interpreter. The VM keeps its own copy
+paths (`src/vm/**`); both share the width table so numeric semantics cannot
+drift. No `Value`, no `VMState`, no dispatch tables.
 
 #### `src/runtime/root.zig`
 Top-level export for all runtime capabilities:
 ```zig
-const std = @import("std");
-
 pub const Context = @import("context.zig").Context;
-pub const Value = @import("value.zig").Value;
-pub const Heap = @import("heap.zig").Heap;
-pub const Memory = @import("memory.zig");
-pub const Ops = @import("ops.zig");
-pub const Builtins = @import("builtins.zig");
+pub const io      = @import("io.zig");      // fd writes, fail(), failMsg(), exitProcess()
+pub const mem     = @import("mem.zig");     // cloneBytes, concat, allocArray…
+pub const arith   = @import("arith.zig");   // add/div/shl/typed ops/compare…
+pub const err     = @import("err.zig");     // Error{code, payload}, eq()
+pub const print   = @import("print.zig");   // VM-parity writeValue/print()
+pub const widths  = @import("widths.zig");  // canonical Width table
+pub const trace   = @import("trace.zig");   // shadow-stack frames + formatting
 ```
 
 #### `src/runtime/context.zig`
-Execution context managing the call stack, packed byte heap, frame watermarks, and globals:
-- Frame bump and watermark rewinding (`allocFrameBytes`, `rewindPacked`).
-- Immortal heap region floor.
-- Global slots and call frames.
+Two-buffer bump heap with fixed capacity (pointers never move):
+- `frame` — per-call scratch, rewound by `enterFrame`/`leaveFrame` marks.
+- `immortal` — program-lifetime values (literals, concat results); never rewound.
+- Defaults 16 MiB each (frame = VM packed cap `1<<20 * 16`); exhaustion = `error.OutOfMemory`.
 
-#### `src/runtime/ops.zig`
-Concrete runtime functions corresponding to LLTS bytecode operations:
-- Arithmetic: `opAdd(ctx, a, b)`, `opAddTyped(ctx, a, b, width)`, `opAddWrap(...)`.
-- Comparisons: `opEqual(ctx, a, b)`, `opLess(...)`.
-- Heap & Slices: `opLoadField(ctx, obj, offset, kind)`, `opStoreField(...)`, `opSlice(ctx, obj, lo, hi)`.
-- Memory & Arenas: `opArenaCreate(hint)`, `opArenaAlloc(...)`, `opArenaReset(...)`, `opArenaDeinit(...)`.
-- Errors: `opMakeError(ctx, msg)`, `opIsError(val)`.
+#### `src/runtime/{arith,mem,err,print,io}.zig`
+Typed ops with VM-exact trap messages and formats (verified against
+`src/vm/execute/arith.zig`, `compare.zig`, `src/vm/builtins/print.zig`):
+- `arith`: checked/wrapping `+ - *` (i64 + width-typed via i128), `@divTrunc`/`@rem`,
+  wrapping `powi`, 0..63 shifts, bitwise, exact comparisons, f32/f64 paths (`@mod`, zero traps).
+- `mem`: `cloneBytes` (`[]byte` value semantics), `concat` (immortal, `stringAdd` parity),
+  `cloneArrayBytes`, `allocArray` (slice-length, no header).
+- `err`: `Error{ code, payload: none|int|float|bool|str|agg }`; equality compares codes only.
+- `print`: raw strings, printable-checked byte buffers, integer-array string heuristic,
+  f64 exact-int special case, `Error: code — payload` rendering.
+- `io`: libc `write`/`exit` (no `std.posix`/`std.process`); `fail()` / `failMsg()` print
+  `Error: <msg>` then the shadow-stack trace and return `error.RuntimeError` — emitted
+  `main` exits 1; LLTS `defer` is explicit-on-return (not Zig `defer`), so it never runs on traps.
+- `trace`: fixed-capacity shadow stack (`MAX_FRAMES` = 256) with VM-parity frame formatting.
+
+`src/runtime/widths.zig` owns the canonical `Width` table;
+`src/compiler/widths.zig` re-exports it (keeping the `Value`-dependent helpers).
+
+`ops.zig` from earlier drafts was replaced by `arith`/`mem`/`err`/`print`
+and no longer exists.
 
 ---
 
@@ -205,10 +221,14 @@ Cleanly remove the inactive LLVM stub module.
 
 ## Phased Implementation Roadmap
 
-1. **Phase 1: Runtime Decoupling (`src/runtime/`)**
-   - Extract core types (`Value`, memory layout, packed byte heap, arena manager) into `src/runtime/`.
-   - Implement `src/runtime/ops.zig` with standalone functions for basic arithmetic, locals, and memory.
-   - Verify the VM continues to function cleanly using the unified runtime foundation.
+1. **Phase 1: Runtime Decoupling (`src/runtime/`)** — ✅ **done (R1)**
+   - Typed native API (`Context`, `arith`, `mem`, `err`, `print`, `io`, `widths`, `trace`)
+     — deliberately **not** a shared `Value` extraction; the VM keeps its own paths.
+   - Two-buffer (frame + immortal) bump heap with stable pointers.
+   - LLTS-owned trap reporting via the shadow stack (`trace.zig`, `enterFunction`/`leaveFunction`/`setLine`).
+   - VM-parity trap messages and print formats, unit-tested
+     (`src/runtime/tests.zig`, wired into `zig build test`).
+   - The VM continues to function unchanged on its own copy paths.
 
 2. **Phase 2: Emitter Core & `llts emit-zig`**
    - Implement `src/compiler/zig/emitter.zig` to generate runtime-driving Zig functions for basic programs (arithmetic, functions, returns, locals with unboxed variables).
