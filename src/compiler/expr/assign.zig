@@ -254,7 +254,11 @@ fn assignPrimary(state: *CompilerState, prim: *const ast.Primary, right: *ast.No
     const arg = scope.resolveLocal(state, prim.name);
     if (arg != -1) {
         // Track region so `return t` after `$t = Foo{}` vs `@new(a, Foo{})` is checked.
-        state.locals.items[@intCast(arg)].alloc_region = escape.regionOfRhs(state, right);
+        // A plain aggregate assign clones into the current frame (__cloneBytes /
+        // __cloneArray via emitValueRHS), so the rebound local is frame-bound
+        // even when the RHS is a parameter or other pass-through handle.
+        const cloned = arith == null and value_clone.cloneBuiltin(state, right) != null;
+        state.locals.items[@intCast(arg)].alloc_region = if (cloned) .frame else escape.regionOfRhs(state, right);
         try emit.emitOp(state, .OP_SET_LOCAL);
         try emit.emitByte(state, @intCast(arg));
     } else {
