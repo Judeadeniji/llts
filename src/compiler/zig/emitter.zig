@@ -1,41 +1,1363 @@
 // Zig code emitter — translates analyzed LLTS AST into runtime-driving Zig source.
 //
 // Emission strategy (see docs/native-backend.md):
-//   - Each LLTS @func → `fn lls_func_*(ctx: *rt.Context, ...) !RetType`
-//   - Local variables and parameters → unboxed native Zig variables (var x: i64)
-//   - Frame watermark RAII → `const mark = ctx.enterFrame(); defer ctx.leaveFrame(mark);`
-//   - Control flow → native if/else, while, for, switch (not software stack dispatch)
-//   - Top-level code → lls_main(ctx) initializing globals then running statements
-//   - Entry wrapper → standard `pub fn main() !void` wiring allocator + lls_main
+//   - Each LLTS @func → `fn lls_fn_*(ctx: *rt.Context, ...) anyerror!RetType`
+//   - Local variables and parameters → unboxed native Zig variables
+//   - Frame watermark RAII → `const mark = ctx.enterFunction(...); defer ctx.leaveFunction(mark);`
+//   - Top-level code → `lls_top_level(ctx)` initializing globals then running statements
+//   - Entry wrapper → `pub fn main()` wiring Context + the LLTS-owned trap sink
 //
-// Phase 2 stub — emit() returns NotImplemented until the emitter is implemented.
+// Phase 2 subset: functions, returns, locals, scalar arithmetic, comparisons,
+// string concatenation, and `print`. Control flow, aggregates, slices,
+// methods, and error values are rejected with a compile-time diagnostic.
 const std = @import("std");
 const ast_mod = @import("../../ast/root.zig");
 const state_mod = @import("../state.zig");
+const reachability = @import("../reachability.zig");
+const from_ast = @import("../typecheck/from_ast.zig");
+const widths = @import("../widths.zig");
+const compile_errors = @import("../../errors/compile.zig");
 const root_mod = @import("root.zig");
+
+const CompilerState = state_mod.CompilerState;
+
+const ValKind = enum { int, float, bool, string, void, other };
+
+const ValType = struct {
+    display: []const u8,
+    clean: []const u8,
+    kind: ValKind,
+    zig: []const u8,
+    width: ?widths.Width = null,
+    may_error: bool = false,
+
+    fn isI64(self: ValType) bool {
+        return self.kind == .int and self.width != null and
+            (self.width.? == .i64 or self.width.? == .isize);
+    }
+
+    fn isU64(self: ValType) bool {
+        return self.kind == .int and self.width != null and
+            (self.width.? == .u64 or self.width.? == .usize);
+    }
+};
+
+const Binding = struct {
+    /// Original LLTS spelling (for diagnostics).
+    name: []const u8,
+    /// Emitted Zig identifier.
+    zig_name: []const u8,
+    display: []const u8,
+    assigned: bool = false,
+    read: bool = false,
+    is_param: bool = false,
+};
+
+const Global = struct {
+    name: []const u8,
+    zig_name: []const u8,
+    display: []const u8,
+    node: *ast_mod.Node,
+};
+
+const ParamInfo = struct {
+    name: []const u8,
+    arg_name: []const u8,
+    display: []const u8,
+    zig: []const u8,
+};
 
 pub const Emitter = struct {
     allocator: std.mem.Allocator,
     writer: std.io.AnyWriter,
     options: root_mod.EmitOptions,
+    arena: std.heap.ArenaAllocator,
+    doc: *ast_mod.Document,
+    state: *CompilerState,
+
+    reach: ?reachability.Result = null,
+    runtime_path: []const u8 = "",
+    globals: std.StringHashMap(*Global),
+    scopes: std.ArrayList(std.StringHashMap(*Binding)) = .empty,
+    infos: std.AutoHashMap(*ast_mod.Node, *Binding),
+    params: std.ArrayList(ParamInfo) = .empty,
+    cur_ret: ValType = undefined,
+    counter: usize = 0,
 
     pub fn init(
         allocator: std.mem.Allocator,
-        _doc: *const ast_mod.Document,
-        _state: *const state_mod.CompilerState,
+        doc: *ast_mod.Document,
+        state: *CompilerState,
         writer: std.io.AnyWriter,
         options: root_mod.EmitOptions,
     ) !Emitter {
-        _ = _doc;
-        _ = _state;
-        return .{ .allocator = allocator, .writer = writer, .options = options };
+        var arena = std.heap.ArenaAllocator.init(allocator);
+        errdefer arena.deinit();
+        return .{
+            .allocator = allocator,
+            .writer = writer,
+            .options = options,
+            .arena = arena,
+            .doc = doc,
+            .state = state,
+            .globals = std.StringHashMap(*Global).init(allocator),
+            .infos = std.AutoHashMap(*ast_mod.Node, *Binding).init(allocator),
+        };
     }
 
-    pub fn deinit(_: *Emitter) void {}
+    pub fn deinit(self: *Emitter) void {
+        if (self.reach) |*r| r.deinit();
+        self.globals.deinit();
+        self.infos.deinit();
+        self.arena.deinit();
+    }
 
     /// Emit a complete runtime-driving Zig compilation unit to the writer.
-    /// Phase 2 implementation pending.
-    pub fn emit(_: *Emitter) !void {
-        return error.NotImplemented;
+    pub fn emit(self: *Emitter) !void {
+        self.reach = try reachability.compute(self.state, self.doc);
+        self.runtime_path = std.fs.cwd().realpathAlloc(self.arena.allocator(), self.options.runtime_path) catch {
+            return self.failNoLoc("runtime path '{s}' not found (pass --runtime-path)", .{self.options.runtime_path});
+        };
+
+        try self.collectGlobals();
+
+        try self.writer.writeAll("// Generated by `llts emit-zig` — do not edit.\n");
+        try self.writer.writeAll("const rt = @import(");
+        try self.writer.writeAll(try self.zigString(self.runtime_path));
+        try self.writer.writeAll(");\n\n");
+
+        try self.emitGlobalDecls();
+        try self.emitFunctions();
+        try self.emitTopLevel();
+        try self.emitEntry();
+    }
+
+    // --- Diagnostics -------------------------------------------------------
+
+    fn failAt(self: *Emitter, node: *ast_mod.Node, comptime fmt: []const u8, args: anytype) error{CompileError} {
+        const loc = node.loc();
+        if (loc.path.len > 0) self.state.diag_path = loc.path;
+        if (loc.line > 0) self.state.diag_line = loc.line;
+        if (loc.column > 0) self.state.diag_column = loc.column;
+        return compile_errors.compileFailFmt(self.state, fmt, args);
+    }
+
+    fn failNoLoc(self: *Emitter, comptime fmt: []const u8, args: anytype) error{CompileError} {
+        self.state.diag_path = self.doc.path;
+        self.state.diag_line = 1;
+        self.state.diag_column = 1;
+        return compile_errors.compileFailFmt(self.state, fmt, args);
+    }
+
+    // --- Naming ------------------------------------------------------------
+
+    fn mangle(self: *Emitter, name: []const u8) ![]const u8 {
+        const a = self.arena.allocator();
+        var out: std.ArrayList(u8) = .empty;
+        for (name) |ch| {
+            if (std.ascii.isAlphanumeric(ch) or ch == '_') {
+                try out.append(a, ch);
+            } else {
+                try out.append(a, '_');
+                try out.writer(a).print("{X:0>2}", .{ch});
+            }
+        }
+        return out.toOwnedSlice(a);
+    }
+
+    fn fnName(self: *Emitter, name: []const u8) ![]const u8 {
+        return std.fmt.allocPrint(self.arena.allocator(), "lls_fn_{s}", .{try self.mangle(name)});
+    }
+
+    fn globalName(self: *Emitter, name: []const u8) ![]const u8 {
+        return std.fmt.allocPrint(self.arena.allocator(), "lls_g_{s}", .{try self.mangle(name)});
+    }
+
+    fn localName(self: *Emitter, name: []const u8) ![]const u8 {
+        self.counter += 1;
+        return std.fmt.allocPrint(self.arena.allocator(), "lls_l{d}_{s}", .{ self.counter, try self.mangle(name) });
+    }
+
+    fn paramArgName(self: *Emitter, name: []const u8) ![]const u8 {
+        return std.fmt.allocPrint(self.arena.allocator(), "lls_arg_{s}", .{try self.mangle(name)});
+    }
+
+    fn zigString(self: *Emitter, s: []const u8) ![]const u8 {
+        const a = self.arena.allocator();
+        var out: std.ArrayList(u8) = .empty;
+        try out.append(a, '"');
+        for (s) |ch| {
+            switch (ch) {
+                '"' => try out.appendSlice(a, "\\\""),
+                '\\' => try out.appendSlice(a, "\\\\"),
+                '\n' => try out.appendSlice(a, "\\n"),
+                '\r' => try out.appendSlice(a, "\\r"),
+                '\t' => try out.appendSlice(a, "\\t"),
+                else => {
+                    if (ch >= 0x20 and ch <= 0x7e) {
+                        try out.append(a, ch);
+                    } else {
+                        try out.writer(a).print("\\x{X:0>2}", .{ch});
+                    }
+                },
+            }
+        }
+        try out.append(a, '"');
+        return out.toOwnedSlice(a);
+    }
+
+    // --- Globals -----------------------------------------------------------
+
+    fn isImportDecl(decl: *const ast_mod.Declaration) bool {
+        if (decl.value.* != .call) return false;
+        const c = decl.value.call;
+        return c.callee.* == .primary and std.mem.eql(u8, c.callee.primary.name, "@import");
+    }
+
+    fn collectGlobals(self: *Emitter) !void {
+        const a = self.arena.allocator();
+        for (self.doc.statements) |s| {
+            if (s.* != .declaration) continue;
+            const d = &s.declaration;
+            if (isImportDecl(d)) continue;
+            if (self.reach) |*r| {
+                if (!r.shouldEmitTopLevel(self.doc, s)) continue;
+            }
+            if (self.globals.contains(d.name)) continue;
+            const display = self.displayForDeclValue(d) catch |err| switch (err) {
+                error.CompileError => return error.CompileError,
+                else => return err,
+            };
+            const g = try a.create(Global);
+            g.* = .{
+                .name = d.name,
+                .zig_name = try self.globalName(d.name),
+                .display = display,
+                .node = s,
+            };
+            try self.globals.put(d.name, g);
+        }
+    }
+
+    fn displayForDeclValue(self: *Emitter, d: *const ast_mod.Declaration) ![]const u8 {
+        if (d.type_annotation) |ann| {
+            if (try from_ast.typeAstToDisplay(ann, self.state)) |disp| return disp;
+        }
+        if (self.state.type_of_results.get(d.value)) |disp| return disp;
+        if (from_ast.resolveType(self.state, d.value)) |disp| return disp;
+        return self.failAt(d.value, "native backend cannot infer the type of '{s}'; add an annotation", .{d.name});
+    }
+
+    fn emitGlobalDecls(self: *Emitter) !void {
+        const a = self.arena.allocator();
+        var names: std.ArrayList([]const u8) = .empty;
+        var it = self.globals.keyIterator();
+        while (it.next()) |name| try names.append(a, name.*);
+        std.mem.sort([]const u8, names.items, {}, struct {
+            fn lessThan(_: void, lhs: []const u8, rhs: []const u8) bool {
+                return std.mem.lessThan(u8, lhs, rhs);
+            }
+        }.lessThan);
+        for (names.items) |name| {
+            const g = self.globals.get(name).?;
+            const vt = try self.classify(g.node, g.display);
+            try self.requireValueType(g.node, vt);
+            try self.writer.print("var {s}: {s} = {s};\n", .{ g.zig_name, vt.zig, try self.zeroValue(vt) });
+        }
+        if (self.globals.count() > 0) try self.writer.writeAll("\n");
+    }
+
+    fn zeroValue(self: *Emitter, t: ValType) ![]const u8 {
+        return switch (t.kind) {
+            .int => "0",
+            .float => "0.0",
+            .bool => "false",
+            .string => "\"\"",
+            else => self.failNoLoc("native backend cannot zero-initialize type '{s}'", .{t.display}),
+        };
+    }
+
+    // --- Function discovery / emission ------------------------------------
+
+    fn emitFunctions(self: *Emitter) !void {
+        const a = self.arena.allocator();
+        var names: std.ArrayList([]const u8) = .empty;
+        if (self.reach) |*r| {
+            var it = r.functions.keyIterator();
+            while (it.next()) |name| try names.append(a, name.*);
+        }
+        std.mem.sort([]const u8, names.items, {}, struct {
+            fn lessThan(_: void, lhs: []const u8, rhs: []const u8) bool {
+                return std.mem.lessThan(u8, lhs, rhs);
+            }
+        }.lessThan);
+
+        for (names.items) |name| {
+            const def = self.state.functions.get(name) orelse continue;
+            try self.emitFunction(name, def);
+        }
+    }
+
+    fn emitFunction(self: *Emitter, name: []const u8, def: state_mod.FunctionDef) !void {
+        if (def.node.* != .function_decl) {
+            return self.failAt(def.node, "native backend cannot emit non-function '{s}'", .{name});
+        }
+        const f = &def.node.function_decl;
+        const params = switch (f.params.*) {
+            .params => |p| p.params,
+            else => return self.failAt(f.params, "native backend cannot emit this parameter list", .{}),
+        };
+        if (f.params.params.is_variadic) {
+            return self.failAt(f.params, "native backend does not support variadic functions yet", .{});
+        }
+
+        try self.prepareFunction(f, params);
+        const ret = try self.functionReturnType(name, def);
+        self.cur_ret = ret;
+
+        const zig_fn = try self.fnName(name);
+        try self.writer.print("fn {s}(ctx: *rt.Context", .{zig_fn});
+        for (self.params.items) |p| {
+            try self.writer.print(", {s}: {s}", .{ p.arg_name, p.zig });
+        }
+        try self.writer.print(") anyerror!{s} {{\n", .{ret.zig});
+
+        const file = if (f.loc.path.len > 0) f.loc.path else self.doc.path;
+        try self.writer.print("    const _mark = try ctx.enterFunction({s}, {s});\n", .{
+            try self.zigString(name),
+            try self.zigString(file),
+        });
+        try self.writer.writeAll("    defer ctx.leaveFunction(_mark);\n");
+
+        // Parameters: copy mutable ones into locals; silence unread ones.
+        for (self.params.items) |p| {
+            const b = self.scopes.items[0].get(p.name).?;
+            if (b.assigned) {
+                b.zig_name = try self.localName(p.name);
+                try self.writer.print("    var {s}: {s} = {s};\n", .{ b.zig_name, p.zig, p.arg_name });
+                if (!b.read) try self.writer.print("    _ = &{s};\n", .{b.zig_name});
+            } else if (!b.read) {
+                try self.writer.print("    _ = {s};\n", .{p.arg_name});
+            }
+        }
+
+        const block = switch (f.body.*) {
+            .block => |b| b,
+            else => return self.failAt(f.body, "native backend expects a block body", .{}),
+        };
+        self.pushScope();
+        try self.emitStatements(block.statements);
+        self.popScope();
+
+        try self.writer.writeAll("}\n\n");
+    }
+
+    fn functionReturnType(self: *Emitter, name: []const u8, def: state_mod.FunctionDef) !ValType {
+        const display = def.return_type orelse blk: {
+            if (def.node.* == .function_decl) {
+                if (def.node.function_decl.return_type) |rt| {
+                    if (try from_ast.typeAstToDisplay(rt, self.state)) |disp| break :blk disp;
+                }
+            }
+            break :blk "void";
+        };
+        const t = try self.classify(def.node, display);
+        if (t.clean.len == 0) {
+            return self.failAt(def.node, "native backend does not support the return type of '{s}'", .{name});
+        }
+        if (t.kind == .other) {
+            return self.failAt(def.node, "native backend (Phase 2) does not support return type '{s}'", .{display});
+        }
+        return t;
+    }
+
+    // --- Pre-scan (var/const + unused locals) -----------------------------
+
+    fn prepareFunction(self: *Emitter, f: *const ast_mod.FunctionDecl, params: []const ast_mod.Param) !void {
+        const a = self.arena.allocator();
+        self.infos.clearRetainingCapacity();
+        self.scopes.clearRetainingCapacity();
+        self.params.clearRetainingCapacity();
+
+        var base = std.StringHashMap(*Binding).init(a);
+        for (params) |p| {
+            if (p.is_rest) return self.failAt(f.params, "native backend does not support rest parameters yet", .{});
+            const display = if (p.type_annotation) |ann|
+                (try from_ast.typeAstToDisplay(ann, self.state)) orelse "unknown"
+            else
+                "unknown";
+            const vt = try self.classify(f.params, display);
+            try self.requireValueType(f.params, vt);
+            const b = try a.create(Binding);
+            b.* = .{
+                .name = p.name,
+                .zig_name = try self.paramArgName(p.name),
+                .display = display,
+                .is_param = true,
+            };
+            try base.put(p.name, b);
+            try self.params.append(a, .{
+                .name = p.name,
+                .arg_name = b.zig_name,
+                .display = display,
+                .zig = vt.zig,
+            });
+        }
+        try self.scopes.append(a, base);
+
+        try self.preScanStmt(f.body);
+    }
+
+    fn pushScope(self: *Emitter) void {
+        self.scopes.append(self.arena.allocator(), std.StringHashMap(*Binding).init(self.arena.allocator())) catch unreachable;
+    }
+
+    fn popScope(self: *Emitter) void {
+        _ = self.scopes.pop();
+    }
+
+    fn markRead(self: *Emitter, name: []const u8) void {
+        var i = self.scopes.items.len;
+        while (i > 0) {
+            i -= 1;
+            if (self.scopes.items[i].get(name)) |b| {
+                b.read = true;
+                return;
+            }
+        }
+    }
+
+    fn markAssigned(self: *Emitter, name: []const u8) void {
+        var i = self.scopes.items.len;
+        while (i > 0) {
+            i -= 1;
+            if (self.scopes.items[i].get(name)) |b| {
+                b.assigned = true;
+                return;
+            }
+        }
+    }
+
+    fn preScanStmt(self: *Emitter, node: *ast_mod.Node) anyerror!void {
+        switch (node.*) {
+            .declaration => |d| {
+                try self.preScanExpr(d.value);
+                const b = try self.arena.allocator().create(Binding);
+                b.* = .{
+                    .name = d.name,
+                    .zig_name = "",
+                    .display = self.displayForDeclValue(&d) catch "unknown",
+                };
+                try self.infos.put(node, b);
+                try self.scopes.items[self.scopes.items.len - 1].put(d.name, b);
+            },
+            .block => |b| {
+                self.pushScope();
+                for (b.statements) |s| try self.preScanStmt(s);
+                self.popScope();
+            },
+            .return_expr => |r| {
+                if (r.return_value) |v| try self.preScanExpr(v);
+            },
+            .defer_stmt => |d| try self.preScanStmt(d.body),
+            .break_expr => |b| {
+                if (b.value) |v| try self.preScanExpr(v);
+            },
+            .continue_expr => {},
+            .if_expr => |i| {
+                try self.preScanExpr(i.condition);
+                if (i.pipe_value) |v| try self.preScanExpr(v);
+                try self.preScanStmt(i.body);
+                if (i.else_body) |e| try self.preScanStmt(e);
+            },
+            .for_expr => |f| {
+                try self.preScanExpr(f.expr);
+                try self.preScanStmt(f.body);
+            },
+            .switch_expr => |sw| {
+                try self.preScanExpr(sw.condition);
+                for (sw.prongs) |prong| {
+                    for (prong.patterns) |p| try self.preScanExpr(p);
+                    try self.preScanStmt(prong.body);
+                }
+            },
+            .function_decl => {},
+            .struct_decl, .enum_decl, .error_decl, .type_decl, .extern_decl => {},
+            else => try self.preScanExpr(node),
+        }
+    }
+
+    fn preScanExpr(self: *Emitter, node: *ast_mod.Node) anyerror!void {
+        switch (node.*) {
+            .primary => |p| {
+                if (p.kind == .identifier or p.kind == .register) self.markRead(p.name);
+            },
+            .literal => {},
+            .binary => |b| {
+                try self.preScanExpr(b.left);
+                try self.preScanExpr(b.right);
+            },
+            .unary => |u| try self.preScanExpr(u.arg),
+            .assignment => |asn| {
+                try self.preScanAssignmentTarget(asn.left);
+                try self.preScanExpr(asn.right);
+            },
+            .call => |c| {
+                for (c.args) |arg| try self.preScanExpr(arg);
+                if (c.callee.* == .member) try self.preScanExpr(c.callee.member.object);
+            },
+            .member => |m| {
+                try self.preScanExpr(m.object);
+                try self.preScanExpr(m.property);
+            },
+            .index => |ix| {
+                try self.preScanExpr(ix.object);
+                if (ix.index) |v| try self.preScanExpr(v);
+                if (ix.end) |v| try self.preScanExpr(v);
+            },
+            .array_literal => |al| {
+                for (al.elements) |e| try self.preScanExpr(e);
+            },
+            .try_expr => |t| try self.preScanExpr(t.expression),
+            .unwrap_expr => |u| try self.preScanExpr(u.expression),
+            .error_expr => |e| {
+                for (e.args) |arg| try self.preScanExpr(arg);
+            },
+            .struct_init => |si| {
+                try self.preScanExpr(si.type_expr);
+                for (si.fields) |field| try self.preScanExpr(field.value);
+            },
+            .comptime_expr => |ce| try self.preScanExpr(ce.expr),
+            .block, .return_expr, .defer_stmt, .break_expr, .continue_expr, .if_expr, .for_expr, .switch_expr => try self.preScanStmt(node),
+            else => {},
+        }
+    }
+
+    fn preScanAssignmentTarget(self: *Emitter, node: *ast_mod.Node) anyerror!void {
+        switch (node.*) {
+            .primary => |p| {
+                if (p.kind == .identifier or p.kind == .register) self.markAssigned(p.name);
+            },
+            else => try self.preScanExpr(node),
+        }
+    }
+
+    // --- Statements --------------------------------------------------------
+
+    fn emitStatements(self: *Emitter, statements: []*ast_mod.Node) !void {
+        for (statements) |s| try self.emitStmt(s);
+    }
+
+    fn emitLineMarker(self: *Emitter, node: *ast_mod.Node) !void {
+        if (self.options.release) return;
+        const loc = node.loc();
+        if (loc.line == 0) return;
+        try self.writer.print("    ctx.setLine({d}, {d});\n", .{ loc.line, loc.column });
+    }
+
+    fn emitStmt(self: *Emitter, node: *ast_mod.Node) anyerror!void {
+        try self.emitLineMarker(node);
+        switch (node.*) {
+            .declaration => |*d| {
+                if (isImportDecl(d)) return;
+                try self.emitLocalDeclaration(node, d);
+            },
+            .return_expr => |r| {
+                if (r.return_value) |v| {
+                    if (self.cur_ret.kind == .void) {
+                        return self.failAt(v, "cannot return a value from a void function", .{});
+                    }
+                    const code = try self.emitValueCoerced(v, self.cur_ret);
+                    try self.writer.print("    return {s};\n", .{code});
+                } else {
+                    if (self.cur_ret.kind != .void) {
+                        return self.failAt(node, "missing return value for type '{s}'", .{self.cur_ret.display});
+                    }
+                    try self.writer.writeAll("    return;\n");
+                }
+            },
+            .block => |b| {
+                try self.writer.writeAll("    {\n");
+                self.pushScope();
+                try self.emitStatements(b.statements);
+                self.popScope();
+                try self.writer.writeAll("    }\n");
+            },
+            .assignment => |*asn| try self.emitAssignment(node, asn),
+            .defer_stmt => return self.failAt(node, "native backend (Phase 3) does not support @defer yet", .{}),
+            .if_expr, .for_expr, .switch_expr, .break_expr, .continue_expr => {
+                return self.failAt(node, "native backend (Phase 3) does not support {s} yet", .{@tagName(node.*)});
+            },
+            .function_decl, .struct_decl, .enum_decl, .error_decl, .type_decl, .extern_decl => {},
+            else => try self.emitExprStatement(node),
+        }
+    }
+
+    fn emitExprStatement(self: *Emitter, node: *ast_mod.Node) !void {
+        const t = try self.valueType(node);
+        if (t.may_error) {
+            return self.failAt(node, "error-union value must be handled with '?' or returned", .{});
+        }
+        const code = try self.emitExpr(node);
+        if (t.kind == .void) {
+            try self.writer.print("    {s};\n", .{code});
+        } else {
+            try self.writer.print("    _ = {s};\n", .{code});
+        }
+    }
+
+    fn emitLocalDeclaration(self: *Emitter, node: *ast_mod.Node, d: *const ast_mod.Declaration) !void {
+        const info = self.infos.get(node) orelse {
+            return self.failAt(node, "internal: missing binding for local '{s}'", .{d.name});
+        };
+        const vt = try self.classify(node, info.display);
+        try self.requireValueType(node, vt);
+        if (info.zig_name.len == 0) info.zig_name = try self.localName(d.name);
+
+        const init_code = if (d.type_annotation != null)
+            try self.emitValueCoerced(d.value, vt)
+        else
+            try self.emitExpr(d.value);
+
+        const kw = if (info.assigned) "var" else "const";
+        try self.writer.print("    {s} {s}: {s} = {s};\n", .{ kw, info.zig_name, vt.zig, init_code });
+
+        try self.scopes.items[self.scopes.items.len - 1].put(d.name, info);
+        if (!info.read) {
+            if (info.assigned) {
+                try self.writer.print("    _ = &{s};\n", .{info.zig_name});
+            } else {
+                try self.writer.print("    _ = {s};\n", .{info.zig_name});
+            }
+        }
+    }
+
+    fn emitAssignment(self: *Emitter, node: *ast_mod.Node, asn: *const ast_mod.Assignment) !void {
+        const name = switch (asn.left.*) {
+            .primary => |p| if (p.kind == .identifier or p.kind == .register) p.name else {
+                return self.failAt(asn.left, "native backend (Phase 2) only supports simple assignments", .{});
+            },
+            else => return self.failAt(asn.left, "native backend (Phase 2) only supports simple assignments", .{}),
+        };
+        if (!std.mem.eql(u8, asn.operator, "=")) {
+            return self.failAt(node, "native backend (Phase 2) does not support '{s}' yet", .{asn.operator});
+        }
+
+        const target = try self.lookupBinding(asn.left, name);
+        const value_t = try self.valueType(asn.right);
+        if (value_t.may_error) {
+            return self.failAt(asn.right, "error-union value must be handled with '?' before assignment", .{});
+        }
+        const vt = try self.classify(node, target.display);
+        try self.requireValueType(node, vt);
+        const rhs = try self.emitValueCoerced(asn.right, vt);
+        try self.writer.print("    {s} = {s};\n", .{ target.zig_name, rhs });
+    }
+
+    const Resolved = struct {
+        zig_name: []const u8,
+        display: []const u8,
+    };
+
+    fn lookupBinding(self: *Emitter, node: *ast_mod.Node, name: []const u8) !Resolved {
+        var i = self.scopes.items.len;
+        while (i > 0) {
+            i -= 1;
+            if (self.scopes.items[i].get(name)) |b| {
+                return .{ .zig_name = b.zig_name, .display = b.display };
+            }
+        }
+        if (self.globals.get(name)) |g| {
+            return .{ .zig_name = g.zig_name, .display = g.display };
+        }
+        return self.failAt(node, "native backend cannot resolve '{s}' (imports/aggregates are Phase 3)", .{name});
+    }
+
+    // --- Top-level ---------------------------------------------------------
+
+    fn emitTopLevel(self: *Emitter) !void {
+        try self.writer.writeAll("fn lls_top_level(ctx: *rt.Context) anyerror!void {\n");
+        try self.writer.writeAll("    ctx.setLine(0, 0);\n");
+        self.pushScope();
+        for (self.doc.statements) |s| {
+            if (s.* == .function_decl or s.* == .struct_decl or s.* == .enum_decl or
+                s.* == .error_decl or s.* == .type_decl or s.* == .extern_decl) continue;
+            if (self.reach) |*r| {
+                if (!r.shouldEmitTopLevel(self.doc, s)) continue;
+            }
+            if (s.* == .declaration) {
+                const d = &s.declaration;
+                if (isImportDecl(d)) continue;
+                const g = self.globals.get(d.name) orelse {
+                    return self.failAt(s, "native backend (Phase 2) does not support this top-level declaration", .{});
+                };
+                try self.emitLineMarker(s);
+                const vt = try self.classify(s, g.display);
+                const code = try self.emitValueCoerced(d.value, vt);
+                try self.writer.print("    {s} = {s};\n", .{ g.zig_name, code });
+                continue;
+            }
+            try self.emitStmt(s);
+        }
+        self.popScope();
+        try self.writer.writeAll("}\n\n");
+    }
+
+    fn emitEntry(self: *Emitter) !void {
+        try self.writer.writeAll(
+            \\fn lls_finish(err: anyerror) noreturn {
+            \\    if (err == error.OutOfMemory) {
+            \\        rt.io.failMsg("Out of memory") catch {};
+            \\    }
+            \\    rt.exitProcess(1);
+            \\}
+            \\
+            \\pub fn main() void {
+            \\    var ctx = rt.Context.init(.{}) catch {
+            \\        rt.io.writeStderr("Error: out of memory\n");
+            \\        rt.exitProcess(1);
+            \\    };
+            \\    ctx.activate();
+            \\    defer ctx.deinit();
+            \\    _ = lls_top_level(&ctx) catch |err| lls_finish(err);
+            \\
+        );
+        try self.writer.print("    _ = {s}(&ctx) catch |err| lls_finish(err);\n", .{try self.fnName("main")});
+        try self.writer.writeAll("}\n");
+    }
+
+    // --- Types -------------------------------------------------------------
+
+    fn classify(self: *Emitter, node: *ast_mod.Node, display_in: []const u8) !ValType {
+        const a = self.arena.allocator();
+        const display = std.mem.trim(u8, display_in, " \t");
+        var parts: std.ArrayList([]const u8) = .empty;
+        var may_error = false;
+        var has_custom_error = false;
+        var it = std.mem.splitSequence(u8, display, "|");
+        while (it.next()) |part| {
+            const p = std.mem.trim(u8, part, " \t");
+            if (p.len == 0) continue;
+            if (std.mem.eql(u8, p, "error")) {
+                may_error = true;
+                continue;
+            }
+            if (self.state.error_sets.contains(p)) {
+                may_error = true;
+                has_custom_error = true;
+                continue;
+            }
+            try parts.append(a, p);
+        }
+        if (has_custom_error) {
+            return self.failAt(node, "native backend does not support custom error sets yet ('{s}')", .{display});
+        }
+
+        const clean = if (parts.items.len == 1)
+            parts.items[0]
+        else if (parts.items.len == 0)
+            "void"
+        else
+            try std.mem.join(a, " | ", parts.items);
+
+        var t: ValType = .{ .display = display, .clean = clean, .kind = .other, .zig = "void", .may_error = may_error };
+        if (std.mem.eql(u8, clean, "void")) {
+            t.kind = .void;
+            t.zig = "void";
+            return t;
+        }
+        if (isByteSliceDisplay(clean)) {
+            t.kind = .string;
+            t.zig = "[]const u8";
+            return t;
+        }
+        if (std.mem.eql(u8, clean, "u1") or std.mem.eql(u8, clean, "bool") or std.mem.eql(u8, clean, "boolean")) {
+            t.kind = .bool;
+            t.zig = "bool";
+            t.width = .u1;
+            return t;
+        }
+        if (widths.fromName(clean)) |w| {
+            t.width = w;
+            if (w.isFloat()) {
+                t.kind = .float;
+                t.zig = switch (w.concrete()) {
+                    .f32 => "f32",
+                    else => "f64",
+                };
+            } else {
+                t.kind = .int;
+                t.zig = switch (w.concrete()) {
+                    .i8 => "i8",
+                    .i16 => "i16",
+                    .i32 => "i32",
+                    .i64, .isize => "i64",
+                    .u8 => "u8",
+                    .u16 => "u16",
+                    .u32 => "u32",
+                    .u64, .usize => "u64",
+                    .u1 => "bool",
+                    else => "i64",
+                };
+            }
+            return t;
+        }
+        return t;
+    }
+
+    fn requireValueType(self: *Emitter, node: *ast_mod.Node, t: ValType) !void {
+        if (t.may_error) {
+            return self.failAt(node, "native backend does not support error values yet (handle with '?')", .{});
+        }
+        if (t.kind == .other) {
+            return self.failAt(node, "native backend (Phase 2) does not support type '{s}'", .{t.display});
+        }
+        if (t.kind == .void) {
+            return self.failAt(node, "native backend cannot bind a void value", .{});
+        }
+    }
+
+    fn valueType(self: *Emitter, node: *ast_mod.Node) !ValType {
+        const display = try self.displayForExpr(node);
+        return self.classify(node, display);
+    }
+
+    fn displayForExpr(self: *Emitter, node: *ast_mod.Node) ![]const u8 {
+        if (self.state.type_of_results.get(node)) |disp| return disp;
+        switch (node.*) {
+            .primary => |p| {
+                if (p.kind == .identifier or p.kind == .register) {
+                    const resolved = try self.lookupBinding(node, p.name);
+                    return resolved.display;
+                }
+            },
+            else => {},
+        }
+        if (from_ast.resolveType(self.state, node)) |disp| return disp;
+        return self.failAt(node, "native backend cannot infer the type of this expression", .{});
+    }
+
+    // --- Expressions -------------------------------------------------------
+
+    fn emitExpr(self: *Emitter, node: *ast_mod.Node) anyerror![]const u8 {
+        switch (node.*) {
+            .literal => |lit| return self.emitLiteral(node, lit),
+            .primary => |p| {
+                if (p.kind != .identifier and p.kind != .register) {
+                    return self.failAt(node, "native backend (Phase 2) does not support '{s}' operands", .{@tagName(p.kind)});
+                }
+                const resolved = try self.lookupBinding(node, p.name);
+                return resolved.zig_name;
+            },
+            .binary => |b| return self.emitBinary(node, &b),
+            .unary => |u| return self.emitUnary(node, &u),
+            .call => |c| return self.emitCall(node, &c),
+            .try_expr => |t| {
+                if (t.expression.* != .call) {
+                    return self.failAt(node, "native backend (Phase 2) only supports '?' on direct calls", .{});
+                }
+                return self.emitExpr(t.expression);
+            },
+            .declaration, .return_expr, .block, .if_expr, .for_expr, .switch_expr, .break_expr, .continue_expr, .defer_stmt, .function_decl, .struct_decl, .enum_decl, .error_decl, .type_decl, .extern_decl => {
+                return self.failAt(node, "native backend (Phase 2) does not support {s} in expression position", .{@tagName(node.*)});
+            },
+            else => {
+                return self.failAt(node, "native backend (Phase 2) does not support {s} yet", .{@tagName(node.*)});
+            },
+        }
+    }
+
+    fn emitLiteral(self: *Emitter, node: *ast_mod.Node, lit: ast_mod.Literal) ![]const u8 {
+        switch (lit.literal_type) {
+            .string => return self.zigString(lit.value),
+            .boolean => return lit.value,
+            .number, .hex, .octal, .binary => return lit.value,
+            .null => return self.failAt(node, "native backend (Phase 2) does not support null values yet", .{}),
+        }
+    }
+
+    fn emitUnary(self: *Emitter, node: *ast_mod.Node, u: *const ast_mod.Unary) ![]const u8 {
+        const a = self.arena.allocator();
+        if (std.mem.eql(u8, u.operator, "const")) return self.emitExpr(u.arg);
+        if (std.mem.eql(u8, u.operator, "&")) {
+            return self.failAt(node, "native backend (Phase 2) does not support address-of yet", .{});
+        }
+        const t = try self.valueType(u.arg);
+        if (t.may_error) {
+            return self.failAt(u.arg, "error-union value must be handled with '?' first", .{});
+        }
+        if (std.mem.eql(u8, u.operator, "!")) {
+            if (t.kind != .bool) {
+                return self.failAt(node, "'!' requires a boolean operand, got '{s}'", .{t.display});
+            }
+            return std.fmt.allocPrint(a, "(!{s})", .{try self.emitExpr(u.arg)});
+        }
+        if (std.mem.eql(u8, u.operator, "-")) {
+            if (t.kind == .float) {
+                const fn_name = if (std.mem.eql(u8, t.zig, "f32")) "negF32" else "negF64";
+                return std.fmt.allocPrint(a, "(rt.arith.{s}({s}))", .{ fn_name, try self.emitExpr(u.arg) });
+            }
+            if (t.kind != .int) {
+                return self.failAt(node, "unary '-' requires a numeric operand", .{});
+            }
+            if (t.isI64()) {
+                return std.fmt.allocPrint(a, "(try rt.arith.neg({s}))", .{try self.emitExpr(u.arg)});
+            }
+            const inner = try std.fmt.allocPrint(a, "(try rt.arith.neg({s}))", .{try self.emitI64Operand(u.arg)});
+            return self.wrapWidth(t, inner);
+        }
+        if (std.mem.eql(u8, u.operator, "~")) {
+            if (t.kind != .int) {
+                return self.failAt(node, "unary '~' requires an integer operand", .{});
+            }
+            if (t.isI64()) {
+                return std.fmt.allocPrint(a, "(rt.arith.bnot({s}))", .{try self.emitExpr(u.arg)});
+            }
+            const inner = try std.fmt.allocPrint(a, "(rt.arith.bnot({s}))", .{try self.emitI64Operand(u.arg)});
+            return self.wrapWidth(t, inner);
+        }
+        return self.failAt(node, "native backend does not support unary '{s}'", .{u.operator});
+    }
+
+    fn emitBinary(self: *Emitter, node: *ast_mod.Node, b: *const ast_mod.Binary) ![]const u8 {
+        const a = self.arena.allocator();
+        const op = b.operator;
+        if (std.mem.eql(u8, op, "&&") or std.mem.eql(u8, op, "||")) {
+            const lt = try self.valueType(b.left);
+            const rt = try self.valueType(b.right);
+            if (lt.kind != .bool or rt.kind != .bool) {
+                return self.failAt(node, "logical '{s}' requires boolean operands", .{op});
+            }
+            const zig_op = if (std.mem.eql(u8, op, "&&")) "and" else "or";
+            return std.fmt.allocPrint(a, "({s} {s} {s})", .{ try self.emitExpr(b.left), zig_op, try self.emitExpr(b.right) });
+        }
+
+        if (std.mem.eql(u8, op, "+") and (try self.isStringy(b.left) or try self.isStringy(b.right))) {
+            const lt = try self.valueType(b.left);
+            const rt = try self.valueType(b.right);
+            if (lt.kind != .string or rt.kind != .string) {
+                return self.failAt(node, "string concatenation requires two string operands", .{});
+            }
+            return std.fmt.allocPrint(a, "(try rt.mem.concat(ctx, {s}, {s}))", .{
+                try self.emitExpr(b.left),
+                try self.emitExpr(b.right),
+            });
+        }
+
+        if (isComparison(op)) return self.emitComparison(node, b);
+
+        const lt = try self.valueType(b.left);
+        const rt = try self.valueType(b.right);
+        if (lt.may_error or rt.may_error) {
+            return self.failAt(node, "error-union operand must be handled with '?' first", .{});
+        }
+        if (lt.kind == .int and rt.kind == .int) return self.emitIntBinary(node, b, lt);
+        if (lt.kind == .float or rt.kind == .float) return self.emitFloatBinary(node, b, lt, rt);
+        return self.failAt(node, "native backend (Phase 2) does not support '{s}' on '{s}' and '{s}'", .{
+            op, lt.display, rt.display,
+        });
+    }
+
+    fn isStringy(self: *Emitter, node: *ast_mod.Node) !bool {
+        const t = try self.valueType(node);
+        return t.kind == .string;
+    }
+
+    fn emitComparison(self: *Emitter, node: *ast_mod.Node, b: *const ast_mod.Binary) ![]const u8 {
+        const a = self.arena.allocator();
+        const op = b.operator;
+        const lt = try self.valueType(b.left);
+        const rt = try self.valueType(b.right);
+        if (lt.may_error or rt.may_error) {
+            return self.failAt(node, "error-union operand must be handled with '?' first", .{});
+        }
+
+        const eq = std.mem.eql(u8, op, "==") or std.mem.eql(u8, op, "!=");
+        if (eq) {
+            const negate = std.mem.eql(u8, op, "!=");
+            if (lt.kind == .string and rt.kind == .string) {
+                const base = try std.fmt.allocPrint(a, "rt.arith.eqStr({s}, {s})", .{
+                    try self.emitExpr(b.left), try self.emitExpr(b.right),
+                });
+                return if (negate) std.fmt.allocPrint(a, "(!{s})", .{base}) else base;
+            }
+            if (lt.kind == .bool and rt.kind == .bool) {
+                const base = try std.fmt.allocPrint(a, "rt.arith.eqBool({s}, {s})", .{
+                    try self.emitExpr(b.left), try self.emitExpr(b.right),
+                });
+                return if (negate) std.fmt.allocPrint(a, "(!{s})", .{base}) else base;
+            }
+            if (lt.kind == .int and rt.kind == .int) {
+                const base = try std.fmt.allocPrint(a, "rt.arith.eqI64({s}, {s})", .{
+                    try self.emitI64Operand(b.left), try self.emitI64Operand(b.right),
+                });
+                return if (negate) std.fmt.allocPrint(a, "(!{s})", .{base}) else base;
+            }
+            if (lt.kind == .float and rt.kind == .float) {
+                const l = try self.emitF64Operand(b.left);
+                const r = try self.emitF64Operand(b.right);
+                const base = try std.fmt.allocPrint(a, "rt.arith.eqF64({s}, {s})", .{ l, r });
+                return if (negate) std.fmt.allocPrint(a, "(!{s})", .{base}) else base;
+            }
+            return self.failAt(node, "cannot compare '{s}' with '{s}'", .{ lt.display, rt.display });
+        }
+
+        if (lt.kind == .int and rt.kind == .int) {
+            const fn_name = switch (op[0]) {
+                '<' => if (op.len == 1) "ltI64" else "leI64",
+                '>' => if (op.len == 1) "gtI64" else "geI64",
+                else => return self.failAt(node, "unsupported comparison '{s}'", .{op}),
+            };
+            return std.fmt.allocPrint(a, "rt.arith.{s}({s}, {s})", .{
+                fn_name, try self.emitI64Operand(b.left), try self.emitI64Operand(b.right),
+            });
+        }
+        if (lt.kind == .float or rt.kind == .float) {
+            const use_f32 = std.mem.eql(u8, lt.zig, "f32") and std.mem.eql(u8, rt.zig, "f32");
+            const suffix: []const u8 = if (use_f32) "F32" else "F64";
+            const prefix = switch (op[0]) {
+                '<' => if (op.len == 1) "lt" else "le",
+                '>' => if (op.len == 1) "gt" else "ge",
+                else => return self.failAt(node, "unsupported comparison '{s}'", .{op}),
+            };
+            const fn_name = try std.fmt.allocPrint(a, "{s}{s}", .{ prefix, suffix });
+            const l = if (use_f32) try self.emitF32Operand(b.left) else try self.emitF64Operand(b.left);
+            const r = if (use_f32) try self.emitF32Operand(b.right) else try self.emitF64Operand(b.right);
+            return std.fmt.allocPrint(a, "rt.arith.{s}({s}, {s})", .{ fn_name, l, r });
+        }
+        return self.failAt(node, "cannot order '{s}' and '{s}'", .{ lt.display, rt.display });
+    }
+
+    fn emitIntBinary(self: *Emitter, node: *ast_mod.Node, b: *const ast_mod.Binary, lt: ValType) ![]const u8 {
+        const a = self.arena.allocator();
+        const op = b.operator;
+        const w = lt.width orelse return self.failAt(node, "missing integer width", .{});
+
+        var checked_call: ?[]const u8 = null;
+        var plain_call: ?[]const u8 = null;
+        const wrap_needed = !(w == .i64 or w == .isize);
+
+        if (std.mem.eql(u8, op, "+") or std.mem.eql(u8, op, "-") or std.mem.eql(u8, op, "*")) {
+            const base = switch (op[0]) {
+                '+' => "add",
+                '-' => "sub",
+                else => "mul",
+            };
+            if (!wrap_needed) {
+                plain_call = try std.fmt.allocPrint(a, "(try rt.arith.{s}({s}, {s}))", .{
+                    base, try self.emitI64Operand(b.left), try self.emitI64Operand(b.right),
+                });
+            } else {
+                checked_call = try std.fmt.allocPrint(a, "(try rt.arith.{s}Checked(.{s}, {s}, {s}))", .{
+                    base, @tagName(w), try self.emitI64Operand(b.left), try self.emitI64Operand(b.right),
+                });
+            }
+        } else if (std.mem.eql(u8, op, "+%") or std.mem.eql(u8, op, "-%") or std.mem.eql(u8, op, "*%")) {
+            const base = switch (op[0]) {
+                '+' => "add",
+                '-' => "sub",
+                else => "mul",
+            };
+            plain_call = try std.fmt.allocPrint(a, "(rt.arith.{s}Wrapped(.{s}, {s}, {s}))", .{
+                base, @tagName(w), try self.emitI64Operand(b.left), try self.emitI64Operand(b.right),
+            });
+        } else if (std.mem.eql(u8, op, "/") or std.mem.eql(u8, op, "%")) {
+            const base = if (std.mem.eql(u8, op, "/")) "div" else "rem";
+            plain_call = try std.fmt.allocPrint(a, "(try rt.arith.{s}({s}, {s}))", .{
+                base, try self.emitI64Operand(b.left), try self.emitI64Operand(b.right),
+            });
+        } else if (std.mem.eql(u8, op, "^") or std.mem.eql(u8, op, "**")) {
+            plain_call = try std.fmt.allocPrint(a, "(rt.arith.pow({s}, {s}))", .{
+                try self.emitI64Operand(b.left), try self.emitI64Operand(b.right),
+            });
+        } else if (std.mem.eql(u8, op, "&") or std.mem.eql(u8, op, "|") or std.mem.eql(u8, op, "~")) {
+            const base = switch (op[0]) {
+                '&' => "band",
+                '|' => "bor",
+                else => "bxor",
+            };
+            plain_call = try std.fmt.allocPrint(a, "(rt.arith.{s}({s}, {s}))", .{
+                base, try self.emitI64Operand(b.left), try self.emitI64Operand(b.right),
+            });
+        } else if (std.mem.eql(u8, op, "<<") or std.mem.eql(u8, op, ">>")) {
+            const base = if (std.mem.eql(u8, op, "<<")) "shl" else "shr";
+            plain_call = try std.fmt.allocPrint(a, "(try rt.arith.{s}({s}, {s}))", .{
+                base, try self.emitI64Operand(b.left), try self.emitI64Operand(b.right),
+            });
+        } else {
+            return self.failAt(node, "native backend (Phase 2) does not support operator '{s}'", .{op});
+        }
+
+        const call = checked_call orelse plain_call.?;
+        return self.wrapWidth(lt, call);
+    }
+
+    fn emitFloatBinary(self: *Emitter, node: *ast_mod.Node, b: *const ast_mod.Binary, lt: ValType, rt: ValType) ![]const u8 {
+        const a = self.arena.allocator();
+        if (lt.kind != .float or rt.kind != .float) {
+            return self.failAt(node, "mixed integer/float arithmetic is not supported yet", .{});
+        }
+        const use_f32 = std.mem.eql(u8, lt.zig, "f32") and std.mem.eql(u8, rt.zig, "f32");
+        const suffix: []const u8 = if (use_f32) "F32" else "F64";
+        const l = if (use_f32) try self.emitF32Operand(b.left) else try self.emitF64Operand(b.left);
+        const r = if (use_f32) try self.emitF32Operand(b.right) else try self.emitF64Operand(b.right);
+        const op = b.operator;
+        if (std.mem.eql(u8, op, "+") or std.mem.eql(u8, op, "-") or std.mem.eql(u8, op, "*") or
+            std.mem.eql(u8, op, "^") or std.mem.eql(u8, op, "**"))
+        {
+            const base = switch (op[0]) {
+                '+' => "add",
+                '-' => "sub",
+                '*' => "mul",
+                else => "pow",
+            };
+            return std.fmt.allocPrint(a, "(rt.arith.{s}{s}({s}, {s}))", .{ base, suffix, l, r });
+        }
+        if (std.mem.eql(u8, op, "/") or std.mem.eql(u8, op, "%")) {
+            const base = if (std.mem.eql(u8, op, "/")) "div" else "mod";
+            return std.fmt.allocPrint(a, "(try rt.arith.{s}{s}({s}, {s}))", .{ base, suffix, l, r });
+        }
+        return self.failAt(node, "native backend (Phase 2) does not support '{s}' on floats", .{op});
+    }
+
+    fn wrapWidth(self: *Emitter, t: ValType, expr: []const u8) ![]const u8 {
+        const a = self.arena.allocator();
+        if (t.isI64()) return expr;
+        if (t.isU64()) return std.fmt.allocPrint(a, "@as(u64, @bitCast({s}))", .{expr});
+        if (t.kind == .bool) return std.fmt.allocPrint(a, "({s} != 0)", .{expr});
+        return std.fmt.allocPrint(a, "@as({s}, @intCast({s}))", .{ t.zig, expr });
+    }
+
+    fn emitI64Operand(self: *Emitter, node: *ast_mod.Node) ![]const u8 {
+        const a = self.arena.allocator();
+        const t = try self.valueType(node);
+        if (t.may_error) return self.failAt(node, "error-union value must be handled with '?' first", .{});
+        if (t.kind != .int) return self.failAt(node, "expected an integer operand, got '{s}'", .{t.display});
+        const code = try self.emitExpr(node);
+        if (t.isU64()) return std.fmt.allocPrint(a, "@as(i64, @bitCast({s}))", .{code});
+        return code;
+    }
+
+    /// Coerce a literal to a concrete type for contexts without one (tuple
+    /// elements, explicit `@as`); ordinary assignments/arguments already
+    /// provide a target type, so they use `emitValueCoerced` directly.
+    fn emitStrongCoercion(self: *Emitter, node: *ast_mod.Node, target: ValType) ![]const u8 {
+        const a = self.arena.allocator();
+        if (node.* == .literal) {
+            const code = try self.emitExpr(node);
+            if (target.kind == .int and isIntLiteral(node)) {
+                return std.fmt.allocPrint(a, "@as({s}, {s})", .{ target.zig, code });
+            }
+            if (target.kind == .float and isNumericLiteral(node)) {
+                return std.fmt.allocPrint(a, "@as({s}, {s})", .{ target.zig, code });
+            }
+            if (target.kind == .string and node.literal.literal_type == .string) {
+                return std.fmt.allocPrint(a, "@as([]const u8, {s})", .{code});
+            }
+        }
+        return self.emitValueCoercedForce(node, target);
+    }
+
+    fn emitF64Operand(self: *Emitter, node: *ast_mod.Node) ![]const u8 {
+        const a = self.arena.allocator();
+        const t = try self.valueType(node);
+        if (t.may_error) return self.failAt(node, "error-union value must be handled with '?' first", .{});
+        const code = try self.emitExpr(node);
+        if (t.kind == .float) {
+            if (std.mem.eql(u8, t.zig, "f32")) return std.fmt.allocPrint(a, "@as(f64, @floatCast({s}))", .{code});
+            return code;
+        }
+        if (t.kind == .int) {
+            if (isBareIntLiteral(node)) return code;
+            return std.fmt.allocPrint(a, "@as(f64, @floatFromInt({s}))", .{code});
+        }
+        return self.failAt(node, "expected a numeric operand, got '{s}'", .{t.display});
+    }
+
+    fn emitF32Operand(self: *Emitter, node: *ast_mod.Node) ![]const u8 {
+        const a = self.arena.allocator();
+        const t = try self.valueType(node);
+        if (t.may_error) return self.failAt(node, "error-union value must be handled with '?' first", .{});
+        const code = try self.emitExpr(node);
+        if (t.kind == .float) {
+            if (std.mem.eql(u8, t.zig, "f64")) return std.fmt.allocPrint(a, "@as(f32, @floatCast({s}))", .{code});
+            return code;
+        }
+        if (t.kind == .int) {
+            if (isBareIntLiteral(node)) return code;
+            return std.fmt.allocPrint(a, "@as(f32, @floatFromInt({s}))", .{code});
+        }
+        return self.failAt(node, "expected a numeric operand, got '{s}'", .{t.display});
+    }
+
+    fn emitValueCoerced(self: *Emitter, node: *ast_mod.Node, target: ValType) ![]const u8 {
+        return self.emitValueCoercedMode(node, target, false);
+    }
+
+    fn emitValueCoercedForce(self: *Emitter, node: *ast_mod.Node, target: ValType) ![]const u8 {
+        return self.emitValueCoercedMode(node, target, true);
+    }
+
+    fn emitValueCoercedMode(self: *Emitter, node: *ast_mod.Node, target: ValType, force: bool) ![]const u8 {
+        const a = self.arena.allocator();
+        const src = try self.valueType(node);
+        if (src.may_error) {
+            return self.failAt(node, "error-union value must be handled with '?' first", .{});
+        }
+        if (target.may_error and target.kind == .other) {
+            return self.failAt(node, "native backend does not support error-union values yet", .{});
+        }
+        const code = try self.emitExpr(node);
+
+        // Literals are already polymorphic; the surrounding declaration,
+        // assignment, return, print, or @as supplies the concrete type.
+        if (node.* == .literal) return code;
+
+        if (src.kind == target.kind and src.zig.len == target.zig.len and
+            std.mem.eql(u8, src.zig, target.zig))
+        {
+            return code;
+        }
+        if (target.kind == .int and src.kind == .int) {
+            if (src.isU64() and target.isI64()) return std.fmt.allocPrint(a, "@as(i64, @bitCast({s}))", .{code});
+            if (src.isI64() and target.isU64()) return std.fmt.allocPrint(a, "@as(u64, @bitCast({s}))", .{code});
+            if (!force and src.width != null and target.width != null and
+                widths.isWidening(src.width.?, target.width.?))
+            {
+                return code;
+            }
+            return std.fmt.allocPrint(a, "@as({s}, @intCast({s}))", .{ target.zig, code });
+        }
+        if (target.kind == .float and src.kind == .float) {
+            if (!force and std.mem.eql(u8, src.zig, "f32") and std.mem.eql(u8, target.zig, "f64")) return code;
+            return std.fmt.allocPrint(a, "@as({s}, @floatCast({s}))", .{ target.zig, code });
+        }
+        if (target.kind == .float and src.kind == .int) {
+            return std.fmt.allocPrint(a, "@as({s}, @floatFromInt({s}))", .{ target.zig, code });
+        }
+        if (target.kind == .void and src.kind == .void) return code;
+        if (target.kind == .bool and src.kind == .bool) return code;
+        if (target.kind == .string and src.kind == .string) return code;
+        return self.failAt(node, "cannot assign '{s}' to '{s}' in native emission", .{ src.display, target.display });
+    }
+
+    fn emitCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) anyerror![]const u8 {
+        const a = self.arena.allocator();
+
+        if (c.callee.* == .primary and std.mem.startsWith(u8, c.callee.primary.name, "@")) {
+            const intrinsic = c.callee.primary.name;
+            if (std.mem.eql(u8, intrinsic, "@as")) {
+                if (c.args.len != 2) return self.failAt(node, "@as expects 2 arguments", .{});
+                const target = try self.valueType(node);
+                if (target.kind == .other or target.kind == .void) {
+                    return self.failAt(node, "native backend (Phase 2) does not support @as to '{s}'", .{target.display});
+                }
+                return self.emitStrongCoercion(c.args[1], target);
+            }
+            if (std.mem.eql(u8, intrinsic, "len")) {
+                if (c.args.len != 1) return self.failAt(node, "len expects 1 argument", .{});
+                const at = try self.valueType(c.args[0]);
+                if (at.kind != .string) {
+                    return self.failAt(node, "len of '{s}' is not supported in Phase 2", .{at.display});
+                }
+                return std.fmt.allocPrint(a, "@as(i64, @intCast(({s}).len))", .{try self.emitExpr(c.args[0])});
+            }
+            return self.failAt(node, "native backend (Phase 2) does not support intrinsic '{s}'", .{intrinsic});
+        }
+
+        if (c.callee.* != .primary) {
+            return self.failAt(node, "native backend (Phase 2) only supports direct function calls", .{});
+        }
+        const callee = c.callee.primary.name;
+
+        if (std.mem.eql(u8, callee, "print")) {
+            var args_buf: std.ArrayList([]const u8) = .empty;
+            for (c.args) |arg| {
+                const at = try self.valueType(arg);
+                if (at.may_error) {
+                    return self.failAt(arg, "error-union print argument must be handled with '?' first", .{});
+                }
+                try args_buf.append(a, try self.emitStrongCoercion(arg, at));
+            }
+            const args_joined = try std.mem.join(a, ", ", args_buf.items);
+            return std.fmt.allocPrint(a, "(try rt.print.print(ctx, .{{{s}}}))", .{args_joined});
+        }
+
+        if (std.mem.eql(u8, callee, "len")) {
+            if (c.args.len != 1) return self.failAt(node, "len expects 1 argument", .{});
+            const at = try self.valueType(c.args[0]);
+            if (at.may_error) {
+                return self.failAt(c.args[0], "error-union len argument must be handled with '?' first", .{});
+            }
+            if (at.kind != .string) {
+                return self.failAt(node, "len of '{s}' is not supported in Phase 2", .{at.display});
+            }
+            return std.fmt.allocPrint(a, "@as(i64, @intCast(({s}).len))", .{try self.emitExpr(c.args[0])});
+        }
+
+        var target_name: ?[]const u8 = null;
+        if (self.state.generic_calls.get(node)) |gc| target_name = gc.instance;
+        if (target_name == null and self.state.functions.contains(callee)) target_name = callee;
+        const name = target_name orelse {
+            return self.failAt(node, "native backend cannot resolve function '{s}' (imports are Phase 3)", .{callee});
+        };
+        if (self.reach) |*r| {
+            if (!r.isFunctionReachable(name)) {
+                return self.failAt(node, "internal: function '{s}' not marked reachable", .{name});
+            }
+        }
+
+        var args_buf: std.ArrayList([]const u8) = .empty;
+        for (c.args) |arg| {
+            const at = try self.valueType(arg);
+            if (at.may_error) {
+                return self.failAt(arg, "error-union argument must be handled with '?' first", .{});
+            }
+            try args_buf.append(a, try self.emitExpr(arg));
+        }
+        const args_joined = try std.mem.join(a, ", ", args_buf.items);
+        const zig_fn = try self.fnName(name);
+        if (args_joined.len == 0) {
+            return std.fmt.allocPrint(a, "(try {s}(ctx))", .{zig_fn});
+        }
+        return std.fmt.allocPrint(a, "(try {s}(ctx, {s}))", .{ zig_fn, args_joined });
     }
 };
+
+fn isByteSliceDisplay(clean: []const u8) bool {
+    if (std.mem.eql(u8, clean, "string") or std.mem.eql(u8, clean, "[]byte") or
+        std.mem.eql(u8, clean, "[]u8")) return true;
+    const elem = (from_ast.arrayElemDisplay(std.heap.page_allocator, clean) catch return false) orelse return false;
+    defer std.heap.page_allocator.free(elem);
+    return std.mem.eql(u8, elem, "byte") or std.mem.eql(u8, elem, "u8");
+}
+
+fn isComparison(op: []const u8) bool {
+    return std.mem.eql(u8, op, "==") or std.mem.eql(u8, op, "!=") or
+        std.mem.eql(u8, op, "<") or std.mem.eql(u8, op, "<=") or
+        std.mem.eql(u8, op, ">") or std.mem.eql(u8, op, ">=");
+}
+
+fn isBareIntLiteral(node: *ast_mod.Node) bool {
+    return isIntLiteral(node);
+}
+
+fn isIntLiteral(node: *ast_mod.Node) bool {
+    if (node.* != .literal) return false;
+    const lit = node.literal;
+    return switch (lit.literal_type) {
+        .number => std.mem.indexOfScalar(u8, lit.value, '.') == null and
+            std.mem.indexOfScalar(u8, lit.value, 'e') == null and
+            std.mem.indexOfScalar(u8, lit.value, 'E') == null,
+        .hex, .octal, .binary => true,
+        else => false,
+    };
+}
+
+fn isNumericLiteral(node: *ast_mod.Node) bool {
+    if (node.* != .literal) return false;
+    return switch (node.literal.literal_type) {
+        .number, .hex, .octal, .binary => true,
+        else => false,
+    };
+}

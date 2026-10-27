@@ -173,8 +173,8 @@ pub const EmitOptions = struct {
 
 pub fn emitRuntimeZig(
     allocator: std.mem.Allocator,
-    doc: *const ast.Document,
-    state: *const state_mod.CompilerState,
+    doc: *ast.Document,
+    state: *state_mod.CompilerState,
     writer: anytype,
     options: EmitOptions,
 ) !void {
@@ -186,13 +186,13 @@ pub fn emitRuntimeZig(
 
 #### `src/compiler/zig/emitter.zig`
 Translates functions and statements into Zig code that calls `src/runtime/`:
-- **Imports & Setup**: Emits `@import("runtime")` and initializes `RuntimeContext`.
-- **Functions**: Each LLTS `@func` becomes a Zig function `fn lls_func_*(ctx: *rt.Context, ...) !RetType`.
+- **Imports & Setup**: Emits an absolute `@import("<runtime_path>")` and uses `rt.Context`.
+- **Functions**: Each LLTS `@func` becomes `fn lls_fn_*(ctx: *rt.Context, ...) anyerror!RetType`.
 - **Unboxed Variables**: Parameters and local bindings emit as typed native variables (`var x: i64 = ...`).
-- **Watermark RAII**: Wraps every function body with `const mark = ctx.enterFrame(); defer ctx.leaveFrame(mark);`.
-- **Top-Level Code**: Emits `lls_main(ctx)` initializing globals and running top-level statements.
-- **Entry Wrapper**: Emits standard Zig `pub fn main() !void` initializing the allocator, running `lls_main`, and handling process exit.
-- **Control Flow**: Lowered into native `if/else`, `while/for` loops, labels, and `break`/`continue`—preserving exact branch conditions via `rt.isTruthy(...)`.
+- **Watermark RAII**: Wraps every function body with `const mark = try ctx.enterFunction(name, file); defer ctx.leaveFunction(mark);`.
+- **Top-Level Code**: Emits `lls_top_level(ctx)` initializing globals and running top-level statements.
+- **Entry Wrapper**: Emits `pub fn main() void` initializing `rt.Context`, running top-level code and LLTS `main`, and mapping errors to process exit.
+- **Control Flow**: Phase 3 — currently rejected with an explicit `native backend (Phase 3)` diagnostic.
 
 ---
 
@@ -230,10 +230,11 @@ Cleanly remove the inactive LLVM stub module.
      (`src/runtime/tests.zig`, wired into `zig build test`).
    - The VM continues to function unchanged on its own copy paths.
 
-2. **Phase 2: Emitter Core & `llts emit-zig`**
-   - Implement `src/compiler/zig/emitter.zig` to generate runtime-driving Zig functions for basic programs (arithmetic, functions, returns, locals with unboxed variables).
-   - Wire `llts emit-zig <file.lls> -o <out.zig>`.
-   - Verify generated `.zig` files compile cleanly with `zig test` or `zig run`.
+2. **Phase 2: Emitter Core & `llts emit-zig`** — implemented for the basic subset
+   - `src/compiler/zig/emitter.zig` generates runtime-driving Zig for arithmetic, functions, returns, locals, strings, top-level code, and `print`.
+   - `llts emit-zig <file.lls> -o <out.zig>` is wired (strict mode on by default).
+   - Generated files are verified by `tests/55_emit_zig.test.ts` (emit → `zig run -lc` → compare against the VM).
+   - Generated Zig must reside inside the repo module root so the absolute runtime import resolves; Phase 3 control flow and Phase 4 `zig build-exe` remain.
 
 3. **Phase 3: Control Flow, Loops, and Heap Operations**
    - Implement structured lowering for `@if`, `@for`, `@switch`.
@@ -276,10 +277,11 @@ Cleanly remove the inactive LLVM stub module.
      ```
 
 ### Manual Verification
-- Compile and run `examples/hello-world.lls`:
+- Emit a Phase 2 program (generated file stays under the repo module root):
   ```bash
-  ./zig-out/bin/llts emit-zig examples/hello-world.lls -o /tmp/hello.zig
-  cat /tmp/hello.zig # Inspect readable runtime calls
-  ./zig-out/bin/llts build examples/hello-world.lls --native -o ./hello_bin
-  ./hello_bin
+  ./zig-out/bin/llts emit-zig examples/functions.lls -o .tmp_functions.zig
+  cat .tmp_functions.zig # Inspect readable runtime calls
+  zig run -lc .tmp_functions.zig
+  rm .tmp_functions.zig
   ```
+- `examples/hello-world.lls` needs Phase 3 (imports, structs, methods, control flow).

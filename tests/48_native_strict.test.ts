@@ -9,9 +9,9 @@
  *   - `--strict=false`                  → explicit opt-out still works
  *   - `llts build <file>` (bytecode)    → stays gradual (non-strict) by default
  *
- * The emitter itself is still a Phase 2/4 stub (`error.NotImplemented`), so
- * these tests assert on the *typecheck* result only — presence/absence of the
- * strict diagnostic — never on emission success.
+ * These tests assert on the *typecheck* result only — presence/absence of the
+ * strict diagnostic — never on emission success (see 55_emit_zig.test.ts for
+ * end-to-end emission coverage).
  */
 import { test, expect } from "bun:test";
 import * as fs from "node:fs";

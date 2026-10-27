@@ -19,8 +19,8 @@ pub const EmitOptions = struct {
 
 pub fn emitRuntimeZig(
     allocator: std.mem.Allocator,
-    doc: *const ast.Document,
-    state: *const state_mod.CompilerState,
+    doc: *ast.Document,
+    state: *state_mod.CompilerState,
     writer: anytype,
     options: EmitOptions,
 ) !void {
