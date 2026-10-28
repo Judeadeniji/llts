@@ -199,8 +199,10 @@ Behavior:
 - **Watermark RAII**: Wraps every function body with `const mark = try ctx.enterFunction(name, file); defer ctx.leaveFunction(mark);`.
 - **Top-Level Code**: Emits `lls_top_level(ctx)` initializing globals and running top-level statements.
 - **Entry Wrapper**: Emits `pub fn main() void` initializing `rt.Context`, running top-level code and LLTS `main`, and mapping errors to process exit.
-- **Control Flow**: `@if`, scalar `@switch`, range `@for (start..end) |i|`, and condition `@for (cond)` lower to native structured Zig. Value-producing arms use labeled-block results and `break` payloads; loop `break`/`continue` preserve labels. Switch scrutinees are evaluated once and prongs use the same runtime equality helpers as the VM. Conditions rely on the LLTS typechecker's guarantees; the emitter adds no runtime truthiness or type assertions.
-- **Remaining**: iterable `@for` over arrays/strings, condition-loop captures, labeled block values, and `@defer`.
+- **Control Flow**: `@if`, scalar `@switch`, range `@for (start..end) |i|`, condition `@for (cond)`, and iterable `@for` over arrays/slices/strings lower to native structured Zig. Value-producing arms use labeled-block results and `break` payloads; loop `break`/`continue` preserve labels. Optional `@if`/`@for` captures unwrap through Zig optional captures. Switch scrutinees are evaluated once and prongs use the same runtime equality helpers as the VM. Conditions rely on the LLTS typechecker's guarantees; the emitter adds no runtime truthiness or type assertions.
+- **Aggregates & Pointers**: Structs lower to typed Zig structs with stable field names; fixed arrays, slices (including heap-allocated slice literals), optionals, and pointers use their native Zig representations. Struct fields, array/slice indexing, slicing, `len`, optional unwrap, and address-of `&` are lowered; slice assignment clones to match VM value semantics.
+- **Cleanup**: `@defer` is tracked explicitly per lexical scope and emitted LIFO on scope exit, `break`, `continue`, and `return`, so it never runs on runtime traps. `@errdefer` and error-union propagation remain Phase 4.
+- **Remaining**: labeled block values, `@errdefer`/error-union values (`?`, `error(...)`, `@isError`), `@new`/`@addrOf`, and struct printing.
 
 ---
 
@@ -245,13 +247,13 @@ Cleanly remove the inactive LLVM stub module.
    - Generated files are verified by `tests/55_emit_zig.test.ts` (emit → `zig run -lc` → compare against the VM); pipe parity is covered in `tests/56_pipe_expr.test.ts` (native section).
    - Generated Zig must reside inside the repo module root so the absolute runtime import resolves; Phase 4 `zig build-exe` remains.
 
-3. **Phase 3: Control Flow, Loops, and Heap Operations** — `@if`, scalar `@switch`, and `@for` implemented
+3. **Phase 3: Control Flow, Loops, and Heap Operations** — control flow, aggregates, and `@defer` implemented
    - Structured `@if` / `@else @if` / `@else` lowering, including value-producing arms via labeled-block results and `break` payloads.
    - `@switch` on integers, floats, booleans, and strings, including multi-pattern prongs, `@else`, and value-producing arms.
-   - Range `@for (start..end) |i|` and condition `@for (cond)` lowering with labeled `break`/`continue` and wrapping counter increments.
-   - Remaining: iterable `@for` over arrays/strings, condition-loop captures, labeled block values, and `@defer`.
-   - Lower packed struct loads/stores (`opLoadField`, `opStoreField`) and slices (`opSlice`).
-   - Lower `defer`, `errdefer`, and error propagation (`?`, `error(...)`).
+   - Range `@for (start..end) |i|`, condition `@for (cond)`, iterable `@for` over arrays/slices/strings, and optional captures with labeled `break`/`continue` and wrapping counter increments.
+   - Struct fields, fixed arrays, slices/slice literals, optionals, pointers/address-of, member/index assignment, and `len` lower to typed Zig values.
+   - `@defer` runs LIFO on scope exit, `break`, `continue`, and `return`.
+   - Remaining: labeled block values, `@errdefer`, error-union values (`?`, `error(...)`, `@isError`), `@new`/`@addrOf`, and struct printing.
    - Enforce RAII frame watermark cleanup in all emitted functions.
 
 4. **Phase 4: Full Native Compilation (`llts build --native`)**

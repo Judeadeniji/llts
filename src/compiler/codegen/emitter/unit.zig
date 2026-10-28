@@ -95,7 +95,8 @@ pub fn emitFunction(self: *Emitter, name: []const u8, def: state_mod.FunctionDef
     // Parameters: copy mutable ones into locals; silence unread ones.
     for (self.params.items) |p| {
         const b = self.scopes.items[0].get(p.name).?;
-        if (b.assigned) {
+        const needs_var = b.reassigned or (b.assigned and p.kind != .pointer and p.kind != .slice);
+        if (needs_var) {
             b.zig_name = try self.localName(p.name);
             try self.writeIndent();
             try self.writer.print("var {s}: {s} = {s};\n", .{ b.zig_name, p.zig, p.arg_name });
@@ -115,6 +116,7 @@ pub fn emitFunction(self: *Emitter, name: []const u8, def: state_mod.FunctionDef
     };
     self.pushScope();
     try self.emitStatements(block.statements);
+    try self.emitDeferredAtScopeEnd(block.statements);
     self.popScope();
 
     try self.writer.writeAll("}\n\n");
@@ -214,6 +216,7 @@ pub fn prepareFunction(self: *Emitter, f: *const ast_mod.FunctionDecl, params: [
     self.scopes.clearRetainingCapacity();
     self.params.clearRetainingCapacity();
     self.break_targets.clearRetainingCapacity();
+    self.defer_scopes.clearRetainingCapacity();
 
     var base = std.StringHashMap(*Binding).init(a);
     for (params) |p| {
@@ -237,9 +240,11 @@ pub fn prepareFunction(self: *Emitter, f: *const ast_mod.FunctionDecl, params: [
             .arg_name = b.zig_name,
             .display = display,
             .zig = vt.zig,
+            .kind = vt.kind,
         });
     }
     try self.scopes.append(a, base);
+    try self.defer_scopes.append(a, .empty);
 
     try self.preScanStmt(f.body);
 }
@@ -250,6 +255,8 @@ pub fn zeroValue(self: *Emitter, t: ValType) ![]const u8 {
         .float => "0.0",
         .bool => "false",
         .string => "\"\"",
+        .optional, .null_value => "null",
+        .struct_, .array, .slice, .pointer => "undefined",
         else => self.failNoLoc("native backend cannot zero-initialize type '{s}'", .{t.display}),
     };
 }

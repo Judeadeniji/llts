@@ -1,3 +1,4 @@
+const std = @import("std");
 const ast_mod = @import("../../../ast/root.zig");
 const root_mod = @import("root.zig");
 const Emitter = root_mod.Emitter;
@@ -9,6 +10,18 @@ pub fn markAssigned(self: *Emitter, name: []const u8) void {
         i -= 1;
         if (self.scopes.items[i].get(name)) |b| {
             b.assigned = true;
+            return;
+        }
+    }
+}
+
+pub fn markReassigned(self: *Emitter, name: []const u8) void {
+    var i = self.scopes.items.len;
+    while (i > 0) {
+        i -= 1;
+        if (self.scopes.items[i].get(name)) |b| {
+            b.assigned = true;
+            b.reassigned = true;
             return;
         }
     }
@@ -28,8 +41,21 @@ pub fn markRead(self: *Emitter, name: []const u8) void {
 pub fn preScanAssignmentTarget(self: *Emitter, node: *ast_mod.Node) anyerror!void {
     switch (node.*) {
         .primary => |p| {
+            if (p.kind == .identifier or p.kind == .register) self.markReassigned(p.name);
+        },
+        .member => |m| try self.markPlaceRootAssigned(m.object),
+        .index => |ix| try self.markPlaceRootAssigned(ix.object),
+        else => try self.preScanExpr(node),
+    }
+}
+
+pub fn markPlaceRootAssigned(self: *Emitter, node: *ast_mod.Node) anyerror!void {
+    switch (node.*) {
+        .primary => |p| {
             if (p.kind == .identifier or p.kind == .register) self.markAssigned(p.name);
         },
+        .member => |m| try self.markPlaceRootAssigned(m.object),
+        .index => |ix| try self.markPlaceRootAssigned(ix.object),
         else => try self.preScanExpr(node),
     }
 }
@@ -44,7 +70,13 @@ pub fn preScanExpr(self: *Emitter, node: *ast_mod.Node) anyerror!void {
             try self.preScanExpr(b.left);
             try self.preScanExpr(b.right);
         },
-        .unary => |u| try self.preScanExpr(u.arg),
+        .unary => |u| {
+            if (std.mem.eql(u8, u.operator, "&")) {
+                try self.markPlaceRootAssigned(u.arg);
+            } else {
+                try self.preScanExpr(u.arg);
+            }
+        },
         .assignment => |asn| {
             try self.preScanAssignmentTarget(asn.left);
             try self.preScanExpr(asn.right);

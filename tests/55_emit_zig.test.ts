@@ -319,20 +319,174 @@ pub @func main() {
 `);
 }, 60_000);
 
-test("unsupported iterable @for is rejected with a Phase 3 diagnostic", () => {
-	const emitted = emitZig(`
+test("emits iterable @for over arrays, slices, and strings", () => {
+	expectParity(`
 pub @func main() {
-    @for ("abc") |c| {
+    $arr: [3]int = [10, 20, 30];
+    @for (arr) |value, index| {
+        print(index);
+        print(value);
+    }
+    $slice: []int = [9, 8];
+    @for (slice) |n| {
+        print(n);
+    }
+    $s: string = "abc";
+    @for (s) |c| {
         print(c);
+    }
+    $count = 0;
+    @for (arr) |value| {
+        count = count + value;
+    }
+    print(count);
+}
+`);
+}, 60_000);
+
+test("emits structs, arrays, slices, and optionals", () => {
+	expectParity(`
+@struct Point {
+    x: int;
+    y: int;
+}
+
+@struct Box {
+    point: Point;
+    label: string;
+}
+
+@func maybe(flag: bool): ?Point {
+    @if (flag) {
+        return Point { x: 3, y: 4 };
+    }
+    return null;
+}
+
+pub @func main() {
+    $p: Point = { x: 3, y: 4 };
+    print(p.x + p.y);
+    p.x = 10;
+    print(p.x);
+
+    $fixed: [3]int = [1, 2, 3];
+    print(fixed[0] + fixed[2]);
+    fixed[1] = 7;
+    print(len(fixed));
+    print(fixed[1]);
+
+    $view: []int = fixed;
+    view[0] = 50;
+    print(fixed[0]);
+    print(view[0]);
+
+    $box: Box = { point: Point { x: 1, y: 2 }, label: "box" };
+    box.point.x = 5;
+    print(box.point.x);
+    $points: [2]Point = [Point { x: 1, y: 2 }, Point { x: 3, y: 4 }];
+    points[1].x = 8;
+    print(points[1].x);
+
+    $dynamic: []int = [4, 5, 6];
+    dynamic[0] = 40;
+    print(len(dynamic));
+    print(dynamic[0]);
+
+    $text: string = "hello";
+    print(text[1..3]);
+    print(len(text));
+
+    $none: ?int = null;
+    print(none);
+    $some: ?int = 5;
+    print(some);
+
+    @if (maybe(true)) |point| {
+        print(point.x);
+        print(point.y);
+    } @else {
+        print("missing");
+    }
+    @if (maybe(false)) |point| {
+        print(point.x);
+    } @else {
+        print("missing");
     }
 }
 `);
-	try {
-		const emit = runCli(["emit-zig", emitted.sourcePath, "-o", emitted.outputPath]);
-		expect(emit.exitCode).not.toBe(0);
-		expect(emit.stderr + emit.stdout).toContain("does not support iterable @for");
-		expect(fs.existsSync(emitted.outputPath)).toBe(false);
-	} finally {
-		emitted.cleanup();
-	}
+}, 60_000);
+
+test("emits @defer on scope exit, break, continue, and return", () => {
+	expectParity(`
+@func valueBeforeDefer() {
+    $x = 0;
+    defer x = 5;
+    return x;
+}
+
+@func order() {
+    defer print("first");
+    defer print("second");
+    print("body");
+}
+
+pub @func main() {
+    $x = 0;
+    @for (0..3) |i| {
+        defer x = x + i;
+        continue;
+    }
+    print(x);
+
+    @for (true) {
+        defer x = x + 10;
+        break;
+    }
+    print(x);
+
+    $y = 0;
+    @if (true) {
+        defer y = y + 5;
+        y = y + 1;
+    }
+    print(y);
+
+    print(valueBeforeDefer());
+    order();
+}
+`);
+}, 60_000);
+
+test("emits pointers and address-of places", () => {
+	expectParity(`
+@struct Point {
+    x: int;
+    y: int;
+}
+
+@func bump(p: *Point) {
+    p.x = p.x + 1;
+}
+
+pub @func main() {
+    $p: Point = { x: 1, y: 2 };
+    $q: *Point = &p;
+    q.x = 5;
+    print(p.x);
+    bump(&p);
+    print(p.x);
+
+    $pts: [2]Point = [Point { x: 1, y: 2 }, Point { x: 3, y: 4 }];
+    $rp: *Point = &pts[1];
+    rp.y = 9;
+    print(pts[1].y);
+
+    $nums: [2]int = [1, 2];
+    $np: *[2]int = &nums;
+    print(np[1]);
+    print(len(np));
+    np[1] = 7;
+    print(nums[1]);
+}
+`);
 }, 60_000);

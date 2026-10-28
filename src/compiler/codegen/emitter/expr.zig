@@ -4,6 +4,7 @@ const widths = @import("../../widths.zig");
 const root_mod = @import("root.zig");
 const Emitter = root_mod.Emitter;
 const ValType = root_mod.ValType;
+const MemberTarget = root_mod.MemberTarget;
 
 pub fn emitBinary(self: *Emitter, node: *ast_mod.Node, b: *const ast_mod.Binary) ![]const u8 {
     const a = self.arena.allocator();
@@ -77,8 +78,8 @@ pub fn emitCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) any
         if (std.mem.eql(u8, intrinsic, "len")) {
             if (c.args.len != 1) return self.failAt(node, "len expects 1 argument", .{});
             const at = try self.valueType(c.args[0]);
-            if (at.kind != .string) {
-                return self.failAt(node, "len of '{s}' is not supported in Phase 2", .{at.display});
+            if (at.kind != .string and at.kind != .slice and at.kind != .array) {
+                return self.failAt(node, "len of '{s}' is not supported in Phase 3", .{at.display});
             }
             return std.fmt.allocPrint(a, "@as(i64, @intCast(({s}).len))", .{try self.emitExpr(c.args[0])});
         }
@@ -97,6 +98,13 @@ pub fn emitCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) any
             if (at.may_error) {
                 return self.failAt(arg, "error-union print argument must be handled with '?' first", .{});
             }
+            if (containsStruct(at)) {
+                return self.failAt(arg, "native backend cannot print struct values yet; print fields individually", .{});
+            }
+            if (at.kind == .null_value) {
+                try args_buf.append(a, std.fmt.allocPrint(a, "@as(?u8, {s})", .{try self.emitExpr(arg)}) catch unreachable);
+                continue;
+            }
             try args_buf.append(a, try self.emitStrongCoercion(arg, at));
         }
         const args_joined = try std.mem.join(a, ", ", args_buf.items);
@@ -105,14 +113,20 @@ pub fn emitCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) any
 
     if (std.mem.eql(u8, callee, "len")) {
         if (c.args.len != 1) return self.failAt(node, "len expects 1 argument", .{});
-        const at = try self.valueType(c.args[0]);
+        var at = try self.valueType(c.args[0]);
+        var operand = try self.emitExpr(c.args[0]);
+        if (at.kind == .pointer) {
+            const payload = at.payload orelse return self.failAt(node, "native backend cannot determine the pointee type of '{s}'", .{at.display});
+            at = payload.*;
+            operand = try std.fmt.allocPrint(a, "({s}).*", .{operand});
+        }
         if (at.may_error) {
             return self.failAt(c.args[0], "error-union len argument must be handled with '?' first", .{});
         }
-        if (at.kind != .string) {
-            return self.failAt(node, "len of '{s}' is not supported in Phase 2", .{at.display});
+        if (at.kind != .string and at.kind != .slice and at.kind != .array) {
+            return self.failAt(node, "len of '{s}' is not supported in Phase 3", .{at.display});
         }
-        return std.fmt.allocPrint(a, "@as(i64, @intCast(({s}).len))", .{try self.emitExpr(c.args[0])});
+        return std.fmt.allocPrint(a, "@as(i64, @intCast(({s}).len))", .{operand});
     }
 
     var target_name: ?[]const u8 = null;
@@ -221,6 +235,12 @@ pub fn emitExpr(self: *Emitter, node: *ast_mod.Node) anyerror![]const u8 {
         .binary => |b| return self.emitBinary(node, &b),
         .unary => |u| return self.emitUnary(node, &u),
         .call => |c| return self.emitCall(node, &c),
+        .member => |m| return self.emitMember(node, &m),
+        .index => |ix| return self.emitIndex(node, &ix),
+        .array_literal => |al| return self.emitArrayLiteral(node, &al, try self.valueType(node)),
+        .struct_init => |si| return self.emitStructLiteral(node, &si, try self.valueType(node)),
+        .unwrap_expr => |u| return self.emitOptionalUnwrap(node, &u),
+        .comptime_expr => |ce| return self.emitExpr(ce.expr),
         .try_expr => |t| {
             if (t.expression.* != .call) {
                 return self.failAt(node, "native backend (Phase 2) only supports '?' on direct calls", .{});
@@ -373,11 +393,12 @@ pub fn emitIntBinary(self: *Emitter, node: *ast_mod.Node, b: *const ast_mod.Bina
 }
 
 pub fn emitLiteral(self: *Emitter, node: *ast_mod.Node, lit: ast_mod.Literal) ![]const u8 {
+    _ = node;
     switch (lit.literal_type) {
         .string => return self.zigString(lit.value),
         .boolean => return lit.value,
         .number, .hex, .octal, .binary => return lit.value,
-        .null => return self.failAt(node, "native backend (Phase 2) does not support null values yet", .{}),
+        .null => return "null",
     }
 }
 
@@ -397,11 +418,36 @@ pub fn emitStrongCoercion(self: *Emitter, node: *ast_mod.Node, target: ValType) 
     return self.emitValueCoercedForce(node, target);
 }
 
+pub fn emitAddressOf(self: *Emitter, node: *ast_mod.Node, arg: *ast_mod.Node) ![]const u8 {
+    const a = self.arena.allocator();
+    switch (arg.*) {
+        .primary => |p| {
+            if (p.kind != .identifier and p.kind != .register) {
+                return self.failAt(node, "native backend only supports '&' on place expressions", .{});
+            }
+            const target = try self.lookupBinding(node, p.name);
+            return std.fmt.allocPrint(a, "@constCast(&{s})", .{target.zig_name});
+        },
+        .member, .index => {
+            var buf: std.ArrayList(u8) = .empty;
+            const old_writer = self.writer;
+            self.writer = buf.writer(a).any();
+            const place = self.emitPlaceLvalue(arg) catch |err| {
+                self.writer = old_writer;
+                return err;
+            };
+            self.writer = old_writer;
+            return std.fmt.allocPrint(a, "blk: {{\n{s}    break :blk @constCast(&({s}));\n}}", .{ buf.items, place });
+        },
+        else => return self.failAt(node, "native backend only supports '&' on place expressions", .{}),
+    }
+}
+
 pub fn emitUnary(self: *Emitter, node: *ast_mod.Node, u: *const ast_mod.Unary) ![]const u8 {
     const a = self.arena.allocator();
     if (std.mem.eql(u8, u.operator, "const")) return self.emitExpr(u.arg);
     if (std.mem.eql(u8, u.operator, "&")) {
-        return self.failAt(node, "native backend (Phase 2) does not support address-of yet", .{});
+        return self.emitAddressOf(node, u.arg);
     }
     const t = try self.valueType(u.arg);
     if (t.may_error) {
@@ -457,11 +503,42 @@ pub fn emitValueCoercedMode(self: *Emitter, node: *ast_mod.Node, target: ValType
     if (target.may_error and target.kind == .other) {
         return self.failAt(node, "native backend does not support error-union values yet", .{});
     }
+    if (node.* == .array_literal and target.kind == .array) {
+        return self.emitArrayLiteral(node, &node.array_literal, target);
+    }
+    if (node.* == .array_literal and target.kind == .slice) {
+        return self.emitSliceLiteral(node, &node.array_literal, target);
+    }
+    if (node.* == .struct_init and target.kind == .struct_) {
+        return self.emitStructLiteral(node, &node.struct_init, target);
+    }
     const code = try self.emitExpr(node);
 
     // Literals are already polymorphic; the surrounding declaration,
     // assignment, return, print, or @as supplies the concrete type.
-    if (node.* == .literal) return code;
+    if (node.* == .literal and !isNullLiteral(node)) return code;
+
+    if (src.kind == .slice and target.kind == .slice and
+        (node.* == .primary or node.* == .member))
+    {
+        return self.emitCloneSlice(node, src, code);
+    }
+
+    if (target.kind == .optional) {
+        if (src.kind == .null_value) return "null";
+        if (src.kind == .optional and std.mem.eql(u8, src.zig, target.zig)) return code;
+        if (src.kind == .other) {
+            return self.failAt(node, "cannot assign '{s}' to '{s}' in native emission", .{ src.display, target.display });
+        }
+        return code;
+    }
+    if (target.kind == .null_value) {
+        if (src.kind == .null_value) return "null";
+        return self.failAt(node, "cannot assign '{s}' to 'null'", .{src.display});
+    }
+    if (target.kind == .slice and src.kind == .array) {
+        return self.emitArrayToSlice(node, src, target, code);
+    }
 
     if (src.kind == target.kind and src.zig.len == target.zig.len and
         std.mem.eql(u8, src.zig, target.zig))
@@ -488,7 +565,295 @@ pub fn emitValueCoercedMode(self: *Emitter, node: *ast_mod.Node, target: ValType
     if (target.kind == .void and src.kind == .void) return code;
     if (target.kind == .bool and src.kind == .bool) return code;
     if (target.kind == .string and src.kind == .string) return code;
+    if (target.kind == .struct_ and src.kind == .struct_) return code;
+    if (target.kind == .array and src.kind == .array) return code;
+    if (target.kind == .slice and src.kind == .slice) return code;
+    if (target.kind == .pointer and src.kind == .pointer) return code;
     return self.failAt(node, "cannot assign '{s}' to '{s}' in native emission", .{ src.display, target.display });
+}
+
+pub fn isNullLiteral(node: *ast_mod.Node) bool {
+    if (node.* != .literal) return false;
+    return node.literal.literal_type == .null;
+}
+
+pub fn containsStruct(t: ValType) bool {
+    return switch (t.kind) {
+        .struct_ => true,
+        .array, .slice => if (t.elem) |e| containsStruct(e.*) else false,
+        .optional, .pointer => if (t.payload) |p| containsStruct(p.*) else false,
+        else => false,
+    };
+}
+
+pub fn resolveMemberField(self: *Emitter, node: *ast_mod.Node, m: *const ast_mod.Member) !?MemberTarget {
+    if (m.property.* != .primary) return null;
+    const field_name = m.property.primary.name;
+    const obj_t = try self.valueType(m.object);
+    const info = (try self.structInfoForDisplay(m.object, obj_t.display)) orelse return null;
+    const index = info.field_index.get(field_name) orelse {
+        return self.failAt(m.property, "native backend cannot resolve field '{s}'", .{field_name});
+    };
+    _ = node;
+    return .{ .info = info, .index = index };
+}
+
+pub fn emitMemberAccess(self: *Emitter, node: *ast_mod.Node, m: *const ast_mod.Member) ![]const u8 {
+    const target = (try self.resolveMemberField(node, m)) orelse {
+        return self.failAt(node, "native backend cannot lower member access '.{s}' yet", .{
+            if (m.property.* == .primary) m.property.primary.name else "?",
+        });
+    };
+    const obj_t = try self.valueType(m.object);
+    const field = target.info.fields[target.index];
+    const deref: []const u8 = if (obj_t.kind == .pointer) ".*" else "";
+    return std.fmt.allocPrint(self.arena.allocator(), "({s}){s}.{s}", .{
+        try self.emitExpr(m.object), deref, field.zig_name,
+    });
+}
+
+pub fn emitMember(self: *Emitter, node: *ast_mod.Node, m: *const ast_mod.Member) ![]const u8 {
+    if (m.object.* == .primary and m.property.* == .primary) {
+        if (self.state.enums.get(m.object.primary.name)) |ed| {
+            const variant = m.property.primary.name;
+            if (ed.string_values) |values| {
+                if (values.get(variant)) |s| return self.zigString(s);
+            }
+            const value = ed.variants.get(variant) orelse {
+                return self.failAt(node, "native backend cannot resolve enum variant '{s}'", .{variant});
+            };
+            return std.fmt.allocPrint(self.arena.allocator(), "{d}", .{value});
+        }
+    }
+    return self.emitMemberAccess(node, m);
+}
+
+pub fn emitIndex(self: *Emitter, node: *ast_mod.Node, ix: *const ast_mod.Index) ![]const u8 {
+    if (ix.is_slice) return self.emitSlice(node, ix);
+
+    const a = self.arena.allocator();
+    var obj_t = try self.valueType(ix.object);
+    var object_expr = try self.emitExpr(ix.object);
+    if (obj_t.kind == .pointer) {
+        const payload = obj_t.payload orelse return self.failAt(node, "native backend cannot determine the pointee type of '{s}'", .{obj_t.display});
+        obj_t = payload.*;
+        object_expr = try std.fmt.allocPrint(a, "({s}).*", .{object_expr});
+    }
+    const word: []const u8 = switch (obj_t.kind) {
+        .string => "String",
+        .slice => "Slice",
+        .array => "Array",
+        else => return self.failAt(node, "native backend cannot index '{s}' yet", .{obj_t.display}),
+    };
+    const use: []const u8 = switch (obj_t.kind) {
+        .string => "str",
+        .slice => "slice",
+        else => "arr",
+    };
+    const index_node = ix.index orelse return self.failAt(node, "expected index expression", .{});
+    const index_code = try self.emitI64Operand(index_node);
+
+    self.counter += 1;
+    const id = self.counter;
+    const obj_name = try std.fmt.allocPrint(a, "lls_idx_obj_{d}", .{id});
+    const idx_name = try std.fmt.allocPrint(a, "lls_idx_{d}", .{id});
+    const fmt = try std.fmt.allocPrint(a, "{s} index out of bounds: {{d}} (len {{d}}); use len({s})", .{ word, use });
+    return std.fmt.allocPrint(a,
+        \\blk: {{
+        \\    const {s}: {s} = {s};
+        \\    const {s}: i64 = {s};
+        \\    if ({s} < 0 or {s} >= @as(i64, @intCast({s}.len))) return rt.io.fail({s}, .{{ {s}, @as(i64, @intCast({s}.len)) }});
+        \\    break :blk {s}[@intCast({s})];
+        \\}}
+    , .{
+        obj_name,       obj_t.zig,   object_expr,
+        idx_name,       index_code,
+        idx_name,       idx_name,    obj_name,
+        try self.zigString(fmt),
+        idx_name,       obj_name,
+        obj_name,       idx_name,
+    });
+}
+
+pub fn emitSlice(self: *Emitter, node: *ast_mod.Node, ix: *const ast_mod.Index) ![]const u8 {
+    const a = self.arena.allocator();
+    const obj_t = try self.valueType(ix.object);
+    if (obj_t.kind != .string and obj_t.kind != .slice and obj_t.kind != .array) {
+        return self.failAt(node, "native backend cannot slice '{s}' yet", .{obj_t.display});
+    }
+    self.counter += 1;
+    const id = self.counter;
+    const obj_name = try std.fmt.allocPrint(a, "lls_slice_obj_{d}", .{id});
+    const lo_name = try std.fmt.allocPrint(a, "lls_slice_lo_{d}", .{id});
+    const hi_name = try std.fmt.allocPrint(a, "lls_slice_hi_{d}", .{id});
+
+    const lo_code = if (ix.index) |idx| try self.emitI64Operand(idx) else "0";
+    const hi_code = if (ix.end) |end|
+        try self.emitI64Operand(end)
+    else
+        try std.fmt.allocPrint(a, "@as(i64, @intCast({s}.len))", .{obj_name});
+
+    return std.fmt.allocPrint(a,
+        \\blk: {{
+        \\    const {s}: {s} = {s};
+        \\    const {s}: i64 = {s};
+        \\    const {s}: i64 = {s};
+        \\    if ({s} < 0 or {s} < {s} or {s} > @as(i64, @intCast({s}.len))) return rt.io.fail("Slice out of bounds: [{{d}}..{{d}}] (len {{d}})", .{{ {s}, {s}, @as(i64, @intCast({s}.len)) }});
+        \\    break :blk {s}[@intCast({s})..@intCast({s})];
+        \\}}
+    , .{
+        obj_name, obj_t.zig, try self.emitExpr(ix.object),
+        lo_name,  lo_code,
+        hi_name,  hi_code,
+        lo_name,  hi_name, lo_name, hi_name, obj_name,
+        lo_name,  hi_name, obj_name,
+        obj_name, lo_name, hi_name,
+    });
+}
+
+pub fn emitArrayLiteral(self: *Emitter, node: *ast_mod.Node, al: *const ast_mod.ArrayLiteral, target: ValType) ![]const u8 {
+    const a = self.arena.allocator();
+    if (target.kind != .array or target.elem == null or target.array_len == null) {
+        return self.failAt(node, "native backend needs a fixed array type for this array literal", .{});
+    }
+    const elem = target.elem.?;
+    if (al.elements.len != target.array_len.?) {
+        return self.failAt(node, "array literal length does not match '{s}'", .{target.display});
+    }
+    var parts: std.ArrayList([]const u8) = .empty;
+    for (al.elements) |element| {
+        try parts.append(a, try self.emitValueCoerced(element, elem.*));
+    }
+    if (parts.items.len == 0) {
+        return std.fmt.allocPrint(a, "{s}{{}}", .{target.zig});
+    }
+    const joined = try std.mem.join(a, ", ", parts.items);
+    return std.fmt.allocPrint(a, "{s}{{ {s} }}", .{ target.zig, joined });
+}
+
+pub fn emitCloneSlice(self: *Emitter, node: *ast_mod.Node, src: ValType, src_code: []const u8) ![]const u8 {
+    const a = self.arena.allocator();
+    const elem = src.elem orelse {
+        return self.failAt(node, "native backend cannot determine the slice element type", .{});
+    };
+    self.counter += 1;
+    const id = self.counter;
+    const src_name = try std.fmt.allocPrint(a, "lls_slice_src_{d}", .{id});
+    const buf_name = try std.fmt.allocPrint(a, "lls_slice_clone_buf_{d}", .{id});
+    const dst_name = try std.fmt.allocPrint(a, "lls_slice_clone_dst_{d}", .{id});
+    const item_name = try std.fmt.allocPrint(a, "lls_slice_item_{d}", .{id});
+    const i_name = try std.fmt.allocPrint(a, "lls_slice_i_{d}", .{id});
+    return std.fmt.allocPrint(a,
+        \\blk: {{
+        \\    const {s}: {s} = {s};
+        \\    const {s} = try rt.mem.allocArray(ctx, {s}.len, @sizeOf({s}), @alignOf({s}));
+        \\    const {s}: [*]{s} = @ptrCast(@alignCast({s}.ptr));
+        \\    for ({s}, 0..) |{s}, {s}| {s}[{s}] = {s};
+        \\    break :blk {s}[0..{s}.len];
+        \\}}
+    , .{
+        src_name, src.zig, src_code,
+        buf_name, src_name, elem.zig, elem.zig,
+        dst_name, elem.zig, buf_name,
+        src_name, item_name, i_name, dst_name, i_name, item_name,
+        dst_name, src_name,
+    });
+}
+
+pub fn emitArrayToSlice(self: *Emitter, node: *ast_mod.Node, src: ValType, target: ValType, src_code: []const u8) ![]const u8 {
+    const a = self.arena.allocator();
+    const elem = target.elem orelse {
+        return self.failAt(node, "native backend cannot determine the slice element type", .{});
+    };
+    const len = src.array_len orelse {
+        return self.failAt(node, "native backend cannot determine the array length", .{});
+    };
+    self.counter += 1;
+    const id = self.counter;
+    const src_name = try std.fmt.allocPrint(a, "lls_arrcopy_src_{d}", .{id});
+    const buf_name = try std.fmt.allocPrint(a, "lls_arrcopy_buf_{d}", .{id});
+    const dst_name = try std.fmt.allocPrint(a, "lls_arrcopy_dst_{d}", .{id});
+    return std.fmt.allocPrint(a,
+        \\blk: {{
+        \\    const {s}: {s} = {s};
+        \\    const {s} = try rt.mem.allocArray(ctx, {d}, @sizeOf({s}), @alignOf({s}));
+        \\    const {s}: *[{d}]{s} = @ptrCast(@alignCast({s}.ptr));
+        \\    {s}.* = {s};
+        \\    break :blk {s}[0..{d}];
+        \\}}
+    , .{
+        src_name, src.zig, src_code,
+        buf_name, len, elem.zig, elem.zig,
+        dst_name, len, elem.zig, buf_name,
+        dst_name, src_name,
+        dst_name, len,
+    });
+}
+
+pub fn emitSliceLiteral(self: *Emitter, node: *ast_mod.Node, al: *const ast_mod.ArrayLiteral, target: ValType) ![]const u8 {
+    const a = self.arena.allocator();
+    const elem = target.elem orelse {
+        return self.failAt(node, "native backend cannot determine the slice element type", .{});
+    };
+    var parts: std.ArrayList([]const u8) = .empty;
+    for (al.elements) |element| {
+        try parts.append(a, try self.emitValueCoerced(element, elem.*));
+    }
+    const joined = if (parts.items.len == 0) "" else try std.mem.join(a, ", ", parts.items);
+    self.counter += 1;
+    const id = self.counter;
+    const buf_name = try std.fmt.allocPrint(a, "lls_slice_buf_{d}", .{id});
+    const arr_name = try std.fmt.allocPrint(a, "lls_slice_arr_{d}", .{id});
+    return std.fmt.allocPrint(a,
+        \\blk: {{
+        \\    const {s} = try rt.mem.allocArray(ctx, {d}, @sizeOf({s}), @alignOf({s}));
+        \\    const {s}: *[{d}]{s} = @ptrCast(@alignCast({s}.ptr));
+        \\    {s}.* = [{d}]{s}{{ {s} }};
+        \\    break :blk {s}[0..{d}];
+        \\}}
+    , .{
+        buf_name, al.elements.len, elem.zig, elem.zig,
+        arr_name, al.elements.len, elem.zig, buf_name,
+        arr_name, al.elements.len, elem.zig, joined,
+        arr_name, al.elements.len,
+    });
+}
+
+pub fn emitStructLiteral(self: *Emitter, node: *ast_mod.Node, si: *const ast_mod.StructInit, target: ValType) ![]const u8 {
+    const a = self.arena.allocator();
+    if (target.kind != .struct_) {
+        return self.failAt(node, "native backend needs a struct type for this initializer", .{});
+    }
+    const info = try self.ensureStructType(node, target.display);
+    var parts: std.ArrayList([]const u8) = .empty;
+    for (info.fields) |field| {
+        var provided: ?*ast_mod.Node = null;
+        for (si.fields) |init_field| {
+            if (std.mem.eql(u8, init_field.name, field.name)) {
+                provided = init_field.value;
+                break;
+            }
+        }
+        const code = if (provided) |value|
+            try self.emitValueCoerced(value, field.vt)
+        else
+            try self.zeroValue(field.vt);
+        try parts.append(a, try std.fmt.allocPrint(a, ".{s} = {s}", .{ field.zig_name, code }));
+    }
+    if (parts.items.len == 0) {
+        return std.fmt.allocPrint(a, "{s}{{}}", .{info.zig_name});
+    }
+    const joined = try std.mem.join(a, ", ", parts.items);
+    return std.fmt.allocPrint(a, "{s}{{ {s} }}", .{ info.zig_name, joined });
+}
+
+pub fn emitOptionalUnwrap(self: *Emitter, node: *ast_mod.Node, u: *const ast_mod.UnwrapExpr) ![]const u8 {
+    _ = node;
+    const vt = try self.valueType(u.expression);
+    if (vt.kind != .optional) return self.emitExpr(u.expression);
+    return std.fmt.allocPrint(self.arena.allocator(), "({s} orelse return rt.io.fail(\"Attempted to unwrap null\"))", .{
+        try self.emitExpr(u.expression),
+    });
 }
 
 pub fn f64Code(self: *Emitter, code: []const u8, t: ValType) ![]const u8 {
