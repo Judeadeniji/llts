@@ -31,6 +31,22 @@ pub const Error = struct {
     payload: Payload = .{ .none = {} },
 };
 
+/// Success-or-error value used for native error unions (`T | error`).
+pub fn Result(comptime T: type) type {
+    return union(enum) {
+        ok: T,
+        err: Error,
+    };
+}
+
+/// Runtime error extraction after `@isError` narrowing.
+pub fn expectError(value: anytype) Error {
+    return switch (value) {
+        .ok => @panic("expected an error value"),
+        .err => |e| e,
+    };
+}
+
 /// Construct an error value (`error(code)` / `error(code, payload)`).
 pub fn make(code: []const u8, payload: Payload) Error {
     return .{ .code = code, .payload = payload };

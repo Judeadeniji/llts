@@ -41,6 +41,8 @@ pub const ValKind = enum {
     optional,
     pointer,
     null_value,
+    error_value,
+    error_payload,
 };
 
 pub const ValType = struct {
@@ -53,6 +55,7 @@ pub const ValType = struct {
     elem: ?*ValType = null,
     array_len: ?usize = null,
     payload: ?*ValType = null,
+    success: ?*ValType = null,
 
     pub fn isI64(self: ValType) bool {
         return self.kind == .int and self.width != null and
@@ -83,6 +86,11 @@ pub const StructType = struct {
 pub const MemberTarget = struct {
     info: *StructType,
     index: usize,
+};
+
+pub const DeferEntry = struct {
+    body: *ast_mod.Node,
+    is_errdefer: bool,
 };
 
 pub const Binding = struct {
@@ -143,7 +151,7 @@ pub const Emitter = struct {
     struct_types: std.ArrayList(*StructType) = .empty,
     struct_by_key: std.StringHashMap(*StructType),
     scopes: std.ArrayList(std.StringHashMap(*Binding)) = .empty,
-    defer_scopes: std.ArrayList(std.ArrayList(*ast_mod.Node)) = .empty,
+    defer_scopes: std.ArrayList(std.ArrayList(DeferEntry)) = .empty,
     infos: std.AutoHashMap(*ast_mod.Node, *Binding),
     params: std.ArrayList(ParamInfo) = .empty,
     break_targets: std.ArrayList(BreakTarget) = .empty,
@@ -163,26 +171,18 @@ pub const Emitter = struct {
     pub fn classify(self: *Emitter, node: *ast_mod.Node, display_in: []const u8) anyerror!ValType {
         const a = self.arena.allocator();
         const display = std.mem.trim(u8, display_in, " \t");
+        const expanded = try self.expandTypedefs(display, 0);
         var parts: std.ArrayList([]const u8) = .empty;
-        var may_error = false;
-        var has_custom_error = false;
-        var it = std.mem.splitSequence(u8, display, "|");
+        var has_error = false;
+        var it = std.mem.splitSequence(u8, expanded, "|");
         while (it.next()) |part| {
             const p = std.mem.trim(u8, part, " \t");
             if (p.len == 0) continue;
-            if (std.mem.eql(u8, p, "error")) {
-                may_error = true;
-                continue;
-            }
-            if (self.state.error_sets.contains(p)) {
-                may_error = true;
-                has_custom_error = true;
+            if (self.isErrorDisplay(p)) {
+                has_error = true;
                 continue;
             }
             try parts.append(a, p);
-        }
-        if (has_custom_error) {
-            return self.failAt(node, "native backend does not support custom error sets yet ('{s}')", .{display});
         }
 
         const clean = if (parts.items.len == 1)
@@ -192,7 +192,27 @@ pub const Emitter = struct {
         else
             try std.mem.join(a, " | ", parts.items);
 
-        var t: ValType = .{ .display = display, .clean = clean, .kind = .other, .zig = "void", .may_error = may_error };
+        if (has_error and parts.items.len == 0) {
+            return .{
+                .display = display,
+                .clean = "error",
+                .kind = .error_value,
+                .zig = "rt.err.Error",
+                .may_error = true,
+            };
+        }
+        if (has_error) {
+            const success = try self.childType(node, clean);
+            var t = success.*;
+            t.display = display;
+            t.clean = clean;
+            t.may_error = true;
+            t.success = success;
+            t.zig = try std.fmt.allocPrint(a, "rt.err.Result({s})", .{success.zig});
+            return t;
+        }
+
+        var t: ValType = .{ .display = display, .clean = clean, .kind = .other, .zig = "void" };
         if (std.mem.eql(u8, clean, "void")) {
             t.kind = .void;
             t.zig = "void";
@@ -289,6 +309,43 @@ pub const Emitter = struct {
             return self.classify(node, peeled);
         }
         return t;
+    }
+
+    fn expandTypedefs(self: *Emitter, display: []const u8, depth: usize) anyerror![]const u8 {
+        if (depth > 16) return display;
+        const a = self.arena.allocator();
+        var out: std.ArrayList([]const u8) = .empty;
+        var it = std.mem.splitSequence(u8, display, "|");
+        while (it.next()) |part| {
+            const trimmed = std.mem.trim(u8, part, " \t");
+            if (trimmed.len == 0) continue;
+            const key = from_ast.findTypedefKey(self.state, trimmed) orelse {
+                try out.append(a, trimmed);
+                continue;
+            };
+            const td = self.state.typedefs.get(key) orelse {
+                try out.append(a, trimmed);
+                continue;
+            };
+            if (std.mem.indexOfScalar(u8, td.underlying, '|') != null or
+                from_ast.typeAllowsErrorState(self.state, trimmed) or
+                from_ast.typeAllowsErrorState(self.state, td.underlying))
+            {
+                try out.append(a, try self.expandTypedefs(td.underlying, depth + 1));
+            } else {
+                try out.append(a, trimmed);
+            }
+        }
+        return std.mem.join(a, " | ", out.items);
+    }
+
+    fn isErrorDisplay(self: *Emitter, part: []const u8) bool {
+        if (std.mem.eql(u8, part, "error")) return true;
+        if (self.state.error_sets.contains(part)) return true;
+        if (std.mem.lastIndexOfScalar(u8, part, '.')) |dot| {
+            if (self.state.error_sets.contains(part[0..dot])) return true;
+        }
+        return false;
     }
 
     fn childType(self: *Emitter, node: *ast_mod.Node, display: []const u8) anyerror!*ValType {
@@ -426,17 +483,17 @@ pub const Emitter = struct {
             return self.failNoLoc("runtime path '{s}' not found (pass --runtime-path)", .{self.options.runtime_path});
         };
 
-        try self.collectGlobals();
+        try unit_mod.collectGlobals(self);
 
         try self.writer.writeAll("// Generated by `llts emit-zig` — do not edit.\n");
         try self.writer.writeAll("const rt = @import(");
         try self.writer.writeAll(try self.zigString(self.runtime_path));
         try self.writer.writeAll(");\n\n");
 
-        try self.emitGlobalDecls();
-        try self.emitFunctions();
-        try self.emitTopLevel();
-        try self.emitEntry();
+        try unit_mod.emitGlobalDecls(self);
+        try unit_mod.emitFunctions(self);
+        try unit_mod.emitTopLevel(self);
+        try unit_mod.emitEntry(self);
         try self.emitStructTypeDecls();
     }
 
@@ -538,9 +595,9 @@ pub const Emitter = struct {
         self.indent += 1;
         self.pushScope();
         if (body.* == .block) {
-            try self.emitStatements(body.block.statements);
+            try stmt_mod.emitStatements(self, body.block.statements);
         } else {
-            try self.emitStmt(body);
+            try stmt_mod.emitStmt(self, body);
         }
         self.popScope();
         self.indent -= 1;
@@ -548,45 +605,63 @@ pub const Emitter = struct {
         try self.writer.writeAll("}\n");
     }
 
-    pub fn emitDeferredScope(self: *Emitter) anyerror!void {
-        if (self.defer_scopes.items.len == 0) return;
-        const frame = &self.defer_scopes.items[self.defer_scopes.items.len - 1];
+    fn emitDeferFrame(self: *Emitter, frame: std.ArrayList(DeferEntry), include_errdefer: bool) anyerror!void {
         var i = frame.items.len;
         while (i > 0) {
             i -= 1;
-            try self.emitDeferBody(frame.items[i]);
+            const entry = frame.items[i];
+            if (entry.is_errdefer and !include_errdefer) continue;
+            try self.emitDeferBody(entry.body);
         }
     }
 
+    pub fn emitDeferredScope(self: *Emitter) anyerror!void {
+        if (self.defer_scopes.items.len == 0) return;
+        const frame = self.defer_scopes.items[self.defer_scopes.items.len - 1];
+        try self.emitDeferFrame(frame, false);
+    }
+
     pub fn emitDeferredAtScopeEnd(self: *Emitter, statements: []*ast_mod.Node) anyerror!void {
-        if (statements.len > 0 and self.stmtTerminates(statements[statements.len - 1])) return;
+        if (statements.len > 0 and prescan_mod.stmtTerminates(self, statements[statements.len - 1])) return;
         try self.emitDeferredScope();
     }
 
-    pub fn emitDeferredFromDepth(self: *Emitter, depth: usize) anyerror!void {
+    pub fn emitDeferredFromDepthMode(self: *Emitter, depth: usize, include_errdefer: bool) anyerror!void {
         if (self.defer_scopes.items.len <= depth) return;
         var i = self.defer_scopes.items.len;
         while (i > depth) {
             i -= 1;
-            const frame = &self.defer_scopes.items[i];
-            var j = frame.items.len;
-            while (j > 0) {
-                j -= 1;
-                try self.emitDeferBody(frame.items[j]);
-            }
+            const frame = self.defer_scopes.items[i];
+            try self.emitDeferFrame(frame, include_errdefer);
         }
     }
 
+    pub fn emitDeferredFromDepth(self: *Emitter, depth: usize) anyerror!void {
+        try self.emitDeferredFromDepthMode(depth, false);
+    }
+
+    pub fn emitErrorCleanup(self: *Emitter) anyerror!void {
+        try self.emitDeferredFromDepthMode(0, true);
+    }
+
     pub fn requireValueType(self: *Emitter, node: *ast_mod.Node, t: ValType) !void {
-        if (t.may_error) {
-            return self.failAt(node, "native backend does not support error values yet (handle with '?')", .{});
-        }
         if (t.kind == .other) {
             return self.failAt(node, "native backend (Phase 2) does not support type '{s}'", .{t.display});
         }
-        if (t.kind == .void) {
+        if (t.kind == .void and !t.may_error) {
             return self.failAt(node, "native backend cannot bind a void value", .{});
         }
+    }
+
+    pub fn storageValueType(self: *Emitter, node: *ast_mod.Node) anyerror!ValType {
+        const narrowed = try self.valueType(node);
+        if (narrowed.kind != .error_value) return narrowed;
+        if (node.* == .primary and (node.primary.kind == .identifier or node.primary.kind == .register)) {
+            const b = try self.lookupBinding(node, node.primary.name);
+            const stored = try self.classify(node, b.display);
+            if (stored.may_error and stored.kind != .error_value) return stored;
+        }
+        return narrowed;
     }
 
     pub fn valueType(self: *Emitter, node: *ast_mod.Node) anyerror!ValType {
@@ -603,8 +678,23 @@ pub const Emitter = struct {
                 }
             },
             .member => |m| {
-                if (try self.resolveMemberField(node, &m)) |target| {
+                if (m.property.* == .primary) {
+                    const prop = m.property.primary.name;
+                    if (std.mem.eql(u8, prop, "message") or std.mem.eql(u8, prop, "code") or std.mem.eql(u8, prop, "payload")) {
+                        const obj_t = try self.storageValueType(m.object);
+                        if (obj_t.kind == .error_value or obj_t.may_error) {
+                            if (std.mem.eql(u8, prop, "payload")) {
+                                return .{ .display = "unknown", .clean = "unknown", .kind = .error_payload, .zig = "rt.err.Payload" };
+                            }
+                            return .{ .display = "string", .clean = "string", .kind = .string, .zig = "[]const u8" };
+                        }
+                    }
+                }
+                if (try expr_mod.resolveMemberField(self, node, &m)) |target| {
                     return target.info.fields[target.index].vt;
+                }
+                if (self.state.type_of_results.get(node)) |disp| {
+                    if (self.isErrorDisplay(disp)) return self.classify(node, disp);
                 }
             },
             else => {},
@@ -641,90 +731,6 @@ pub const Emitter = struct {
         try out.append(a, '"');
         return out.toOwnedSlice(a);
     }
-
-    pub const collectGlobals = unit_mod.collectGlobals;
-    pub const emitEntry = unit_mod.emitEntry;
-    pub const emitFunction = unit_mod.emitFunction;
-    pub const emitFunctions = unit_mod.emitFunctions;
-    pub const emitGlobalDecls = unit_mod.emitGlobalDecls;
-    pub const emitTopLevel = unit_mod.emitTopLevel;
-    pub const functionReturnType = unit_mod.functionReturnType;
-    pub const prepareFunction = unit_mod.prepareFunction;
-    pub const zeroValue = unit_mod.zeroValue;
-    pub const markAssigned = prescan_mod.markAssigned;
-    pub const markReassigned = prescan_mod.markReassigned;
-    pub const markPlaceRootAssigned = prescan_mod.markPlaceRootAssigned;
-    pub const markRead = prescan_mod.markRead;
-    pub const preScanAssignmentTarget = prescan_mod.preScanAssignmentTarget;
-    pub const preScanExpr = prescan_mod.preScanExpr;
-    pub const preScanStmt = prescan_mod.preScanStmt;
-    pub const stmtTerminates = prescan_mod.stmtTerminates;
-    pub const emitAssignment = stmt_mod.emitAssignment;
-    pub const emitBoolCondition = stmt_mod.emitBoolCondition;
-    pub const emitBreak = stmt_mod.emitBreak;
-    pub const emitCaptureCondFor = stmt_mod.emitCaptureCondFor;
-    pub const emitCaptureIfChain = stmt_mod.emitCaptureIfChain;
-    pub const emitCondFor = stmt_mod.emitCondFor;
-    pub const emitCondition = stmt_mod.emitCondition;
-    pub const emitContinue = stmt_mod.emitContinue;
-    pub const emitDefer = stmt_mod.emitDefer;
-    pub const emitEqualityCode = stmt_mod.emitEqualityCode;
-    pub const emitExprStatement = stmt_mod.emitExprStatement;
-    pub const emitIndexAssignment = stmt_mod.emitIndexAssignment;
-    pub const emitIterableFor = stmt_mod.emitIterableFor;
-    pub const emitForStmt = stmt_mod.emitForStmt;
-    pub const emitIfBody = stmt_mod.emitIfBody;
-    pub const emitIfElse = stmt_mod.emitIfElse;
-    pub const emitIfChain = stmt_mod.emitIfChain;
-    pub const emitIfStmt = stmt_mod.emitIfStmt;
-    pub const emitIfValue = stmt_mod.emitIfValue;
-    pub const emitLineMarker = stmt_mod.emitLineMarker;
-    pub const emitLocalDeclaration = stmt_mod.emitLocalDeclaration;
-    pub const emitProngBody = stmt_mod.emitProngBody;
-    pub const emitRangeFor = stmt_mod.emitRangeFor;
-    pub const emitStatements = stmt_mod.emitStatements;
-    pub const emitStmt = stmt_mod.emitStmt;
-    pub const emitSwitchChain = stmt_mod.emitSwitchChain;
-    pub const emitSwitchCondition = stmt_mod.emitSwitchCondition;
-    pub const emitSwitchStmt = stmt_mod.emitSwitchStmt;
-    pub const emitSwitchValue = stmt_mod.emitSwitchValue;
-    pub const findBreakTarget = stmt_mod.findBreakTarget;
-    pub const findLoopTarget = stmt_mod.findLoopTarget;
-    pub const forBody = stmt_mod.forBody;
-    pub const loopLabelUsed = stmt_mod.loopLabelUsed;
-    pub const switchScrutineeType = stmt_mod.switchScrutineeType;
-    pub const emitAddressOf = expr_mod.emitAddressOf;
-    pub const emitArrayLiteral = expr_mod.emitArrayLiteral;
-    pub const emitArrayToSlice = expr_mod.emitArrayToSlice;
-    pub const emitBinary = expr_mod.emitBinary;
-    pub const emitCall = expr_mod.emitCall;
-    pub const emitCloneSlice = expr_mod.emitCloneSlice;
-    pub const emitComparison = expr_mod.emitComparison;
-    pub const emitExpr = expr_mod.emitExpr;
-    pub const emitF32Operand = expr_mod.emitF32Operand;
-    pub const emitF64Operand = expr_mod.emitF64Operand;
-    pub const emitFloatBinary = expr_mod.emitFloatBinary;
-    pub const emitI64Operand = expr_mod.emitI64Operand;
-    pub const emitIndex = expr_mod.emitIndex;
-    pub const emitIntBinary = expr_mod.emitIntBinary;
-    pub const emitLiteral = expr_mod.emitLiteral;
-    pub const emitMember = expr_mod.emitMember;
-    pub const emitMemberAccess = expr_mod.emitMemberAccess;
-    pub const emitOptionalUnwrap = expr_mod.emitOptionalUnwrap;
-    pub const emitPlaceLvalue = stmt_mod.emitPlaceLvalue;
-    pub const emitSlice = expr_mod.emitSlice;
-    pub const emitSliceLiteral = expr_mod.emitSliceLiteral;
-    pub const emitStrongCoercion = expr_mod.emitStrongCoercion;
-    pub const emitStructLiteral = expr_mod.emitStructLiteral;
-    pub const emitUnary = expr_mod.emitUnary;
-    pub const emitValueCoerced = expr_mod.emitValueCoerced;
-    pub const emitValueCoercedForce = expr_mod.emitValueCoercedForce;
-    pub const emitValueCoercedMode = expr_mod.emitValueCoercedMode;
-    pub const f64Code = expr_mod.f64Code;
-    pub const i64Code = expr_mod.i64Code;
-    pub const isStringy = expr_mod.isStringy;
-    pub const resolveMemberField = expr_mod.resolveMemberField;
-    pub const wrapWidth = expr_mod.wrapWidth;
 };
 
 pub fn isImportDecl(decl: *const ast_mod.Declaration) bool {

@@ -1301,6 +1301,16 @@ fn inferExprInner(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, 
                     }
                 }
                 const field_obj = ir.peelDefined(obj);
+                if (field_obj == .error_ or field_obj == .error_set or field_obj == .error_lit) {
+                    const prop = m.property.primary.name;
+                    if (std.mem.eql(u8, prop, "message") or std.mem.eql(u8, prop, "code")) {
+                        break :blk ir.TString;
+                    }
+                    if (std.mem.eql(u8, prop, "payload")) {
+                        break :blk ir.TUnknown;
+                    }
+                    return compiler_errors.compileFailFmt(state, "Unknown error field '{s}'", .{prop});
+                }
                 // Tuple / array numeric field access: `.0`, `.1`, …
                 if (field_obj == .tuple) {
                     if (std.fmt.parseInt(i64, m.property.primary.name, 10)) |ci| {
@@ -2599,7 +2609,6 @@ fn checkFunction(
             const disp = try ownDisplayQualified(state, a);
             // `unknown | error` from refineErrorReturns — upgrade success arm from body.
             const weak_success = std.mem.eql(u8, disp, "unknown") or
-                std.mem.eql(u8, disp, "error") or
                 std.mem.startsWith(u8, disp, "unknown |");
             if (weak_success) {
                 if (inferReturnDisplayFromBody(state, f.body)) |better| {

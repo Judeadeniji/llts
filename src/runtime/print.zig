@@ -228,6 +228,38 @@ pub fn writeValue(out: *std.ArrayList(u8), alloc: std.mem.Allocator, v: anytype)
                 @compileError("print: unsupported struct type " ++ @typeName(T));
             }
         },
+        .@"union" => {
+            if (T == err_mod.Payload) {
+                switch (v) {
+                    .none => try writeNull(out, alloc),
+                    .int => |n| try writeInt(out, alloc, n),
+                    .float => |n| try writeFloat(out, alloc, n),
+                    .boolean => |b| try writeBool(out, alloc, b),
+                    .str => |s| try writeStr(out, alloc, s),
+                    .agg => |a| switch (a.kind) {
+                        .list => try out.appendSlice(alloc, "<list>"),
+                        .map => try out.appendSlice(alloc, "<map>"),
+                        .buffer => {
+                            var tmp: [32]u8 = undefined;
+                            const s = try std.fmt.bufPrint(&tmp, "<Buffer {d} bytes>", .{a.len});
+                            try out.appendSlice(alloc, s);
+                        },
+                        .module => try out.appendSlice(alloc, "<module>"),
+                        .function => try out.appendSlice(alloc, "<fn>"),
+                        .other => try out.appendSlice(alloc, "<ptr>"),
+                    },
+                }
+            } else if (comptime @hasField(T, "ok") and @hasField(T, "err") and
+                @FieldType(T, "err") == err_mod.Error)
+            {
+                switch (v) {
+                    .ok => |inner| try writeValue(out, alloc, inner),
+                    .err => |e| try writeError(out, alloc, e),
+                }
+            } else {
+                @compileError("print: unsupported union type " ++ @typeName(T));
+            }
+        },
         else => @compileError("print: unsupported type " ++ @typeName(T)),
     }
 }

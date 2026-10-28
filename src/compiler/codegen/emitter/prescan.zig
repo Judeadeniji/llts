@@ -41,73 +41,73 @@ pub fn markRead(self: *Emitter, name: []const u8) void {
 pub fn preScanAssignmentTarget(self: *Emitter, node: *ast_mod.Node) anyerror!void {
     switch (node.*) {
         .primary => |p| {
-            if (p.kind == .identifier or p.kind == .register) self.markReassigned(p.name);
+            if (p.kind == .identifier or p.kind == .register) markReassigned(self, p.name);
         },
-        .member => |m| try self.markPlaceRootAssigned(m.object),
-        .index => |ix| try self.markPlaceRootAssigned(ix.object),
-        else => try self.preScanExpr(node),
+        .member => |m| try markPlaceRootAssigned(self, m.object),
+        .index => |ix| try markPlaceRootAssigned(self, ix.object),
+        else => try preScanExpr(self, node),
     }
 }
 
 pub fn markPlaceRootAssigned(self: *Emitter, node: *ast_mod.Node) anyerror!void {
     switch (node.*) {
         .primary => |p| {
-            if (p.kind == .identifier or p.kind == .register) self.markAssigned(p.name);
+            if (p.kind == .identifier or p.kind == .register) markAssigned(self, p.name);
         },
-        .member => |m| try self.markPlaceRootAssigned(m.object),
-        .index => |ix| try self.markPlaceRootAssigned(ix.object),
-        else => try self.preScanExpr(node),
+        .member => |m| try markPlaceRootAssigned(self, m.object),
+        .index => |ix| try markPlaceRootAssigned(self, ix.object),
+        else => try preScanExpr(self, node),
     }
 }
 
 pub fn preScanExpr(self: *Emitter, node: *ast_mod.Node) anyerror!void {
     switch (node.*) {
         .primary => |p| {
-            if (p.kind == .identifier or p.kind == .register) self.markRead(p.name);
+            if (p.kind == .identifier or p.kind == .register) markRead(self, p.name);
         },
         .literal => {},
         .binary => |b| {
-            try self.preScanExpr(b.left);
-            try self.preScanExpr(b.right);
+            try preScanExpr(self, b.left);
+            try preScanExpr(self, b.right);
         },
         .unary => |u| {
             if (std.mem.eql(u8, u.operator, "&")) {
-                try self.markPlaceRootAssigned(u.arg);
+                try markPlaceRootAssigned(self, u.arg);
             } else {
-                try self.preScanExpr(u.arg);
+                try preScanExpr(self, u.arg);
             }
         },
         .assignment => |asn| {
-            try self.preScanAssignmentTarget(asn.left);
-            try self.preScanExpr(asn.right);
+            try preScanAssignmentTarget(self, asn.left);
+            try preScanExpr(self, asn.right);
         },
         .call => |c| {
-            for (c.args) |arg| try self.preScanExpr(arg);
-            if (c.callee.* == .member) try self.preScanExpr(c.callee.member.object);
+            for (c.args) |arg| try preScanExpr(self, arg);
+            if (c.callee.* == .member) try preScanExpr(self, c.callee.member.object);
         },
         .member => |m| {
-            try self.preScanExpr(m.object);
-            try self.preScanExpr(m.property);
+            try preScanExpr(self, m.object);
+            try preScanExpr(self, m.property);
         },
         .index => |ix| {
-            try self.preScanExpr(ix.object);
-            if (ix.index) |v| try self.preScanExpr(v);
-            if (ix.end) |v| try self.preScanExpr(v);
+            try preScanExpr(self, ix.object);
+            if (ix.index) |v| try preScanExpr(self, v);
+            if (ix.end) |v| try preScanExpr(self, v);
         },
         .array_literal => |al| {
-            for (al.elements) |e| try self.preScanExpr(e);
+            for (al.elements) |e| try preScanExpr(self, e);
         },
-        .try_expr => |t| try self.preScanExpr(t.expression),
-        .unwrap_expr => |u| try self.preScanExpr(u.expression),
+        .try_expr => |t| try preScanExpr(self, t.expression),
+        .unwrap_expr => |u| try preScanExpr(self, u.expression),
         .error_expr => |e| {
-            for (e.args) |arg| try self.preScanExpr(arg);
+            for (e.args) |arg| try preScanExpr(self, arg);
         },
         .struct_init => |si| {
-            try self.preScanExpr(si.type_expr);
-            for (si.fields) |field| try self.preScanExpr(field.value);
+            try preScanExpr(self, si.type_expr);
+            for (si.fields) |field| try preScanExpr(self, field.value);
         },
-        .comptime_expr => |ce| try self.preScanExpr(ce.expr),
-        .block, .return_expr, .defer_stmt, .break_expr, .continue_expr, .if_expr, .for_expr, .switch_expr => try self.preScanStmt(node),
+        .comptime_expr => |ce| try preScanExpr(self, ce.expr),
+        .block, .return_expr, .defer_stmt, .break_expr, .continue_expr, .if_expr, .for_expr, .switch_expr => try preScanStmt(self, node),
         else => {},
     }
 }
@@ -115,7 +115,7 @@ pub fn preScanExpr(self: *Emitter, node: *ast_mod.Node) anyerror!void {
 pub fn preScanStmt(self: *Emitter, node: *ast_mod.Node) anyerror!void {
     switch (node.*) {
         .declaration => |d| {
-            try self.preScanExpr(d.value);
+            try preScanExpr(self, d.value);
             const b = try self.arena.allocator().create(Binding);
             b.* = .{
                 .name = d.name,
@@ -128,39 +128,39 @@ pub fn preScanStmt(self: *Emitter, node: *ast_mod.Node) anyerror!void {
         .block => |b| {
             self.pushScope();
             for (b.statements) |s| {
-                try self.preScanStmt(s);
-                if (self.stmtTerminates(s)) break;
+                try preScanStmt(self, s);
+                if (stmtTerminates(self, s)) break;
             }
             self.popScope();
         },
         .return_expr => |r| {
-            if (r.return_value) |v| try self.preScanExpr(v);
+            if (r.return_value) |v| try preScanExpr(self, v);
         },
-        .defer_stmt => |d| try self.preScanStmt(d.body),
+        .defer_stmt => |d| try preScanStmt(self, d.body),
         .break_expr => |b| {
-            if (b.value) |v| try self.preScanExpr(v);
+            if (b.value) |v| try preScanExpr(self, v);
         },
         .continue_expr => {},
         .if_expr => |i| {
-            try self.preScanExpr(i.condition);
-            if (i.pipe_value) |v| try self.preScanExpr(v);
-            try self.preScanStmt(i.body);
-            if (i.else_body) |e| try self.preScanStmt(e);
+            try preScanExpr(self, i.condition);
+            if (i.pipe_value) |v| try preScanExpr(self, v);
+            try preScanStmt(self, i.body);
+            if (i.else_body) |e| try preScanStmt(self, e);
         },
         .for_expr => |f| {
-            try self.preScanExpr(f.expr);
-            try self.preScanStmt(f.body);
+            try preScanExpr(self, f.expr);
+            try preScanStmt(self, f.body);
         },
         .switch_expr => |sw| {
-            try self.preScanExpr(sw.condition);
+            try preScanExpr(self, sw.condition);
             for (sw.prongs) |prong| {
-                for (prong.patterns) |p| try self.preScanExpr(p);
-                try self.preScanStmt(prong.body);
+                for (prong.patterns) |p| try preScanExpr(self, p);
+                try preScanStmt(self, prong.body);
             }
         },
         .function_decl => {},
         .struct_decl, .enum_decl, .error_decl, .type_decl, .extern_decl => {},
-        else => try self.preScanExpr(node),
+        else => try preScanExpr(self, node),
     }
 }
 
@@ -169,17 +169,17 @@ pub fn stmtTerminates(self: *Emitter, node: *ast_mod.Node) bool {
         .return_expr, .break_expr, .continue_expr => true,
         .block => |b| blk: {
             if (b.statements.len == 0) break :blk false;
-            break :blk self.stmtTerminates(b.statements[b.statements.len - 1]);
+            break :blk stmtTerminates(self, b.statements[b.statements.len - 1]);
         },
         .if_expr => |i| blk: {
             const else_body = i.else_body orelse break :blk false;
-            break :blk self.stmtTerminates(i.body) and self.stmtTerminates(else_body);
+            break :blk stmtTerminates(self, i.body) and stmtTerminates(self, else_body);
         },
         .switch_expr => |sw| blk: {
             var has_else = false;
             for (sw.prongs) |prong| {
                 if (prong.is_else) has_else = true;
-                if (!self.stmtTerminates(prong.body)) break :blk false;
+                if (!stmtTerminates(self, prong.body)) break :blk false;
             }
             break :blk has_else and sw.prongs.len > 0;
         },

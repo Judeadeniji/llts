@@ -201,8 +201,9 @@ Behavior:
 - **Entry Wrapper**: Emits `pub fn main() void` initializing `rt.Context`, running top-level code and LLTS `main`, and mapping errors to process exit.
 - **Control Flow**: `@if`, scalar `@switch`, range `@for (start..end) |i|`, condition `@for (cond)`, and iterable `@for` over arrays/slices/strings lower to native structured Zig. Value-producing arms use labeled-block results and `break` payloads; loop `break`/`continue` preserve labels. Optional `@if`/`@for` captures unwrap through Zig optional captures. Switch scrutinees are evaluated once and prongs use the same runtime equality helpers as the VM. Conditions rely on the LLTS typechecker's guarantees; the emitter adds no runtime truthiness or type assertions.
 - **Aggregates & Pointers**: Structs lower to typed Zig structs with stable field names; fixed arrays, slices (including heap-allocated slice literals), optionals, and pointers use their native Zig representations. Struct fields, array/slice indexing, slicing, `len`, optional unwrap, and address-of `&` are lowered; slice assignment clones to match VM value semantics.
-- **Cleanup**: `@defer` is tracked explicitly per lexical scope and emitted LIFO on scope exit, `break`, `continue`, and `return`, so it never runs on runtime traps. `@errdefer` and error-union propagation remain Phase 4.
-- **Remaining**: labeled block values, `@errdefer`/error-union values (`?`, `error(...)`, `@isError`), `@new`/`@addrOf`, and struct printing.
+- **Errors**: Error values use `rt.err.Error`; error unions lower to `rt.err.Result(T)`. `error(...)`, `?`, `return` coercion, `@isError`, `@nameOf`, `.code`/`.message`/`.payload`, equality, `@switch` over narrowed errors, and error printing match the VM. Error-set typedefs are expanded during classification.
+- **Cleanup**: `@defer` and `@errdefer` are tracked explicitly per lexical scope and emitted LIFO on scope exit, `break`, `continue`, and `return`, so they never run on runtime traps. `@errdefer` runs only on error returns.
+- **Remaining**: labeled block values, `@new`/`@addrOf`, and struct printing.
 
 ---
 
@@ -254,15 +255,22 @@ Cleanly remove the inactive LLVM stub module.
    - Range `@for (start..end) |i|`, condition `@for (cond)`, iterable `@for` over arrays/slices/strings, and optional captures with labeled `break`/`continue` and wrapping counter increments.
    - Struct fields, fixed arrays, slices/slice literals, optionals, pointers/address-of, member/index assignment, and `len` lower to typed Zig values.
    - `@defer` runs LIFO on scope exit, `break`, `continue`, and `return`.
-   - Remaining: labeled block values, `@errdefer`, error-union values (`?`, `error(...)`, `@isError`), `@new`/`@addrOf`, and struct printing.
+   - Remaining: labeled block values, `@new`/`@addrOf`, and struct printing.
    - Enforce RAII frame watermark cleanup in all emitted functions.
 
-4. **Phase 4: Full Native Compilation (`llts build --native`)** — implemented
+4. **Phase 3.5: Error Semantics** — implemented
+   - `error(...)` values and payloads, custom `@error` sets and unions, error-set typedefs, error-union `?` propagation, and implicit `.ok` wrapping.
+   - `@isError` narrowing, `@nameOf`, `.code`/`.message`/`.payload`, error equality, `@switch` over narrowed errors, and error printing.
+   - `@errdefer` interleaves with `@defer` in LIFO order and runs only on error exits.
+   - Unhandled errors from `main` and top-level code print `Error: <code>` and exit nonzero.
+   - Covered by `tests/55_emit_zig.test.ts` native parity tests.
+
+5. **Phase 4: Full Native Compilation (`llts build --native`)** — implemented
    - `compileNativeBinary` in `src/pipeline.zig` emits the runtime unit, stages it in the cwd, and spawns `zig build-exe` with the `-femit-*` flag for the selected artifact (`bin`, `asm`, `llvm-ir`, `llvm-bc`, `h`, `docs`, `implib` via `--emit=<kind>`); the staged file is removed afterwards.
    - Supports `-O Debug` / `-O ReleaseFast` / `--target` / `--zig-bin` / `--zig-args` passthrough; zig's stderr surfaces on failure as `error.NativeBuildFailed`.
    - Verified end-to-end by `tests/57.1_native_binary.test.ts` (binary-vs-VM stdout/exit-code parity, staging cleanup), `tests/57.2_native_artifacts.test.ts` (asm/llvm-ir/docs emission), and `tests/57.3_native_emit_errors.test.ts` (implib Windows-only rejection, unknown-kind validation).
 
-5. **Phase 5: Conformance Testing & Parity**
+6. **Phase 5: Conformance Testing & Parity**
    - Run the Bun test suite across both the bytecode VM runner and the native binary runner to ensure 100% output and error parity.
 
 ---

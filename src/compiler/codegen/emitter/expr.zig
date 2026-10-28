@@ -2,6 +2,8 @@ const std = @import("std");
 const ast_mod = @import("../../../ast/root.zig");
 const widths = @import("../../widths.zig");
 const root_mod = @import("root.zig");
+const unit_mod = @import("unit.zig");
+const stmt_mod = @import("stmt.zig");
 const Emitter = root_mod.Emitter;
 const ValType = root_mod.ValType;
 const MemberTarget = root_mod.MemberTarget;
@@ -17,30 +19,30 @@ pub fn emitBinary(self: *Emitter, node: *ast_mod.Node, b: *const ast_mod.Binary)
             return self.failAt(node, "logical '{s}' requires boolean operands", .{op});
         }
         const zig_op = if (std.mem.eql(u8, op, "&&")) "and" else "or";
-        return std.fmt.allocPrint(a, "({s} {s} {s})", .{ try self.emitExpr(b.left), zig_op, try self.emitExpr(b.right) });
+        return std.fmt.allocPrint(a, "({s} {s} {s})", .{ try emitExpr(self, b.left), zig_op, try emitExpr(self, b.right) });
     }
 
-    if (std.mem.eql(u8, op, "+") and (try self.isStringy(b.left) or try self.isStringy(b.right))) {
+    if (std.mem.eql(u8, op, "+") and (try isStringy(self, b.left) or try isStringy(self, b.right))) {
         const lt = try self.valueType(b.left);
         const rt = try self.valueType(b.right);
         if (lt.kind != .string or rt.kind != .string) {
             return self.failAt(node, "string concatenation requires two string operands", .{});
         }
         return std.fmt.allocPrint(a, "(try rt.mem.concat(ctx, {s}, {s}))", .{
-            try self.emitExpr(b.left),
-            try self.emitExpr(b.right),
+            try emitExpr(self, b.left),
+            try emitExpr(self, b.right),
         });
     }
 
-    if (isComparison(op)) return self.emitComparison(node, b);
+    if (isComparison(op)) return emitComparison(self, node, b);
 
     const lt = try self.valueType(b.left);
     const rt = try self.valueType(b.right);
     if (lt.may_error or rt.may_error) {
         return self.failAt(node, "error-union operand must be handled with '?' first", .{});
     }
-    if (lt.kind == .int and rt.kind == .int) return self.emitIntBinary(node, b, lt);
-    if (lt.kind == .float or rt.kind == .float) return self.emitFloatBinary(node, b, lt, rt);
+    if (lt.kind == .int and rt.kind == .int) return emitIntBinary(self, node, b, lt);
+    if (lt.kind == .float or rt.kind == .float) return emitFloatBinary(self, node, b, lt, rt);
     return self.failAt(node, "native backend (Phase 2) does not support '{s}' on '{s}' and '{s}'", .{
         op, lt.display, rt.display,
     });
@@ -59,7 +61,7 @@ fn emitPipe(self: *Emitter, b: *const ast_mod.Binary) ![]const u8 {
     args[0] = b.left;
     @memcpy(args[1..], explicit);
     const synth = ast_mod.Call{ .callee = callee, .args = args, .loc = right.loc() };
-    return self.emitCall(right, &synth);
+    return emitCall(self, right, &synth);
 }
 
 pub fn emitCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) anyerror![]const u8 {
@@ -67,13 +69,48 @@ pub fn emitCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) any
 
     if (c.callee.* == .primary and std.mem.startsWith(u8, c.callee.primary.name, "@")) {
         const intrinsic = c.callee.primary.name;
+        if (std.mem.eql(u8, intrinsic, "@isError")) {
+            if (c.args.len != 1) return self.failAt(node, "@isError expects 1 argument", .{});
+            const t = try self.valueType(c.args[0]);
+            if (t.may_error and t.kind != .error_value) {
+                self.counter += 1;
+                const id = self.counter;
+                const res_name = try std.fmt.allocPrint(a, "lls_iseres_{d}", .{id});
+                return std.fmt.allocPrint(a,
+                    \\blk: {{
+                    \\    const {s}: {s} = {s};
+                    \\    break :blk switch ({s}) {{ .ok => false, .err => true }};
+                    \\}}
+                , .{ res_name, t.zig, try emitExpr(self, c.args[0]), res_name });
+            }
+            const has_effects = exprHasEffects(c.args[0]);
+            if (t.kind == .error_value) {
+                if (!has_effects) return "true";
+                return std.fmt.allocPrint(a, "blk: {{ _ = {s}; break :blk true; }}", .{try emitExpr(self, c.args[0])});
+            }
+            if (t.kind == .void or t.kind == .null_value) return "false";
+            if (!has_effects) return "false";
+            return std.fmt.allocPrint(a, "blk: {{ _ = {s}; break :blk false; }}", .{try emitExpr(self, c.args[0])});
+        }
+        if (std.mem.eql(u8, intrinsic, "@nameOf")) {
+            if (c.args.len != 1) return self.failAt(node, "@nameOf expects 1 argument", .{});
+            const plan = self.state.name_of_plans.get(node) orelse {
+                return self.failAt(node, "native backend cannot resolve @nameOf", .{});
+            };
+            return switch (plan) {
+                .fold => |spelling| self.zigString(spelling),
+                .decl_name => |spelling| self.zigString(spelling),
+                .error_code => std.fmt.allocPrint(a, "({s}).code", .{try errorOperandCode(self, c.args[0])}),
+                .enum_type => self.failAt(node, "native backend cannot lower runtime @nameOf on enums yet", .{}),
+            };
+        }
         if (std.mem.eql(u8, intrinsic, "@as")) {
             if (c.args.len != 2) return self.failAt(node, "@as expects 2 arguments", .{});
             const target = try self.valueType(node);
             if (target.kind == .other or target.kind == .void) {
                 return self.failAt(node, "native backend (Phase 2) does not support @as to '{s}'", .{target.display});
             }
-            return self.emitStrongCoercion(c.args[1], target);
+            return emitStrongCoercion(self, c.args[1], target);
         }
         if (std.mem.eql(u8, intrinsic, "len")) {
             if (c.args.len != 1) return self.failAt(node, "len expects 1 argument", .{});
@@ -81,7 +118,7 @@ pub fn emitCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) any
             if (at.kind != .string and at.kind != .slice and at.kind != .array) {
                 return self.failAt(node, "len of '{s}' is not supported in Phase 3", .{at.display});
             }
-            return std.fmt.allocPrint(a, "@as(i64, @intCast(({s}).len))", .{try self.emitExpr(c.args[0])});
+            return std.fmt.allocPrint(a, "@as(i64, @intCast(({s}).len))", .{try emitExpr(self, c.args[0])});
         }
         return self.failAt(node, "native backend (Phase 2) does not support intrinsic '{s}'", .{intrinsic});
     }
@@ -95,17 +132,14 @@ pub fn emitCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) any
         var args_buf: std.ArrayList([]const u8) = .empty;
         for (c.args) |arg| {
             const at = try self.valueType(arg);
-            if (at.may_error) {
-                return self.failAt(arg, "error-union print argument must be handled with '?' first", .{});
-            }
             if (containsStruct(at)) {
                 return self.failAt(arg, "native backend cannot print struct values yet; print fields individually", .{});
             }
             if (at.kind == .null_value) {
-                try args_buf.append(a, std.fmt.allocPrint(a, "@as(?u8, {s})", .{try self.emitExpr(arg)}) catch unreachable);
+                try args_buf.append(a, std.fmt.allocPrint(a, "@as(?u8, {s})", .{try emitExpr(self, arg)}) catch unreachable);
                 continue;
             }
-            try args_buf.append(a, try self.emitStrongCoercion(arg, at));
+            try args_buf.append(a, try emitStrongCoercion(self, arg, at));
         }
         const args_joined = try std.mem.join(a, ", ", args_buf.items);
         return std.fmt.allocPrint(a, "(try rt.print.print(ctx, .{{{s}}}))", .{args_joined});
@@ -114,7 +148,7 @@ pub fn emitCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) any
     if (std.mem.eql(u8, callee, "len")) {
         if (c.args.len != 1) return self.failAt(node, "len expects 1 argument", .{});
         var at = try self.valueType(c.args[0]);
-        var operand = try self.emitExpr(c.args[0]);
+        var operand = try emitExpr(self, c.args[0]);
         if (at.kind == .pointer) {
             const payload = at.payload orelse return self.failAt(node, "native backend cannot determine the pointee type of '{s}'", .{at.display});
             at = payload.*;
@@ -143,11 +177,7 @@ pub fn emitCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) any
 
     var args_buf: std.ArrayList([]const u8) = .empty;
     for (c.args) |arg| {
-        const at = try self.valueType(arg);
-        if (at.may_error) {
-            return self.failAt(arg, "error-union argument must be handled with '?' first", .{});
-        }
-        try args_buf.append(a, try self.emitExpr(arg));
+        try args_buf.append(a, try emitExpr(self, arg));
     }
     const args_joined = try std.mem.join(a, ", ", args_buf.items);
     const zig_fn = try self.fnName(name);
@@ -162,34 +192,40 @@ pub fn emitComparison(self: *Emitter, node: *ast_mod.Node, b: *const ast_mod.Bin
     const op = b.operator;
     const lt = try self.valueType(b.left);
     const rt = try self.valueType(b.right);
+    const eq = std.mem.eql(u8, op, "==") or std.mem.eql(u8, op, "!=");
     if (lt.may_error or rt.may_error) {
+        if (eq and lt.kind == .error_value and rt.kind == .error_value) {
+            const base = try std.fmt.allocPrint(a, "rt.err.eq({s}, {s})", .{
+                try errorOperandCode(self, b.left), try errorOperandCode(self, b.right),
+            });
+            return if (std.mem.eql(u8, op, "!=")) std.fmt.allocPrint(a, "(!{s})", .{base}) else base;
+        }
         return self.failAt(node, "error-union operand must be handled with '?' first", .{});
     }
 
-    const eq = std.mem.eql(u8, op, "==") or std.mem.eql(u8, op, "!=");
     if (eq) {
         const negate = std.mem.eql(u8, op, "!=");
         if (lt.kind == .string and rt.kind == .string) {
             const base = try std.fmt.allocPrint(a, "rt.arith.eqStr({s}, {s})", .{
-                try self.emitExpr(b.left), try self.emitExpr(b.right),
+                try emitExpr(self, b.left), try emitExpr(self, b.right),
             });
             return if (negate) std.fmt.allocPrint(a, "(!{s})", .{base}) else base;
         }
         if (lt.kind == .bool and rt.kind == .bool) {
             const base = try std.fmt.allocPrint(a, "rt.arith.eqBool({s}, {s})", .{
-                try self.emitExpr(b.left), try self.emitExpr(b.right),
+                try emitExpr(self, b.left), try emitExpr(self, b.right),
             });
             return if (negate) std.fmt.allocPrint(a, "(!{s})", .{base}) else base;
         }
         if (lt.kind == .int and rt.kind == .int) {
             const base = try std.fmt.allocPrint(a, "rt.arith.eqI64({s}, {s})", .{
-                try self.emitI64Operand(b.left), try self.emitI64Operand(b.right),
+                try emitI64Operand(self, b.left), try emitI64Operand(self, b.right),
             });
             return if (negate) std.fmt.allocPrint(a, "(!{s})", .{base}) else base;
         }
         if (lt.kind == .float and rt.kind == .float) {
-            const l = try self.emitF64Operand(b.left);
-            const r = try self.emitF64Operand(b.right);
+            const l = try emitF64Operand(self, b.left);
+            const r = try emitF64Operand(self, b.right);
             const base = try std.fmt.allocPrint(a, "rt.arith.eqF64({s}, {s})", .{ l, r });
             return if (negate) std.fmt.allocPrint(a, "(!{s})", .{base}) else base;
         }
@@ -203,7 +239,7 @@ pub fn emitComparison(self: *Emitter, node: *ast_mod.Node, b: *const ast_mod.Bin
             else => return self.failAt(node, "unsupported comparison '{s}'", .{op}),
         };
         return std.fmt.allocPrint(a, "rt.arith.{s}({s}, {s})", .{
-            fn_name, try self.emitI64Operand(b.left), try self.emitI64Operand(b.right),
+            fn_name, try emitI64Operand(self, b.left), try emitI64Operand(self, b.right),
         });
     }
     if (lt.kind == .float or rt.kind == .float) {
@@ -215,8 +251,8 @@ pub fn emitComparison(self: *Emitter, node: *ast_mod.Node, b: *const ast_mod.Bin
             else => return self.failAt(node, "unsupported comparison '{s}'", .{op}),
         };
         const fn_name = try std.fmt.allocPrint(a, "{s}{s}", .{ prefix, suffix });
-        const l = if (use_f32) try self.emitF32Operand(b.left) else try self.emitF64Operand(b.left);
-        const r = if (use_f32) try self.emitF32Operand(b.right) else try self.emitF64Operand(b.right);
+        const l = if (use_f32) try emitF32Operand(self, b.left) else try emitF64Operand(self, b.left);
+        const r = if (use_f32) try emitF32Operand(self, b.right) else try emitF64Operand(self, b.right);
         return std.fmt.allocPrint(a, "rt.arith.{s}({s}, {s})", .{ fn_name, l, r });
     }
     return self.failAt(node, "cannot order '{s}' and '{s}'", .{ lt.display, rt.display });
@@ -224,7 +260,7 @@ pub fn emitComparison(self: *Emitter, node: *ast_mod.Node, b: *const ast_mod.Bin
 
 pub fn emitExpr(self: *Emitter, node: *ast_mod.Node) anyerror![]const u8 {
     switch (node.*) {
-        .literal => |lit| return self.emitLiteral(node, lit),
+        .literal => |lit| return emitLiteral(self, node, lit),
         .primary => |p| {
             if (p.kind != .identifier and p.kind != .register) {
                 return self.failAt(node, "native backend (Phase 2) does not support '{s}' operands", .{@tagName(p.kind)});
@@ -232,23 +268,19 @@ pub fn emitExpr(self: *Emitter, node: *ast_mod.Node) anyerror![]const u8 {
             const resolved = try self.lookupBinding(node, p.name);
             return resolved.zig_name;
         },
-        .binary => |b| return self.emitBinary(node, &b),
-        .unary => |u| return self.emitUnary(node, &u),
-        .call => |c| return self.emitCall(node, &c),
-        .member => |m| return self.emitMember(node, &m),
-        .index => |ix| return self.emitIndex(node, &ix),
-        .array_literal => |al| return self.emitArrayLiteral(node, &al, try self.valueType(node)),
-        .struct_init => |si| return self.emitStructLiteral(node, &si, try self.valueType(node)),
-        .unwrap_expr => |u| return self.emitOptionalUnwrap(node, &u),
-        .comptime_expr => |ce| return self.emitExpr(ce.expr),
-        .try_expr => |t| {
-            if (t.expression.* != .call) {
-                return self.failAt(node, "native backend (Phase 2) only supports '?' on direct calls", .{});
-            }
-            return self.emitExpr(t.expression);
-        },
-        .if_expr => |i| return self.emitIfValue(node, &i),
-        .switch_expr => |sw| return self.emitSwitchValue(node, &sw),
+        .binary => |b| return emitBinary(self, node, &b),
+        .unary => |u| return emitUnary(self, node, &u),
+        .call => |c| return emitCall(self, node, &c),
+        .member => |m| return emitMember(self, node, &m),
+        .index => |ix| return emitIndex(self, node, &ix),
+        .array_literal => |al| return emitArrayLiteral(self, node, &al, try self.valueType(node)),
+        .struct_init => |si| return emitStructLiteral(self, node, &si, try self.valueType(node)),
+        .unwrap_expr => |u| return emitOptionalUnwrap(self, node, &u),
+        .comptime_expr => |ce| return emitExpr(self, ce.expr),
+        .try_expr => |t| return emitTryExpr(self, node, &t),
+        .error_expr => |e| return emitErrorExpr(self, node, &e),
+        .if_expr => |i| return stmt_mod.emitIfValue(self, node, &i),
+        .switch_expr => |sw| return stmt_mod.emitSwitchValue(self, node, &sw),
         .declaration, .return_expr, .block, .for_expr, .break_expr, .continue_expr, .defer_stmt, .function_decl, .struct_decl, .enum_decl, .error_decl, .type_decl, .extern_decl => {
             return self.failAt(node, "native backend (Phase 2) does not support {s} in expression position", .{@tagName(node.*)});
         },
@@ -258,11 +290,101 @@ pub fn emitExpr(self: *Emitter, node: *ast_mod.Node) anyerror![]const u8 {
     }
 }
 
+pub fn writeErrorReturn(self: *Emitter, node: *ast_mod.Node, err_code: []const u8) !void {
+    if (self.cur_ret.kind == .error_value) {
+        try self.writeIndent();
+        try self.writer.print("return {s};\n", .{err_code});
+        return;
+    }
+    if (self.cur_ret.may_error) {
+        try self.writeIndent();
+        try self.writer.print("return .{{ .err = {s} }};\n", .{err_code});
+        return;
+    }
+    if (self.cur_ret.kind == .void) {
+        try self.writeIndent();
+        try self.writer.print("return rt.io.failMsg({s}.code);\n", .{err_code});
+        return;
+    }
+    return self.failAt(node, "cannot propagate an error from a function returning '{s}'", .{self.cur_ret.display});
+}
+
+pub fn emitTryExpr(self: *Emitter, node: *ast_mod.Node, t: *const ast_mod.TryExpr) ![]const u8 {
+    const a = self.arena.allocator();
+    const vt = try self.valueType(t.expression);
+    self.counter += 1;
+    const id = self.counter;
+    const tmp = try std.fmt.allocPrint(a, "lls_try_{d}", .{id});
+    const value = try std.fmt.allocPrint(a, "lls_try_val_{d}", .{id});
+    const err_name = try std.fmt.allocPrint(a, "lls_try_err_{d}", .{id});
+
+    var buf: std.ArrayList(u8) = .empty;
+    const old_writer = self.writer;
+    const old_indent = self.indent;
+    self.writer = buf.writer(a).any();
+    self.indent += 1;
+    defer {
+        self.writer = old_writer;
+        self.indent = old_indent;
+    }
+
+    try buf.appendSlice(a, "blk: {\n");
+    try self.writeIndent();
+    if (vt.kind == .error_value) {
+        try self.writer.print("const {s}: rt.err.Error = {s};\n", .{ tmp, try emitExpr(self, t.expression) });
+        try self.emitErrorCleanup();
+        try writeErrorReturn(self, node, tmp);
+    } else if (vt.may_error) {
+        try self.writer.print("const {s}: {s} = {s};\n", .{ tmp, vt.zig, try emitExpr(self, t.expression) });
+        try self.writeIndent();
+        try self.writer.print("break :blk switch ({s}) {{\n", .{tmp});
+        self.indent += 1;
+        try self.writeIndent();
+        try self.writer.print(".ok => |{s}| {s},\n", .{ value, value });
+        try self.writeIndent();
+        try self.writer.print(".err => |{s}| {{\n", .{err_name});
+        self.indent += 1;
+        try self.emitErrorCleanup();
+        try writeErrorReturn(self, node, err_name);
+        self.indent -= 1;
+        try self.writeIndent();
+        try self.writer.writeAll("},\n");
+        self.indent -= 1;
+        try self.writeIndent();
+        try self.writer.writeAll("};\n");
+    } else {
+        return self.failAt(node, "'?' requires an error or error-union value", .{});
+    }
+    try self.writer.writeAll("}");
+    return buf.items;
+}
+
+pub fn emitErrorExpr(self: *Emitter, node: *ast_mod.Node, e: *const ast_mod.ErrorExpr) ![]const u8 {
+    const a = self.arena.allocator();
+    if (e.args.len == 0 or e.args.len > 2) {
+        return self.failAt(node, "error() takes at most 2 arguments (message, payload)", .{});
+    }
+    const code = try emitExpr(self, e.args[0]);
+    if (e.args.len == 1) {
+        return std.fmt.allocPrint(a, "rt.err.makeCode({s})", .{code});
+    }
+    const payload_t = try self.valueType(e.args[1]);
+    const payload = switch (payload_t.kind) {
+        .null_value => ".{ .none = {} }",
+        .int => try std.fmt.allocPrint(a, ".{{ .int = {s} }}", .{try emitExpr(self, e.args[1])}),
+        .float => try std.fmt.allocPrint(a, ".{{ .float = {s} }}", .{try emitExpr(self, e.args[1])}),
+        .bool => try std.fmt.allocPrint(a, ".{{ .boolean = {s} }}", .{try emitExpr(self, e.args[1])}),
+        .string => try std.fmt.allocPrint(a, ".{{ .str = {s} }}", .{try emitExpr(self, e.args[1])}),
+        else => return self.failAt(e.args[1], "native backend cannot store an error payload of type '{s}'", .{payload_t.display}),
+    };
+    return std.fmt.allocPrint(a, "rt.err.make({s}, {s})", .{ code, payload });
+}
+
 pub fn emitF32Operand(self: *Emitter, node: *ast_mod.Node) ![]const u8 {
     const a = self.arena.allocator();
     const t = try self.valueType(node);
     if (t.may_error) return self.failAt(node, "error-union value must be handled with '?' first", .{});
-    const code = try self.emitExpr(node);
+    const code = try emitExpr(self, node);
     if (t.kind == .float) {
         if (std.mem.eql(u8, t.zig, "f64")) return std.fmt.allocPrint(a, "@as(f32, @floatCast({s}))", .{code});
         return code;
@@ -278,7 +400,7 @@ pub fn emitF64Operand(self: *Emitter, node: *ast_mod.Node) ![]const u8 {
     const a = self.arena.allocator();
     const t = try self.valueType(node);
     if (t.may_error) return self.failAt(node, "error-union value must be handled with '?' first", .{});
-    const code = try self.emitExpr(node);
+    const code = try emitExpr(self, node);
     if (t.kind == .float) {
         if (std.mem.eql(u8, t.zig, "f32")) return std.fmt.allocPrint(a, "@as(f64, @floatCast({s}))", .{code});
         return code;
@@ -297,8 +419,8 @@ pub fn emitFloatBinary(self: *Emitter, node: *ast_mod.Node, b: *const ast_mod.Bi
     }
     const use_f32 = std.mem.eql(u8, lt.zig, "f32") and std.mem.eql(u8, rt.zig, "f32");
     const suffix: []const u8 = if (use_f32) "F32" else "F64";
-    const l = if (use_f32) try self.emitF32Operand(b.left) else try self.emitF64Operand(b.left);
-    const r = if (use_f32) try self.emitF32Operand(b.right) else try self.emitF64Operand(b.right);
+    const l = if (use_f32) try emitF32Operand(self, b.left) else try emitF64Operand(self, b.left);
+    const r = if (use_f32) try emitF32Operand(self, b.right) else try emitF64Operand(self, b.right);
     const op = b.operator;
     if (std.mem.eql(u8, op, "+") or std.mem.eql(u8, op, "-") or std.mem.eql(u8, op, "*") or
         std.mem.eql(u8, op, "^") or std.mem.eql(u8, op, "**"))
@@ -323,7 +445,7 @@ pub fn emitI64Operand(self: *Emitter, node: *ast_mod.Node) ![]const u8 {
     const t = try self.valueType(node);
     if (t.may_error) return self.failAt(node, "error-union value must be handled with '?' first", .{});
     if (t.kind != .int) return self.failAt(node, "expected an integer operand, got '{s}'", .{t.display});
-    const code = try self.emitExpr(node);
+    const code = try emitExpr(self, node);
     if (t.isU64()) return std.fmt.allocPrint(a, "@as(i64, @bitCast({s}))", .{code});
     return code;
 }
@@ -345,11 +467,11 @@ pub fn emitIntBinary(self: *Emitter, node: *ast_mod.Node, b: *const ast_mod.Bina
         };
         if (!wrap_needed) {
             plain_call = try std.fmt.allocPrint(a, "(try rt.arith.{s}({s}, {s}))", .{
-                base, try self.emitI64Operand(b.left), try self.emitI64Operand(b.right),
+                base, try emitI64Operand(self, b.left), try emitI64Operand(self, b.right),
             });
         } else {
             checked_call = try std.fmt.allocPrint(a, "(try rt.arith.{s}Checked(.{s}, {s}, {s}))", .{
-                base, @tagName(w), try self.emitI64Operand(b.left), try self.emitI64Operand(b.right),
+                base, @tagName(w), try emitI64Operand(self, b.left), try emitI64Operand(self, b.right),
             });
         }
     } else if (std.mem.eql(u8, op, "+%") or std.mem.eql(u8, op, "-%") or std.mem.eql(u8, op, "*%")) {
@@ -359,16 +481,16 @@ pub fn emitIntBinary(self: *Emitter, node: *ast_mod.Node, b: *const ast_mod.Bina
             else => "mul",
         };
         plain_call = try std.fmt.allocPrint(a, "(rt.arith.{s}Wrapped(.{s}, {s}, {s}))", .{
-            base, @tagName(w), try self.emitI64Operand(b.left), try self.emitI64Operand(b.right),
+            base, @tagName(w), try emitI64Operand(self, b.left), try emitI64Operand(self, b.right),
         });
     } else if (std.mem.eql(u8, op, "/") or std.mem.eql(u8, op, "%")) {
         const base = if (std.mem.eql(u8, op, "/")) "div" else "rem";
         plain_call = try std.fmt.allocPrint(a, "(try rt.arith.{s}({s}, {s}))", .{
-            base, try self.emitI64Operand(b.left), try self.emitI64Operand(b.right),
+            base, try emitI64Operand(self, b.left), try emitI64Operand(self, b.right),
         });
     } else if (std.mem.eql(u8, op, "^") or std.mem.eql(u8, op, "**")) {
         plain_call = try std.fmt.allocPrint(a, "(rt.arith.pow({s}, {s}))", .{
-            try self.emitI64Operand(b.left), try self.emitI64Operand(b.right),
+            try emitI64Operand(self, b.left), try emitI64Operand(self, b.right),
         });
     } else if (std.mem.eql(u8, op, "&") or std.mem.eql(u8, op, "|") or std.mem.eql(u8, op, "~")) {
         const base = switch (op[0]) {
@@ -377,19 +499,19 @@ pub fn emitIntBinary(self: *Emitter, node: *ast_mod.Node, b: *const ast_mod.Bina
             else => "bxor",
         };
         plain_call = try std.fmt.allocPrint(a, "(rt.arith.{s}({s}, {s}))", .{
-            base, try self.emitI64Operand(b.left), try self.emitI64Operand(b.right),
+            base, try emitI64Operand(self, b.left), try emitI64Operand(self, b.right),
         });
     } else if (std.mem.eql(u8, op, "<<") or std.mem.eql(u8, op, ">>")) {
         const base = if (std.mem.eql(u8, op, "<<")) "shl" else "shr";
         plain_call = try std.fmt.allocPrint(a, "(try rt.arith.{s}({s}, {s}))", .{
-            base, try self.emitI64Operand(b.left), try self.emitI64Operand(b.right),
+            base, try emitI64Operand(self, b.left), try emitI64Operand(self, b.right),
         });
     } else {
         return self.failAt(node, "native backend (Phase 2) does not support operator '{s}'", .{op});
     }
 
     const call = checked_call orelse plain_call.?;
-    return self.wrapWidth(lt, call);
+    return wrapWidth(self, lt, call);
 }
 
 pub fn emitLiteral(self: *Emitter, node: *ast_mod.Node, lit: ast_mod.Literal) ![]const u8 {
@@ -405,7 +527,7 @@ pub fn emitLiteral(self: *Emitter, node: *ast_mod.Node, lit: ast_mod.Literal) ![
 pub fn emitStrongCoercion(self: *Emitter, node: *ast_mod.Node, target: ValType) ![]const u8 {
     const a = self.arena.allocator();
     if (node.* == .literal) {
-        const code = try self.emitExpr(node);
+        const code = try emitExpr(self, node);
         if (target.kind == .int and isIntLiteral(node)) {
             return std.fmt.allocPrint(a, "@as({s}, {s})", .{ target.zig, code });
         }
@@ -415,7 +537,7 @@ pub fn emitStrongCoercion(self: *Emitter, node: *ast_mod.Node, target: ValType) 
         // String literals are already string-compatible in Zig (print
         // accepts pointer-to-array, annotated slots coerce to []const u8).
     }
-    return self.emitValueCoercedForce(node, target);
+    return emitValueCoercedForce(self, node, target);
 }
 
 pub fn emitAddressOf(self: *Emitter, node: *ast_mod.Node, arg: *ast_mod.Node) ![]const u8 {
@@ -432,7 +554,7 @@ pub fn emitAddressOf(self: *Emitter, node: *ast_mod.Node, arg: *ast_mod.Node) ![
             var buf: std.ArrayList(u8) = .empty;
             const old_writer = self.writer;
             self.writer = buf.writer(a).any();
-            const place = self.emitPlaceLvalue(arg) catch |err| {
+            const place = stmt_mod.emitPlaceLvalue(self, arg) catch |err| {
                 self.writer = old_writer;
                 return err;
             };
@@ -445,9 +567,9 @@ pub fn emitAddressOf(self: *Emitter, node: *ast_mod.Node, arg: *ast_mod.Node) ![
 
 pub fn emitUnary(self: *Emitter, node: *ast_mod.Node, u: *const ast_mod.Unary) ![]const u8 {
     const a = self.arena.allocator();
-    if (std.mem.eql(u8, u.operator, "const")) return self.emitExpr(u.arg);
+    if (std.mem.eql(u8, u.operator, "const")) return emitExpr(self, u.arg);
     if (std.mem.eql(u8, u.operator, "&")) {
-        return self.emitAddressOf(node, u.arg);
+        return emitAddressOf(self, node, u.arg);
     }
     const t = try self.valueType(u.arg);
     if (t.may_error) {
@@ -457,62 +579,79 @@ pub fn emitUnary(self: *Emitter, node: *ast_mod.Node, u: *const ast_mod.Unary) !
         if (t.kind != .bool) {
             return self.failAt(node, "'!' requires a boolean operand, got '{s}'", .{t.display});
         }
-        return std.fmt.allocPrint(a, "(!{s})", .{try self.emitExpr(u.arg)});
+        return std.fmt.allocPrint(a, "(!{s})", .{try emitExpr(self, u.arg)});
     }
     if (std.mem.eql(u8, u.operator, "-")) {
         if (t.kind == .float) {
             const fn_name = if (std.mem.eql(u8, t.zig, "f32")) "negF32" else "negF64";
-            return std.fmt.allocPrint(a, "(rt.arith.{s}({s}))", .{ fn_name, try self.emitExpr(u.arg) });
+            return std.fmt.allocPrint(a, "(rt.arith.{s}({s}))", .{ fn_name, try emitExpr(self, u.arg) });
         }
         if (t.kind != .int) {
             return self.failAt(node, "unary '-' requires a numeric operand", .{});
         }
         if (t.isI64()) {
-            return std.fmt.allocPrint(a, "(try rt.arith.neg({s}))", .{try self.emitExpr(u.arg)});
+            return std.fmt.allocPrint(a, "(try rt.arith.neg({s}))", .{try emitExpr(self, u.arg)});
         }
-        const inner = try std.fmt.allocPrint(a, "(try rt.arith.neg({s}))", .{try self.emitI64Operand(u.arg)});
-        return self.wrapWidth(t, inner);
+        const inner = try std.fmt.allocPrint(a, "(try rt.arith.neg({s}))", .{try emitI64Operand(self, u.arg)});
+        return wrapWidth(self, t, inner);
     }
     if (std.mem.eql(u8, u.operator, "~")) {
         if (t.kind != .int) {
             return self.failAt(node, "unary '~' requires an integer operand", .{});
         }
         if (t.isI64()) {
-            return std.fmt.allocPrint(a, "(rt.arith.bnot({s}))", .{try self.emitExpr(u.arg)});
+            return std.fmt.allocPrint(a, "(rt.arith.bnot({s}))", .{try emitExpr(self, u.arg)});
         }
-        const inner = try std.fmt.allocPrint(a, "(rt.arith.bnot({s}))", .{try self.emitI64Operand(u.arg)});
-        return self.wrapWidth(t, inner);
+        const inner = try std.fmt.allocPrint(a, "(rt.arith.bnot({s}))", .{try emitI64Operand(self, u.arg)});
+        return wrapWidth(self, t, inner);
     }
     return self.failAt(node, "native backend does not support unary '{s}'", .{u.operator});
 }
 
 pub fn emitValueCoerced(self: *Emitter, node: *ast_mod.Node, target: ValType) ![]const u8 {
-    return self.emitValueCoercedMode(node, target, false);
+    return emitValueCoercedMode(self, node, target, false);
 }
 
 pub fn emitValueCoercedForce(self: *Emitter, node: *ast_mod.Node, target: ValType) ![]const u8 {
-    return self.emitValueCoercedMode(node, target, true);
+    return emitValueCoercedMode(self, node, target, true);
 }
 
 pub fn emitValueCoercedMode(self: *Emitter, node: *ast_mod.Node, target: ValType, force: bool) ![]const u8 {
     const a = self.arena.allocator();
     const src = try self.valueType(node);
+    if (target.kind == .error_value) {
+        if (src.kind != .error_value) {
+            return self.failAt(node, "cannot assign '{s}' to '{s}' in native emission", .{ src.display, target.display });
+        }
+        return emitExpr(self, node);
+    }
+    if (target.may_error) {
+        if (src.kind == .error_value) {
+            return std.fmt.allocPrint(a, ".{{ .err = {s} }}", .{try emitExpr(self, node)});
+        }
+        if (src.may_error) {
+            if (std.mem.eql(u8, src.zig, target.zig)) return emitExpr(self, node);
+            return self.failAt(node, "cannot assign error union '{s}' to '{s}' in native emission", .{ src.display, target.display });
+        }
+        const success = target.success orelse {
+            return self.failAt(node, "native backend cannot determine the success type of '{s}'", .{target.display});
+        };
+        const inner = try emitValueCoercedMode(self, node, success.*, force);
+        return std.fmt.allocPrint(a, ".{{ .ok = {s} }}", .{inner});
+    }
     if (src.may_error) {
         return self.failAt(node, "error-union value must be handled with '?' first", .{});
     }
-    if (target.may_error and target.kind == .other) {
-        return self.failAt(node, "native backend does not support error-union values yet", .{});
-    }
     if (node.* == .array_literal and target.kind == .array) {
-        return self.emitArrayLiteral(node, &node.array_literal, target);
+        return emitArrayLiteral(self, node, &node.array_literal, target);
     }
     if (node.* == .array_literal and target.kind == .slice) {
-        return self.emitSliceLiteral(node, &node.array_literal, target);
+        return emitSliceLiteral(self, node, &node.array_literal, target);
     }
     if (node.* == .struct_init and target.kind == .struct_) {
-        return self.emitStructLiteral(node, &node.struct_init, target);
+        return emitStructLiteral(self, node, &node.struct_init, target);
     }
-    const code = try self.emitExpr(node);
+    const code = try emitExpr(self, node);
 
     // Literals are already polymorphic; the surrounding declaration,
     // assignment, return, print, or @as supplies the concrete type.
@@ -521,7 +660,7 @@ pub fn emitValueCoercedMode(self: *Emitter, node: *ast_mod.Node, target: ValType
     if (src.kind == .slice and target.kind == .slice and
         (node.* == .primary or node.* == .member))
     {
-        return self.emitCloneSlice(node, src, code);
+        return emitCloneSlice(self, node, src, code);
     }
 
     if (target.kind == .optional) {
@@ -537,7 +676,7 @@ pub fn emitValueCoercedMode(self: *Emitter, node: *ast_mod.Node, target: ValType
         return self.failAt(node, "cannot assign '{s}' to 'null'", .{src.display});
     }
     if (target.kind == .slice and src.kind == .array) {
-        return self.emitArrayToSlice(node, src, target, code);
+        return emitArrayToSlice(self, node, src, target, code);
     }
 
     if (src.kind == target.kind and src.zig.len == target.zig.len and
@@ -569,6 +708,7 @@ pub fn emitValueCoercedMode(self: *Emitter, node: *ast_mod.Node, target: ValType
     if (target.kind == .array and src.kind == .array) return code;
     if (target.kind == .slice and src.kind == .slice) return code;
     if (target.kind == .pointer and src.kind == .pointer) return code;
+    if (target.kind == .error_payload and src.kind == .error_payload) return code;
     return self.failAt(node, "cannot assign '{s}' to '{s}' in native emission", .{ src.display, target.display });
 }
 
@@ -578,6 +718,9 @@ pub fn isNullLiteral(node: *ast_mod.Node) bool {
 }
 
 pub fn containsStruct(t: ValType) bool {
+    if (t.may_error) {
+        if (t.success) |success| return containsStruct(success.*);
+    }
     return switch (t.kind) {
         .struct_ => true,
         .array, .slice => if (t.elem) |e| containsStruct(e.*) else false,
@@ -588,6 +731,7 @@ pub fn containsStruct(t: ValType) bool {
 
 pub fn resolveMemberField(self: *Emitter, node: *ast_mod.Node, m: *const ast_mod.Member) !?MemberTarget {
     if (m.property.* != .primary) return null;
+    if (m.object.* == .primary and self.state.error_sets.contains(m.object.primary.name)) return null;
     const field_name = m.property.primary.name;
     const obj_t = try self.valueType(m.object);
     const info = (try self.structInfoForDisplay(m.object, obj_t.display)) orelse return null;
@@ -598,8 +742,17 @@ pub fn resolveMemberField(self: *Emitter, node: *ast_mod.Node, m: *const ast_mod
     return .{ .info = info, .index = index };
 }
 
+pub fn errorOperandCode(self: *Emitter, node: *ast_mod.Node) ![]const u8 {
+    const t = try self.storageValueType(node);
+    const code = try emitExpr(self, node);
+    if (t.may_error and t.kind != .error_value) {
+        return std.fmt.allocPrint(self.arena.allocator(), "rt.err.expectError({s})", .{code});
+    }
+    return code;
+}
+
 pub fn emitMemberAccess(self: *Emitter, node: *ast_mod.Node, m: *const ast_mod.Member) ![]const u8 {
-    const target = (try self.resolveMemberField(node, m)) orelse {
+    const target = (try resolveMemberField(self, node, m)) orelse {
         return self.failAt(node, "native backend cannot lower member access '.{s}' yet", .{
             if (m.property.* == .primary) m.property.primary.name else "?",
         });
@@ -608,32 +761,58 @@ pub fn emitMemberAccess(self: *Emitter, node: *ast_mod.Node, m: *const ast_mod.M
     const field = target.info.fields[target.index];
     const deref: []const u8 = if (obj_t.kind == .pointer) ".*" else "";
     return std.fmt.allocPrint(self.arena.allocator(), "({s}){s}.{s}", .{
-        try self.emitExpr(m.object), deref, field.zig_name,
+        try emitExpr(self, m.object), deref, field.zig_name,
     });
 }
 
 pub fn emitMember(self: *Emitter, node: *ast_mod.Node, m: *const ast_mod.Member) ![]const u8 {
+    const a = self.arena.allocator();
     if (m.object.* == .primary and m.property.* == .primary) {
-        if (self.state.enums.get(m.object.primary.name)) |ed| {
-            const variant = m.property.primary.name;
+        const object_name = m.object.primary.name;
+        const member_name = m.property.primary.name;
+        if (self.state.enums.get(object_name)) |ed| {
+            const variant = member_name;
             if (ed.string_values) |values| {
                 if (values.get(variant)) |s| return self.zigString(s);
             }
             const value = ed.variants.get(variant) orelse {
                 return self.failAt(node, "native backend cannot resolve enum variant '{s}'", .{variant});
             };
-            return std.fmt.allocPrint(self.arena.allocator(), "{d}", .{value});
+            return std.fmt.allocPrint(a, "{d}", .{value});
+        }
+        if (self.state.error_sets.get(object_name)) |ed| {
+            if (ed.variants.contains(member_name)) {
+                return std.fmt.allocPrint(a, "rt.err.makeCode({s})", .{try self.zigString(member_name)});
+            }
+            return self.failAt(node, "native backend cannot resolve error member '{s}'", .{member_name});
         }
     }
-    return self.emitMemberAccess(node, m);
+    if (m.property.* == .primary) {
+        const obj_t = try self.storageValueType(m.object);
+        if (obj_t.kind == .error_value or obj_t.may_error) {
+            const prop = m.property.primary.name;
+            const object_code = try emitExpr(self, m.object);
+            const err_code = if (obj_t.kind == .error_value)
+                object_code
+            else
+                try std.fmt.allocPrint(a, "rt.err.expectError({s})", .{object_code});
+            if (std.mem.eql(u8, prop, "message") or std.mem.eql(u8, prop, "code")) {
+                return std.fmt.allocPrint(a, "({s}).code", .{err_code});
+            }
+            if (std.mem.eql(u8, prop, "payload")) {
+                return std.fmt.allocPrint(a, "({s}).payload", .{err_code});
+            }
+        }
+    }
+    return emitMemberAccess(self, node, m);
 }
 
 pub fn emitIndex(self: *Emitter, node: *ast_mod.Node, ix: *const ast_mod.Index) ![]const u8 {
-    if (ix.is_slice) return self.emitSlice(node, ix);
+    if (ix.is_slice) return emitSlice(self, node, ix);
 
     const a = self.arena.allocator();
     var obj_t = try self.valueType(ix.object);
-    var object_expr = try self.emitExpr(ix.object);
+    var object_expr = try emitExpr(self, ix.object);
     if (obj_t.kind == .pointer) {
         const payload = obj_t.payload orelse return self.failAt(node, "native backend cannot determine the pointee type of '{s}'", .{obj_t.display});
         obj_t = payload.*;
@@ -651,7 +830,7 @@ pub fn emitIndex(self: *Emitter, node: *ast_mod.Node, ix: *const ast_mod.Index) 
         else => "arr",
     };
     const index_node = ix.index orelse return self.failAt(node, "expected index expression", .{});
-    const index_code = try self.emitI64Operand(index_node);
+    const index_code = try emitI64Operand(self, index_node);
 
     self.counter += 1;
     const id = self.counter;
@@ -666,12 +845,11 @@ pub fn emitIndex(self: *Emitter, node: *ast_mod.Node, ix: *const ast_mod.Index) 
         \\    break :blk {s}[@intCast({s})];
         \\}}
     , .{
-        obj_name,       obj_t.zig,   object_expr,
-        idx_name,       index_code,
-        idx_name,       idx_name,    obj_name,
-        try self.zigString(fmt),
-        idx_name,       obj_name,
-        obj_name,       idx_name,
+        obj_name, obj_t.zig,  object_expr,
+        idx_name, index_code, idx_name,
+        idx_name, obj_name,   try self.zigString(fmt),
+        idx_name, obj_name,   obj_name,
+        idx_name,
     });
 }
 
@@ -687,9 +865,9 @@ pub fn emitSlice(self: *Emitter, node: *ast_mod.Node, ix: *const ast_mod.Index) 
     const lo_name = try std.fmt.allocPrint(a, "lls_slice_lo_{d}", .{id});
     const hi_name = try std.fmt.allocPrint(a, "lls_slice_hi_{d}", .{id});
 
-    const lo_code = if (ix.index) |idx| try self.emitI64Operand(idx) else "0";
+    const lo_code = if (ix.index) |idx| try emitI64Operand(self, idx) else "0";
     const hi_code = if (ix.end) |end|
-        try self.emitI64Operand(end)
+        try emitI64Operand(self, end)
     else
         try std.fmt.allocPrint(a, "@as(i64, @intCast({s}.len))", .{obj_name});
 
@@ -702,12 +880,12 @@ pub fn emitSlice(self: *Emitter, node: *ast_mod.Node, ix: *const ast_mod.Index) 
         \\    break :blk {s}[@intCast({s})..@intCast({s})];
         \\}}
     , .{
-        obj_name, obj_t.zig, try self.emitExpr(ix.object),
-        lo_name,  lo_code,
-        hi_name,  hi_code,
-        lo_name,  hi_name, lo_name, hi_name, obj_name,
-        lo_name,  hi_name, obj_name,
-        obj_name, lo_name, hi_name,
+        obj_name, obj_t.zig, try emitExpr(self, ix.object),
+        lo_name,  lo_code,   hi_name,
+        hi_code,  lo_name,   hi_name,
+        lo_name,  hi_name,   obj_name,
+        lo_name,  hi_name,   obj_name,
+        obj_name, lo_name,   hi_name,
     });
 }
 
@@ -722,7 +900,7 @@ pub fn emitArrayLiteral(self: *Emitter, node: *ast_mod.Node, al: *const ast_mod.
     }
     var parts: std.ArrayList([]const u8) = .empty;
     for (al.elements) |element| {
-        try parts.append(a, try self.emitValueCoerced(element, elem.*));
+        try parts.append(a, try emitValueCoerced(self, element, elem.*));
     }
     if (parts.items.len == 0) {
         return std.fmt.allocPrint(a, "{s}{{}}", .{target.zig});
@@ -752,11 +930,12 @@ pub fn emitCloneSlice(self: *Emitter, node: *ast_mod.Node, src: ValType, src_cod
         \\    break :blk {s}[0..{s}.len];
         \\}}
     , .{
-        src_name, src.zig, src_code,
-        buf_name, src_name, elem.zig, elem.zig,
-        dst_name, elem.zig, buf_name,
-        src_name, item_name, i_name, dst_name, i_name, item_name,
-        dst_name, src_name,
+        src_name,  src.zig,  src_code,
+        buf_name,  src_name, elem.zig,
+        elem.zig,  dst_name, elem.zig,
+        buf_name,  src_name, item_name,
+        i_name,    dst_name, i_name,
+        item_name, dst_name, src_name,
     });
 }
 
@@ -782,11 +961,11 @@ pub fn emitArrayToSlice(self: *Emitter, node: *ast_mod.Node, src: ValType, targe
         \\    break :blk {s}[0..{d}];
         \\}}
     , .{
-        src_name, src.zig, src_code,
-        buf_name, len, elem.zig, elem.zig,
-        dst_name, len, elem.zig, buf_name,
-        dst_name, src_name,
-        dst_name, len,
+        src_name, src.zig,  src_code,
+        buf_name, len,      elem.zig,
+        elem.zig, dst_name, len,
+        elem.zig, buf_name, dst_name,
+        src_name, dst_name, len,
     });
 }
 
@@ -797,7 +976,7 @@ pub fn emitSliceLiteral(self: *Emitter, node: *ast_mod.Node, al: *const ast_mod.
     };
     var parts: std.ArrayList([]const u8) = .empty;
     for (al.elements) |element| {
-        try parts.append(a, try self.emitValueCoerced(element, elem.*));
+        try parts.append(a, try emitValueCoerced(self, element, elem.*));
     }
     const joined = if (parts.items.len == 0) "" else try std.mem.join(a, ", ", parts.items);
     self.counter += 1;
@@ -835,9 +1014,9 @@ pub fn emitStructLiteral(self: *Emitter, node: *ast_mod.Node, si: *const ast_mod
             }
         }
         const code = if (provided) |value|
-            try self.emitValueCoerced(value, field.vt)
+            try emitValueCoerced(self, value, field.vt)
         else
-            try self.zeroValue(field.vt);
+            try unit_mod.zeroValue(self, field.vt);
         try parts.append(a, try std.fmt.allocPrint(a, ".{s} = {s}", .{ field.zig_name, code }));
     }
     if (parts.items.len == 0) {
@@ -850,9 +1029,9 @@ pub fn emitStructLiteral(self: *Emitter, node: *ast_mod.Node, si: *const ast_mod
 pub fn emitOptionalUnwrap(self: *Emitter, node: *ast_mod.Node, u: *const ast_mod.UnwrapExpr) ![]const u8 {
     _ = node;
     const vt = try self.valueType(u.expression);
-    if (vt.kind != .optional) return self.emitExpr(u.expression);
+    if (vt.kind != .optional) return emitExpr(self, u.expression);
     return std.fmt.allocPrint(self.arena.allocator(), "({s} orelse return rt.io.fail(\"Attempted to unwrap null\"))", .{
-        try self.emitExpr(u.expression),
+        try emitExpr(self, u.expression),
     });
 }
 
@@ -907,6 +1086,29 @@ pub fn isNumericLiteral(node: *ast_mod.Node) bool {
     if (node.* != .literal) return false;
     return switch (node.literal.literal_type) {
         .number, .hex, .octal, .binary => true,
+        else => false,
+    };
+}
+
+fn exprHasEffects(node: *ast_mod.Node) bool {
+    return switch (node.*) {
+        .call, .index, .try_expr, .unwrap_expr => true,
+        .binary => |b| exprHasEffects(b.left) or exprHasEffects(b.right),
+        .unary => |u| exprHasEffects(u.arg),
+        .member => |m| exprHasEffects(m.object),
+        .array_literal => |al| blk: {
+            for (al.elements) |e| if (exprHasEffects(e)) break :blk true;
+            break :blk false;
+        },
+        .struct_init => |si| blk: {
+            for (si.fields) |f| if (exprHasEffects(f.value)) break :blk true;
+            break :blk false;
+        },
+        .error_expr => |e| blk: {
+            for (e.args) |arg| if (exprHasEffects(arg)) break :blk true;
+            break :blk false;
+        },
+        .comptime_expr => |ce| exprHasEffects(ce.expr),
         else => false,
     };
 }

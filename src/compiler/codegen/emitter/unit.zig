@@ -3,6 +3,9 @@ const ast_mod = @import("../../../ast/root.zig");
 const state_mod = @import("../../state.zig");
 const from_ast = @import("../../typecheck/from_ast.zig");
 const root_mod = @import("root.zig");
+const prescan_mod = @import("prescan.zig");
+const stmt_mod = @import("stmt.zig");
+const expr_mod = @import("expr.zig");
 const Emitter = root_mod.Emitter;
 const ValType = root_mod.ValType;
 const Binding = root_mod.Binding;
@@ -54,7 +57,40 @@ pub fn emitEntry(self: *Emitter) !void {
     );
     self.indent = 1;
     try self.writeIndent();
-    try self.writer.print("_ = {s}(&ctx) catch |err| lls_finish(err);\n", .{try self.fnName("main")});
+    const main_t = if (self.state.functions.get("main")) |def| try functionReturnType(self, "main", def) else null;
+    if (main_t) |t| {
+        if (t.may_error) {
+            try self.writer.print("const lls_main_result = {s}(&ctx) catch |err| lls_finish(err);\n", .{try self.fnName("main")});
+            try self.writeIndent();
+            if (t.kind == .error_value) {
+                try self.writer.writeAll("rt.io.failMsg(lls_main_result.code) catch {};\n");
+                try self.writeIndent();
+                try self.writer.writeAll("rt.exitProcess(1);\n");
+            } else {
+                try self.writer.writeAll("switch (lls_main_result) {\n");
+                self.indent += 1;
+                try self.writeIndent();
+                try self.writer.writeAll(".ok => {},\n");
+                try self.writeIndent();
+                try self.writer.writeAll(".err => |e| {\n");
+                self.indent += 1;
+                try self.writeIndent();
+                try self.writer.writeAll("rt.io.failMsg(e.code) catch {};\n");
+                try self.writeIndent();
+                try self.writer.writeAll("rt.exitProcess(1);\n");
+                self.indent -= 1;
+                try self.writeIndent();
+                try self.writer.writeAll("},\n");
+                self.indent -= 1;
+                try self.writeIndent();
+                try self.writer.writeAll("}\n");
+            }
+        } else {
+            try self.writer.print("_ = {s}(&ctx) catch |err| lls_finish(err);\n", .{try self.fnName("main")});
+        }
+    } else {
+        try self.writer.print("_ = {s}(&ctx) catch |err| lls_finish(err);\n", .{try self.fnName("main")});
+    }
     try self.writer.writeAll("}\n");
 }
 
@@ -71,8 +107,8 @@ pub fn emitFunction(self: *Emitter, name: []const u8, def: state_mod.FunctionDef
         return self.failAt(f.params, "native backend does not support variadic functions yet", .{});
     }
 
-    try self.prepareFunction(f, params);
-    const ret = try self.functionReturnType(name, def);
+    try prepareFunction(self, f, params);
+    const ret = try functionReturnType(self, name, def);
     self.cur_ret = ret;
 
     const zig_fn = try self.fnName(name);
@@ -115,8 +151,25 @@ pub fn emitFunction(self: *Emitter, name: []const u8, def: state_mod.FunctionDef
         else => return self.failAt(f.body, "native backend expects a block body", .{}),
     };
     self.pushScope();
-    try self.emitStatements(block.statements);
+    try stmt_mod.emitStatements(self, block.statements);
     try self.emitDeferredAtScopeEnd(block.statements);
+    const terminates = block.statements.len > 0 and prescan_mod.stmtTerminates(self, block.statements[block.statements.len - 1]);
+    if (!terminates and ret.may_error) {
+        if (ret.kind == .error_value) {
+            self.popScope();
+            return self.failAt(f.body, "function returning '{s}' must return an error value", .{ret.display});
+        }
+        const success = ret.success orelse {
+            self.popScope();
+            return self.failAt(f.body, "native backend cannot determine the success type of '{s}'", .{ret.display});
+        };
+        try self.writeIndent();
+        if (success.kind == .void) {
+            try self.writer.writeAll("return .{ .ok = {} };\n");
+        } else {
+            try self.writer.print("return .{{ .ok = {s} }};\n", .{try zeroValue(self, success.*)});
+        }
+    }
     self.popScope();
 
     try self.writer.writeAll("}\n\n");
@@ -137,7 +190,7 @@ pub fn emitFunctions(self: *Emitter) !void {
 
     for (names.items) |name| {
         const def = self.state.functions.get(name) orelse continue;
-        try self.emitFunction(name, def);
+        try emitFunction(self, name, def);
     }
 }
 
@@ -155,12 +208,13 @@ pub fn emitGlobalDecls(self: *Emitter) !void {
         const g = self.globals.get(name).?;
         const vt = try self.classify(g.node, g.display);
         try self.requireValueType(g.node, vt);
-        try self.writer.print("var {s}: {s} = {s};\n", .{ g.zig_name, vt.zig, try self.zeroValue(vt) });
+        try self.writer.print("var {s}: {s} = {s};\n", .{ g.zig_name, vt.zig, try zeroValue(self, vt) });
     }
     if (self.globals.count() > 0) try self.writer.writeAll("\n");
 }
 
 pub fn emitTopLevel(self: *Emitter) !void {
+    self.cur_ret = .{ .display = "void", .clean = "void", .kind = .void, .zig = "void" };
     try self.writer.writeAll("fn lls_top_level(ctx: *rt.Context) anyerror!void {\n");
     self.indent = 1;
     try self.writeIndent();
@@ -178,21 +232,21 @@ pub fn emitTopLevel(self: *Emitter) !void {
             const g = self.globals.get(d.name) orelse {
                 return self.failAt(s, "native backend (Phase 2) does not support this top-level declaration", .{});
             };
-            try self.emitLineMarker(s);
+            try stmt_mod.emitLineMarker(self, s);
             const vt = try self.classify(s, g.display);
-            const code = try self.emitValueCoerced(d.value, vt);
+            const code = try expr_mod.emitValueCoerced(self, d.value, vt);
             try self.writeIndent();
             try self.writer.print("{s} = {s};\n", .{ g.zig_name, code });
             continue;
         }
-        try self.emitStmt(s);
+        try stmt_mod.emitStmt(self, s);
     }
     self.popScope();
     try self.writer.writeAll("}\n\n");
 }
 
 pub fn functionReturnType(self: *Emitter, name: []const u8, def: state_mod.FunctionDef) !ValType {
-    const display = def.return_type orelse blk: {
+    var display = def.return_type orelse blk: {
         if (def.node.* == .function_decl) {
             if (def.node.function_decl.return_type) |rt| {
                 if (try from_ast.typeAstToDisplay(rt, self.state)) |disp| break :blk disp;
@@ -200,6 +254,19 @@ pub fn functionReturnType(self: *Emitter, name: []const u8, def: state_mod.Funct
         }
         break :blk "void";
     };
+    if (def.node.* == .function_decl) {
+        const f = def.node.function_decl;
+        const raw = if (f.return_type) |rt| try from_ast.typeAstToDisplay(rt, self.state) else null;
+        if (raw) |r| {
+            if (std.mem.eql(u8, r, "error")) display = "error";
+        } else if (std.mem.eql(u8, display, "unknown | error")) {
+            if (!bodyHasValuedReturn(f.body)) {
+                display = "void | error";
+            } else if (bodyReturnsOnlyErrors(self.state, f.body)) {
+                display = "error";
+            }
+        }
+    }
     const t = try self.classify(def.node, display);
     if (t.clean.len == 0) {
         return self.failAt(def.node, "native backend does not support the return type of '{s}'", .{name});
@@ -246,7 +313,7 @@ pub fn prepareFunction(self: *Emitter, f: *const ast_mod.FunctionDecl, params: [
     try self.scopes.append(a, base);
     try self.defer_scopes.append(a, .empty);
 
-    try self.preScanStmt(f.body);
+    try prescan_mod.preScanStmt(self, f.body);
 }
 
 pub fn zeroValue(self: *Emitter, t: ValType) ![]const u8 {
@@ -257,6 +324,60 @@ pub fn zeroValue(self: *Emitter, t: ValType) ![]const u8 {
         .string => "\"\"",
         .optional, .null_value => "null",
         .struct_, .array, .slice, .pointer => "undefined",
-        else => self.failNoLoc("native backend cannot zero-initialize type '{s}'", .{t.display}),
+        .error_value, .error_payload => "undefined",
+        else => if (t.may_error)
+            "undefined"
+        else
+            self.failNoLoc("native backend cannot zero-initialize type '{s}'", .{t.display}),
     };
+}
+
+fn bodyHasValuedReturn(node: *ast_mod.Node) bool {
+    return switch (node.*) {
+        .return_expr => |r| r.return_value != null,
+        .block => |b| blk: {
+            for (b.statements) |s| if (bodyHasValuedReturn(s)) break :blk true;
+            break :blk false;
+        },
+        .if_expr => |i| bodyHasValuedReturn(i.body) or (i.else_body != null and bodyHasValuedReturn(i.else_body.?)),
+        .switch_expr => |sw| blk: {
+            for (sw.prongs) |p| if (bodyHasValuedReturn(p.body)) break :blk true;
+            break :blk false;
+        },
+        .for_expr => |f| bodyHasValuedReturn(f.body),
+        .defer_stmt => |d| bodyHasValuedReturn(d.body),
+        else => false,
+    };
+}
+
+fn bodyReturnsOnlyErrors(state: *state_mod.CompilerState, node: *ast_mod.Node) bool {
+    return switch (node.*) {
+        .return_expr => |r| blk: {
+            const v = r.return_value orelse break :blk true;
+            if (v.* == .error_expr) break :blk true;
+            const disp = state.type_of_results.get(v) orelse break :blk false;
+            break :blk isPureErrorDisplay(state, disp);
+        },
+        .block => |b| blk: {
+            for (b.statements) |s| if (!bodyReturnsOnlyErrors(state, s)) break :blk false;
+            break :blk true;
+        },
+        .if_expr => |i| bodyReturnsOnlyErrors(state, i.body) and (i.else_body == null or bodyReturnsOnlyErrors(state, i.else_body.?)),
+        .switch_expr => |sw| blk: {
+            for (sw.prongs) |p| if (!bodyReturnsOnlyErrors(state, p.body)) break :blk false;
+            break :blk true;
+        },
+        .for_expr => |f| bodyReturnsOnlyErrors(state, f.body),
+        .defer_stmt => |d| bodyReturnsOnlyErrors(state, d.body),
+        else => true,
+    };
+}
+
+fn isPureErrorDisplay(state: *state_mod.CompilerState, display: []const u8) bool {
+    if (std.mem.eql(u8, display, "error")) return true;
+    if (state.error_sets.contains(display)) return true;
+    if (std.mem.lastIndexOfScalar(u8, display, '.')) |dot| {
+        return state.error_sets.contains(display[0..dot]);
+    }
+    return false;
 }
