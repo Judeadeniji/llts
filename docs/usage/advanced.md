@@ -35,23 +35,43 @@ Use `@import("path")` to include modules, binding them to constants via `@const`
 
 ## Pipe Operators (`|>`)
 
-The pipe operator (`|>`) is a functional idiom that forwards the evaluated result of the left-hand expression as the *first argument* to the function on the right. This allows readable function chaining.
+The pipe operator (`|>`) forwards the evaluated result of the left-hand expression as the *first argument* to the function on the right. `lhs |> f(a)` is exactly the call `f(lhs, a)` — the operator is pure compile-time desugaring with no runtime support.
 
 ```lls
-@func sqr(a) {
-    return a**2; // Built-in exponentiation
-}
+// Given helpers used below:
+@func sqr(a: int): int { return a**2; } // Built-in exponentiation
+@func dbl(a: int): int { return a * 2; }
+@func add(a: int, b: int): int { return a + b; }
 
 // 2 is piped as the argument 'a' to sqr
-$a = 2 |> sqr; 
+$a = 2 |> sqr;               // == sqr(2)
 
 // Passing an object as the first parameter to a global function
 @func printStatus(p: Player) { ... }
 $hero = Player { x: 0, y: 0, health: 100, name: "Antigravity" };
 
 // Equivalent to printStatus(hero)
-hero |> printStatus; 
+hero |> printStatus;         // == printStatus(hero)
+
+// Trailing arguments are kept: the piped value is prepended
+$sum = 10 |> add(5);         // == add(10, 5)
+
+// Chains run left to right
+$doubled = 5 |> dbl |> dbl;  // == dbl(dbl(5))
 ```
+
+**Semantics and rules:**
+
+- **Precedence**: `|>` shares the additive level with `+` / `-` and is left-associative, so `1 + 2 |> dbl` groups as `(1 + 2) |> dbl` → `dbl(1 + 2)`.
+- **Trailing arguments**: `lhs |> f(a, b)` becomes `f(lhs, a, b)` — the left operand is always the *first* argument.
+- **Method receivers come from the callee**: `4 |> c.add` becomes `c.add(4)` — the receiver is part of the right-hand side, so the piped value fills the first *parameter* after `self`.
+- **Type checking**: a pipe is checked like any other call — callee must be callable, arity and argument types are validated, and the pipe's result type is the callee's return type. So `3 |> 5` fails with `Pipe target must be a function`, and pipes type-check under `--strict` mode.
+- **Unused-callee tracking**: the piped function counts as used, so `5 |> dbl` does not produce an unused-function warning.
+
+**Backend status:**
+
+- **Bytecode VM**: fully supported (`src/compiler/expr/call.zig` desugars pipes into ordinary calls during compilation).
+- **Native backend (`llts emit-zig`)**: direct callees are supported — the emitter rewrites `lhs |> f(a)` to `f(lhs, a)` before lowering (`src/compiler/codegen/emitter/expr.zig`). Method pipes (`4 |> c.add`) are rejected with `native backend (Phase 2) only supports direct function calls` until method calls land natively.
 
 ## Structs and Object-Oriented Idioms
 *See [Structs and Methods](structs_and_methods.md) for full details on this topic. For shapes vs `@struct` / `@type`, see [Shapes vs Structs](shapes_and_types.md).*

@@ -8,7 +8,7 @@ This repository is the **Zig** implementation (the forward path). The TypeScript
 
 ## Features
 
-- Custom syntax: `@func`, `$var` declarations, `@const`, `@struct`, `@for` / `@if`
+- Custom syntax: `@func`, `$var` declarations, `@const`, `@struct`, `@for` / `@if`, pipe operator `|>` (desugars to a first-argument call)
 - Hand-written scanner, recursive-descent parser, AST, bytecode compiler, stack VM
 - Modules (`@import`), `pub` visibility, gradual typecheck + `@typeOf` / `@sizeOf`
 - Explicit errors (`error(...)`, `?`), arenas + `defer` (no tracing GC)

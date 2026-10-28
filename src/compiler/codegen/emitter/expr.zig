@@ -8,6 +8,7 @@ const ValType = root_mod.ValType;
 pub fn emitBinary(self: *Emitter, node: *ast_mod.Node, b: *const ast_mod.Binary) ![]const u8 {
     const a = self.arena.allocator();
     const op = b.operator;
+    if (std.mem.eql(u8, op, "|>")) return emitPipe(self, b);
     if (std.mem.eql(u8, op, "&&") or std.mem.eql(u8, op, "||")) {
         const lt = try self.valueType(b.left);
         const rt = try self.valueType(b.right);
@@ -42,6 +43,22 @@ pub fn emitBinary(self: *Emitter, node: *ast_mod.Node, b: *const ast_mod.Binary)
     return self.failAt(node, "native backend (Phase 2) does not support '{s}' on '{s}' and '{s}'", .{
         op, lt.display, rt.display,
     });
+}
+
+/// `lhs |> f(a)` emits as the ordinary call `f(lhs, a)`: the left operand
+/// becomes the callee's first argument. Pure desugaring — no runtime support.
+/// The synthetic call is keyed on the right-hand node so generic-call and
+/// diagnostic lookups match what typecheck recorded for it.
+fn emitPipe(self: *Emitter, b: *const ast_mod.Binary) ![]const u8 {
+    const a = self.arena.allocator();
+    const right = b.right;
+    const callee: *ast_mod.Node = if (right.* == .call) right.call.callee else right;
+    const explicit: []const *ast_mod.Node = if (right.* == .call) right.call.args else &.{};
+    const args = try a.alloc(*ast_mod.Node, explicit.len + 1);
+    args[0] = b.left;
+    @memcpy(args[1..], explicit);
+    const synth = ast_mod.Call{ .callee = callee, .args = args, .loc = right.loc() };
+    return self.emitCall(right, &synth);
 }
 
 pub fn emitCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) anyerror![]const u8 {

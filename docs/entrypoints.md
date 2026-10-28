@@ -74,7 +74,7 @@ The pipeline orchestrated by `runSource` runs sequentially, transforming raw sou
 - **Input:** AST `Document`, Compiler Options (containing `debug` boolean).
 - **Output:** Bytecode `Chunk`.
 - **Entry point:** The root file must define `pub @func main()` with no parameters. Missing `main`, a private `main`, or a `main` with parameters is a compile error. Top-level statements run first as module init, then `main` is called.
-- **Tree shaking:** After typechecking, a reachability pass emits only functions and module-level initializers referenced from the entry file (plus transitive callees and globals). Importing `std/index` still parses the full stdlib, but unreached functions are omitted from the chunk.
+- **Tree shaking:** After typechecking, a reachability pass emits only functions and module-level initializers referenced from the entry file (plus transitive callees and globals). A piped callee (`lhs |> f`) counts as referenced, so pipes do not get tree-shaken away. Importing `std/index` still parses the full stdlib, but unreached functions are omitted from the chunk.
 
 ### 4. VM & Execution Phase
 - **State Initialization:** `VMState.init()` sets up the VM given the `Chunk`.

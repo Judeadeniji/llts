@@ -21,9 +21,11 @@ The `compile()` function in `root.zig` orchestrates the following passes:
    - A gradual typechecker that walks the AST.
    - Validates struct initialization, function call arguments, assignability, and arithmetic operations.
    - Enforces known types while falling back to `TUnknown` for untyped values.
+   - `lhs |> f(a)` is checked as a real first-argument call (`inferPipe`): callee callability, arity, argument types, and the result type (the callee's return type) are all validated the same way as a direct call, so pipes type-check under `--strict`.
 4. **Code Generation**:
    - Compiles functions (assigning function addresses and patching forward references).
    - Emits bytecode for top-level statements.
+   - Elaborates pipes: `lhs |> f(a)` becomes an ordinary call `f(lhs, a)` (`compilePipe` builds a synthetic call node and delegates to `compileCall` — there is no pipe opcode and no runtime support).
    - Generates an entry point that requires `pub @func main()` with arity 0 and calls it after top-level statements.
 
 ## State Management (`CompilerState`)
@@ -46,6 +48,7 @@ The LLTS compiler is a single-pass bytecode emitter *after* the initial metadata
 ### Chunk and Bytecode Emission
 - **Direct Emission**: Bytecode is written directly to an active `Chunk` (which owns a `std.ArrayList(u8)`).
 - **Constant Pool**: Strings and numbers are inserted into the chunk's constant table. The emitter outputs `OP_CONSTANT` followed by a 16-bit index to the constant pool.
+- **Pipe Desugaring**: `lhs |> f(a)` never reaches the stack machine as a pipe — `compilePipe` rewrites it to the call `f(lhs, a)` and runs the ordinary call lowering (named calls, methods, intrinsics, generics). The left operand is simply the first argument.
 - **Variables**:
   - **Locals**: Addressed by their index on the execution stack. The compiler uses `resolveLocal` to map a variable name to a stack slot and emits `OP_GET_LOCAL <slot>`.
   - **Globals**: Resolved dynamically at runtime. The compiler emits `OP_GET_GLOBAL <string_idx>`, fetching the global's name from the constant pool.

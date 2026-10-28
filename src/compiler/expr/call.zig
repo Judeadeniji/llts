@@ -238,6 +238,7 @@ pub fn compilePipe(state: *CompilerState, bin: *const ast.Binary) !void {
     const callee: *ast.Node = if (right.* == .call) right.call.callee else right;
     const explicit: []const *ast.Node = if (right.* == .call) right.call.args else &.{};
     const args = try state.allocator.alloc(*ast.Node, explicit.len + 1);
+    defer state.allocator.free(args);
     args[0] = bin.left;
     @memcpy(args[1..], explicit);
     const c = ast.Call{ .callee = callee, .args = args, .loc = right.loc() };

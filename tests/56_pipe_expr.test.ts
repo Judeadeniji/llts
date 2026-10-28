@@ -10,12 +10,16 @@
  *   - rejected: compile-time errors (arity, callability, argument types)
  *   - warnings: still compiles, but reports a diagnostic on stderr
  *   - runtime:  accepted by the compiler, traps while executing
+ *   - native:   `llts emit-zig` desugars pipes to ordinary calls (parity
+ *               with the VM for the direct-call subset; method pipes are
+ *               outside Phase 2 and must fail cleanly)
  */
 import { test, expect } from "bun:test";
+import { spawnSync } from "bun";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { expectError, expectOutput, runFile, runSource, runSourceStrict } from "./helpers";
+import { expectError, expectOutput, runCli, runFile, runSource, runSourceStrict } from "./helpers";
 
 /** Compile a two-file program (entry imports ./lib.lls) without touching std. */
 function runWithLib(entrySource: string, libSource: string) {
@@ -374,4 +378,133 @@ print(a |> pick(7));
 `),
 		"Array index out of bounds",
 	);
+});
+
+// ---------------------------------------------------------------------------
+// native backend (llts emit-zig): pipes desugar to ordinary calls
+// ---------------------------------------------------------------------------
+
+const ROOT = path.resolve(import.meta.dir, "..");
+const ZIG_BIN = process.env.LLTS_ZIG_BIN || "zig";
+
+function emitZig(source: string): { sourcePath: string; outputPath: string; cleanup: () => void } {
+	const id = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
+	const sourcePath = path.join(os.tmpdir(), `llts_pipe_native_${id}.lls`);
+	const outputPath = path.join(ROOT, `.tmp_pipe_native_${id}.zig`);
+	fs.writeFileSync(sourcePath, source, "utf-8");
+	return {
+		sourcePath,
+		outputPath,
+		cleanup: () => {
+			if (fs.existsSync(sourcePath)) fs.unlinkSync(sourcePath);
+			if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
+		},
+	};
+}
+
+function expectNativeParity(source: string, checkGenerated?: (code: string) => void) {
+	const emitted = emitZig(source);
+	try {
+		const emit = runCli(["emit-zig", emitted.sourcePath, "-o", emitted.outputPath]);
+		expect(emit.stderr + emit.stdout).toBe("");
+		expect(emit.exitCode).toBe(0);
+		if (checkGenerated) checkGenerated(fs.readFileSync(emitted.outputPath, "utf-8"));
+
+		const native = spawnSync([ZIG_BIN, "run", "-lc", emitted.outputPath], { cwd: ROOT });
+		const nativeOut = native.stdout.toString();
+		const nativeErr = native.stderr.toString();
+		const vm = runFile(emitted.sourcePath);
+		expect(native.exitCode).toBe(vm.exitCode);
+		expect(nativeOut).toBe(vm.stdout);
+		expect(nativeErr).toBe(vm.stderr);
+	} finally {
+		emitted.cleanup();
+	}
+}
+
+test("native: pipes desugar to first-argument calls", () => {
+	expectNativeParity(
+		`
+@func dbl(a: int) { return a * 2; }
+@func add(a: int, b: int) { return a + b; }
+pub @func main() {
+	$x = 3 |> dbl;
+	print(x);
+	print(10 |> add(5));
+}
+`,
+		(generated) => {
+			expect(generated).toContain("lls_fn_dbl(ctx, 3)");
+			expect(generated).toContain("lls_fn_add(ctx, 10, 5)");
+			expect(generated).not.toContain("rt.pipe");
+		},
+	);
+}, 60_000);
+
+test("native: chained, nested, and precedence pipes match the VM", () => {
+	expectNativeParity(
+		`
+@func dbl(a: int) { return a * 2; }
+@func sum(a: int, b: int) { return a + b; }
+@func isEven(a: int) { return a % 2 == 0; }
+pub @func main() {
+	print(5 |> dbl |> dbl);
+	print(1 + 2 |> dbl);
+	print(sum(3 |> dbl, 4));
+	@if (6 |> isEven) {
+		print("even");
+	}
+}
+`,
+		(generated) => {
+			expect(generated).toContain("lls_fn_dbl(ctx, (try lls_fn_dbl(ctx, 5)))");
+			expect(generated).toContain("lls_fn_dbl(ctx, (try rt.arith.add(1, 2)))");
+			expect(generated).toContain("lls_fn_isEven(ctx, 6)");
+		},
+	);
+}, 60_000);
+
+test("native: method pipe fails cleanly on the native backend", () => {
+	const emitted = emitZig(
+		`
+@struct Counter {
+	value: i64;
+	@func add(self: Counter, by: i64) { return Counter { value: self.value + by }; }
+}
+pub @func main() {
+	$c = Counter { value: 1 };
+	$d = 4 |> c.add;
+	print(d.value);
+}
+`,
+	);
+	try {
+		const emit = runCli(["emit-zig", emitted.sourcePath, "-o", emitted.outputPath]);
+		expect(emit.exitCode).not.toBe(0);
+		// Depending on how much of struct/method lowering the backend has,
+		// this stops at struct types ("does not support type 'Counter'") or
+		// at the pipe itself ("only supports direct function calls").
+		// Either way it must be a clean Phase 2 capability error, not a crash.
+		expect(emit.stderr).toContain("native backend (Phase 2)");
+		expect(emit.stderr).not.toContain("panic");
+	} finally {
+		emitted.cleanup();
+	}
+});
+
+test("native: non-callable pipe target is rejected before emission", () => {
+	const emitted = emitZig(
+		`
+pub @func main() {
+	print(3 |> 5);
+}
+`,
+	);
+	try {
+		const emit = runCli(["emit-zig", emitted.sourcePath, "-o", emitted.outputPath]);
+		expect(emit.exitCode).not.toBe(0);
+		expect(emit.stderr).toContain("Pipe target must be a function");
+	} finally {
+		emitted.cleanup();
+	}
 });

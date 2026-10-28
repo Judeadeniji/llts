@@ -190,7 +190,7 @@ The emitter is split by responsibility:
 - **`unit.zig`**: Compilation-unit lowering — globals, function discovery/emission, top-level code, and the `pub fn main()` wrapper.
 - **`prescan.zig`**: Statement termination analysis and the read/assigned pre-scan used for locals and unused-value silencing.
 - **`stmt.zig`**: Statement and control-flow lowering (`@if`, `@switch`, `@for`, `break`, `continue`, assignments, declarations).
-- **`expr.zig`**: Expression lowering, scalar arithmetic/comparisons, string operations, coercions, and calls.
+- **`expr.zig`**: Expression lowering, scalar arithmetic/comparisons, string operations, coercions, and calls. `lhs |> f(a)` desugars to the ordinary call `f(lhs, a)` (`emitPipe` builds a synthetic call node and delegates to `emitCall`) — pipes have no native runtime representation.
 
 Behavior:
 - **Imports & Setup**: Emits an absolute `@import("<runtime_path>")` and uses `rt.Context`.
@@ -240,8 +240,9 @@ Cleanly remove the inactive LLVM stub module.
 
 2. **Phase 2: Emitter Core & `llts emit-zig`** — implemented for the basic subset
    - `src/compiler/codegen/emitter/` generates runtime-driving Zig for arithmetic, functions, returns, locals, strings, top-level code, and `print`.
+   - Pipes (`|>`) over direct callees desugar to ordinary calls in the emitter and match the VM output; method pipes (`lhs |> obj.method`) fail cleanly with the Phase 2 direct-calls-only error until method calls are lowered.
    - `llts emit-zig <file.lls> -o <out.zig>` is wired (strict mode on by default).
-   - Generated files are verified by `tests/55_emit_zig.test.ts` (emit → `zig run -lc` → compare against the VM).
+   - Generated files are verified by `tests/55_emit_zig.test.ts` (emit → `zig run -lc` → compare against the VM); pipe parity is covered in `tests/56_pipe_expr.test.ts` (native section).
    - Generated Zig must reside inside the repo module root so the absolute runtime import resolves; Phase 4 `zig build-exe` remains.
 
 3. **Phase 3: Control Flow, Loops, and Heap Operations** — `@if`, scalar `@switch`, and `@for` implemented
