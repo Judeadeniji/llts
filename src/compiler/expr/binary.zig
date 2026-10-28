@@ -57,9 +57,17 @@ pub fn compileBinary(state: *CompilerState, bin: *const ast.Binary) !void {
     if (try foldStringConcat(state, bin)) {
         return;
     }
+    const locals_before = state.locals.items.len;
     try expr.compileExpression(state, bin.left);
+    // Claim left (and any temps under it) as anonymous locals so a value `@if`
+    // / labeled block on the right does not clobber them via SET_LOCAL into the
+    // wrong slot (`"r=" + (@if …)`).
+    try scope.claimStackTemps(state);
+    const left_claims = state.locals.items.len - locals_before;
     try expr.compileExpression(state, bin.right);
     try emitBinOp(state, bin);
+    // Binop consumed left; drop its claim(s) (no OP_POP — value already gone).
+    scope.dropLocalEntries(state, left_claims);
 }
 
 fn foldStringConcat(state: *CompilerState, bin: *const ast.Binary) !bool {

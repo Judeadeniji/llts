@@ -31,6 +31,45 @@ pub fn addLocal(state: *CompilerState, name: []const u8, is_const: bool) !u8 {
     return @intCast(state.locals.items.len - 1);
 }
 
+/// Register every stack temporary below the current top as an anonymous local so
+/// `local index == stack offset from frame base`. Required before opening a
+/// value-expression frame (`@if` / `@switch` / labeled block) while operands
+/// or call arguments already sit on the stack.
+pub fn claimStackTemps(state: *CompilerState) !void {
+    while (state.locals.items.len < state.stack_depth) {
+        try state.locals.append(state.allocator, .{
+            .name = "",
+            .depth = state.scope_depth,
+        });
+    }
+}
+
+/// Drop the most recent `n` local entries without emitting `OP_POP` — the
+/// values were already consumed by a binop / call.
+pub fn dropLocalEntries(state: *CompilerState, n: usize) void {
+    var i: usize = 0;
+    while (i < n) : (i += 1) {
+        if (state.locals.items.len == 0) return;
+        _ = state.locals.pop();
+    }
+}
+
+pub fn notePush(state: *CompilerState) void {
+    state.stack_depth += 1;
+}
+
+pub fn notePop(state: *CompilerState) void {
+    if (state.stack_depth > 0) state.stack_depth -= 1;
+}
+
+pub fn notePopN(state: *CompilerState, n: u32) void {
+    if (n >= state.stack_depth) {
+        state.stack_depth = 0;
+    } else {
+        state.stack_depth -= n;
+    }
+}
+
 pub fn resolveLocal(state: *CompilerState, name: []const u8) i32 {
     var i: isize = @intCast(state.locals.items.len);
     i -= 1;

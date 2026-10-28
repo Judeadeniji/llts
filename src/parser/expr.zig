@@ -253,6 +253,7 @@ pub fn parsePrimary(self: *Parser) ParseError!*Node {
     const token = self.peek(0) orelse return self.failMsg("Unexpected end of expression");
     switch (token.type) {
         .boolean, .string, .number, .hex, .binary, .octal => return parseLiteral(self),
+        .template => return parseTemplate(self, token),
         .keyword => {
             if (std.mem.eql(u8, token.value, "error")) {
                 _ = self.advance();
@@ -430,4 +431,209 @@ fn parseLiteral(self: *Parser) ParseError!*Node {
         .value = try self.dupe(token.value),
         .loc = self.locOf(token),
     } });
+}
+
+/// Cook template-body escapes (same set as `"…"` plus `\$` → `$`).
+fn cookTemplateText(self: *Parser, raw: []const u8) ParseError![]const u8 {
+    var buf: std.ArrayList(u8) = .empty;
+    var i: usize = 0;
+    while (i < raw.len) {
+        if (raw[i] == '\\' and i + 1 < raw.len) {
+            const esc = raw[i + 1];
+            switch (esc) {
+                'n' => try buf.append(self.arena, '\n'),
+                'r' => try buf.append(self.arena, '\r'),
+                't' => try buf.append(self.arena, '\t'),
+                '\\' => try buf.append(self.arena, '\\'),
+                '"' => try buf.append(self.arena, '"'),
+                '\'' => try buf.append(self.arena, '\''),
+                '$' => try buf.append(self.arena, '$'),
+                else => {
+                    try buf.append(self.arena, '\\');
+                    try buf.append(self.arena, esc);
+                },
+            }
+            i += 2;
+            continue;
+        }
+        try buf.append(self.arena, raw[i]);
+        i += 1;
+    }
+    return buf.toOwnedSlice(self.arena) catch return error.OutOfMemory;
+}
+
+fn stringLiteralNode(self: *Parser, value: []const u8, loc: ast.Location) ParseError!*Node {
+    const owned = try self.dupe(value);
+    return self.create(.{ .literal = .{
+        .literal_type = .string,
+        .value = owned,
+        .loc = loc,
+    } });
+}
+
+/// Parse a fenced template token and desugar to a left-folded string `+` chain.
+fn parseTemplate(self: *Parser, token: ctx.Token) ParseError!*Node {
+    _ = self.advance(); // consume .template
+    const parts = token.template_parts orelse {
+        return self.failTok(token, "internal: template token missing parts", .{});
+    };
+
+    var pieces: std.ArrayList(*Node) = .empty;
+    const base_loc = self.locOf(token);
+    var has_hole = false;
+
+    for (parts) |part| {
+        const part_loc = ast.Location{
+            .line = part.line,
+            .column = part.column,
+            .path = self.path,
+        };
+        if (part.is_hole) {
+            if (part.value.len == 0) {
+                return self.failTokRaw(
+                    .{ .type = .template, .value = "", .line = part.line, .column = part.column },
+                    \\empty `${}` interpolation
+                    \\
+                    \\help: put a single expression inside the braces:
+                    \\
+                    \\    ```
+                    \\    hello ${name}
+                    \\    ```;
+                    \\
+                    \\note: declarations (`$x = …`) are not allowed here; declare outside the template
+                );
+            }
+            has_hole = true;
+            const hole_node = try parseHoleExpression(self, part.value, part_loc);
+            try pieces.append(self.arena, hole_node);
+        } else {
+            if (part.value.len == 0) continue;
+            const cooked = try cookTemplateText(self, part.value);
+            if (cooked.len == 0) continue;
+            try pieces.append(self.arena, try stringLiteralNode(self, cooked, part_loc));
+        }
+    }
+
+    if (pieces.items.len == 0) {
+        return stringLiteralNode(self, "", base_loc);
+    }
+    // Pure text → string literal(s). Any `${…}` → `"" + …` so a lone hole
+    // still yields a string (`${n}` → `"" + n`), matching desugar-to-+.
+    if (pieces.items.len == 1 and !has_hole) {
+        return pieces.items[0];
+    }
+
+    var acc = if (has_hole)
+        try stringLiteralNode(self, "", base_loc)
+    else
+        pieces.items[0];
+    const start: usize = if (has_hole) 0 else 1;
+    for (pieces.items[start..]) |right| {
+        acc = try self.create(.{ .binary = .{
+            .left = acc,
+            .operator = try self.dupe("+"),
+            .right = right,
+            .loc = base_loc,
+        } });
+    }
+    return acc;
+}
+
+/// Tokenize and parse a single-expression `${…}` hole.
+fn parseHoleExpression(self: *Parser, src: []const u8, loc: ast.Location) ParseError!*Node {
+    const scanner = @import("../scanner/root.zig");
+    const scan_result = scanner.scan(self.arena, src, self.path) catch {
+        return self.failTokRaw(
+            .{ .type = .template, .value = "", .line = loc.line, .column = loc.column },
+            \\could not scan `${…}` interpolation
+            \\
+            \\help: a hole must be a single expression (call, identifier, literal, @if, …)
+        );
+    };
+
+    // Offset hole token positions to the real source location.
+    for (scan_result.tokens.items) |*t| {
+        const rel_line = t.line;
+        t.line = loc.line + rel_line - 1;
+        if (rel_line == 1) {
+            t.column = loc.column + t.column - 1;
+        }
+    }
+
+    var hole_parser: Parser = .{
+        .tokens = scan_result.tokens.items,
+        .current = 0,
+        .path = self.path,
+        .source = self.source,
+        .arena = self.arena,
+        .diagnostics = self.diagnostics,
+        .in_type_fn = self.in_type_fn,
+    };
+
+    if (hole_parser.isAtEnd()) {
+        return self.failTokRaw(
+            .{ .type = .template, .value = "", .line = loc.line, .column = loc.column },
+            \\empty `${}` interpolation
+            \\
+            \\help: put a single expression inside the braces:
+            \\
+            \\    ```
+            \\    hello ${name}
+            \\    ```;
+            \\
+            \\note: declarations (`$x = …`) are not allowed here; declare outside the template
+        );
+    }
+
+    const node = try parseExpression(&hole_parser);
+
+    // A hole is a single expression — no statements, no `$` declarations, no `;`.
+    if (!hole_parser.isAtEnd()) {
+        const bad = hole_parser.peek(0).?;
+        return hole_parser.failTokRaw(
+            bad,
+            \\unexpected token in `${…}` interpolation
+            \\
+            \\help: a hole holds exactly one expression, for example:
+            \\
+            \\    $name = "world";
+            \\    $s = ```
+            \\    hello ${name}
+            \\    ```;
+            \\
+            \\note: no `;` inside ${} — declare `$` variables outside the template
+            \\note: no multi-statement holes
+            \\note: `"` / `'` strings and nested `{…}` inside a call are fine
+        );
+    }
+
+    if (node.* == .assignment) {
+        return self.failTokRaw(
+            .{ .type = .template, .value = "", .line = node.loc().line, .column = node.loc().column },
+            \\assignment is not allowed in `${…}`
+            \\
+            \\help: assign before the template, then interpolate the variable:
+            \\
+            \\    $name = "world";
+            \\    $s = ```
+            \\    hello ${name}
+            \\    ```;
+        );
+    }
+
+    if (node.* == .declaration) {
+        return self.failTokRaw(
+            .{ .type = .template, .value = "", .line = node.loc().line, .column = node.loc().column },
+            \\variable declaration is not allowed in `${…}`
+            \\
+            \\help: declare outside the template, then interpolate:
+            \\
+            \\    $name = "world";
+            \\    $s = ```
+            \\    hello ${name}
+            \\    ```;
+        );
+    }
+
+    return node;
 }

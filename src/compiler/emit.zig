@@ -1,6 +1,7 @@
 const state_mod = @import("state.zig");
 const opcode = @import("../bytecode/opcode.zig");
 const value = @import("../bytecode/value.zig");
+const scope = @import("scope.zig");
 
 const CompilerState = state_mod.CompilerState;
 const OpCode = opcode.OpCode;
@@ -11,7 +12,29 @@ pub fn emitByte(state: *CompilerState, byte: u8) !void {
 }
 
 pub fn emitOp(state: *CompilerState, op: OpCode) !void {
+    applyStackEffect(state, op);
     try state.chunk.writeOp(op);
+}
+
+/// Keep `state.stack_depth` aligned with VM stack effects for fixed-arity ops.
+/// Variable-arity ops (`OP_CALL`, `OP_PRINT`, …) adjust depth at their emit site.
+fn applyStackEffect(state: *CompilerState, op: OpCode) void {
+    switch (op) {
+        .OP_CONSTANT, .OP_NULL, .OP_TRUE, .OP_FALSE, .OP_VOID, .OP_DUP, .OP_GET_LOCAL, .OP_GET_GLOBAL, .OP_GET_FUNCTION, .OP_GET_MODULE => scope.notePush(state),
+        .OP_POP, .OP_JUMP_IF_FALSE => scope.notePop(state),
+        // pop2 push1
+        .OP_ADD, .OP_ADD_WRAP, .OP_STRING_ADD, .OP_SUB, .OP_SUB_WRAP, .OP_MUL, .OP_MUL_WRAP, .OP_DIV, .OP_MOD, .OP_POW, .OP_EQUAL, .OP_NOT_EQUAL, .OP_STRING_EQUAL, .OP_STRING_NOT_EQUAL, .OP_LESS, .OP_LESS_EQUAL, .OP_GREATER, .OP_GREATER_EQUAL, .OP_BIT_AND, .OP_BIT_OR, .OP_BIT_XOR, .OP_SHL, .OP_SHR, .OP_ADD_TYPED, .OP_SUB_TYPED, .OP_MUL_TYPED, .OP_LT_TYPED, .OP_ADD_TYPED_WRAP, .OP_SUB_TYPED_WRAP, .OP_MUL_TYPED_WRAP => scope.notePop(state),
+        // in-place / pop1 push1 (net 0)
+        .OP_MAKE_STRING, .OP_MAKE_ERROR, .OP_MAKE_ERROR_PAYLOAD, .OP_NEGATE, .OP_NOT, .OP_BIT_NOT, .OP_IS_ERROR, .OP_SET_LOCAL, .OP_SET_GLOBAL, .OP_MARK_CONST, .OP_ASSERT_TYPE, .OP_AS, .OP_ADDR_OF, .OP_ERROR_NAME, .OP_GET_PROPERTY, .OP_LOAD_FIELD, .OP_JUMP, .OP_JUMP_IF_NULL, .OP_LOOP, .OP_LINE, .OP_SOURCE, .OP_RETURN, .OP_IMPORT, .OP_SIZEOF, .OP_FOR_PREP, .OP_FOR_LOOP, .OP_PACK_REST => {},
+        // pop2 push1
+        .OP_GET_INDEX, .OP_GET_ARRAY, .OP_GET_ARRAY_OR_NULL => scope.notePop(state),
+        // pop3 push1
+        .OP_SLICE => scope.notePopN(state, 2),
+        // pop2 (no push)
+        .OP_SET_INDEX, .OP_SET_ARRAY, .OP_SET_PROPERTY, .OP_STORE_FIELD => scope.notePopN(state, 2),
+        // Variable arity — caller adjusts.
+        .OP_CALL, .OP_CALL_STATIC, .OP_PRINT => {},
+    }
 }
 
 pub fn emitShort(state: *CompilerState, short: u16) !void {

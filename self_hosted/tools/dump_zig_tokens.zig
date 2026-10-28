@@ -11,6 +11,7 @@ fn typeName(t: llts.scanner.TokenType) []const u8 {
         .v_register => "VRegister",
         .compiler_keyword => "CompilerKeyword",
         .string => "String",
+        .template => "Template",
         .number => "Number",
         .hex => "Hex",
         .octal => "Octal",

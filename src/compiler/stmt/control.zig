@@ -596,6 +596,10 @@ pub fn compileContinue(state: *CompilerState, cont: *const ast.Continue) !void {
 }
 
 fn beginExprFrame(state: *CompilerState, label: ?[]const u8) !void {
+    // Temps already on the stack (left operand of `+`, prior call args, …) must
+    // be claimed as locals so the result slot's index matches its stack offset.
+    // Otherwise `break` SET_LOCAL overwrites those temps (e.g. `"r=" + @if…`).
+    try scope.claimStackTemps(state);
     try scope.beginScope(state);
     try emit.emitOp(state, .OP_NULL);
     const slot = try scope.addLocal(state, "", false);

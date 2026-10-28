@@ -110,6 +110,22 @@ pub const Parser = struct {
         return error.ParseFailed;
     }
 
+    /// Emit a diagnostic without format-string interpolation (message may contain `{}`).
+    pub fn failTokRaw(self: *Parser, token: Token, message: []const u8) ParseError {
+        if (self.diagnostics) |diags| {
+            diags.append(self.arena, .{
+                .line = token.line,
+                .column = token.column,
+                .message = self.arena.dupe(u8, message) catch "parse error",
+            }) catch {};
+            return error.ParseFailed;
+        }
+
+        report.reportSourceError(self.path, self.source, token.line, token.column, message);
+        report.reportLocationFrameCol(self.path, token.line, token.column, "<parse>");
+        return error.ParseFailed;
+    }
+
     pub fn synchronize(self: *Parser) void {
         _ = self.advance();
         while (!self.isAtEnd()) {

@@ -139,10 +139,12 @@ pub fn compileFunction(state: *CompilerState, node: *ast.FunctionDecl, ast_node:
     _ = ast_node;
     const outer_locals = state.locals;
     const outer_depth = state.scope_depth;
+    const outer_stack = state.stack_depth;
     const outer_defers = state.defer_stacks;
 
     state.locals = .empty;
     state.scope_depth = 0;
+    state.stack_depth = 0;
     state.defer_stacks = std.AutoHashMap(i32, std.ArrayListUnmanaged(state_mod.DeferEntry)).init(state.allocator);
 
     try scope.beginScope(state);
@@ -166,6 +168,8 @@ pub fn compileFunction(state: *CompilerState, node: *ast.FunctionDecl, ast_node:
     for (params.params) |p| {
         try pushParam(state, p, method_struct);
     }
+    // Params are already on the VM stack at the frame base.
+    state.stack_depth = @intCast(state.locals.items.len);
 
     const body = switch (node.body.*) {
         .block => |*b| b,
@@ -185,6 +189,7 @@ pub fn compileFunction(state: *CompilerState, node: *ast.FunctionDecl, ast_node:
 
     state.locals = outer_locals;
     state.scope_depth = outer_depth;
+    state.stack_depth = outer_stack;
     state.defer_stacks = outer_defers;
 }
 
