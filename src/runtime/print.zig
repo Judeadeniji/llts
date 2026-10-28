@@ -12,6 +12,9 @@ const io = @import("io.zig");
 const Context = @import("context.zig").Context;
 const err_mod = @import("err.zig");
 
+/// Wrapper used by emitted `print(@addrOf(x))` to render raw hex pointers.
+pub const Addr = struct { value: usize };
+
 pub fn writeNull(out: *std.ArrayList(u8), alloc: std.mem.Allocator) !void {
     try out.appendSlice(alloc, "null");
 }
@@ -224,6 +227,10 @@ pub fn writeValue(out: *std.ArrayList(u8), alloc: std.mem.Allocator, v: anytype)
         .@"struct" => {
             if (T == err_mod.Error) {
                 try writeError(out, alloc, v);
+            } else if (T == Addr) {
+                var tmp: [32]u8 = undefined;
+                const s = try std.fmt.bufPrint(&tmp, "0x{x}", .{v.value});
+                try out.appendSlice(alloc, s);
             } else {
                 @compileError("print: unsupported struct type " ++ @typeName(T));
             }

@@ -92,6 +92,11 @@ pub fn emitCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) any
             if (!has_effects) return "false";
             return std.fmt.allocPrint(a, "blk: {{ _ = {s}; break :blk false; }}", .{try emitExpr(self, c.args[0])});
         }
+        if (std.mem.eql(u8, intrinsic, "@addrOf")) {
+            if (c.args.len != 1) return self.failAt(node, "@addrOf expects 1 argument", .{});
+            const ptr = try addrOfPointerCode(self, node, c.args[0]);
+            return std.fmt.allocPrint(a, "@as(i64, @intCast(@intFromPtr({s})))", .{ptr});
+        }
         if (std.mem.eql(u8, intrinsic, "@nameOf")) {
             if (c.args.len != 1) return self.failAt(node, "@nameOf expects 1 argument", .{});
             const plan = self.state.name_of_plans.get(node) orelse {
@@ -131,6 +136,14 @@ pub fn emitCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) any
     if (std.mem.eql(u8, callee, "print")) {
         var args_buf: std.ArrayList([]const u8) = .empty;
         for (c.args) |arg| {
+            if (arg.* == .call and arg.call.callee.* == .primary and
+                std.mem.eql(u8, arg.call.callee.primary.name, "@addrOf"))
+            {
+                if (arg.call.args.len != 1) return self.failAt(arg, "@addrOf expects 1 argument", .{});
+                const ptr = try addrOfPointerCode(self, arg, arg.call.args[0]);
+                try args_buf.append(a, try std.fmt.allocPrint(a, "rt.print.Addr{{ .value = @intFromPtr({s}) }}", .{ptr}));
+                continue;
+            }
             const at = try self.valueType(arg);
             if (containsStruct(at)) {
                 return self.failAt(arg, "native backend cannot print struct values yet; print fields individually", .{});
@@ -539,6 +552,12 @@ pub fn emitStrongCoercion(self: *Emitter, node: *ast_mod.Node, target: ValType) 
         // accepts pointer-to-array, annotated slots coerce to []const u8).
     }
     return emitValueCoercedForce(self, node, target);
+}
+
+pub fn addrOfPointerCode(self: *Emitter, node: *ast_mod.Node, arg: *ast_mod.Node) ![]const u8 {
+    const at = try self.valueType(arg);
+    if (at.kind == .pointer) return emitExpr(self, arg);
+    return emitAddressOf(self, node, arg);
 }
 
 pub fn emitAddressOf(self: *Emitter, node: *ast_mod.Node, arg: *ast_mod.Node) ![]const u8 {

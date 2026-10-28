@@ -619,6 +619,32 @@ pub @func main() {
 `);
 }, 60_000);
 
+test("prints @addrOf as a raw hex pointer", () => {
+  const emitted = emitZig(`
+@struct Point { x: int; y: int; }
+
+pub @func main() {
+    $p = Point { x: 1, y: 2 };
+    print(@addrOf(p));
+    $q = &p;
+    print(@addrOf(q));
+    print(@addrOf(p) == @addrOf(q));
+}
+`);
+  try {
+    const emit = runCli(["emit-zig", emitted.sourcePath, "-o", emitted.outputPath]);
+    expect(emit.stderr + emit.stdout).toBe("");
+    const native = runEmitted(emitted.outputPath);
+    expect(native.exitCode).toBe(0);
+    const lines = native.stdout.trimEnd().split("\n");
+    expect(lines[0]).toMatch(/^0x[0-9a-f]+$/);
+    expect(lines[1]).toBe(lines[0]);
+    expect(lines[2]).toBe("true");
+  } finally {
+    emitted.cleanup();
+  }
+}, 60_000);
+
 test("propagates an unhandled main error and exits nonzero", () => {
   const emitted = emitZig(`
 @func fail(): int | error {
