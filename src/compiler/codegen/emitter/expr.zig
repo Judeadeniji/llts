@@ -92,6 +92,28 @@ pub fn emitCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) any
             if (!has_effects) return "false";
             return std.fmt.allocPrint(a, "blk: {{ _ = {s}; break :blk false; }}", .{try emitExpr(self, c.args[0])});
         }
+        if (std.mem.eql(u8, intrinsic, "@new")) {
+            if (c.args.len != 2 and c.args.len != 3) {
+                return self.failAt(node, "@new expects (allocator, type) or (allocator, []T, length)", .{});
+            }
+            const target = try self.valueType(node);
+            const payload = target.payload orelse {
+                return self.failAt(node, "native backend cannot determine the @new element type", .{});
+            };
+            if (payload.kind == .slice) {
+                if (c.args.len != 3) return self.failAt(node, "@new slice type needs a length", .{});
+                const elem = payload.elem orelse {
+                    return self.failAt(node, "native backend cannot determine the @new slice element type", .{});
+                };
+                return std.fmt.allocPrint(a, "try rt.mem.newSlice(ctx, {s}, @as(usize, @intCast({s})))", .{
+                    elem.zig, try emitI64Operand(self, c.args[2]),
+                });
+            }
+            if (payload.kind == .string) {
+                return self.failAt(node, "native backend does not support @new(string, n) yet", .{});
+            }
+            return std.fmt.allocPrint(a, "try rt.mem.newZero(ctx, {s})", .{payload.zig});
+        }
         if (std.mem.eql(u8, intrinsic, "@addrOf")) {
             if (c.args.len != 1) return self.failAt(node, "@addrOf expects 1 argument", .{});
             const ptr = try addrOfPointerCode(self, node, c.args[0]);
@@ -875,7 +897,13 @@ pub fn emitIndex(self: *Emitter, node: *ast_mod.Node, ix: *const ast_mod.Index) 
 
 pub fn emitSlice(self: *Emitter, node: *ast_mod.Node, ix: *const ast_mod.Index) ![]const u8 {
     const a = self.arena.allocator();
-    const obj_t = try self.valueType(ix.object);
+    var obj_t = try self.valueType(ix.object);
+    var object_expr = try emitExpr(self, ix.object);
+    if (obj_t.kind == .pointer) {
+        const payload = obj_t.payload orelse return self.failAt(node, "native backend cannot determine the pointee type of '{s}'", .{obj_t.display});
+        obj_t = payload.*;
+        object_expr = try std.fmt.allocPrint(a, "({s}).*", .{object_expr});
+    }
     if (obj_t.kind != .string and obj_t.kind != .slice and obj_t.kind != .array) {
         return self.failAt(node, "native backend cannot slice '{s}' yet", .{obj_t.display});
     }
@@ -900,7 +928,7 @@ pub fn emitSlice(self: *Emitter, node: *ast_mod.Node, ix: *const ast_mod.Index) 
         \\    break :blk {s}[@intCast({s})..@intCast({s})];
         \\}}
     , .{
-        obj_name, obj_t.zig, try emitExpr(self, ix.object),
+        obj_name, obj_t.zig, object_expr,
         lo_name,  lo_code,   hi_name,
         hi_code,  lo_name,   hi_name,
         lo_name,  hi_name,   obj_name,

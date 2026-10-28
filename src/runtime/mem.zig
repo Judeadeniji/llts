@@ -47,6 +47,27 @@ pub fn allocArray(
     return ctx.allocFrame(len, elem_align);
 }
 
+/// Zero-filled immortal allocation for `@new(allocator, T)`.
+pub fn newZero(ctx: *Context, comptime T: type) error{OutOfMemory}!*T {
+    const bytes = try ctx.allocImmortal(@sizeOf(T), @alignOf(T));
+    const ptr: *T = @ptrCast(@alignCast(bytes.ptr));
+    ptr.* = std.mem.zeroes(T);
+    return ptr;
+}
+
+/// Zero-filled immortal slice header + backing storage for `@new(allocator, []T, n)`.
+pub fn newSlice(ctx: *Context, comptime Elem: type, len: usize) error{OutOfMemory}!*[]Elem {
+    const bytes = try ctx.allocImmortal(
+        std.math.mul(usize, len, @sizeOf(Elem)) catch return error.OutOfMemory,
+        @alignOf(Elem),
+    );
+    const data: [*]Elem = @ptrCast(@alignCast(bytes.ptr));
+    @memset(data[0..len], std.mem.zeroes(Elem));
+    const holder = try newZero(ctx, []Elem);
+    holder.* = data[0..len];
+    return holder;
+}
+
 /// Concatenate two string views into the immortal buffer — `stringAdd`
 /// parity (VM marks concatenation as immortal growth, so results survive
 /// frame exits).

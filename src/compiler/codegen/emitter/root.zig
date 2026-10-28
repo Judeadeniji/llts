@@ -740,11 +740,8 @@ pub fn isImportDecl(decl: *const ast_mod.Declaration) bool {
 }
 
 fn isByteSequenceDisplay(clean: []const u8) bool {
-    if (std.mem.eql(u8, clean, "string") or std.mem.eql(u8, clean, "[]byte") or
-        std.mem.eql(u8, clean, "[]u8") or std.mem.eql(u8, clean, "[]const u8")) return true;
-    const elem = (from_ast.arrayElemDisplay(std.heap.page_allocator, clean) catch return false) orelse return false;
-    defer std.heap.page_allocator.free(elem);
-    return std.mem.eql(u8, elem, "byte") or std.mem.eql(u8, elem, "u8");
+    return std.mem.eql(u8, clean, "string") or std.mem.eql(u8, clean, "[]byte") or
+        std.mem.eql(u8, clean, "[]u8") or std.mem.eql(u8, clean, "[]const u8");
 }
 
 fn optionalPayloadDisplay(clean: []const u8) ?[]const u8 {

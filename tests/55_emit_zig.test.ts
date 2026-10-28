@@ -645,6 +645,48 @@ pub @func main() {
   }
 }, 60_000);
 
+test("emits @new allocations for structs and slices", () => {
+  const emitted = emitZig(`
+@struct Point { x: int; y: int; }
+
+pub @func main() {
+    $p = @new(0, Point);
+    print(p.x);
+    p.x = 5;
+    print(p.x);
+    $q = p;
+    q.x = 9;
+    print(p.x);
+
+    $buf = @new(0, [4]byte);
+    print(len(buf));
+    buf[1] = 7;
+    print(buf[1]);
+    $s = buf[0..2];
+    print(len(s));
+    print(s[1]);
+
+    $xs = @new(0, []int, 3);
+    print(len(xs));
+    xs[0] = 10;
+    print(xs[0]);
+    print(xs[1]);
+    $ys = xs;
+    ys[1] = 11;
+    print(xs[1]);
+}
+`);
+  try {
+    const emit = runCli(["emit-zig", emitted.sourcePath, "-o", emitted.outputPath]);
+    expect(emit.stderr + emit.stdout).toBe("");
+    const native = runEmitted(emitted.outputPath);
+    expect(native.exitCode).toBe(0);
+    expect(native.stdout).toBe("0\n5\n9\n4\n7\n2\n7\n3\n10\n0\n11\n");
+  } finally {
+    emitted.cleanup();
+  }
+}, 60_000);
+
 test("propagates an unhandled main error and exits nonzero", () => {
   const emitted = emitZig(`
 @func fail(): int | error {
