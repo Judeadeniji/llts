@@ -476,6 +476,41 @@ pub @func main() {
 `);
 }, 60_000);
 
+test("emits labeled block values, defers, and loop breaks", () => {
+  expectParity(`
+pub @func main() {
+    $z = blk: {
+        break :blk 42;
+    };
+    print(z);
+
+    $sum = compute: {
+        $a = 10;
+        $b = 32;
+        break :compute a + b;
+    };
+    print(sum);
+
+    $e = blk: {
+        defer print("d1");
+        defer print("d2");
+        break :blk "done";
+    };
+    print(e);
+
+    $n = blk: {
+        $i = 0;
+        @for (i < 10) {
+            i = i + 1;
+            @if (i == 3) { break :blk i * 7; }
+        }
+        break :blk 0;
+    };
+    print(n);
+}
+`);
+}, 60_000);
+
 test("emits error values, sets, fields, equality, and @nameOf", () => {
   expectParity(`
 @error IoError { NotFound, Denied }

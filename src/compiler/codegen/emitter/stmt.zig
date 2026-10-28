@@ -950,6 +950,40 @@ pub fn emitSwitchStmt(self: *Emitter, node: *ast_mod.Node, sw: *const ast_mod.Sw
     try emitSwitchChain(self, sw, scrut_name, vt, true);
 }
 
+pub fn emitBlockValue(self: *Emitter, node: *ast_mod.Node, b: *const ast_mod.Block) ![]const u8 {
+    const label = b.label orelse {
+        return self.failAt(node, "value-producing block requires a label", .{});
+    };
+    const a = self.arena.allocator();
+    const vt = try self.valueType(node);
+    try self.requireValueType(node, vt);
+
+    self.counter += 1;
+    const zig_label = try std.fmt.allocPrint(a, "lls_blk_{d}", .{self.counter});
+    try self.break_targets.append(a, .{
+        .label = label,
+        .zig_label = zig_label,
+        .value_type = vt,
+        .scope_depth = self.scopes.items.len,
+    });
+    defer _ = self.break_targets.pop();
+
+    var buf: std.ArrayList(u8) = .empty;
+    const old_writer = self.writer;
+    self.writer = buf.writer(a).any();
+    defer self.writer = old_writer;
+
+    self.indent += 1;
+    self.pushScope();
+    try emitStatements(self, b.statements);
+    self.popScope();
+    self.indent -= 1;
+    try self.writeIndent();
+    try self.writer.writeAll("}");
+
+    return std.fmt.allocPrint(a, "{s}: {{\n{s}", .{ zig_label, buf.items });
+}
+
 pub fn emitSwitchValue(self: *Emitter, node: *ast_mod.Node, sw: *const ast_mod.Switch) ![]const u8 {
     var has_else = false;
     for (sw.prongs) |prong| {

@@ -281,7 +281,8 @@ pub fn emitExpr(self: *Emitter, node: *ast_mod.Node) anyerror![]const u8 {
         .error_expr => |e| return emitErrorExpr(self, node, &e),
         .if_expr => |i| return stmt_mod.emitIfValue(self, node, &i),
         .switch_expr => |sw| return stmt_mod.emitSwitchValue(self, node, &sw),
-        .declaration, .return_expr, .block, .for_expr, .break_expr, .continue_expr, .defer_stmt, .function_decl, .struct_decl, .enum_decl, .error_decl, .type_decl, .extern_decl => {
+        .block => |b| return stmt_mod.emitBlockValue(self, node, &b),
+        .declaration, .return_expr, .for_expr, .break_expr, .continue_expr, .defer_stmt, .function_decl, .struct_decl, .enum_decl, .error_decl, .type_decl, .extern_decl => {
             return self.failAt(node, "native backend (Phase 2) does not support {s} in expression position", .{@tagName(node.*)});
         },
         else => {

@@ -199,11 +199,11 @@ Behavior:
 - **Watermark RAII**: Wraps every function body with `const mark = try ctx.enterFunction(name, file); defer ctx.leaveFunction(mark);`.
 - **Top-Level Code**: Emits `lls_top_level(ctx)` initializing globals and running top-level statements.
 - **Entry Wrapper**: Emits `pub fn main() void` initializing `rt.Context`, running top-level code and LLTS `main`, and mapping errors to process exit.
-- **Control Flow**: `@if`, scalar `@switch`, range `@for (start..end) |i|`, condition `@for (cond)`, and iterable `@for` over arrays/slices/strings lower to native structured Zig. Value-producing arms use labeled-block results and `break` payloads; loop `break`/`continue` preserve labels. Optional `@if`/`@for` captures unwrap through Zig optional captures. Switch scrutinees are evaluated once and prongs use the same runtime equality helpers as the VM. Conditions rely on the LLTS typechecker's guarantees; the emitter adds no runtime truthiness or type assertions.
+- **Control Flow**: `@if`, scalar `@switch`, range `@for (start..end) |i|`, condition `@for (cond)`, and iterable `@for` over arrays/slices/strings lower to native structured Zig. Value-producing arms and labeled blocks use labeled-block results and `break` payloads; loop `break`/`continue` preserve labels. Optional `@if`/`@for` captures unwrap through Zig optional captures. Switch scrutinees are evaluated once and prongs use the same runtime equality helpers as the VM. Conditions rely on the LLTS typechecker's guarantees; the emitter adds no runtime truthiness or type assertions.
 - **Aggregates & Pointers**: Structs lower to typed Zig structs with stable field names; fixed arrays, slices (including heap-allocated slice literals), optionals, and pointers use their native Zig representations. Struct fields, array/slice indexing, slicing, `len`, optional unwrap, and address-of `&` are lowered; slice assignment clones to match VM value semantics.
 - **Errors**: Error values use `rt.err.Error`; error unions lower to `rt.err.Result(T)`. `error(...)`, `?`, `return` coercion, `@isError`, `@nameOf`, `.code`/`.message`/`.payload`, equality, `@switch` over narrowed errors, and error printing match the VM. Error-set typedefs are expanded during classification.
 - **Cleanup**: `@defer` and `@errdefer` are tracked explicitly per lexical scope and emitted LIFO on scope exit, `break`, `continue`, and `return`, so they never run on runtime traps. `@errdefer` runs only on error returns.
-- **Remaining**: labeled block values, `@new`/`@addrOf`, and struct printing.
+- **Remaining**: `@new`/`@addrOf` and struct printing.
 
 ---
 
@@ -255,7 +255,8 @@ Cleanly remove the inactive LLVM stub module.
    - Range `@for (start..end) |i|`, condition `@for (cond)`, iterable `@for` over arrays/slices/strings, and optional captures with labeled `break`/`continue` and wrapping counter increments.
    - Struct fields, fixed arrays, slices/slice literals, optionals, pointers/address-of, member/index assignment, and `len` lower to typed Zig values.
    - `@defer` runs LIFO on scope exit, `break`, `continue`, and `return`.
-   - Remaining: labeled block values, `@new`/`@addrOf`, and struct printing.
+   - Labeled block values lower to Zig labeled blocks; `break :label value` runs pending defers before yielding.
+   - Remaining: `@new`/`@addrOf` and struct printing.
    - Enforce RAII frame watermark cleanup in all emitted functions.
 
 4. **Phase 3.5: Error Semantics** — implemented
