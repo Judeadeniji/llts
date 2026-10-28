@@ -2,7 +2,7 @@ import { test, expect } from "bun:test";
 import { runSource, expectOutput, expectError } from "./helpers";
 
 test("buffer: alloc, len, get, set", () => {
-	const res = runSource(`
+  const res = runSource(`
 		@const $buffer = @import("std/buffer");
 		@const $mem = @import("std/mem");
 		pub @func main() {
@@ -15,11 +15,11 @@ test("buffer: alloc, len, get, set", () => {
 			print(buffer.get(buf, 1));
 		}
 	`);
-	expectOutput(res, ["10", "65", "66"]);
+  expectOutput(res, ["10", "65", "66"]);
 });
 
 test("buffer: dynamic growth", () => {
-	const res = runSource(`
+  const res = runSource(`
 		@const $buffer = @import("std/buffer");
 		@const $mem = @import("std/mem");
 		pub @func main() {
@@ -31,11 +31,11 @@ test("buffer: dynamic growth", () => {
 			print(buffer.readString(buf, 0, buffer.len(buf)));
 		}
 	`);
-	expectOutput(res, ["5", "Hello"]);
+  expectOutput(res, ["5", "Hello"]);
 });
 
 test("buffer: string I/O", () => {
-	const res = runSource(`
+  const res = runSource(`
 		@const $buffer = @import("std/buffer");
 		@const $mem = @import("std/mem");
 		pub @func main() {
@@ -46,11 +46,11 @@ test("buffer: string I/O", () => {
 			print(buffer.readString(buf, 5, 5));
 		}
 	`);
-	expectOutput(res, ["5", "Hello"]);
+  expectOutput(res, ["5", "Hello"]);
 });
 
 test("buffer: file I/O", () => {
-	const res = runSource(`
+  const res = runSource(`
 		@const $buffer = @import("std/buffer");
 		@const $mem = @import("std/mem");
 		@const $fs = @import("std/fs");
@@ -67,11 +67,11 @@ test("buffer: file I/O", () => {
 			fs.deleteFile("test_buf.txt");
 		}
 	`);
-	expectOutput(res, ["5", "world"]);
+  expectOutput(res, ["5", "world"]);
 });
 
 test("buffer: out of bounds write/set", () => {
-	const res = runSource(`
+  const res = runSource(`
 		@const $buffer = @import("std/buffer");
 		@const $mem = @import("std/mem");
 		pub @func main() {
@@ -80,11 +80,11 @@ test("buffer: out of bounds write/set", () => {
 			buffer.set(buf, 10, 255);
 		}
 	`);
-	expectError(res, "IndexOutOfBounds");
+  expectError(res, "IndexOutOfBounds");
 });
 
 test("buffer: out of bounds get", () => {
-	const res = runSource(`
+  const res = runSource(`
 		@const $buffer = @import("std/buffer");
 		@const $mem = @import("std/mem");
 		pub @func main() {
@@ -93,11 +93,11 @@ test("buffer: out of bounds get", () => {
 			print(buffer.get(buf, 10));
 		}
 	`);
-	expectError(res, "IndexOutOfBounds");
+  expectError(res, "IndexOutOfBounds");
 });
 
 test("buffer: resize, copy, fill, fromString", () => {
-	const res = runSource(`
+  const res = runSource(`
 		@const $buffer = @import("std/buffer");
 		@const $mem = @import("std/mem");
 		pub @func main() {
@@ -117,60 +117,79 @@ test("buffer: resize, copy, fill, fromString", () => {
 			print(buffer.readString(b2, 0, 5)); # !!!!!
 		}
 	`);
-	expectOutput(res, ["5", "10", "0", "!!!!!!!!!!", "!!!!!"]);
+  expectOutput(res, ["5", "10", "0", "!!!!!!!!!!", "!!!!!"]);
 });
 
 test("buffer: edge cases", () => {
-	// Negative alloc
-	expectError(runSource(`
+  // Negative alloc
+  expectError(
+    runSource(`
 		@const $buffer = @import("std/buffer");
 		@const $mem = @import("std/mem");
 		pub @func main() {
 			$a = mem.create(0); buffer.alloc(a, -1); }
-	`), "IndexOutOfBounds");
+	`),
+    "IndexOutOfBounds",
+  );
 
-	// Negative resize
-	expectError(runSource(`
+  // Negative resize
+  expectError(
+    runSource(`
 		@const $buffer = @import("std/buffer");
 		@const $mem = @import("std/mem");
 		pub @func main() {
 			$a = mem.create(0); $b = buffer.alloc(a, 5); buffer.resize(b, -5); }
-	`), "IndexOutOfBounds");
+	`),
+    "IndexOutOfBounds",
+  );
 
-	// readString zero length
-	expectOutput(runSource(`
+  // readString zero length
+  expectOutput(
+    runSource(`
 		@const $buffer = @import("std/buffer");
 		@const $mem = @import("std/mem");
 		pub @func main() {
 			$a = mem.create(0); $b = buffer.alloc(a, 5); print(len(buffer.readString(b, 0, 0))); }
-	`), ["0"]);
+	`),
+    ["0"],
+  );
 
-	// readString out of bounds
-	expectError(runSource(`
+  // readString out of bounds
+  expectError(
+    runSource(`
 		@const $buffer = @import("std/buffer");
 		@const $mem = @import("std/mem");
 		pub @func main() {
 			$a = mem.create(0); $b = buffer.alloc(a, 5); buffer.readString(b, 4, 2); }
-	`), "IndexOutOfBounds");
+	`),
+    "IndexOutOfBounds",
+  );
 
-	// writeString out of bounds
-	expectError(runSource(`
+  // writeString out of bounds
+  expectError(
+    runSource(`
 		@const $buffer = @import("std/buffer");
 		@const $mem = @import("std/mem");
 		pub @func main() {
 			$a = mem.create(0); $b = buffer.alloc(a, 5); buffer.writeString(b, 4, "hi"); }
-	`), "IndexOutOfBounds");
+	`),
+    "IndexOutOfBounds",
+  );
 
-	// writeString empty string
-	expectOutput(runSource(`
+  // writeString empty string
+  expectOutput(
+    runSource(`
 		@const $buffer = @import("std/buffer");
 		@const $mem = @import("std/mem");
 		pub @func main() {
 			$a = mem.create(0); $b = buffer.alloc(a, 5); print(buffer.writeString(b, 0, "")); }
-	`), ["0"]);
+	`),
+    ["0"],
+  );
 
-	// copy out of bounds
-	expectError(runSource(`
+  // copy out of bounds
+  expectError(
+    runSource(`
 		@const $buffer = @import("std/buffer");
 		@const $mem = @import("std/mem");
 		pub @func main() {
@@ -179,11 +198,13 @@ test("buffer: edge cases", () => {
 			$b2 = buffer.alloc(a, 5); 
 			buffer.copy(b1, 0, b2, 4, 2); 
 		}
-	`), "IndexOutOfBounds");
+	`),
+    "IndexOutOfBounds",
+  );
 });
 
 test("buffer: overlapping copy", () => {
-	const res = runSource(`
+  const res = runSource(`
 		@const $buffer = @import("std/buffer");
 		@const $mem = @import("std/mem");
 		pub @func main() {
@@ -204,11 +225,11 @@ test("buffer: overlapping copy", () => {
 			print(buffer.readString(b3, 0, 8));
 		}
 	`);
-	expectOutput(res, ["12123478", "34565678", "12345678"]);
+  expectOutput(res, ["12123478", "34565678", "12345678"]);
 });
 
 test("buffer: fillRange", () => {
-	const res = runSource(`
+  const res = runSource(`
 		@const $buffer = @import("std/buffer");
 		@const $mem = @import("std/mem");
 		pub @func main() {
@@ -218,20 +239,24 @@ test("buffer: fillRange", () => {
 			print(buffer.readString(b, 0, 8));
 		}
 	`);
-	expectOutput(res, ["12!!!!78"]);
+  expectOutput(res, ["12!!!!78"]);
 });
 
 test("buffer: additional edge cases", () => {
-	// fillRange OOB
-	expectError(runSource(`
+  // fillRange OOB
+  expectError(
+    runSource(`
 		@const $buffer = @import("std/buffer");
 		@const $mem = @import("std/mem");
 		pub @func main() {
 			$a = mem.create(0); $b = buffer.alloc(a, 5); buffer.fillRange(b, 33, 4, 2); }
-	`), "IndexOutOfBounds");
+	`),
+    "IndexOutOfBounds",
+  );
 
-	// resize shrink
-	expectOutput(runSource(`
+  // resize shrink
+  expectOutput(
+    runSource(`
 		@const $buffer = @import("std/buffer");
 		@const $mem = @import("std/mem");
 		pub @func main() {
@@ -241,10 +266,13 @@ test("buffer: additional edge cases", () => {
 			print(buffer.len(b));
 			print(buffer.readString(b, 0, 4));
 		}
-	`), ["4", "1234"]);
+	`),
+    ["4", "1234"],
+  );
 
-	// alloc(0)
-	expectOutput(runSource(`
+  // alloc(0)
+  expectOutput(
+    runSource(`
 		@const $buffer = @import("std/buffer");
 		@const $mem = @import("std/mem");
 		pub @func main() {
@@ -252,10 +280,13 @@ test("buffer: additional edge cases", () => {
 			$b = buffer.alloc(a, 0);
 			print(buffer.len(b));
 		}
-	`), ["0"]);
+	`),
+    ["0"],
+  );
 
-	// set byte mask
-	expectOutput(runSource(`
+  // set byte mask
+  expectOutput(
+    runSource(`
 		@const $buffer = @import("std/buffer");
 		@const $mem = @import("std/mem");
 		pub @func main() {
@@ -264,14 +295,19 @@ test("buffer: additional edge cases", () => {
 			buffer.set(b, 0, 300);
 			print(buffer.get(b, 0));
 		}
-	`), ["44"]);
+	`),
+    ["44"],
+  );
 
-	// Type error (pass int where buffer expected) — now rejected at compile
-	// time by the sound parameter contract instead of at runtime.
-	expectError(runSource(`
+  // Type error (pass int where buffer expected) — now rejected at compile
+  // time by the sound parameter contract instead of at runtime.
+  expectError(
+    runSource(`
 		@const $buffer = @import("std/buffer");
 		@const $mem = @import("std/mem");
 		pub @func main() {
 			$a = mem.create(0); buffer.len(123); }
-	`), "not assignable to '*Buffer'");
+	`),
+    "not assignable to '*Buffer'",
+  );
 });

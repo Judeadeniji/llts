@@ -146,7 +146,23 @@ print(string.compare("a", "b"));
 print(string.compare("b", "a"));
 print(string.compare("a", "a"));
 `),
-    ["3", "a", "b", "c-d", "a", "b", "cde", "007", "700", "true", "false", "true", "-1", "1", "0"],
+    [
+      "3",
+      "a",
+      "b",
+      "c-d",
+      "a",
+      "b",
+      "cde",
+      "007",
+      "700",
+      "true",
+      "false",
+      "true",
+      "-1",
+      "1",
+      "0",
+    ],
   );
 });
 
@@ -309,40 +325,55 @@ io.appendFile("append_test.txt", "second");
 // ---------------------------------------------------------------------------
 
 test("importing an unknown module name is a compile-time error", () => {
-  expectError(runSource(`
+  expectError(
+    runSource(`
 @const $nope = @import("not_a_real_module");
-`), "Unknown module 'not_a_real_module'");
+`),
+    "Unknown module 'not_a_real_module'",
+  );
 });
 
 test("aliasing two different modules to distinct names works independently", () => {
-  expectOutput(runSource(`
+  expectOutput(
+    runSource(`
 @const $s = @import("std/string");
 @const $m = @import("std/math");
 print(s.len("abcd"));
 print(m.max(1, 9));
-`), ["4", "9"]);
+`),
+    ["4", "9"],
+  );
 });
 
 test("importing the same module twice under different aliases both work", () => {
-  expectOutput(runSource(`
+  expectOutput(
+    runSource(`
 @const $m1 = @import("std/math");
 @const $m2 = @import("std/math");
 print(m1.abs(-3));
 print(m2.abs(-3));
-`), ["3", "3"]);
+`),
+    ["3", "3"],
+  );
 });
 
 test("calling a module function that doesn't exist is a compile-time error", () => {
-  expectError(runSource(`
+  expectError(
+    runSource(`
 @const $math = @import("std/math");
 print(math.notARealFunction(1));
-`), "'math' has no export 'notARealFunction'");
+`),
+    "'math' has no export 'notARealFunction'",
+  );
 });
 
 test("using a module namespace without importing it is a compile-time error", () => {
-  expectError(runSource(`
+  expectError(
+    runSource(`
 print(string.len("hi"));
-`), "Unknown identifier 'string'");
+`),
+    "Unknown identifier 'string'",
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -350,12 +381,15 @@ print(string.len("hi"));
 // ---------------------------------------------------------------------------
 
 test("chaining string and math module calls together", () => {
-  expectOutput(runSource(`
+  expectOutput(
+    runSource(`
 @const $string = @import("std/string");
 @const $math = @import("std/math");
 @const $s = "12345";
 print(math.max(string.len(s), 3));
-`), ["5"]);
+`),
+    ["5"],
+  );
 });
 
 test("io.writeFile followed by io.readFile round-trips content built from string module", () => {

@@ -12,9 +12,9 @@ const rLongfile = `.+/[A-Za-z0-9_\\-\\.]+\\.lls:[0-9]+:`;
 const rShortfile = `[A-Za-z0-9_\\-\\.]+\\.lls:[0-9]+:`;
 
 interface Tester {
-	flag: number;
-	prefix: string;
-	pattern: string;
+  flag: number;
+  prefix: string;
+  pattern: string;
 }
 
 const ldate = 1;
@@ -25,42 +25,48 @@ const lshortfile = 16;
 const lmsgprefix = 64;
 
 const testCases: Tester[] = [
-	// individual pieces:
-	{ flag: 0, prefix: "", pattern: "" },
-	{ flag: 0, prefix: "XXX", pattern: "XXX" },
-	{ flag: ldate, prefix: "", pattern: rDate + " " },
-	{ flag: ltime, prefix: "", pattern: rTime + " " },
-	{ flag: ltime | lmsgprefix, prefix: "XXX", pattern: rTime + " XXX" },
-	{ flag: ltime | lmicroseconds, prefix: "", pattern: rTime + rMicroseconds + " " },
-	{ flag: lmicroseconds, prefix: "", pattern: rTime + rMicroseconds + " " },
-	{ flag: llongfile, prefix: "", pattern: rLongfile + " " },
-	{ flag: lshortfile, prefix: "", pattern: rShortfile + " " },
-	{ flag: llongfile | lshortfile, prefix: "", pattern: rShortfile + " " },
-	// everything at once:
-	{
-		flag: ldate | ltime | lmicroseconds | llongfile,
-		prefix: "XXX",
-		pattern: "XXX" + rDate + " " + rTime + rMicroseconds + " " + rLongfile + " ",
-	},
-	{
-		flag: ldate | ltime | lmicroseconds | lshortfile,
-		prefix: "XXX",
-		pattern: "XXX" + rDate + " " + rTime + rMicroseconds + " " + rShortfile + " ",
-	},
-	{
-		flag: ldate | ltime | lmicroseconds | llongfile | lmsgprefix,
-		prefix: "XXX",
-		pattern: rDate + " " + rTime + rMicroseconds + " " + rLongfile + " XXX",
-	},
-	{
-		flag: ldate | ltime | lmicroseconds | lshortfile | lmsgprefix,
-		prefix: "XXX",
-		pattern: rDate + " " + rTime + rMicroseconds + " " + rShortfile + " XXX",
-	},
+  // individual pieces:
+  { flag: 0, prefix: "", pattern: "" },
+  { flag: 0, prefix: "XXX", pattern: "XXX" },
+  { flag: ldate, prefix: "", pattern: rDate + " " },
+  { flag: ltime, prefix: "", pattern: rTime + " " },
+  { flag: ltime | lmsgprefix, prefix: "XXX", pattern: rTime + " XXX" },
+  {
+    flag: ltime | lmicroseconds,
+    prefix: "",
+    pattern: rTime + rMicroseconds + " ",
+  },
+  { flag: lmicroseconds, prefix: "", pattern: rTime + rMicroseconds + " " },
+  { flag: llongfile, prefix: "", pattern: rLongfile + " " },
+  { flag: lshortfile, prefix: "", pattern: rShortfile + " " },
+  { flag: llongfile | lshortfile, prefix: "", pattern: rShortfile + " " },
+  // everything at once:
+  {
+    flag: ldate | ltime | lmicroseconds | llongfile,
+    prefix: "XXX",
+    pattern:
+      "XXX" + rDate + " " + rTime + rMicroseconds + " " + rLongfile + " ",
+  },
+  {
+    flag: ldate | ltime | lmicroseconds | lshortfile,
+    prefix: "XXX",
+    pattern:
+      "XXX" + rDate + " " + rTime + rMicroseconds + " " + rShortfile + " ",
+  },
+  {
+    flag: ldate | ltime | lmicroseconds | llongfile | lmsgprefix,
+    prefix: "XXX",
+    pattern: rDate + " " + rTime + rMicroseconds + " " + rLongfile + " XXX",
+  },
+  {
+    flag: ldate | ltime | lmicroseconds | lshortfile | lmsgprefix,
+    prefix: "XXX",
+    pattern: rDate + " " + rTime + rMicroseconds + " " + rShortfile + " XXX",
+  },
 ];
 
 test("TestDefault: Default returns standard logger", () => {
-	const res = runSource(`
+  const res = runSource(`
 @const $log = @import("std/log");
 pub @func main() {
     $d = log.default();
@@ -68,67 +74,75 @@ pub @func main() {
     print(d == s);
 }
 `);
-	expect(res.exitCode).toBe(0);
-	expect(res.stdout.trim()).toBe("true");
+  expect(res.exitCode).toBe(0);
+  expect(res.stdout.trim()).toBe("true");
 });
 
 test("TestAll: All 14 flag combinations match Go specification", () => {
-	// Execute all 14 test cases in a single LLTS program for maximum performance
-	const scriptLines: string[] = [
-		`@const $log = @import("std/log");`,
-		`pub @func main() {`,
-		`    $buf = log.newBuffer();`,
-		`    log.setOutput(&buf);`,
-		`    $out1: string = "";`,
-		`    $out2: string = "";`,
-	];
+  // Execute all 14 test cases in a single LLTS program for maximum performance
+  const scriptLines: string[] = [
+    `@const $log = @import("std/log");`,
+    `pub @func main() {`,
+    `    $buf = log.newBuffer();`,
+    `    log.setOutput(&buf);`,
+    `    $out1: string = "";`,
+    `    $out2: string = "";`,
+  ];
 
-	for (const tc of testCases) {
-		// println
-		scriptLines.push(`    buf.reset();`);
-		scriptLines.push(`    log.setFlags(${tc.flag});`);
-		scriptLines.push(`    log.setPrefix("${tc.prefix}");`);
-		scriptLines.push(`    log.println("hello", 23, "world");`);
-		scriptLines.push(`    out1 = buf.string();`);
-		scriptLines.push(`    @if (len(out1) > 0 && out1[len(out1) - 1] == 10) { out1 = __slice(out1, 0, len(out1) - 1); }`);
-		scriptLines.push(`    print(out1);`);
+  for (const tc of testCases) {
+    // println
+    scriptLines.push(`    buf.reset();`);
+    scriptLines.push(`    log.setFlags(${tc.flag});`);
+    scriptLines.push(`    log.setPrefix("${tc.prefix}");`);
+    scriptLines.push(`    log.println("hello", 23, "world");`);
+    scriptLines.push(`    out1 = buf.string();`);
+    scriptLines.push(
+      `    @if (len(out1) > 0 && out1[len(out1) - 1] == 10) { out1 = __slice(out1, 0, len(out1) - 1); }`,
+    );
+    scriptLines.push(`    print(out1);`);
 
-		// printf
-		scriptLines.push(`    buf.reset();`);
-		scriptLines.push(`    log.setFlags(${tc.flag});`);
-		scriptLines.push(`    log.setPrefix("${tc.prefix}");`);
-		scriptLines.push(`    log.printf("hello %d world", 23);`);
-		scriptLines.push(`    out2 = buf.string();`);
-		scriptLines.push(`    @if (len(out2) > 0 && out2[len(out2) - 1] == 10) { out2 = __slice(out2, 0, len(out2) - 1); }`);
-		scriptLines.push(`    print(out2);`);
-	}
+    // printf
+    scriptLines.push(`    buf.reset();`);
+    scriptLines.push(`    log.setFlags(${tc.flag});`);
+    scriptLines.push(`    log.setPrefix("${tc.prefix}");`);
+    scriptLines.push(`    log.printf("hello %d world", 23);`);
+    scriptLines.push(`    out2 = buf.string();`);
+    scriptLines.push(
+      `    @if (len(out2) > 0 && out2[len(out2) - 1] == 10) { out2 = __slice(out2, 0, len(out2) - 1); }`,
+    );
+    scriptLines.push(`    print(out2);`);
+  }
 
-	scriptLines.push(`}`);
-	const src = scriptLines.join("\n");
-	
-	const res = runSource(src);
-	expect(res.exitCode).toBe(0);
+  scriptLines.push(`}`);
+  const src = scriptLines.join("\n");
 
-	const lines = res.stdout.split(/\r?\n/).filter((l) => l.length > 0);
-	expect(lines.length).toBe(testCases.length * 2);
+  const res = runSource(src);
+  expect(res.exitCode).toBe(0);
 
-	for (let i = 0; i < testCases.length; i++) {
-		const tc = testCases[i];
-		const linePrintln = lines[i * 2];
-		const linePrintf = lines[i * 2 + 1];
+  const lines = res.stdout.split(/\r?\n/).filter((l) => l.length > 0);
+  expect(lines.length).toBe(testCases.length * 2);
 
-		const regex = new RegExp(`^${tc.pattern}hello 23 world$`);
-		if (!regex.test(linePrintln)) {
-			throw new Error(`TestAll case ${i} (println) failed:\nPattern: ${regex}\nGot:     ${linePrintln}`);
-		}
-		if (!regex.test(linePrintf)) {
-			throw new Error(`TestAll case ${i} (printf) failed:\nPattern: ${regex}\nGot:     ${linePrintf}`);
-		}
-	}
+  for (let i = 0; i < testCases.length; i++) {
+    const tc = testCases[i];
+    const linePrintln = lines[i * 2];
+    const linePrintf = lines[i * 2 + 1];
+
+    const regex = new RegExp(`^${tc.pattern}hello 23 world$`);
+    if (!regex.test(linePrintln)) {
+      throw new Error(
+        `TestAll case ${i} (println) failed:\nPattern: ${regex}\nGot:     ${linePrintln}`,
+      );
+    }
+    if (!regex.test(linePrintf)) {
+      throw new Error(
+        `TestAll case ${i} (printf) failed:\nPattern: ${regex}\nGot:     ${linePrintf}`,
+      );
+    }
+  }
 });
 
 test("TestOutput: basic Output functionality", () => {
-	const res = runSource(`
+  const res = runSource(`
 @const $log = @import("std/log");
 pub @func main() {
     $b = log.newBuffer();
@@ -137,12 +151,12 @@ pub @func main() {
     print(b.string() == "test\\n");
 }
 `);
-	expect(res.exitCode).toBe(0);
-	expect(res.stdout.trim()).toBe("true");
+  expect(res.exitCode).toBe(0);
+  expect(res.stdout.trim()).toBe("true");
 });
 
 test("TestNonNewLogger: struct literal initialized logger works with setOutput", () => {
-	const res = runSource(`
+  const res = runSource(`
 @const $log = @import("std/log");
 pub @func main() {
     $l = log.Logger {};
@@ -152,12 +166,12 @@ pub @func main() {
     print(b.string() == "hello\\n");
 }
 `);
-	expect(res.exitCode).toBe(0);
-	expect(res.stdout.trim()).toBe("true");
+  expect(res.exitCode).toBe(0);
+  expect(res.stdout.trim()).toBe("true");
 });
 
 test("TestFlagAndPrefixSetting: flags and prefix getter/setter and newline preservation", () => {
-	const res = runSource(`
+  const res = runSource(`
 @const $log = @import("std/log");
 pub @func main() {
     $b = log.newBuffer();
@@ -195,12 +209,12 @@ pub @func main() {
     print(preserved);
 }
 `);
-	expect(res.exitCode).toBe(0);
-	expect(res.stdout.trim()).toBe("true");
+  expect(res.exitCode).toBe(0);
+  expect(res.stdout.trim()).toBe("true");
 });
 
 test("TestUTCFlag: lUTC formats date/time in UTC", () => {
-	const res = runSource(`
+  const res = runSource(`
 @const $log = @import("std/log");
 pub @func main() {
     $b = log.newBuffer();
@@ -210,14 +224,14 @@ pub @func main() {
     print(b.string());
 }
 `);
-	expect(res.exitCode).toBe(0);
-	const line = res.stdout.trim();
-	const regex = new RegExp(`^Test:${rDate} ${rTime} hello$`);
-	expect(regex.test(line)).toBe(true);
+  expect(res.exitCode).toBe(0);
+  const line = res.stdout.trim();
+  const regex = new RegExp(`^Test:${rDate} ${rTime} hello$`);
+  expect(regex.test(line)).toBe(true);
 });
 
 test("TestEmptyPrintCreatesLine: empty print call still outputs header and newline", () => {
-	const res = runSource(`
+  const res = runSource(`
 @const $log = @import("std/log");
 pub @func main() {
     $b = log.newBuffer();
@@ -238,12 +252,12 @@ pub @func main() {
     print(twoHeaders && twoNLs);
 }
 `);
-	expect(res.exitCode).toBe(0);
-	expect(res.stdout.trim()).toBe("true");
+  expect(res.exitCode).toBe(0);
+  expect(res.stdout.trim()).toBe("true");
 });
 
 test("TestDiscard: discard writer absorbs output without error", () => {
-	const res = runSource(`
+  const res = runSource(`
 @const $log = @import("std/log");
 pub @func main() {
     $l = log.new(log.discard, "", 0);
@@ -252,12 +266,12 @@ pub @func main() {
     print("discard-ok");
 }
 `);
-	expect(res.exitCode).toBe(0);
-	expect(res.stdout.trim()).toBe("discard-ok");
+  expect(res.exitCode).toBe(0);
+  expect(res.stdout.trim()).toBe("discard-ok");
 });
 
 test("ExampleLogger: shortfile prefix and line reporting", () => {
-	const res = runSource(`
+  const res = runSource(`
 @const $log = @import("std/log");
 pub @func main() {
     $buf = log.newBuffer();
@@ -266,14 +280,14 @@ pub @func main() {
     print(buf.string());
 }
 `);
-	expect(res.exitCode).toBe(0);
-	const line = res.stdout.trim();
-	const regex = new RegExp(`^logger: ${rShortfile} Hello, log file!$`);
-	expect(regex.test(line)).toBe(true);
+  expect(res.exitCode).toBe(0);
+  const line = res.stdout.trim();
+  const regex = new RegExp(`^logger: ${rShortfile} Hello, log file!$`);
+  expect(regex.test(line)).toBe(true);
 });
 
 test("ExampleLogger_Output: custom calldepth preserves caller site", () => {
-	const res = runSource(`
+  const res = runSource(`
 @const $log = @import("std/log");
 
 @func infof(logger: *log.Logger, info: string) {
@@ -287,14 +301,14 @@ pub @func main() {
     print(buf.string());
 }
 `);
-	expect(res.exitCode).toBe(0);
-	const line = res.stdout.trim();
-	const regex = new RegExp(`^INFO: ${rShortfile} Hello world$`);
-	expect(regex.test(line)).toBe(true);
+  expect(res.exitCode).toBe(0);
+  const line = res.stdout.trim();
+  const regex = new RegExp(`^INFO: ${rShortfile} Hello world$`);
+  expect(regex.test(line)).toBe(true);
 });
 
 test("Log submodules: slog and syslog are accessible under log", () => {
-	const res = runSource(`
+  const res = runSource(`
 @const $log = @import("std/log");
 pub @func main() {
     print(log.slog.levelDebug);
@@ -305,12 +319,12 @@ pub @func main() {
     print(log.syslog.LOG_LOCAL7);
 }
 `);
-	expect(res.exitCode).toBe(0);
-	const lines = res.stdout.split(/\r?\n/).filter((l) => l.length > 0);
-	expect(lines[0]).toBe("-4");
-	expect(lines[1]).toBe("0");
-	expect(lines[2]).toBe("0");
-	expect(lines[3]).toBe("7");
-	expect(lines[4]).toBe("4");
-	expect(lines[5]).toBe("184");
+  expect(res.exitCode).toBe(0);
+  const lines = res.stdout.split(/\r?\n/).filter((l) => l.length > 0);
+  expect(lines[0]).toBe("-4");
+  expect(lines[1]).toBe("0");
+  expect(lines[2]).toBe("0");
+  expect(lines[3]).toBe("7");
+  expect(lines[4]).toBe("4");
+  expect(lines[5]).toBe("184");
 });

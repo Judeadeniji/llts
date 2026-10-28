@@ -4,25 +4,30 @@
  * Distinct from `void` (unit / no result) and `never` (noreturn / bottom).
  */
 import { test } from "bun:test";
-import { expectError, expectOutput, runSource, runSourceStrict } from "./helpers";
+import {
+  expectError,
+  expectOutput,
+  runSource,
+  runSourceStrict,
+} from "./helpers";
 
 // ---------------------------------------------------------------------------
 // Identity / meta
 // ---------------------------------------------------------------------------
 
 test("@typeOf(null) / @sizeOf(null)", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 print(@typeOf(null));
 print(@sizeOf(null));
 `),
-		["null", "0"],
-	);
+    ["null", "0"],
+  );
 });
 
 test("?T sugar equals T | null", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 $x: ?i64 = null;
 $y: i64 | null = null;
 print(@typeOf(x));
@@ -30,8 +35,8 @@ print(@typeOf(y));
 print(x);
 print(y);
 `),
-		["?i64", "?i64", "null", "null"],
-	);
+    ["?i64", "?i64", "null", "null"],
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -39,8 +44,8 @@ print(y);
 // ---------------------------------------------------------------------------
 
 test("optional scalar bind / rebind null", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 $x: ?i64 = null;
 print(x);
 x = 7;
@@ -48,13 +53,13 @@ print(x);
 x = null;
 print(x);
 `),
-		["null", "7", "null"],
-	);
+    ["null", "7", "null"],
+  );
 });
 
 test("?*T null then bind pointer", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @struct Point { x: i64; }
 $v = Point { x: 1 };
 $p: ?*Point = null;
@@ -64,13 +69,13 @@ print(p.x);
 p = null;
 print(p == null);
 `),
-		["true", "1", "true"],
-	);
+    ["true", "1", "true"],
+  );
 });
 
 test("optional struct field with null", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @struct Node {
     value: i64;
     next: ?Node;
@@ -78,35 +83,35 @@ test("optional struct field with null", () => {
 $n = Node { value: 1, next: null };
 print(n.next);
 `),
-		["null"],
-	);
+    ["null"],
+  );
 });
 
 test("return null from ?T", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @func miss(): ?i64 { return null; }
 @func hit(): ?i64 { return 3; }
 print(miss());
 print(hit());
 `),
-		["null", "3"],
-	);
+    ["null", "3"],
+  );
 });
 
 test("return null from T | null", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @func miss(): i64 | null { return null; }
 print(miss());
 `),
-		["null"],
-	);
+    ["null"],
+  );
 });
 
 test("null check narrowing", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 $x: ?i64 = 9;
 @if (x != null) {
     print(x);
@@ -118,50 +123,50 @@ x = null;
     print("yes");
 }
 `),
-		["9", "yes"],
-	);
+    ["9", "yes"],
+  );
 });
 
 test("pass null to ?T param", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @func take(x: ?i64): ?i64 { return x; }
 print(take(null));
 print(take(2));
 `),
-		["null", "2"],
-	);
+    ["null", "2"],
+  );
 });
 
 test("@const null", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @const $z = null;
 print(z);
 print(@typeOf(z));
 `),
-		["null", "null"],
-	);
+    ["null", "null"],
+  );
 });
 
 test("print shows null not void", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 $x: ?i64 = null;
 print(x);
 `),
-		["null"],
-	);
+    ["null"],
+  );
 });
 
 test("null is falsy", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 $x: ?i64 = null;
 @if (x) { print("t"); } @else { print("f"); }
 `),
-		["f"],
-	);
+    ["f"],
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -169,88 +174,88 @@ $x: ?i64 = null;
 // ---------------------------------------------------------------------------
 
 test(": null as function return type rejected", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 @func f(): null { return null; }
 print(f());
 `),
-		"Function return type cannot be 'null'",
-	);
+    "Function return type cannot be 'null'",
+  );
 });
 
 test(": type + return null fails", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 @func f(): i64 { return null; }
 print(f());
 `),
-		"not assignable",
-	);
+    "not assignable",
+  );
 });
 
 test(": void + return null fails", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 @func f(): void { return null; }
 f();
 `),
-		"not assignable",
-	);
+    "not assignable",
+  );
 });
 
 test("null not assignable to type", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 $n: i64 = null;
 print(n);
 `),
-		"not assignable",
-	);
+    "not assignable",
+  );
 });
 
 test("null not assignable to struct", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 @struct Point { x: i64; }
 $p: Point = null;
 print(p.x);
 `),
-		"not assignable",
-	);
+    "not assignable",
+  );
 });
 
 test("null not assignable to *T", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 @struct Point { x: i64; }
 $v = Point { x: 1 };
 $p: *Point = null;
 print(p.x);
 `),
-		"not assignable",
-	);
+    "not assignable",
+  );
 });
 
 test("null not assignable to void", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 $x: void = null;
 print(x);
 `),
-		"not assignable",
-	);
+    "not assignable",
+  );
 });
 
 test("strict: member access on optional rejected", () => {
-	expectError(
-		runSourceStrict(`
+  expectError(
+    runSourceStrict(`
 @struct User { name: []byte; }
 $u: ?User = null;
 print(u.name);
 pub @func main() {}
 `),
-		"optional",
-	);
+    "optional",
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -258,44 +263,44 @@ pub @func main() {}
 // ---------------------------------------------------------------------------
 
 test("return null is not bare return;", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @func a(): ?i64 { return null; }
 @func b(): void { return; }
 print(@typeOf(a()));
 print(@typeOf(b()));
 `),
-		["?i64", "void"],
-	);
+    ["?i64", "void"],
+  );
 });
 
 test("null ⊑ ?T; void ⊄ ?T", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 $x: ?i64 = null;
 print(x);
 `),
-		["null"],
-	);
-	expectError(
-		runSource(`
+    ["null"],
+  );
+  expectError(
+    runSource(`
 @func f(): void {}
 $x: ?i64 = f();
 print(x);
 `),
-		"not assignable",
-	);
+    "not assignable",
+  );
 });
 
 test("narrowing yields payload or null, not void", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 $x: ?i64 = 4;
 @if (x != null) {
     print(x);
     print(@typeOf(null));
 }
 `),
-		["4", "null"],
-	);
+    ["4", "null"],
+  );
 });

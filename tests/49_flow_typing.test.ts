@@ -2,8 +2,8 @@ import { test } from "bun:test";
 import { expectError, expectOutput, runSourceStrict } from "./helpers";
 
 test("flow: null-check narrows optional struct in then-branch", () => {
-	expectOutput(
-		runSourceStrict(`
+  expectOutput(
+    runSourceStrict(`
 @struct User { name: string; }
 pub @func main() {
     $u: ?User = User { name: "zoe" };
@@ -12,13 +12,13 @@ pub @func main() {
     }
 }
 `),
-		["zoe"],
-	);
+    ["zoe"],
+  );
 });
 
 test("flow: null-check narrows call-return optional", () => {
-	expectOutput(
-		runSourceStrict(`
+  expectOutput(
+    runSourceStrict(`
 @struct User { name: string; }
 @func make(): ?User {
     return (User { name: "ann" });
@@ -30,13 +30,13 @@ pub @func main() {
     }
 }
 `),
-		["ann"],
-	);
+    ["ann"],
+  );
 });
 
 test("flow: assignment narrows optional to struct", () => {
-	expectOutput(
-		runSourceStrict(`
+  expectOutput(
+    runSourceStrict(`
 @struct User { name: string; }
 pub @func main() {
     $u: ?User = null;
@@ -44,13 +44,13 @@ pub @func main() {
     print(u.name);
 }
 `),
-		["set"],
-	);
+    ["set"],
+  );
 });
 
 test("flow: else-branch of null-check narrows to struct", () => {
-	expectOutput(
-		runSourceStrict(`
+  expectOutput(
+    runSourceStrict(`
 @struct User { name: string; }
 pub @func main() {
     $u: ?User = User { name: "e" };
@@ -61,13 +61,13 @@ pub @func main() {
     }
 }
 `),
-		["e"],
-	);
+    ["e"],
+  );
 });
 
 test("flow: truthiness @if capture narrows the variable itself", () => {
-	expectOutput(
-		runSourceStrict(`
+  expectOutput(
+    runSourceStrict(`
 @struct User { name: string; }
 pub @func main() {
     $u: ?User = User { name: "cap" };
@@ -77,13 +77,13 @@ pub @func main() {
     }
 }
 `),
-		["cap", "cap"],
-	);
+    ["cap", "cap"],
+  );
 });
 
 test("flow: assignment inside narrowed branch re-widens", () => {
-	expectOutput(
-		runSourceStrict(`
+  expectOutput(
+    runSourceStrict(`
 @struct User { name: string; }
 pub @func main() {
     $u: ?User = User { name: "x" };
@@ -93,13 +93,13 @@ pub @func main() {
     print("re-widened");
 }
 `),
-		["re-widened"],
-	);
+    ["re-widened"],
+  );
 });
 
 test("flow: field access after join is not narrowed", () => {
-	expectError(
-		runSourceStrict(`
+  expectError(
+    runSourceStrict(`
 @struct User { name: string; }
 pub @func main() {
     $u: ?User = User { name: "j" };
@@ -109,13 +109,13 @@ pub @func main() {
     print(u.name);
 }
 `),
-		"Cannot access field 'name' on optional type '?User'",
-	);
+    "Cannot access field 'name' on optional type '?User'",
+  );
 });
 
 test("flow: field access in null branch is not narrowed", () => {
-	expectError(
-		runSourceStrict(`
+  expectError(
+    runSourceStrict(`
 @struct User { name: string; }
 pub @func main() {
     $u: ?User = User { name: "j" };
@@ -124,26 +124,26 @@ pub @func main() {
     }
 }
 `),
-		"Cannot access field 'name' on type 'null'",
-	);
+    "Cannot access field 'name' on type 'null'",
+  );
 });
 
 test("flow: optional stays optional without any narrowing", () => {
-	expectError(
-		runSourceStrict(`
+  expectError(
+    runSourceStrict(`
 @struct User { name: string; }
 pub @func main() {
     $u: ?User = User { name: "j" };
     print(u.name);
 }
 `),
-		"Cannot access field 'name' on optional type '?User'",
-	);
+    "Cannot access field 'name' on optional type '?User'",
+  );
 });
 
 test("flow: assignment in else joins with then-narrowing to struct", () => {
-	expectOutput(
-		runSourceStrict(`
+  expectOutput(
+    runSourceStrict(`
 @struct User { name: string; }
 pub @func main() {
     $u: ?User = null;
@@ -155,6 +155,6 @@ pub @func main() {
     print(u.name);
 }
 `),
-		["late"],
-	);
+    ["late"],
+  );
 });

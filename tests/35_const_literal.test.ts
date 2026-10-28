@@ -5,47 +5,47 @@ import { test } from "bun:test";
 import { expectOutput, runSource } from "./helpers";
 
 test('const "x" has type "x", bare "x" has type []byte', () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 print(@typeOf("x"));
 print(@typeOf(const "x"));
 $a = const "x";
 print(@typeOf(a));
 `),
-		["[]byte", '"x"', '"x"'],
-	);
+    ["[]byte", '"x"', '"x"'],
+  );
 });
 
 test("@const binding infers literal types", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @const $k = "y";
 print(@typeOf(k));
 @const $n = 3;
 print(@typeOf(n));
 `),
-		['"y"', "3"],
-	);
+    ['"y"', "3"],
+  );
 });
 
 test("const array becomes a deep literal tuple", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 $p = const [1, "hi"];
 print(@typeOf(p));
 print(p.0);
 print(p.1);
 `),
-		['[1, "hi"]', "1", "hi"],
-	);
+    ['[1, "hi"]', "1", "hi"],
+  );
 });
 
 test("tuple with const string element", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 $p = [1, const "hi"];
 print(@typeOf(p));
 `),
-		['[i64, "hi"]'],
-	);
+    ['[i64, "hi"]'],
+  );
 });

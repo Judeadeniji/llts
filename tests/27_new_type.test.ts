@@ -5,8 +5,8 @@ import { test } from "bun:test";
 import { expectError, expectOutput, runSource } from "./helpers";
 
 test("@new(a, [N]byte) zeros and has len", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @const $mem = @import("std/mem");
 $a = mem.create(0);
 $b = @new(a, [4]byte);
@@ -17,13 +17,13 @@ b[1] = 9;
 print(b[1]);
 a.reset();
 `),
-		["4", "0", "0", "9"],
-	);
+    ["4", "0", "0", "9"],
+  );
 });
 
 test("@new(a, Point) zeros struct fields", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @const $mem = @import("std/mem");
 @struct Point { x: int; y: int; }
 $a = mem.create(0);
@@ -34,13 +34,13 @@ p.x = 5;
 print(p.x);
 a.deinit();
 `),
-		["0", "0", "5"],
-	);
+    ["0", "0", "5"],
+  );
 });
 
 test("@new(a, Point) may be returned (Pass region)", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @const $mem = @import("std/mem");
 @struct Point { x: int; y: int; }
 @func make(a): *Point {
@@ -57,46 +57,46 @@ pub @func main() {
     print(p.y);
 }
 `),
-		["1", "2"],
-	);
+    ["1", "2"],
+  );
 });
 
 test("@new rejects struct and array literals (type form only)", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 @const $mem = @import("std/mem");
 @struct Point { x: int; y: int; }
 $a = mem.create(0);
 $p = @new(a, Point { x: 3, y: 4 });
 print(p.x);
 `),
-		"@new takes a type, not a value",
-	);
-	expectError(
-		runSource(`
+    "@new takes a type, not a value",
+  );
+  expectError(
+    runSource(`
 @const $mem = @import("std/mem");
 $a = mem.create(0);
 $arr = @new(a, [1, 2, 3]);
 print(len(arr));
 `),
-		"@new takes a type, not a value",
-	);
+    "@new takes a type, not a value",
+  );
 });
 
 test("@new rejects unsized slice without length", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 @const $mem = @import("std/mem");
 $a = mem.create(0);
 $b = @new(a, []byte);
 `),
-		"length",
-	);
+    "length",
+  );
 });
 
 test("@new(a, []byte, n) runtime length", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @const $mem = @import("std/mem");
 $a = mem.create(0);
 $n = 5;
@@ -107,13 +107,13 @@ b[4] = 42;
 print(b[4]);
 a.reset();
 `),
-		["5", "0", "42"],
-	);
+    ["5", "0", "42"],
+  );
 });
 
 test("@new(a, []int, n) value array", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @const $mem = @import("std/mem");
 $a = mem.create(0);
 $n = 3;
@@ -126,13 +126,13 @@ print(xs[1]);
 print(xs[2]);
 a.deinit();
 `),
-		["3", "10", "0", "30"],
-	);
+    ["3", "10", "0", "30"],
+  );
 });
 
 test("@new(a, string, n) makes a byte buffer", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @const $mem = @import("std/mem");
 $a = mem.create(0);
 $s = @new(a, string, 3);
@@ -144,13 +144,13 @@ print(s[0]);
 print(s[2]);
 a.deinit();
 `),
-		["3", "65", "67"],
-	);
+    ["3", "65", "67"],
+  );
 });
 
 test("@new []byte grows past 1MiB", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @const $mem = @import("std/mem");
 $a = mem.create(0);
 $n = 2000000;
@@ -162,13 +162,13 @@ print(b[0]);
 print(b[1999999]);
 a.deinit();
 `),
-		["2000000", "1", "2"],
-	);
+    ["2000000", "1", "2"],
+  );
 });
 
 test("@new []byte is packed (200 bytes in a tiny arena)", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @const $mem = @import("std/mem");
 $a = mem.create(16);
 $b = @new(a, []byte, 200);
@@ -180,13 +180,13 @@ print(b[199]);
 print(b[50]);
 a.deinit();
 `),
-		["200", "7", "9", "0"],
-	);
+    ["200", "7", "9", "0"],
+  );
 });
 
 test("@new [N]byte index via for range", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @const $mem = @import("std/mem");
 $a = mem.create(0);
 $b = @new(a, [3]byte);
@@ -198,6 +198,6 @@ b[2] = 3;
 }
 a.deinit();
 `),
-		["1", "2", "3"],
-	);
+    ["1", "2", "3"],
+  );
 });

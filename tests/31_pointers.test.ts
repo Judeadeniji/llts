@@ -12,8 +12,8 @@ import { expectError, expectOutput, runSource } from "./helpers";
 // ---------------------------------------------------------------------------
 
 test("@typeOf(@new(a, Point)) is *Point", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @const $mem = @import("std/mem");
 @struct Point { x: i64; y: i64; }
 $a = mem.create(0);
@@ -22,13 +22,13 @@ print(@typeOf(p));
 print(p.x);
 a.deinit();
 `),
-		["*Point", "0"],
-	);
+    ["*Point", "0"],
+  );
 });
 
 test("function returning @new is *T not T", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @const $mem = @import("std/mem");
 @struct Point { x: i64; y: i64; }
 @func mk(arena) {
@@ -43,13 +43,13 @@ print(@typeOf(p));
 print(p.x);
 a.deinit();
 `),
-		["*Point", "1"],
-	);
+    ["*Point", "1"],
+  );
 });
 
 test("@new([N]byte) yields *[N]byte", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @const $mem = @import("std/mem");
 $a = mem.create(0);
 $buf = @new(a, [4]byte);
@@ -58,8 +58,8 @@ buf[0] = 7;
 print(buf[0]);
 a.deinit();
 `),
-		["*[4]byte", "7"],
-	);
+    ["*[4]byte", "7"],
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -67,45 +67,45 @@ a.deinit();
 // ---------------------------------------------------------------------------
 
 test("*Point is not assignable to Point", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 @const $mem = @import("std/mem");
 @struct Point { x: i64; }
 $a = mem.create(0);
 $p: Point = @new(a, Point);
 print(p.x);
 `),
-		"not assignable",
-	);
+    "not assignable",
+  );
 });
 
 test("Point is not assignable to *Point", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 @struct Point { x: i64; }
 $v = Point { x: 1 };
 $p: *Point = v;
 print(p.x);
 `),
-		"not assignable",
-	);
+    "not assignable",
+  );
 });
 
 test("*[3]i64 is not assignable to [3]i64", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 $a = [1, 2, 3];
 $p = &a;
 $b: [3]i64 = p;
 print(b[0]);
 `),
-		"not assignable",
-	);
+    "not assignable",
+  );
 });
 
 test("*T is assignable to ?*T", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @struct Box { n: i64; }
 $v = Box { n: 3 };
 $p: *Box = &v;
@@ -113,8 +113,8 @@ $o: ?*Box = p;
 print(@typeOf(o));
 print(o.n);
 `),
-		["?*Box", "3"],
-	);
+    ["?*Box", "3"],
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -122,8 +122,8 @@ print(o.n);
 // ---------------------------------------------------------------------------
 
 test("?*T accepts null and *T", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @const $mem = @import("std/mem");
 @struct Box { n: i64; }
 $a = mem.create(0);
@@ -136,13 +136,13 @@ print(@typeOf(p));
 print(p.n);
 a.deinit();
 `),
-		["?*Box", "?*Box", "9"],
-	);
+    ["?*Box", "?*Box", "9"],
+  );
 });
 
 test("?*T field access after null assign is null-checkable", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @struct Box { n: i64; }
 $v = Box { n: 1 };
 $o: ?*Box = &v;
@@ -150,20 +150,20 @@ print(o == null);
 o = null;
 print(o == null);
 `),
-		["false", "true"],
-	);
+    ["false", "true"],
+  );
 });
 
 test("?*[N]T index after binding a pointer", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 $a = [10, 20, 30];
 $o: ?*[3]i64 = &a;
 o[1] = 99;
 print(a[1]);
 `),
-		["99"],
-	);
+    ["99"],
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -171,16 +171,16 @@ print(a[1]);
 // ---------------------------------------------------------------------------
 
 test("@sizeOf(*T) is handle-sized for structs and arrays", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @struct Point { x: i64; y: i64; }
 print(@sizeOf(*Point));
 print(@sizeOf(?*Point));
 print(@sizeOf(*[3]i64));
 print(@sizeOf(*[]byte));
 `),
-		["8", "8", "8", "8"],
-	);
+    ["8", "8", "8", "8"],
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -188,8 +188,8 @@ print(@sizeOf(*[]byte));
 // ---------------------------------------------------------------------------
 
 test("&struct_value yields *T and shares the handle", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @struct Point { x: i64; y: i64; }
 $p = Point { x: 1, y: 2 };
 $q: *Point = &p;
@@ -198,13 +198,13 @@ print(q.x);
 q.x = 9;
 print(p.x);
 `),
-		["*Point", "1", "9"],
-	);
+    ["*Point", "1", "9"],
+  );
 });
 
 test("&struct: multiple aliases all see mutations", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @struct Point { x: i64; }
 $p = Point { x: 1 };
 $a = &p;
@@ -215,13 +215,13 @@ print(p.x);
 print(b.x);
 print(c.x);
 `),
-		["2", "2", "2"],
-	);
+    ["2", "2", "2"],
+  );
 });
 
 test("&struct: rebind pointer to another value", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @struct Point { x: i64; }
 $p = Point { x: 1 };
 $q = Point { x: 2 };
@@ -232,13 +232,13 @@ r.x = 20;
 print(p.x);
 print(q.x);
 `),
-		["10", "20"],
-	);
+    ["10", "20"],
+  );
 });
 
 test("&struct: nested field write through pointer", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @struct Inner { v: i64; }
 @struct Outer { i: Inner; }
 $o = Outer { i: Inner { v: 1 } };
@@ -246,13 +246,13 @@ $p = &o;
 p.i.v = 7;
 print(o.i.v);
 `),
-		["7"],
-	);
+    ["7"],
+  );
 });
 
 test("method on *T receiver mutates through pointer", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @struct Point {
     x: i64;
     @func bump(self: *Point) { self.x = self.x + 1; }
@@ -264,8 +264,8 @@ print(p.x);
 p.bump();
 print(p.x);
 `),
-		["6", "7"],
-	);
+    ["6", "7"],
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -273,8 +273,8 @@ print(p.x);
 // ---------------------------------------------------------------------------
 
 test("&array yields *[N]T and shares storage via index", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 $a = [1, 2, 3];
 $p = &a;
 print(@typeOf(p));
@@ -287,39 +287,39 @@ $b = a;
 b[0] = 1;
 print(a[0]);
 `),
-		["*[3]i64", "9", "8", "9"],
-	);
+    ["*[3]i64", "9", "8", "9"],
+  );
 });
 
 test("&array with explicit *[N]T annotation", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 $a: [3]i64 = [1, 2, 3];
 $p: *[3]i64 = &a;
 p[2] = 42;
 print(a[2]);
 print(@typeOf(p));
 `),
-		["42", "*[3]i64"],
-	);
+    ["42", "*[3]i64"],
+  );
 });
 
 test("&array: *[]T annotation accepts *[N]T (subtype)", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 $a = [1, 2, 3];
 $p: *[]i64 = &a;
 p[0] = 5;
 print(a[0]);
 print(@typeOf(p));
 `),
-		["5", "*[]i64"],
-	);
+    ["5", "*[]i64"],
+  );
 });
 
 test("@new([]byte) is *[]byte; assign shares storage", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @const $mem = @import("std/mem");
 $arena = mem.create(0);
 $buf = @new(arena, []byte, 4);
@@ -331,13 +331,13 @@ print(buf[0]);
 print(p[0]);
 arena.deinit();
 `),
-		["*[]byte", "65", "65"],
-	);
+    ["*[]byte", "65", "65"],
+  );
 });
 
 test("@new([N]byte) pointer assign shares (no value-copy of *T)", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @const $mem = @import("std/mem");
 $arena = mem.create(0);
 $buf = @new(arena, [4]byte);
@@ -352,13 +352,13 @@ print(buf[0]);
 print(c[0]);
 arena.deinit();
 `),
-		["*[4]byte", "2", "3", "3"],
-	);
+    ["*[4]byte", "2", "3", "3"],
+  );
 });
 
 test("@new([]byte): slice through *[]byte", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @const $mem = @import("std/mem");
 $arena = mem.create(0);
 $buf = @new(arena, []byte, 5);
@@ -371,13 +371,13 @@ print(s[0]);
 print(s[1]);
 arena.deinit();
 `),
-		["2", "65", "66"],
-	);
+    ["2", "65", "66"],
+  );
 });
 
 test("& value array of structs: element field via pointer index", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @struct Point { x: i64; }
 $a = [Point { x: 1 }, Point { x: 2 }];
 $p = &a;
@@ -385,45 +385,45 @@ p[0].x = 9;
 print(a[0].x);
 print(a[1].x);
 `),
-		["9", "2"],
-	);
+    ["9", "2"],
+  );
 });
 
 test("function param *[]i64 mutates caller array", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @func poke(p: *[]i64) { p[0] = 99; }
 $a = [1, 2, 3];
 poke(&a);
 print(a[0]);
 `),
-		["99"],
-	);
+    ["99"],
+  );
 });
 
 test("function param *[N]i64 mutates caller array", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @func poke(p: *[3]i64) { p[1] = 7; }
 $a = [1, 2, 3];
 poke(&a);
 print(a[1]);
 `),
-		["7"],
-	);
+    ["7"],
+  );
 });
 
 test("function param *Point mutates caller struct", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @struct Point { x: i64; }
 @func poke(p: *Point) { p.x = 42; }
 $v = Point { x: 1 };
 poke(&v);
 print(v.x);
 `),
-		["42"],
-	);
+    ["42"],
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -431,8 +431,8 @@ print(v.x);
 // ---------------------------------------------------------------------------
 
 test("*T assign shares; bare aggregate assign copies", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 $a = [1, 2, 3];
 $p = &a;
 $q = p;
@@ -443,13 +443,13 @@ b[0] = 1;
 print(a[0]);
 print(b[0]);
 `),
-		["9", "9", "1"],
-	);
+    ["9", "9", "1"],
+  );
 });
 
 test("*Point assign shares; Point assign copies", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @struct Point { x: i64; }
 $a = Point { x: 1 };
 $p = &a;
@@ -461,8 +461,8 @@ b.x = 2;
 print(a.x);
 print(b.x);
 `),
-		["5", "5", "2"],
-	);
+    ["5", "5", "2"],
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -470,41 +470,41 @@ print(b.x);
 // ---------------------------------------------------------------------------
 
 test("& rejects i64 scalar", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 $n: i64 = 1;
 $p = &n;
 print(p);
 `),
-		"Address-of requires an aggregate value",
-	);
+    "Address-of requires an aggregate value",
+  );
 });
 
 test("& rejects f64 scalar", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 $n: f64 = 1.5;
 $p = &n;
 print(p);
 `),
-		"Address-of requires an aggregate value",
-	);
+    "Address-of requires an aggregate value",
+  );
 });
 
 test("& rejects bool scalar", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 $b: bool = true;
 $p = &b;
 print(p);
 `),
-		"Address-of requires an aggregate value",
-	);
+    "Address-of requires an aggregate value",
+  );
 });
 
 test("& rejects already-pointers (*T)", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 @const $mem = @import("std/mem");
 @struct Point { x: i64; }
 $a = mem.create(0);
@@ -512,61 +512,61 @@ $p = @new(a, Point);
 $q = &p;
 print(q);
 `),
-		"Cannot take the address of a pointer",
-	);
+    "Cannot take the address of a pointer",
+  );
 });
 
 test("& rejects already-pointers (*[N]T)", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 $a = [1, 2, 3];
 $p = &a;
 $q = &p;
 print(q);
 `),
-		"Cannot take the address of a pointer",
-	);
+    "Cannot take the address of a pointer",
+  );
 });
 
 test("& rejects optional aggregate", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 @struct Point { x: i64; }
 $v = Point { x: 1 };
 $o: ?Point = v;
 $p = &o;
 print(p);
 `),
-		"Cannot take the address of an optional",
-	);
+    "Cannot take the address of an optional",
+  );
 });
 
 test("& rejects @const struct", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 @struct Point { x: i64; }
 @const $ORIGIN = Point { x: 0 };
 $p = &ORIGIN;
 print(p.x);
 `),
-		"Cannot take the address of constant",
-	);
+    "Cannot take the address of constant",
+  );
 });
 
 test("& rejects @const array", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 @const $A = [1, 2, 3];
 $p = &A;
 p[0] = 9;
 `),
-		"Cannot take the address of constant",
-	);
+    "Cannot take the address of constant",
+  );
 });
 
 test("returning &frame_struct is an escape error", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 @struct Point { x: i64; }
 @func bad(): *Point {
     $p = Point { x: 1 };
@@ -574,21 +574,21 @@ test("returning &frame_struct is an escape error", () => {
 }
 print(bad());
 `),
-		"escapes its frame region",
-	);
+    "escapes its frame region",
+  );
 });
 
 test("returning &frame_array is an escape error", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 @func bad(): *[3]i64 {
     $a = [1, 2, 3];
     return &a;
 }
 print(bad());
 `),
-		"escapes its frame region",
-	);
+    "escapes its frame region",
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -596,38 +596,38 @@ print(bad());
 // ---------------------------------------------------------------------------
 
 test("bitwise AND still parses beside unary &", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 print(6 & 3);
 @struct Point { x: i64; }
 $p = Point { x: 1 };
 $q = &p;
 print(q.x);
 `),
-		["2", "1"],
-	);
+    ["2", "1"],
+  );
 });
 
 test("parenthesized (&a)[i] mutates", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 $a = [1, 2, 3];
 (&a)[0] = 4;
 print(a[0]);
 `),
-		["4"],
-	);
+    ["4"],
+  );
 });
 
 test("@typeOf(&a) for struct and array", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @struct Point { x: i64; }
 $p = Point { x: 1 };
 $a = [1, 2];
 print(@typeOf(&p));
 print(@typeOf(&a));
 `),
-		["*Point", "*[2]i64"],
-	);
+    ["*Point", "*[2]i64"],
+  );
 });

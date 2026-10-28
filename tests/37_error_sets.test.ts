@@ -5,8 +5,8 @@ import { test } from "bun:test";
 import { expectError, expectOutput, runSource } from "./helpers";
 
 test("@error member construct, return, print", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @error IoError { NotFound, Denied }
 
 @func open(fail: u1): i64 | IoError {
@@ -20,13 +20,13 @@ $x = open(0)?;
 print(x);
 print(open(1));
 `),
-		["7", "Error: NotFound"],
-	);
+    ["7", "Error: NotFound"],
+  );
 });
 
 test("incomplete @switch on error set fails", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 @error IoError { NotFound, Denied }
 
 @func handle(e: IoError) {
@@ -39,13 +39,13 @@ pub @func main() {
   handle(IoError.Denied);
 }
 `),
-		"missing error member",
-	);
+    "missing error member",
+  );
 });
 
 test("full @switch on error set ok", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @error IoError { NotFound, Denied }
 
 @func handle(e: IoError) {
@@ -60,13 +60,13 @@ pub @func main() {
   handle(IoError.Denied);
 }
 `),
-		["nf", "den"],
-	);
+    ["nf", "den"],
+  );
 });
 
 test("@switch with @else covers remaining", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @error IoError { NotFound, Denied }
 
 @func handle(e: IoError) {
@@ -80,13 +80,13 @@ pub @func main() {
   handle(IoError.Denied);
 }
 `),
-		["other"],
-	);
+    ["other"],
+  );
 });
 
 test("union of sets requires all members", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 @error IoError { NotFound, Denied }
 @error HttpError { Timeout, Forbidden }
 
@@ -104,13 +104,13 @@ pub @func main() {
   handle(HttpError.Forbidden);
 }
 `),
-		"missing error member",
-	);
+    "missing error member",
+  );
 });
 
 test("union of sets full cover", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @error IoError { NotFound, Denied }
 @error HttpError { Timeout, Forbidden }
 
@@ -130,13 +130,13 @@ pub @func main() {
   handle(HttpError.Timeout);
 }
 `),
-		["nf", "to"],
-	);
+    ["nf", "to"],
+  );
 });
 
 test("merge & full cover", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @error IoError { NotFound, Denied }
 @error HttpError { Timeout, Forbidden }
 
@@ -155,13 +155,13 @@ pub @func main() {
   handle(HttpError.Forbidden);
 }
 `),
-		["forb"],
-	);
+    ["forb"],
+  );
 });
 
 test("merge & conflicting member names", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 @error IoError { Timeout }
 @error HttpError { Timeout }
 
@@ -169,13 +169,13 @@ test("merge & conflicting member names", () => {
 
 pub @func main() {}
 `),
-		"Conflicting error member",
-	);
+    "Conflicting error member",
+  );
 });
 
 test("@type member + mixed union with ?", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @error IoError { NotFound, Denied }
 
 @type NotFoundErr = IoError.NotFound;
@@ -194,13 +194,13 @@ pub @func main() {
   print(load(0));
 }
 `),
-		["hi", "Error: NotFound"],
-	);
+    ["hi", "Error: NotFound"],
+  );
 });
 
 test("@isError on error set members and unions", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @error IoError { NotFound, Denied }
 
 @func open(fail: u1): i64 | IoError {
@@ -217,13 +217,13 @@ pub @func main() {
   print(@isError(open(0)));
 }
 `),
-		["true", "false", "true", "false"],
-	);
+    ["true", "false", "true", "false"],
+  );
 });
 
 test("set member assignable to open error (anyerror-style umbrella)", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @error IoError { NotFound }
 
 @func f(): error {
@@ -236,13 +236,13 @@ pub @func main() {
   print(@isError(e));
 }
 `),
-		["Error: NotFound", "true"],
-	);
+    ["Error: NotFound", "true"],
+  );
 });
 
 test("open error not assignable to set", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 @error IoError { NotFound }
 
 @func f(): IoError {
@@ -251,8 +251,8 @@ test("open error not assignable to set", () => {
 
 pub @func main() { f(); }
 `),
-		"not assignable",
-	);
+    "not assignable",
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -260,7 +260,7 @@ pub @func main() { f(); }
 // ---------------------------------------------------------------------------
 
 test("discarding fallible call in pure function warns but runs", () => {
-	const res = runSource(`
+  const res = runSource(`
 @error IoError { NotFound }
 
 @func fail(): i64 | IoError {
@@ -276,14 +276,14 @@ pub @func main() {
   print(pure());
 }
 `);
-	expectOutput(res, ["1"]);
-	if (!res.stderr.includes("Warning") || !res.stderr.includes("discarded")) {
-		throw new Error(`expected discard Warning on stderr, got:\n${res.stderr}`);
-	}
+  expectOutput(res, ["1"]);
+  if (!res.stderr.includes("Warning") || !res.stderr.includes("discarded")) {
+    throw new Error(`expected discard Warning on stderr, got:\n${res.stderr}`);
+  }
 });
 
 test("discarding fallible call in main warns but runs", () => {
-	const res = runSource(`
+  const res = runSource(`
 @error IoError { NotFound }
 
 @func fail(): i64 | IoError {
@@ -295,14 +295,14 @@ pub @func main() {
   print("ok");
 }
 `);
-	expectOutput(res, ["ok"]);
-	if (!res.stderr.includes("Warning") || !res.stderr.includes("discarded")) {
-		throw new Error(`expected discard Warning on stderr, got:\n${res.stderr}`);
-	}
+  expectOutput(res, ["ok"]);
+  if (!res.stderr.includes("Warning") || !res.stderr.includes("discarded")) {
+    throw new Error(`expected discard Warning on stderr, got:\n${res.stderr}`);
+  }
 });
 
 test("discarding fallible call in fallible function also warns", () => {
-	const res = runSource(`
+  const res = runSource(`
 @error IoError { NotFound }
 
 @func fail(): i64 | IoError {
@@ -318,14 +318,14 @@ pub @func main() {
   print(wrap());
 }
 `);
-	expectOutput(res, ["1"]);
-	if (!res.stderr.includes("Warning") || !res.stderr.includes("discarded")) {
-		throw new Error(`expected discard Warning on stderr, got:\n${res.stderr}`);
-	}
+  expectOutput(res, ["1"]);
+  if (!res.stderr.includes("Warning") || !res.stderr.includes("discarded")) {
+    throw new Error(`expected discard Warning on stderr, got:\n${res.stderr}`);
+  }
 });
 
 test("storing error union without unwrap is allowed (no discard warning)", () => {
-	const res = runSource(`
+  const res = runSource(`
 @error IoError { NotFound }
 
 @func fail(): i64 | IoError {
@@ -338,15 +338,15 @@ pub @func main() {
   print(x);
 }
 `);
-	expectOutput(res, ["true", "Error: NotFound"]);
-	if (res.stderr.includes("discarded")) {
-		throw new Error(`unexpected discard Warning on bind:\n${res.stderr}`);
-	}
+  expectOutput(res, ["true", "Error: NotFound"]);
+  if (res.stderr.includes("discarded")) {
+    throw new Error(`unexpected discard Warning on bind:\n${res.stderr}`);
+  }
 });
 
 test("cannot return set member from pure i64 function", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 @error IoError { NotFound }
 
 @func bad(): i64 {
@@ -355,13 +355,13 @@ test("cannot return set member from pure i64 function", () => {
 
 pub @func main() { bad(); }
 `),
-		"not assignable",
-	);
+    "not assignable",
+  );
 });
 
 test("? inside pure function is rejected", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 @error IoError { NotFound }
 
 @func fail(): i64 | IoError {
@@ -374,13 +374,13 @@ test("? inside pure function is rejected", () => {
 
 pub @func main() { pure(); }
 `),
-		"does not allow error",
-	);
+    "does not allow error",
+  );
 });
 
 test("? on non-error value is rejected", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 @func get(): i64 {
   return 7;
 }
@@ -391,19 +391,19 @@ test("? on non-error value is rejected", () => {
 
 pub @func main() { wrap(); }
 `),
-		"non-error-union",
-	);
+    "non-error-union",
+  );
 });
 
 test("@nameOf returns error member spelling as declared", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @error IoError { NotFound, AccessDenied }
 print(@nameOf(IoError.NotFound));
 $e: IoError = IoError.AccessDenied;
 print(@nameOf(e));
 print(@nameOf(error("OpenFailed")));
 `),
-		["NotFound", "AccessDenied", "OpenFailed"],
-	);
+    ["NotFound", "AccessDenied", "OpenFailed"],
+  );
 });

@@ -13,21 +13,21 @@ import { expectError, expectOutput, runSource } from "./helpers";
 // ---------------------------------------------------------------------------
 
 test("@typeOf(@addrOf(x)) is i64 for struct and *T", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @struct Point { x: i64; }
 $p = Point { x: 1 };
 $q = &p;
 print(@typeOf(@addrOf(p)));
 print(@typeOf(@addrOf(q)));
 `),
-		["i64", "i64"],
-	);
+    ["i64", "i64"],
+  );
 });
 
 test("@addrOf result can be stored and compared", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @struct Point { x: i64; }
 $p = Point { x: 1 };
 $a: i64 = @addrOf(p);
@@ -38,8 +38,8 @@ $d: i64 = @addrOf(c);
 print(a == b);
 print(a == d);
 `),
-		["true", "false"],
-	);
+    ["true", "false"],
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -47,21 +47,21 @@ print(a == d);
 // ---------------------------------------------------------------------------
 
 test("@addrOf struct equals @addrOf(&struct)", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @struct Point { x: i64; }
 $p = Point { x: 1 };
 $q = &p;
 print(@addrOf(p) == @addrOf(q));
 print(@addrOf(p) == @addrOf(&p));
 `),
-		["true", "true"],
-	);
+    ["true", "true"],
+  );
 });
 
 test("@addrOf struct: *T assign shares; value assign diverges", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @struct Point { x: i64; }
 $a = Point { x: 1 };
 $p = &a;
@@ -71,13 +71,13 @@ print(@addrOf(a) == @addrOf(p));
 print(@addrOf(p) == @addrOf(q));
 print(@addrOf(a) == @addrOf(b));
 `),
-		["true", "true", "false"],
-	);
+    ["true", "true", "false"],
+  );
 });
 
 test("@addrOf struct: multiple & aliases agree", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @struct Point { x: i64; }
 $p = Point { x: 1 };
 $a = &p;
@@ -85,13 +85,13 @@ $b = &p;
 print(@addrOf(p) == @addrOf(a));
 print(@addrOf(a) == @addrOf(b));
 `),
-		["true", "true"],
-	);
+    ["true", "true"],
+  );
 });
 
 test("@addrOf struct: rebind pointer changes identity", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @struct Point { x: i64; }
 $p = Point { x: 1 };
 $q = Point { x: 2 };
@@ -101,13 +101,13 @@ r = &q;
 print(@addrOf(r) == @addrOf(q));
 print(@addrOf(r) == @addrOf(p));
 `),
-		["true", "true", "false"],
-	);
+    ["true", "true", "false"],
+  );
 });
 
 test("@addrOf struct stable across field mutation", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @struct Point { x: i64; }
 $p = Point { x: 1 };
 $a = @addrOf(p);
@@ -117,13 +117,13 @@ q.x = 7;
 print(@addrOf(p) == a);
 print(@addrOf(q) == a);
 `),
-		["true", "true"],
-	);
+    ["true", "true"],
+  );
 });
 
 test("@addrOf @new(Point) equals pointer aliases", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @const $mem = @import("std/mem");
 @struct Point { x: i64; }
 $arena = mem.create(0);
@@ -133,13 +133,13 @@ print(@addrOf(p) == @addrOf(q));
 print(@typeOf(@addrOf(p)));
 arena.deinit();
 `),
-		["true", "i64"],
-	);
+    ["true", "i64"],
+  );
 });
 
 test("@addrOf nested struct field is distinct from outer", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @struct Inner { v: i64; }
 @struct Outer { i: Inner; }
 $o = Outer { i: Inner { v: 1 } };
@@ -147,8 +147,8 @@ print(@addrOf(o) == @addrOf(o.i));
 $p = &o;
 print(@addrOf(o) == @addrOf(p));
 `),
-		["false", "true"],
-	);
+    ["false", "true"],
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -156,21 +156,21 @@ print(@addrOf(o) == @addrOf(p));
 // ---------------------------------------------------------------------------
 
 test("@addrOf [N]T equals @addrOf(&array)", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 $a = [1, 2, 3];
 $p = &a;
 print(@typeOf(p));
 print(@addrOf(a) == @addrOf(p));
 print(@addrOf(a) == @addrOf(&a));
 `),
-		["*[3]i64", "true", "true"],
-	);
+    ["*[3]i64", "true", "true"],
+  );
 });
 
 test("@addrOf [N]T: *T assign shares; value assign diverges", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 $a = [1, 2, 3];
 $p = &a;
 $q = p;
@@ -179,13 +179,13 @@ print(@addrOf(a) == @addrOf(p));
 print(@addrOf(p) == @addrOf(q));
 print(@addrOf(a) == @addrOf(b));
 `),
-		["true", "true", "false"],
-	);
+    ["true", "true", "false"],
+  );
 });
 
 test("@addrOf array stable across index mutation", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 $a = [1, 2, 3];
 $before = @addrOf(a);
 $p = &a;
@@ -194,24 +194,24 @@ a[1] = 8;
 print(@addrOf(a) == before);
 print(@addrOf(p) == before);
 `),
-		["true", "true"],
-	);
+    ["true", "true"],
+  );
 });
 
 test("@addrOf *[N]T via *[]T annotation still shares", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 $a = [1, 2, 3];
 $p: *[]i64 = &a;
 print(@addrOf(a) == @addrOf(p));
 `),
-		["true"],
-	);
+    ["true"],
+  );
 });
 
 test("@addrOf array of structs shares with &", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @struct Point { x: i64; }
 $a = [Point { x: 1 }, Point { x: 2 }];
 $p = &a;
@@ -219,8 +219,8 @@ print(@addrOf(a) == @addrOf(p));
 $b = a;
 print(@addrOf(a) == @addrOf(b));
 `),
-		["true", "false"],
-	);
+    ["true", "false"],
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -228,21 +228,21 @@ print(@addrOf(a) == @addrOf(b));
 // ---------------------------------------------------------------------------
 
 test("@addrOf string ([]byte) equals @addrOf(&s)", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 $s = "hello";
 $p = &s;
 print(@addrOf(s) == @addrOf(p));
 $t = s;
 print(@addrOf(s) == @addrOf(t));
 `),
-		["true", "false"],
-	);
+    ["true", "false"],
+  );
 });
 
 test("@addrOf @new([]byte) stable across *T aliases", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @const $mem = @import("std/mem");
 $arena = mem.create(0);
 $buf = @new(arena, []byte, 4);
@@ -253,13 +253,13 @@ print(@addrOf(buf) == @addrOf(p));
 print(@addrOf(p) == @addrOf(q));
 arena.deinit();
 `),
-		["*[]byte", "true", "true"],
-	);
+    ["*[]byte", "true", "true"],
+  );
 });
 
 test("@addrOf @new([N]byte) shares across pointer assign", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @const $mem = @import("std/mem");
 $arena = mem.create(0);
 $buf = @new(arena, [4]byte);
@@ -268,13 +268,13 @@ print(@typeOf(buf));
 print(@addrOf(buf) == @addrOf(p));
 arena.deinit();
 `),
-		["*[4]byte", "true"],
-	);
+    ["*[4]byte", "true"],
+  );
 });
 
 test("@addrOf []byte stable across element writes", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @const $mem = @import("std/mem");
 $arena = mem.create(0);
 $buf = @new(arena, []byte, 4);
@@ -286,8 +286,8 @@ print(@addrOf(buf) == a);
 print(@addrOf(p) == a);
 arena.deinit();
 `),
-		["true", "true"],
-	);
+    ["true", "true"],
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -295,8 +295,8 @@ arena.deinit();
 // ---------------------------------------------------------------------------
 
 test("@addrOf tuple equals @addrOf(&tuple)", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 $t: [i64, []byte] = [1, "a"];
 $p = &t;
 print(@typeOf(p));
@@ -304,13 +304,13 @@ print(@addrOf(t) == @addrOf(p));
 $u = t;
 print(@addrOf(t) == @addrOf(u));
 `),
-		["*[i64, []byte]", "true", "false"],
-	);
+    ["*[i64, []byte]", "true", "false"],
+  );
 });
 
 test("@addrOf tuple stable across element mutation", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 $t: [i64, []byte] = [1, "a"];
 $a = @addrOf(t);
 $p = &t;
@@ -319,8 +319,8 @@ t[1] = "b";
 print(@addrOf(t) == a);
 print(@addrOf(p) == a);
 `),
-		["true", "true"],
-	);
+    ["true", "true"],
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -328,8 +328,8 @@ print(@addrOf(p) == a);
 // ---------------------------------------------------------------------------
 
 test("@addrOf shape equals @addrOf(&shape)", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @type Point = { x: i64; y: i64; };
 $p = Point { x: 1, y: 2 };
 $q = &p;
@@ -338,13 +338,13 @@ print(@addrOf(p) == @addrOf(q));
 $r = p;
 print(@addrOf(p) == @addrOf(r));
 `),
-		["*Point", "true", "false"],
-	);
+    ["*Point", "true", "false"],
+  );
 });
 
 test("@addrOf structural shape via @type coerce", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @type Box = { n: i64; };
 $s: { n: i64; } = Box { n: 3 };
 $p = &s;
@@ -352,8 +352,8 @@ print(@addrOf(s) == @addrOf(p));
 $t = s;
 print(@addrOf(s) == @addrOf(t));
 `),
-		["true", "false"],
-	);
+    ["true", "false"],
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -361,8 +361,8 @@ print(@addrOf(s) == @addrOf(t));
 // ---------------------------------------------------------------------------
 
 test("@addrOf of *T param matches caller aggregate", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @struct Point { x: i64; }
 @func addr(p: *Point) {
     return @addrOf(p);
@@ -370,21 +370,21 @@ test("@addrOf of *T param matches caller aggregate", () => {
 $v = Point { x: 1 };
 print(addr(&v) == @addrOf(v));
 `),
-		["true"],
-	);
+    ["true"],
+  );
 });
 
 test("@addrOf of array *T param matches caller", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @func addr(p: *[3]i64) {
     return @addrOf(p);
 }
 $a = [1, 2, 3];
 print(addr(&a) == @addrOf(a));
 `),
-		["true"],
-	);
+    ["true"],
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -392,38 +392,38 @@ print(addr(&a) == @addrOf(a));
 // ---------------------------------------------------------------------------
 
 test("@addrOf accepts @const struct (read-only identity)", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @struct Point { x: i64; }
 @const $p = Point { x: 1 };
 print(@typeOf(@addrOf(p)));
 print(@addrOf(p) == @addrOf(p));
 `),
-		["i64", "true"],
-	);
+    ["i64", "true"],
+  );
 });
 
 test("@addrOf accepts @const array", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @const $a = [1, 2, 3];
 print(@addrOf(a) == @addrOf(a));
 `),
-		["true"],
-	);
+    ["true"],
+  );
 });
 
 test("@addrOf on @type alias of struct", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @struct Point { x: i64; }
 @type P = Point;
 $v: P = Point { x: 1 };
 $q = &v;
 print(@addrOf(v) == @addrOf(q));
 `),
-		["true"],
-	);
+    ["true"],
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -431,44 +431,44 @@ print(@addrOf(v) == @addrOf(q));
 // ---------------------------------------------------------------------------
 
 test("@addrOf rejects i64", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 $n: i64 = 1;
 print(@addrOf(n));
 `),
-		"@addrOf requires an aggregate or *T",
-	);
+    "@addrOf requires an aggregate or *T",
+  );
 });
 
 test("@addrOf rejects f64", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 $n: f64 = 1.5;
 print(@addrOf(n));
 `),
-		"@addrOf requires an aggregate or *T",
-	);
+    "@addrOf requires an aggregate or *T",
+  );
 });
 
 test("@addrOf rejects bool", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 $b: bool = true;
 print(@addrOf(b));
 `),
-		"@addrOf requires an aggregate or *T",
-	);
+    "@addrOf requires an aggregate or *T",
+  );
 });
 
 test("@addrOf rejects enum", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 @enum Color { Red, Green }
 $c = Color.Red;
 print(@addrOf(c));
 `),
-		"@addrOf requires an aggregate or *T",
-	);
+    "@addrOf requires an aggregate or *T",
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -476,47 +476,47 @@ print(@addrOf(c));
 // ---------------------------------------------------------------------------
 
 test("@addrOf rejects optional struct", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 @struct Point { x: i64; }
 $v = Point { x: 1 };
 $o: ?Point = v;
 print(@addrOf(o));
 `),
-		"@addrOf does not accept optionals",
-	);
+    "@addrOf does not accept optionals",
+  );
 });
 
 test("@addrOf rejects optional array", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 $a = [1, 2, 3];
 $o: ?[3]i64 = a;
 print(@addrOf(o));
 `),
-		"@addrOf does not accept optionals",
-	);
+    "@addrOf does not accept optionals",
+  );
 });
 
 test("@addrOf rejects ?*T", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 @struct Point { x: i64; }
 $v = Point { x: 1 };
 $o: ?*Point = &v;
 print(@addrOf(o));
 `),
-		"@addrOf does not accept optionals",
-	);
+    "@addrOf does not accept optionals",
+  );
 });
 
 test("@addrOf rejects null", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 print(@addrOf(null));
 `),
-		"@addrOf",
-	);
+    "@addrOf",
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -524,23 +524,23 @@ print(@addrOf(null));
 // ---------------------------------------------------------------------------
 
 test("@addrOf arity must be 1", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 @struct Point { x: i64; }
 $p = Point { x: 1 };
 print(@addrOf());
 `),
-		"@addrOf expects exactly 1 argument",
-	);
+    "@addrOf expects exactly 1 argument",
+  );
 });
 
 test("@addrOf rejects extra arguments", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 @struct Point { x: i64; }
 $p = Point { x: 1 };
 print(@addrOf(p, p));
 `),
-		"@addrOf expects exactly 1 argument",
-	);
+    "@addrOf expects exactly 1 argument",
+  );
 });

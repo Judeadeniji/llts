@@ -2,8 +2,8 @@ import { test } from "bun:test";
 import { expectOutput, runSource } from "./helpers";
 
 test("@if optional unwrap keeps struct field access", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @const $list = @import("std/list");
 @const $mem = @import("std/mem");
 @struct Tok {
@@ -25,13 +25,13 @@ pub @func main() {
     }
 }
 `),
-		["7", "hi"],
-	);
+    ["7", "hi"],
+  );
 });
 
 test("@if optional unwrap", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 pub @func main() {
     $maybe: ?int = 42;
     @if (maybe) |v| {
@@ -39,13 +39,13 @@ pub @func main() {
     }
 }
 `),
-		["42"],
-	);
+    ["42"],
+  );
 });
 
 test("@if optional unwrap null", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 pub @func main() {
     $maybe: ?int = null;
     $x = 0;
@@ -57,13 +57,13 @@ pub @func main() {
     print(x);
 }
 `),
-		["99"],
-	);
+    ["99"],
+  );
 });
 
 test("@for optional unwrapping (while-let)", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 pub @func main() {
     $arr: []int = [10, 20, 30];
     $i: int = 0;
@@ -74,13 +74,13 @@ pub @func main() {
     print(i);
 }
 `),
-		["10", "20", "30", "3"],
-	);
+    ["10", "20", "30", "3"],
+  );
 });
 
 test("@for iterates over string and print characters", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 pub @func main() {
     $s = "abc";
     @for (s) |c| {
@@ -88,13 +88,13 @@ pub @func main() {
     }
 }
 `),
-		["a", "b", "c"],
-	);
+    ["a", "b", "c"],
+  );
 });
 
 test("@for iterates over string variables and slice variables", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 pub @func main() {
     $s: string = "yo";
     @for (s) |c| {
@@ -107,15 +107,15 @@ pub @func main() {
     }
 }
 `),
-		["y", "o", "9", "8"],
-	);
+    ["y", "o", "9", "8"],
+  );
 });
 
 import { expectError } from "./helpers";
 
 test("@if capture with multiple captures errors", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 pub @func main() {
     $maybe: ?int = 42;
     @if (maybe) |v, err| {
@@ -123,13 +123,13 @@ pub @func main() {
     }
 }
 `),
-		"Expected '|' after pipe capture",
-	);
+    "Expected '|' after pipe capture",
+  );
 });
 
 test("@if capture on non-optional is allowed", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 pub @func main() {
     $val: int = 42;
     @if (val) |v| {
@@ -137,13 +137,13 @@ pub @func main() {
     }
 }
 `),
-		["42"],
-	);
+    ["42"],
+  );
 });
 
 test("@for optional unwrapping with multiple captures errors", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 pub @func main() {
     $maybe: ?int = 42;
     @for (maybe) |v, idx| {
@@ -151,13 +151,13 @@ pub @func main() {
     }
 }
 `),
-		"Optional while-loop only supports 1 capture",
-	);
+    "Optional while-loop only supports 1 capture",
+  );
 });
 
 test("@for iterates over string with index", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 pub @func main() {
     $s = "abc";
     @for (s) |c, idx| {
@@ -165,6 +165,6 @@ pub @func main() {
     }
 }
 `),
-		["0", "1", "2"],
-	);
+    ["0", "1", "2"],
+  );
 });

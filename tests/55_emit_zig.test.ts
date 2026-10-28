@@ -14,56 +14,62 @@ const ROOT = path.resolve(import.meta.dir, "..");
 const ZIG_BIN = process.env.LLTS_ZIG_BIN || "zig";
 
 interface Emitted {
-	sourcePath: string;
-	outputPath: string;
-	cleanup: () => void;
+  sourcePath: string;
+  outputPath: string;
+  cleanup: () => void;
 }
 
 function emitZig(source: string): Emitted {
-	const id = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
-	const sourcePath = path.join(os.tmpdir(), `llts_emit_zig_${id}.lls`);
-	const outputPath = path.join(ROOT, `.tmp_emit_zig_${id}.zig`);
-	fs.writeFileSync(sourcePath, source, "utf-8");
-	return {
-		sourcePath,
-		outputPath,
-		cleanup: () => {
-			if (fs.existsSync(sourcePath)) fs.unlinkSync(sourcePath);
-			if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
-		},
-	};
+  const id = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
+  const sourcePath = path.join(os.tmpdir(), `llts_emit_zig_${id}.lls`);
+  const outputPath = path.join(ROOT, `.tmp_emit_zig_${id}.zig`);
+  fs.writeFileSync(sourcePath, source, "utf-8");
+  return {
+    sourcePath,
+    outputPath,
+    cleanup: () => {
+      if (fs.existsSync(sourcePath)) fs.unlinkSync(sourcePath);
+      if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
+    },
+  };
 }
 
 function runEmitted(outputPath: string) {
-	const result = spawnSync([ZIG_BIN, "run", "-lc", outputPath], { cwd: ROOT });
-	return {
-		stdout: result.stdout.toString(),
-		stderr: result.stderr.toString(),
-		exitCode: result.exitCode ?? 1,
-	};
+  const result = spawnSync([ZIG_BIN, "run", "-lc", outputPath], { cwd: ROOT });
+  return {
+    stdout: result.stdout.toString(),
+    stderr: result.stderr.toString(),
+    exitCode: result.exitCode ?? 1,
+  };
 }
 
 function expectParity(source: string, checkGenerated?: (code: string) => void) {
-	const emitted = emitZig(source);
-	try {
-		const emit = runCli(["emit-zig", emitted.sourcePath, "-o", emitted.outputPath]);
-		expect(emit.stderr + emit.stdout).toBe("");
-		expect(emit.exitCode).toBe(0);
-		if (checkGenerated) {
-			checkGenerated(fs.readFileSync(emitted.outputPath, "utf-8"));
-		}
+  const emitted = emitZig(source);
+  try {
+    const emit = runCli([
+      "emit-zig",
+      emitted.sourcePath,
+      "-o",
+      emitted.outputPath,
+    ]);
+    expect(emit.stderr + emit.stdout).toBe("");
+    expect(emit.exitCode).toBe(0);
+    if (checkGenerated) {
+      checkGenerated(fs.readFileSync(emitted.outputPath, "utf-8"));
+    }
 
-		const native = runEmitted(emitted.outputPath);
-		const vm = runFile(emitted.sourcePath);
-		expect(native.exitCode).toBe(vm.exitCode);
-		expect(native.stdout).toBe(vm.stdout);
-	} finally {
-		emitted.cleanup();
-	}
+    const native = runEmitted(emitted.outputPath);
+    const vm = runFile(emitted.sourcePath);
+    expect(native.exitCode).toBe(vm.exitCode);
+    expect(native.stdout).toBe(vm.stdout);
+  } finally {
+    emitted.cleanup();
+  }
 }
 
 test("emits functions, locals, and scalar arithmetic", () => {
-	expectParity(`
+  expectParity(
+    `
 @func add(a: int, b: int): int {
     return a + b;
 }
@@ -76,14 +82,17 @@ pub @func main() {
     print(-a);
     print(1.25 * 2.0);
 }
-`, (generated) => {
-	expect(generated).not.toContain("@as(i64, lls_");
-	expect(generated).not.toContain("@bitCast(lls_");
-});
+`,
+    (generated) => {
+      expect(generated).not.toContain("@as(i64, lls_");
+      expect(generated).not.toContain("@bitCast(lls_");
+    },
+  );
 }, 60_000);
 
 test("emits strings, booleans, len, and @as", () => {
-	expectParity(`
+  expectParity(
+    `
 pub @func main() {
     $s: string = "foo" + "bar";
     print(s);
@@ -93,13 +102,15 @@ pub @func main() {
     print(@as(u8, 42));
     print(@as(int, @as(u8, 42)));
 }
-`, (generated) => {
-	expect(generated).not.toContain("@as([]const u8,");
-});
+`,
+    (generated) => {
+      expect(generated).not.toContain("@as([]const u8,");
+    },
+  );
 }, 60_000);
 
 test("emits top-level globals before main", () => {
-	expectParity(`
+  expectParity(`
 @const $base = 10;
 $counter = 0;
 print("top");
@@ -118,7 +129,7 @@ pub @func main() {
 }, 60_000);
 
 test("runtime traps keep the VM error message and exit code", () => {
-	const emitted = emitZig(`
+  const emitted = emitZig(`
 @func div(a: int, b: int): int {
     return a / b;
 }
@@ -128,25 +139,30 @@ pub @func main() {
     print(div(1, 0));
 }
 `);
-	try {
-		const emit = runCli(["emit-zig", emitted.sourcePath, "-o", emitted.outputPath]);
-		expect(emit.exitCode).toBe(0);
+  try {
+    const emit = runCli([
+      "emit-zig",
+      emitted.sourcePath,
+      "-o",
+      emitted.outputPath,
+    ]);
+    expect(emit.exitCode).toBe(0);
 
-		const native = runEmitted(emitted.outputPath);
-		const vm = runFile(emitted.sourcePath);
-		expect(native.exitCode).toBe(1);
-		expect(vm.exitCode).toBe(1);
-		expect(native.stdout).toBe("before\n");
-		expect(vm.stdout).toBe("before\n");
-		expect(native.stderr).toContain("Error: Division by zero");
-		expect(vm.stderr).toContain("Error: Division by zero");
-	} finally {
-		emitted.cleanup();
-	}
+    const native = runEmitted(emitted.outputPath);
+    const vm = runFile(emitted.sourcePath);
+    expect(native.exitCode).toBe(1);
+    expect(vm.exitCode).toBe(1);
+    expect(native.stdout).toBe("before\n");
+    expect(vm.stdout).toBe("before\n");
+    expect(native.stderr).toContain("Error: Division by zero");
+    expect(vm.stderr).toContain("Error: Division by zero");
+  } finally {
+    emitted.cleanup();
+  }
 }, 60_000);
 
 test("emits @if, @else @if, and returns inside arms", () => {
-	expectParity(`
+  expectParity(`
 @func sign(a: int): int {
     @if (a < 0) {
         return 0 - 1;
@@ -176,7 +192,7 @@ pub @func main() {
 }, 60_000);
 
 test("emits value-producing @if with break payloads", () => {
-	expectParity(`
+  expectParity(`
 $g = @if (true) {
     break 3;
 } @else {
@@ -226,7 +242,8 @@ pub @func main() {
 }, 60_000);
 
 test("emits statement and value-producing @switch", () => {
-	expectParity(`
+  expectParity(
+    `
 pub @func main() {
     $n = 2;
     @switch (n) {
@@ -256,14 +273,16 @@ pub @func main() {
     };
     print(f);
 }
-`, (generated) => {
-	expect(generated).toContain("lls_sw_");
-	expect(generated).toContain("rt.arith.eqStr");
-});
+`,
+    (generated) => {
+      expect(generated).toContain("lls_sw_");
+      expect(generated).toContain("rt.arith.eqStr");
+    },
+  );
 }, 60_000);
 
 test("emits range and condition @for loops with break/continue", () => {
-	expectParity(`
+  expectParity(`
 pub @func main() {
     @for (0..3) |i| {
         print(i);
@@ -320,7 +339,7 @@ pub @func main() {
 }, 60_000);
 
 test("emits iterable @for over arrays, slices, and strings", () => {
-	expectParity(`
+  expectParity(`
 pub @func main() {
     $arr: [3]int = [10, 20, 30];
     @for (arr) |value, index| {
@@ -345,7 +364,7 @@ pub @func main() {
 }, 60_000);
 
 test("emits structs, arrays, slices, and optionals", () => {
-	expectParity(`
+  expectParity(`
 @struct Point {
     x: int;
     y: int;
@@ -417,7 +436,7 @@ pub @func main() {
 }, 60_000);
 
 test("emits @defer on scope exit, break, continue, and return", () => {
-	expectParity(`
+  expectParity(`
 @func valueBeforeDefer() {
     $x = 0;
     defer x = 5;
@@ -457,8 +476,148 @@ pub @func main() {
 `);
 }, 60_000);
 
+test("emits error values, sets, fields, equality, and @nameOf", () => {
+  expectParity(`
+@error IoError { NotFound, Denied }
+
+@func fail(code: string): error {
+    return error(code);
+}
+
+pub @func main() {
+    $e: IoError = IoError.Denied;
+    print(e);
+    print(e.code);
+    print(e.message);
+    print(@isError(e));
+    print(@nameOf(e));
+    print(e == IoError.Denied);
+    print(e != IoError.NotFound);
+    print(@nameOf(IoError.NotFound));
+
+    $open: error = fail("Nope");
+    print(open);
+    print(open.code);
+    print(@nameOf(open));
+    print(open.payload);
+    print(open == fail("Nope"));
+    print(@isError(42));
+}
+`);
+}, 60_000);
+
+test("emits error unions, ?, narrowing, payloads, and @switch", () => {
+  expectParity(`
+@error IoError { NotFound, Denied }
+@error HttpError { Timeout, Forbidden }
+@type AppError = IoError | HttpError;
+
+@func pick(n: int): int | AppError {
+    @if (n == 1) { return IoError.NotFound; }
+    @if (n == 2) { return HttpError.Timeout; }
+    return n;
+}
+
+@func payload(flag: bool): int | error {
+    @if (flag) { return 7; }
+    return error("bad", 42);
+}
+
+@func openfail(): int | error {
+    return error("OpenBoom");
+}
+
+pub @func main() {
+    print(pick(0)?);
+    $a = pick(1);
+    @if (@isError(a)) {
+        print(a.code);
+        print(@nameOf(a));
+        print(a == IoError.NotFound);
+        @switch (a) {
+            IoError.NotFound => { print("switch-nf"); },
+            @else => { print("switch-other"); },
+        }
+    } @else {
+        print("bad");
+    }
+    $b = openfail();
+    @if (@isError(b)) {
+        print(b.message);
+        print(@nameOf(b));
+    }
+    $p = payload(false);
+    @if (@isError(p)) {
+        print(p.payload);
+    }
+    print(payload(true)?);
+}
+`);
+}, 60_000);
+
+test("emits errdefer and defer in LIFO order on success and error paths", () => {
+  expectParity(`
+$log = "";
+
+@func note(s: string) {
+    log = log + s;
+}
+
+@func work(fail: bool): bool | error {
+    defer note("d1");
+    errdefer note("e1");
+    defer note("d2");
+    errdefer note("e2");
+    @if (fail) {
+        return error("boom");
+    }
+    return true;
+}
+
+pub @func main() {
+    print(work(false)?);
+    print(log);
+    $bad = work(true);
+    print(@isError(bad));
+    print(log);
+}
+`);
+}, 60_000);
+
+test("propagates an unhandled main error and exits nonzero", () => {
+  const emitted = emitZig(`
+@func fail(): int | error {
+    return error("top fail");
+}
+
+pub @func main() {
+    $x = fail()?;
+    print(x);
+}
+`);
+  try {
+    const emit = runCli([
+      "emit-zig",
+      emitted.sourcePath,
+      "-o",
+      emitted.outputPath,
+    ]);
+    expect(emit.exitCode).toBe(0);
+    const native = runEmitted(emitted.outputPath);
+    const vm = runFile(emitted.sourcePath);
+    expect(native.exitCode).toBe(1);
+    expect(vm.exitCode).toBe(1);
+    expect(native.stdout).toBe("");
+    expect(vm.stdout).toBe("");
+    expect(native.stderr).toContain("Error: top fail");
+    expect(vm.stderr).toContain("Error: top fail");
+  } finally {
+    emitted.cleanup();
+  }
+}, 60_000);
+
 test("emits pointers and address-of places", () => {
-	expectParity(`
+  expectParity(`
 @struct Point {
     x: int;
     y: int;

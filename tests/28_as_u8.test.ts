@@ -5,8 +5,8 @@ import { test } from "bun:test";
 import { expectError, expectOutput, runSource } from "./helpers";
 
 test("@as widens and narrows between int and u8", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 $b: u8 = @as(u8, 42);
 print(@typeOf(b));
 print(b);
@@ -14,45 +14,45 @@ $n: int = @as(int, b);
 print(@typeOf(n));
 print(n);
 `),
-		["u8", "42", "i64", "42"],
-	);
+    ["u8", "42", "i64", "42"],
+  );
 });
 
 test("byte annotation rejects bare int variable without @as", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 $n: int = 3;
 $b: u8 = n;
 `),
-		"not assignable",
-	);
+    "not assignable",
+  );
 });
 
 test("int annotation rejects bare u8 without @as", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 $b: u8 = @as(u8, 3);
 $n: int = b;
 `),
-		"not assignable",
-	);
+    "not assignable",
+  );
 });
 
 test("integer literal may coerce into u8", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 $b: u8 = 7;
 print(b);
 print(@sizeOf(u8));
 print(@sizeOf(byte));
 `),
-		["7", "1", "1"],
-	);
+    ["7", "1", "1"],
+  );
 });
 
 test("[]byte index yields u8; store accepts literal", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @const $mem = @import("std/mem");
 $a = mem.create(0);
 $buf = @new(a, [3]byte);
@@ -63,24 +63,24 @@ print(buf[0]);
 print(@as(int, buf[1]) + @as(int, buf[0]));
 a.deinit();
 `),
-		["u8", "10", "30"],
-	);
+    ["u8", "10", "30"],
+  );
 });
 
 test("@as(u8) rejects out-of-range at runtime", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 $n: int = 300;
 $b: u8 = @as(u8, n);
 print(b);
 `),
-		"out of range",
-	);
+    "out of range",
+  );
 });
 
 test("T(x) cast sugar matches @as for widths", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 $b: u8 = u8(42);
 print(@typeOf(b));
 print(b);
@@ -88,17 +88,17 @@ $n: int = i64(b);
 print(@typeOf(n));
 print(n);
 `),
-		["u8", "42", "i64", "42"],
-	);
+    ["u8", "42", "i64", "42"],
+  );
 });
 
 test("T(x) rejects bad width cast at runtime", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 $n: int = 300;
 $b: u8 = u8(n);
 print(b);
 `),
-		"out of range",
-	);
+    "out of range",
+  );
 });

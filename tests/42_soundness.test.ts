@@ -1,13 +1,18 @@
 import { test } from "bun:test";
-import { expectOutput, expectError, runSourceStrict, runSource } from "./helpers";
+import {
+  expectOutput,
+  expectError,
+  runSourceStrict,
+  runSource,
+} from "./helpers";
 
 // =========================================================================
 // Phase 1.1: Boundary Contracts on Declarations
 // =========================================================================
 
 test("strict: unannotated function parameter is rejected at compile time", () => {
-	expectError(
-		runSourceStrict(`
+  expectError(
+    runSourceStrict(`
 @func add(a, b: i64): i64 {
     return b;
 }
@@ -15,13 +20,13 @@ pub @func main() {
     print(add(1, 2));
 }
 `),
-		"Parameter 'a' of function 'add' must have an explicit type annotation in strict mode",
-	);
+    "Parameter 'a' of function 'add' must have an explicit type annotation in strict mode",
+  );
 });
 
 test("strict: fully annotated function parameters are accepted", () => {
-	expectOutput(
-		runSourceStrict(`
+  expectOutput(
+    runSourceStrict(`
 @func add(a: i64, b: i64): i64 {
     return a + b;
 }
@@ -29,13 +34,13 @@ pub @func main() {
     print(add(10, 20));
 }
 `),
-		["30"],
-	);
+    ["30"],
+  );
 });
 
 test("strict: struct method self parameter is allowed without annotation", () => {
-	expectOutput(
-		runSourceStrict(`
+  expectOutput(
+    runSourceStrict(`
 @struct Counter {
     val: i64;
     @func get(self): i64 {
@@ -47,8 +52,8 @@ pub @func main() {
     print(c.get());
 }
 `),
-		["42"],
-	);
+    ["42"],
+  );
 });
 
 // =========================================================================
@@ -56,26 +61,26 @@ pub @func main() {
 // =========================================================================
 
 test("strict: unannotated empty array literal is rejected", () => {
-	expectError(
-		runSourceStrict(`
+  expectError(
+    runSourceStrict(`
 pub @func main() {
     $items = [];
 }
 `),
-		"Cannot infer the type of local '$items' from an empty array literal; add an explicit type annotation",
-	);
+    "Cannot infer the type of local '$items' from an empty array literal; add an explicit type annotation",
+  );
 });
 
 test("strict: annotated empty array literal is accepted", () => {
-	expectOutput(
-		runSourceStrict(`
+  expectOutput(
+    runSourceStrict(`
 pub @func main() {
     $items: []i64 = [];
     print(len(items));
 }
 `),
-		["0"],
-	);
+    ["0"],
+  );
 });
 
 // =========================================================================
@@ -83,8 +88,8 @@ pub @func main() {
 // =========================================================================
 
 test("strict: binary literal and numeric underscores compile and fit type", () => {
-	expectOutput(
-		runSourceStrict(`
+  expectOutput(
+    runSourceStrict(`
 pub @func main() {
     $mask: u8 = 0b0000_1111;
     $million: i64 = 1_000_000;
@@ -92,19 +97,19 @@ pub @func main() {
     print(million);
 }
 `),
-		["15", "1000000"],
-	);
+    ["15", "1000000"],
+  );
 });
 
 test("strict: integer literal overflow is rejected at compile time", () => {
-	expectError(
-		runSourceStrict(`
+  expectError(
+    runSourceStrict(`
 pub @func main() {
     $b: u8 = 300;
 }
 `),
-		"Literal 300 overflows target type 'u8'",
-	);
+    "Literal 300 overflows target type 'u8'",
+  );
 });
 
 // =========================================================================
@@ -112,8 +117,8 @@ pub @func main() {
 // =========================================================================
 
 test("strict: non-void function missing return on control path is rejected", () => {
-	expectError(
-		runSourceStrict(`
+  expectError(
+    runSourceStrict(`
 @func find(a: i64): i64 {
     @if (a > 0) {
         return a;
@@ -123,13 +128,13 @@ pub @func main() {
     print(find(5));
 }
 `),
-		"Function 'find' must return a value on all control paths",
-	);
+    "Function 'find' must return a value on all control paths",
+  );
 });
 
 test("strict: non-void function returning on all branches is accepted", () => {
-	expectOutput(
-		runSourceStrict(`
+  expectOutput(
+    runSourceStrict(`
 @func find(a: i64): i64 {
     @if (a > 0) {
         return a;
@@ -142,13 +147,13 @@ pub @func main() {
     print(find(-3));
 }
 `),
-		["5", "3"],
-	);
+    ["5", "3"],
+  );
 });
 
 test("strict: void function without return statement is accepted", () => {
-	expectOutput(
-		runSourceStrict(`
+  expectOutput(
+    runSourceStrict(`
 @func doNothing() {
 }
 pub @func main() {
@@ -156,8 +161,8 @@ pub @func main() {
     print(@typeOf(doNothing()));
 }
 `),
-		["void"],
-	);
+    ["void"],
+  );
 });
 
 // =========================================================================
@@ -165,8 +170,8 @@ pub @func main() {
 // =========================================================================
 
 test("strict: direct member access on optional type is rejected", () => {
-	expectError(
-		runSourceStrict(`
+  expectError(
+    runSourceStrict(`
 @struct User {
     id: i64;
     name: string;
@@ -176,13 +181,13 @@ pub @func main() {
     print(u.name);
 }
 `),
-		"Cannot access field 'name' on optional type '?User'; unwrap with '@if' or '.?'",
-	);
+    "Cannot access field 'name' on optional type '?User'; unwrap with '@if' or '.?'",
+  );
 });
 
 test("strict: unwrapped optional member access is accepted", () => {
-	expectOutput(
-		runSourceStrict(`
+  expectOutput(
+    runSourceStrict(`
 @struct User {
     id: i64;
     name: string;
@@ -194,8 +199,8 @@ pub @func main() {
     }
 }
 `),
-		["Alice"],
-	);
+    ["Alice"],
+  );
 });
 
 // =========================================================================
@@ -203,8 +208,8 @@ pub @func main() {
 // =========================================================================
 
 test("strict: missing required non-optional struct field is rejected", () => {
-	expectError(
-		runSourceStrict(`
+  expectError(
+    runSourceStrict(`
 @struct User {
     id: i64;
     name: string;
@@ -213,13 +218,13 @@ pub @func main() {
     $u = User{ id: 1 };
 }
 `),
-		"Missing required field 'name' in initialization of 'User'",
-	);
+    "Missing required field 'name' in initialization of 'User'",
+  );
 });
 
 test("strict: optional struct field can be omitted in initialization", () => {
-	expectOutput(
-		runSourceStrict(`
+  expectOutput(
+    runSourceStrict(`
 @struct User {
     id: i64;
     name: string;
@@ -230,13 +235,13 @@ pub @func main() {
     print(u.name);
 }
 `),
-		["Bob"],
-	);
+    ["Bob"],
+  );
 });
 
 test("optional scalar struct field accepts null and values", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @struct Holder { v: ?i64; w: i64; }
 pub @func main() {
     $h = Holder { v: null, w: 2 };
@@ -248,8 +253,8 @@ pub @func main() {
     @if (h2.v) |x| { print(x); }
 }
 `),
-		["2", "none", "7", "3"],
-	);
+    ["2", "none", "7", "3"],
+  );
 });
 
 // =========================================================================
@@ -257,21 +262,21 @@ pub @func main() {
 // =========================================================================
 
 test("strict: @if condition must be boolean (rejected on integer)", () => {
-	expectError(
-		runSourceStrict(`
+  expectError(
+    runSourceStrict(`
 pub @func main() {
     @if (42) {
         print("bad");
     }
 }
 `),
-		"Condition of @if must be boolean ('bool' or 'u1'), got 'i64'",
-	);
+    "Condition of @if must be boolean ('bool' or 'u1'), got 'i64'",
+  );
 });
 
 test("strict: @if capture on non-container type is rejected", () => {
-	expectError(
-		runSourceStrict(`
+  expectError(
+    runSourceStrict(`
 pub @func main() {
     $val: int = 42;
     @if (val) |v| {
@@ -279,13 +284,13 @@ pub @func main() {
     }
 }
 `),
-		"Cannot capture from a non-container type 'i64'; @if capture requires an optional '?T' or an error union",
-	);
+    "Cannot capture from a non-container type 'i64'; @if capture requires an optional '?T' or an error union",
+  );
 });
 
 test("legacy: @if capture on non-container type is allowed without --strict", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 pub @func main() {
     $val: int = 42;
     @if (val) |v| {
@@ -293,13 +298,13 @@ pub @func main() {
     }
 }
 `),
-		["42"],
-	);
+    ["42"],
+  );
 });
 
 test("strict: @if capture on optional type unwraps payload", () => {
-	expectOutput(
-		runSourceStrict(`
+  expectOutput(
+    runSourceStrict(`
 pub @func main() {
     $opt: ?int = 42;
     @if (opt) |v| {
@@ -307,8 +312,8 @@ pub @func main() {
     }
 }
 `),
-		["43"],
-	);
+    ["43"],
+  );
 });
 
 // =========================================================================
@@ -316,8 +321,8 @@ pub @func main() {
 // =========================================================================
 
 test("strict: @for condition must be boolean (rejected on integer)", () => {
-	expectError(
-		runSourceStrict(`
+  expectError(
+    runSourceStrict(`
 pub @func main() {
     $n: int = 0;
     @for (n) {
@@ -325,13 +330,13 @@ pub @func main() {
     }
 }
 `),
-		"Condition of @for must be boolean ('bool' or 'u1'), got 'i64'",
-	);
+    "Condition of @for must be boolean ('bool' or 'u1'), got 'i64'",
+  );
 });
 
 test("legacy: @for condition truthiness still compiles without --strict", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 pub @func main() {
     $n: int = 1;
     @for (n) {
@@ -341,13 +346,13 @@ pub @func main() {
     print("done");
 }
 `),
-		["body", "done"],
-	);
+    ["body", "done"],
+  );
 });
 
 test("strict: boolean @for condition is accepted", () => {
-	expectOutput(
-		runSourceStrict(`
+  expectOutput(
+    runSourceStrict(`
 pub @func main() {
     $i: int = 0;
     $n: int = 3;
@@ -357,8 +362,8 @@ pub @func main() {
     }
 }
 `),
-		["0", "1", "2"],
-	);
+    ["0", "1", "2"],
+  );
 });
 
 // =========================================================================
@@ -366,8 +371,8 @@ pub @func main() {
 // =========================================================================
 
 test("strict: union common field with incompatible types is rejected", () => {
-	expectError(
-		runSourceStrict(`
+  expectError(
+    runSourceStrict(`
 @struct A { x: i64; }
 @struct B { x: string; }
 pub @func main() {
@@ -375,13 +380,13 @@ pub @func main() {
     print(u.x);
 }
 `),
-		"has incompatible types across arms of union",
-	);
+    "has incompatible types across arms of union",
+  );
 });
 
 test("strict: union common field with matching types is accepted", () => {
-	expectOutput(
-		runSourceStrict(`
+  expectOutput(
+    runSourceStrict(`
 @struct A { x: i64; }
 @struct B { x: i64; }
 pub @func main() {
@@ -389,13 +394,13 @@ pub @func main() {
     print(u.x);
 }
 `),
-		["1"],
-	);
+    ["1"],
+  );
 });
 
 test("legacy: union field conflict still compiles without --strict", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @struct A { x: i64; }
 @struct B { x: string; }
 pub @func main() {
@@ -403,6 +408,6 @@ pub @func main() {
     print(u.x);
 }
 `),
-		["1"],
-	);
+    ["1"],
+  );
 });

@@ -12,37 +12,37 @@ const ROOT = path.resolve(import.meta.dir, "..");
 const ENTRY = path.join(ROOT, "zig-out/bin/llts");
 
 function runWithEnv(source: string, env: Record<string, string | undefined>) {
-	const tmp = path.join(
-		os.tmpdir(),
-		`llts_log_${Date.now()}_${Math.random().toString(36).slice(2)}.lls`,
-	);
-	fs.writeFileSync(tmp, source, "utf-8");
-	try {
-		const merged: Record<string, string> = {};
-		for (const [k, v] of Object.entries({ ...process.env, ...env })) {
-			if (v !== undefined && v !== "") merged[k] = v;
-		}
-		// Explicit empty string means delete (for clearing NO_COLOR)
-		for (const [k, v] of Object.entries(env)) {
-			if (v === "") delete merged[k];
-		}
-		const result = spawnSync([ENTRY, "run", tmp], {
-			cwd: ROOT,
-			env: merged,
-		});
-		return {
-			stdout: result.stdout.toString(),
-			stderr: result.stderr.toString(),
-			exitCode: result.exitCode ?? 1,
-		};
-	} finally {
-		fs.unlinkSync(tmp);
-	}
+  const tmp = path.join(
+    os.tmpdir(),
+    `llts_log_${Date.now()}_${Math.random().toString(36).slice(2)}.lls`,
+  );
+  fs.writeFileSync(tmp, source, "utf-8");
+  try {
+    const merged: Record<string, string> = {};
+    for (const [k, v] of Object.entries({ ...process.env, ...env })) {
+      if (v !== undefined && v !== "") merged[k] = v;
+    }
+    // Explicit empty string means delete (for clearing NO_COLOR)
+    for (const [k, v] of Object.entries(env)) {
+      if (v === "") delete merged[k];
+    }
+    const result = spawnSync([ENTRY, "run", tmp], {
+      cwd: ROOT,
+      env: merged,
+    });
+    return {
+      stdout: result.stdout.toString(),
+      stderr: result.stderr.toString(),
+      exitCode: result.exitCode ?? 1,
+    };
+  } finally {
+    fs.unlinkSync(tmp);
+  }
 }
 
 test("slog.info / warn / err appear on stderr with level prefix", () => {
-	const res = runWithEnv(
-		`
+  const res = runWithEnv(
+    `
 @const $slog = @import("std/slog");
 pub @func main() {
     slog.info("hello-info");
@@ -50,47 +50,49 @@ pub @func main() {
     slog.err("hello-err");
 }
 `,
-		{ LLTS_LOG_LEVEL: "info", NO_COLOR: "1" },
-	);
-	if (res.exitCode !== 0) {
-		throw new Error(`exit ${res.exitCode}\nstderr: ${res.stderr}\nstdout: ${res.stdout}`);
-	}
-	if (!res.stderr.includes("INFO: hello-info")) {
-		throw new Error(`missing INFO line:\n${res.stderr}`);
-	}
-	if (!res.stderr.includes("WARN: hello-warn")) {
-		throw new Error(`missing WARN line:\n${res.stderr}`);
-	}
-	if (!res.stderr.includes("ERROR: hello-err")) {
-		throw new Error(`missing ERROR line:\n${res.stderr}`);
-	}
+    { LLTS_LOG_LEVEL: "info", NO_COLOR: "1" },
+  );
+  if (res.exitCode !== 0) {
+    throw new Error(
+      `exit ${res.exitCode}\nstderr: ${res.stderr}\nstdout: ${res.stdout}`,
+    );
+  }
+  if (!res.stderr.includes("INFO: hello-info")) {
+    throw new Error(`missing INFO line:\n${res.stderr}`);
+  }
+  if (!res.stderr.includes("WARN: hello-warn")) {
+    throw new Error(`missing WARN line:\n${res.stderr}`);
+  }
+  if (!res.stderr.includes("ERROR: hello-err")) {
+    throw new Error(`missing ERROR line:\n${res.stderr}`);
+  }
 });
 
 test("LLTS_LOG_LEVEL=warn suppresses info", () => {
-	const res = runWithEnv(
-		`
+  const res = runWithEnv(
+    `
 @const $slog = @import("std/slog");
 pub @func main() {
     slog.info("should-hide");
     slog.warn("should-show");
 }
 `,
-		{ LLTS_LOG_LEVEL: "warn", NO_COLOR: "1" },
-	);
-	if (res.exitCode !== 0) {
-		throw new Error(`exit ${res.exitCode}\nstderr: ${res.stderr}`);
-	}
-	if (res.stderr.includes("should-hide")) {
-		throw new Error(`info not filtered:\n${res.stderr}`);
-	}
-	if (!res.stderr.includes("WARN: should-show")) {
-		throw new Error(`missing warn:\n${res.stderr}`);
-	}
+    { LLTS_LOG_LEVEL: "warn", NO_COLOR: "1" },
+  );
+  if (res.exitCode !== 0) {
+    throw new Error(`exit ${res.exitCode}\nstderr: ${res.stderr}`);
+  }
+  if (res.stderr.includes("should-hide")) {
+    throw new Error(`info not filtered:\n${res.stderr}`);
+  }
+  if (!res.stderr.includes("WARN: should-show")) {
+    throw new Error(`missing warn:\n${res.stderr}`);
+  }
 });
 
 test("slog.assert returns AssertFailed error value", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @const $slog = @import("std/slog");
 pub @func main() {
     $ok = slog.assert(true);
@@ -100,32 +102,36 @@ pub @func main() {
     print(bad.code);
 }
 `),
-		["false", "true", "AssertFailed"],
-	);
+    ["false", "true", "AssertFailed"],
+  );
 });
 
 test("FORCE_COLOR embeds ANSI; NO_COLOR does not", () => {
-	const src = `
+  const src = `
 pub @func main() {
     print(1 / 0);
 }
 `;
-	const forced = runWithEnv(src, { FORCE_COLOR: "1", NO_COLOR: "" });
-	if (forced.exitCode === 0) throw new Error("expected failure");
-	if (!forced.stderr.includes("\x1b[")) {
-		throw new Error(`expected ANSI escapes with FORCE_COLOR:\n${JSON.stringify(forced.stderr)}`);
-	}
+  const forced = runWithEnv(src, { FORCE_COLOR: "1", NO_COLOR: "" });
+  if (forced.exitCode === 0) throw new Error("expected failure");
+  if (!forced.stderr.includes("\x1b[")) {
+    throw new Error(
+      `expected ANSI escapes with FORCE_COLOR:\n${JSON.stringify(forced.stderr)}`,
+    );
+  }
 
-	const plain = runWithEnv(src, { NO_COLOR: "1", FORCE_COLOR: "0" });
-	if (plain.exitCode === 0) throw new Error("expected failure");
-	if (plain.stderr.includes("\x1b[")) {
-		throw new Error(`unexpected ANSI with NO_COLOR:\n${JSON.stringify(plain.stderr)}`);
-	}
+  const plain = runWithEnv(src, { NO_COLOR: "1", FORCE_COLOR: "0" });
+  if (plain.exitCode === 0) throw new Error("expected failure");
+  if (plain.stderr.includes("\x1b[")) {
+    throw new Error(
+      `unexpected ANSI with NO_COLOR:\n${JSON.stringify(plain.stderr)}`,
+    );
+  }
 });
 
 test("slog.err auto-detects error values", () => {
-	const res = runWithEnv(
-		`
+  const res = runWithEnv(
+    `
 @const $slog = @import("std/slog");
 pub @func main() {
     slog.err(error("boom"));
@@ -133,40 +139,46 @@ pub @func main() {
     slog.err("plain string");
 }
 `,
-		{ LLTS_LOG_LEVEL: "error", NO_COLOR: "1" },
-	);
-	if (res.exitCode !== 0) {
-		throw new Error(`exit ${res.exitCode}\nstderr: ${res.stderr}`);
-	}
-	if (!res.stderr.includes("ERROR: boom")) {
-		throw new Error(`expected code without Error: prefix:\n${res.stderr}`);
-	}
-	if (res.stderr.includes("Error: boom")) {
-		throw new Error(`redundant Error: prefix:\n${res.stderr}`);
-	}
-	if (!res.stderr.includes("ERROR: FileNotFound") || !res.stderr.includes("payload: missing.txt")) {
-		throw new Error(`expected code + payload lines:\n${res.stderr}`);
-	}
-	if (!res.stderr.includes("ERROR: plain string")) {
-		throw new Error(`expected plain string path:\n${res.stderr}`);
-	}
+    { LLTS_LOG_LEVEL: "error", NO_COLOR: "1" },
+  );
+  if (res.exitCode !== 0) {
+    throw new Error(`exit ${res.exitCode}\nstderr: ${res.stderr}`);
+  }
+  if (!res.stderr.includes("ERROR: boom")) {
+    throw new Error(`expected code without Error: prefix:\n${res.stderr}`);
+  }
+  if (res.stderr.includes("Error: boom")) {
+    throw new Error(`redundant Error: prefix:\n${res.stderr}`);
+  }
+  if (
+    !res.stderr.includes("ERROR: FileNotFound") ||
+    !res.stderr.includes("payload: missing.txt")
+  ) {
+    throw new Error(`expected code + payload lines:\n${res.stderr}`);
+  }
+  if (!res.stderr.includes("ERROR: plain string")) {
+    throw new Error(`expected plain string path:\n${res.stderr}`);
+  }
 });
 
 test("std/log outputs to stderr", () => {
-	const res = runWithEnv(
-		`
+  const res = runWithEnv(
+    `
 @const $log = @import("std/log");
 pub @func main() {
     log.setPrefix("[MYAPP] ");
     log.printf("server listening on port %d", 8080);
 }
 `,
-		{ NO_COLOR: "1" },
-	);
-	if (res.exitCode !== 0) {
-		throw new Error(`exit ${res.exitCode}\nstderr: ${res.stderr}`);
-	}
-	if (!res.stderr.includes("[MYAPP] ") || !res.stderr.includes("server listening on port 8080")) {
-		throw new Error(`expected prefix and formatted output:\n${res.stderr}`);
-	}
+    { NO_COLOR: "1" },
+  );
+  if (res.exitCode !== 0) {
+    throw new Error(`exit ${res.exitCode}\nstderr: ${res.stderr}`);
+  }
+  if (
+    !res.stderr.includes("[MYAPP] ") ||
+    !res.stderr.includes("server listening on port 8080")
+  ) {
+    throw new Error(`expected prefix and formatted output:\n${res.stderr}`);
+  }
 });

@@ -18,46 +18,48 @@ import { runFile, runFileStrict } from "./helpers";
 const DIR = path.join(import.meta.dir, "compile_fails");
 
 const fixtures = fs
-	.readdirSync(DIR)
-	.filter((f) => f.endsWith(".lls"))
-	.sort();
+  .readdirSync(DIR)
+  .filter((f) => f.endsWith(".lls"))
+  .sort();
 
 test("compile_fails fixtures exist", () => {
-	expect(fixtures.length).toBeGreaterThan(0);
+  expect(fixtures.length).toBeGreaterThan(0);
 });
 
 for (const name of fixtures) {
-	test(`compile_fails: ${name}`, () => {
-		const file = path.join(DIR, name);
-		const source = fs.readFileSync(file, "utf-8");
-		const lines = source.split("\n");
+  test(`compile_fails: ${name}`, () => {
+    const file = path.join(DIR, name);
+    const source = fs.readFileSync(file, "utf-8");
+    const lines = source.split("\n");
 
-		const expectLine = lines.find((l) => l.trimStart().startsWith("# expect:"));
-		if (!expectLine) {
-			throw new Error(
-				`${name}: missing '# expect: <substring>' header comment`,
-			);
-		}
-		const needle = expectLine.slice(expectLine.indexOf("# expect:") + "# expect:".length).trim();
-		if (needle.length === 0) {
-			throw new Error(`${name}: empty '# expect:' substring`);
-		}
+    const expectLine = lines.find((l) => l.trimStart().startsWith("# expect:"));
+    if (!expectLine) {
+      throw new Error(
+        `${name}: missing '# expect: <substring>' header comment`,
+      );
+    }
+    const needle = expectLine
+      .slice(expectLine.indexOf("# expect:") + "# expect:".length)
+      .trim();
+    if (needle.length === 0) {
+      throw new Error(`${name}: empty '# expect:' substring`);
+    }
 
-		const strict = lines.some((l) => l.trim() === "# mode: strict");
-		const res = strict ? runFileStrict(file) : runFile(file);
-		const combined = res.stderr + res.stdout;
+    const strict = lines.some((l) => l.trim() === "# mode: strict");
+    const res = strict ? runFileStrict(file) : runFile(file);
+    const combined = res.stderr + res.stdout;
 
-		if (res.exitCode === 0) {
-			throw new Error(
-				`${name}: expected a compile failure but the program succeeded.\n` +
-					`stdout:\n${res.stdout}`,
-			);
-		}
-		if (!combined.includes(needle)) {
-			throw new Error(
-				`${name}: expected diagnostic containing ${JSON.stringify(needle)}\n` +
-					`but got:\n${combined}`,
-			);
-		}
-	});
+    if (res.exitCode === 0) {
+      throw new Error(
+        `${name}: expected a compile failure but the program succeeded.\n` +
+          `stdout:\n${res.stdout}`,
+      );
+    }
+    if (!combined.includes(needle)) {
+      throw new Error(
+        `${name}: expected diagnostic containing ${JSON.stringify(needle)}\n` +
+          `but got:\n${combined}`,
+      );
+    }
+  });
 }

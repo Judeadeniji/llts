@@ -7,143 +7,145 @@ import { test } from "bun:test";
 import { runSource, expectOutput, expectError } from "./helpers";
 
 test("len(arr) returns element count", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 $a = [10, 20, 30];
 print(len(a));
 print(a[0]);
 print(a[2]);
 `),
-		["3", "10", "30"],
-	);
+    ["3", "10", "30"],
+  );
 });
 
 test("len of empty array is 0", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 $a = [];
 print(len(a));
 `),
-		["0"],
-	);
+    ["0"],
+  );
 });
 
 test("len works on strings", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 print(len("hi"));
 `),
-		["2"],
-	);
+    ["2"],
+  );
 });
 
 test("negative array index is a runtime error", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 $a = [1, 2, 3];
 $i = 0 - 1;
 print(a[i]);
 `),
-		"Array index out of bounds",
-	);
+    "Array index out of bounds",
+  );
 });
 
 test("index equal to len is out of bounds", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 $a = [1, 2, 3];
 $i = 3;
 print(a[i]);
 `),
-		"Array index out of bounds",
-	);
+    "Array index out of bounds",
+  );
 });
 
 test("set index out of bounds is a runtime error", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 $a = [1, 2, 3];
 a[5] = 9;
 `),
-		"Array index out of bounds",
-	);
+    "Array index out of bounds",
+  );
 });
 
 test("struct field access still works", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @struct Point { x: int; y: int; }
 $p = Point { x: 1, y: 2 };
 print(p.x);
 print(p.y);
 `),
-		["1", "2"],
-	);
+    ["1", "2"],
+  );
 });
 
 test("for-in over array uses len", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 $sum = 0;
 @for ([10, 20, 30]) |x| {
     sum = sum + x;
 }
 print(sum);
 `),
-		["60"],
-	);
+    ["60"],
+  );
 });
 
 test("sigil is rejected in expression uses", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 $a = 1;
 print($a);
 `),
-		"only used in declarations",
-	);
+    "only used in declarations",
+  );
 });
 
 test("sigil is rejected on compound assignment", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 $a = 1;
 $a += 2;
 `),
-		"only used in declarations",
-	);
+    "only used in declarations",
+  );
 });
 
 test("redeclaration with $ in the same scope is an error", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 $a = 1;
 $a = 2;
 `),
-		"already declared",
-	);
+    "already declared",
+  );
 });
 
 test("bare name reassignment works after $ declaration", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 $a = 1;
 a = 2;
 print(a);
 `),
-		["2"],
-	);
+    ["2"],
+  );
 });
 
 test("runtime OOB error includes LLTS source location", () => {
-	const res = runSource(`
+  const res = runSource(`
 $a = [1, 2];
 $i = 9;
 print(a[i]);
 `);
-	expectError(res, "Array index out of bounds");
-	const combined = res.stderr + res.stdout;
-	if (!combined.includes(".lls") || !/\.lls:\d+:\d+/.test(combined)) {
-		throw new Error(`Expected LLTS file:line:col in error output, got:\n${combined}`);
-	}
+  expectError(res, "Array index out of bounds");
+  const combined = res.stderr + res.stdout;
+  if (!combined.includes(".lls") || !/\.lls:\d+:\d+/.test(combined)) {
+    throw new Error(
+      `Expected LLTS file:line:col in error output, got:\n${combined}`,
+    );
+  }
 });

@@ -5,121 +5,118 @@ import { test } from "bun:test";
 import { runSource, expectOutput } from "./helpers";
 
 test("fmt.sprintf basic verbs: %v %d %s %t %x %b", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @const $fmt = @import("std/fmt");
 pub @func main() {
     print(fmt.sprintf("val: %v, dec: %d, str: %s, bool: %t, hex: %x, bin: %b", 123, 456, "hello", true, 255, 10));
 }
 `),
-		["val: 123, dec: 456, str: hello, bool: true, hex: ff, bin: 1010"],
-	);
+    ["val: 123, dec: 456, str: hello, bool: true, hex: ff, bin: 1010"],
+  );
 });
 
 test("fmt.sprintf numeric bases and prefixes: %#x %#X %#b %o %O", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @const $fmt = @import("std/fmt");
 pub @func main() {
     print(fmt.sprintf("%#x %#X %#b %o %O", 255, 255, 10, 64, 64));
 }
 `),
-		["0xff 0XFF 0b1010 100 0o100"],
-	);
+    ["0xff 0XFF 0b1010 100 0o100"],
+  );
 });
 
 test("fmt.sprintf padding, sign, and alignment: %+d %-10s %10s %05d", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @const $fmt = @import("std/fmt");
 pub @func main() {
     print(fmt.sprintf("[%+d] [%+d] [%-8s] [%8s] [%06d]", 42, -42, "left", "right", 77));
 }
 `),
-		["[+42] [-42] [left    ] [   right] [000077]"],
-	);
+    ["[+42] [-42] [left    ] [   right] [000077]"],
+  );
 });
 
 test("fmt.sprintf precision on float and string: %.2f %.3s", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @const $fmt = @import("std/fmt");
 pub @func main() {
     print(fmt.sprintf("%.2f %.4f %.3s", 3.14159, 2.5, "foobar"));
 }
 `),
-		["3.14 2.5000 foo"],
-	);
+    ["3.14 2.5000 foo"],
+  );
 });
 
 test("fmt.sprintf dynamic width and precision: %*s %.*f", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @const $fmt = @import("std/fmt");
 pub @func main() {
     print(fmt.sprintf("[%*s] [%.*f]", 6, "cat", 3, 1.23456));
 }
 `),
-		["[   cat] [1.235]"],
-	);
+    ["[   cat] [1.235]"],
+  );
 });
 
 test("fmt.sprintf argument indexing: %[2]s %[1]d", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @const $fmt = @import("std/fmt");
 pub @func main() {
     print(fmt.sprintf("%[2]s is %[1]d years old", 25, "Alice"));
 }
 `),
-		["Alice is 25 years old"],
-	);
+    ["Alice is 25 years old"],
+  );
 });
 
 test("fmt.sprintf quoting: %q", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @const $fmt = @import("std/fmt");
 pub @func main() {
     print(fmt.sprintf("%q %q", "hello world", 65));
 }
 `),
-		["\"hello world\" 'A'"],
-	);
+    ["\"hello world\" 'A'"],
+  );
 });
 
 test("fmt.sprintf type %T and syntax %#v", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @const $fmt = @import("std/fmt");
 pub @func main() {
     print(fmt.sprintf("%T %T %T", 1, "s", true));
     print(fmt.sprintf("%#v", "text"));
 }
 `),
-		["int string bool", "\"text\""],
-	);
+    ["int string bool", '"text"'],
+  );
 });
 
 test("fmt.sprintf missing and extra argument diagnostics", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @const $fmt = @import("std/fmt");
 pub @func main() {
     print(fmt.sprintf("missing: %d %s", 1));
     print(fmt.sprintf("extra: %d", 1, 2, "three"));
 }
 `),
-		[
-			"missing: 1 %!s(MISSING)",
-			"extra: 1%!(EXTRA int=2, string=three)",
-		],
-	);
+    ["missing: 1 %!s(MISSING)", "extra: 1%!(EXTRA int=2, string=three)"],
+  );
 });
 
 test("fmt.sprint and fmt.sprintln rules", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @const $fmt = @import("std/fmt");
 pub @func main() {
     print(fmt.sprint("a", "b"));
@@ -129,32 +126,32 @@ pub @func main() {
     print(ln);
 }
 `),
-		["ab", "1 2", "x10", "hello 42"],
-	);
+    ["ab", "1 2", "x10", "hello 42"],
+  );
 });
 
 test("fmt.errorf returns an Error value", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @const $fmt = @import("std/fmt");
 pub @func main() {
     $err = fmt.errorf("failed with code %d: %s", 404, "not found");
     print(@isError(err));
 }
 `),
-		["true"],
-	);
+    ["true"],
+  );
 });
 
 test("fmt.printf and fmt.println write to stdout", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @const $fmt = @import("std/fmt");
 pub @func main() {
     fmt.printf("count: %d, name: %s\\n", 5, "items");
     fmt.println("done", 100);
 }
 `),
-		["count: 5, name: items", "done 100"],
-	);
+    ["count: 5, name: items", "done 100"],
+  );
 });

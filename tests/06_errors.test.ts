@@ -13,43 +13,58 @@ import { runSource, expectOutput, expectError } from "./helpers";
 // ---------------------------------------------------------------------------
 
 test("can create and print an error", () => {
-  expectOutput(runSource(`
+  expectOutput(
+    runSource(`
 $err = error("File not found");
 print(err);
-`), ["Error: File not found"]);
+`),
+    ["Error: File not found"],
+  );
 });
 
 test("can manually check if a value is an error", () => {
-  expectOutput(runSource(`
+  expectOutput(
+    runSource(`
 $err = error("Boom");
 $val = 42;
 print(@isError(err));
 print(@isError(val));
-`), ["true", "false"]);
+`),
+    ["true", "false"],
+  );
 });
 
 test("@isError returns false for other falsy-ish values", () => {
-  expectOutput(runSource(`
+  expectOutput(
+    runSource(`
 print(@isError(0));
 print(@isError(""));
 print(@isError(false));
 print(@isError(null));
-`), ["false", "false", "false", "false"]);
+`),
+    ["false", "false", "false", "false"],
+  );
 });
 
 test("error() with empty message", () => {
-  expectOutput(runSource(`
+  expectOutput(
+    runSource(`
 $err = error("");
 print(err);
-`), ["Error: "]);
+`),
+    ["Error: "],
+  );
 });
 
 test("two errors with the same message compare equal by code", () => {
-  expectOutput(runSource(`
+  expectOutput(
+    runSource(`
 $a = error("same");
 $b = error("same");
 print(a == b);
-`), ["true"]);
+`),
+    ["true"],
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -57,7 +72,8 @@ print(a == b);
 // ---------------------------------------------------------------------------
 
 test("? operator propagates error automatically", () => {
-  expectOutput(runSource(`
+  expectOutput(
+    runSource(`
 @func fail(): string | error {
     return error("Task failed successfully");
 }
@@ -70,11 +86,14 @@ test("? operator propagates error automatically", () => {
 
 $res = doWork();
 print(res);
-`), ["Error: Task failed successfully"]);
+`),
+    ["Error: Task failed successfully"],
+  );
 });
 
 test("? operator unwraps successful value", () => {
-  expectOutput(runSource(`
+  expectOutput(
+    runSource(`
 @func succeed(): string | error {
     return "Task succeeded";
 }
@@ -86,7 +105,9 @@ test("? operator unwraps successful value", () => {
 }
 
 doWork();
-`), ["Task succeeded"]);
+`),
+    ["Task succeeded"],
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -94,7 +115,8 @@ doWork();
 // ---------------------------------------------------------------------------
 
 test("? propagates through three levels of nested calls", () => {
-  expectOutput(runSource(`
+  expectOutput(
+    runSource(`
 @func level3(): string | error {
     return error("deep failure");
 }
@@ -110,11 +132,14 @@ test("? propagates through three levels of nested calls", () => {
 }
 
 print(level1());
-`), ["Error: deep failure"]);
+`),
+    ["Error: deep failure"],
+  );
 });
 
 test("? stops propagation at the first level that manually checks", () => {
-  expectOutput(runSource(`
+  expectOutput(
+    runSource(`
 @func fail(): string | error {
     return error("inner boom");
 }
@@ -132,11 +157,14 @@ test("? stops propagation at the first level that manually checks", () => {
 }
 
 print(outer());
-`), ["caught: inner boom"]);
+`),
+    ["caught: inner boom"],
+  );
 });
 
 test("multiple ? calls in the same function, first one fails", () => {
-  expectOutput(runSource(`
+  expectOutput(
+    runSource(`
 @func a(): string | error { return error("a failed"); }
 @func b(): string | error { return "b ok"; }
 
@@ -148,11 +176,14 @@ test("multiple ? calls in the same function, first one fails", () => {
 }
 
 print(doWork());
-`), ["Error: a failed"]);
+`),
+    ["Error: a failed"],
+  );
 });
 
 test("multiple ? calls in the same function, second one fails", () => {
-  expectOutput(runSource(`
+  expectOutput(
+    runSource(`
 @func a(): string | error { return "a ok"; }
 @func b(): string | error { return error("b failed"); }
 
@@ -164,11 +195,14 @@ test("multiple ? calls in the same function, second one fails", () => {
 }
 
 print(doWork());
-`), ["Error: b failed"]);
+`),
+    ["Error: b failed"],
+  );
 });
 
 test("? used directly in an expression without intermediate assignment", () => {
-  expectOutput(runSource(`
+  expectOutput(
+    runSource(`
 @func getNum(): number | error {
     return 10;
 }
@@ -178,11 +212,14 @@ test("? used directly in an expression without intermediate assignment", () => {
 }
 
 print(doWork());
-`), ["15"]);
+`),
+    ["15"],
+  );
 });
 
 test("? propagates immediately even mid-expression, short-circuiting the rest", () => {
-  expectOutput(runSource(`
+  expectOutput(
+    runSource(`
 @func getNum(): number | error {
     return error("no number");
 }
@@ -197,7 +234,9 @@ test("? propagates immediately even mid-expression, short-circuiting the rest", 
 }
 
 print(doWork());
-`), ["Error: no number"]);
+`),
+    ["Error: no number"],
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -205,7 +244,8 @@ print(doWork());
 // ---------------------------------------------------------------------------
 
 test("? inside a for loop propagates out of the loop and function", () => {
-  expectOutput(runSource(`
+  expectOutput(
+    runSource(`
 @func risky(i: number): number | error {
     @if (i == 2) {
         return error("failed at 2");
@@ -222,11 +262,14 @@ test("? inside a for loop propagates out of the loop and function", () => {
 }
 
 print(doWork());
-`), ["Error: failed at 2"]);
+`),
+    ["Error: failed at 2"],
+  );
 });
 
 test("? inside a loop that never fails accumulates normally", () => {
-  expectOutput(runSource(`
+  expectOutput(
+    runSource(`
 @func risky(i: number): number | error {
     return i;
 }
@@ -240,11 +283,14 @@ test("? inside a loop that never fails accumulates normally", () => {
 }
 
 print(doWork());
-`), ["10"]);
+`),
+    ["10"],
+  );
 });
 
 test("? inside an if-branch that is never taken does not fire", () => {
-  expectOutput(runSource(`
+  expectOutput(
+    runSource(`
 @func fail(): string | error {
     return error("should not run");
 }
@@ -258,7 +304,9 @@ test("? inside an if-branch that is never taken does not fire", () => {
 }
 
 print(doWork(false));
-`), ["skipped"]);
+`),
+    ["skipped"],
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -266,29 +314,38 @@ print(doWork(false));
 // ---------------------------------------------------------------------------
 
 test("error value exposes a readable .message field", () => {
-  expectOutput(runSource(`
+  expectOutput(
+    runSource(`
 $err = error("custom message");
 print(err.message);
-`), ["custom message"]);
+`),
+    ["custom message"],
+  );
 });
 
 test("@isError on the result of a function call, not just a variable", () => {
-  expectOutput(runSource(`
+  expectOutput(
+    runSource(`
 @func fail(): string | error {
     return error("direct check");
 }
 
 print(@isError(fail()));
-`), ["true"]);
+`),
+    ["true"],
+  );
 });
 
 test("errors can be stored in and retrieved from an array", () => {
-  expectOutput(runSource(`
+  expectOutput(
+    runSource(`
 $errs = [error("first"), error("second")];
 print(errs[0]);
 print(errs[1]);
 print(@isError(errs[0]));
-`), ["Error: first", "Error: second", "true"]);
+`),
+    ["Error: first", "Error: second", "true"],
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -296,7 +353,8 @@ print(@isError(errs[0]));
 // ---------------------------------------------------------------------------
 
 test("? on a function with no error in its return type is a compile-time error", () => {
-  expectError(runSource(`
+  expectError(
+    runSource(`
 @func getStr(): string {
     return "original text";
 }
@@ -306,11 +364,14 @@ test("? on a function with no error in its return type is a compile-time error",
 }
 
 print(doWork());
-`), "'?' operator used on non-error-union type '[]byte'");
+`),
+    "'?' operator used on non-error-union type '[]byte'",
+  );
 });
 
 test("propagated error keeps its original message through multiple hops unmodified", () => {
-  expectOutput(runSource(`
+  expectOutput(
+    runSource(`
 @func origin(): string | error {
     return error("original text");
 }
@@ -326,7 +387,9 @@ test("propagated error keeps its original message through multiple hops unmodifi
 $final = hop2();
 print(@isError(final));
 print(final.message);
-`), ["true", "original text"]);
+`),
+    ["true", "original text"],
+  );
 });
 
 test("error() rejects more than 2 arguments with a clear message", () => {
@@ -338,8 +401,8 @@ test("error() rejects more than 2 arguments with a clear message", () => {
 });
 
 test("annotated T return widens to T | error when body returns error()", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @struct Box { n: int; }
 @func make(): Box {
     @if (false) {
@@ -350,13 +413,13 @@ test("annotated T return widens to T | error when body returns error()", () => {
 $r = make()?;
 print(r.n);
 `),
-		["7"],
-	);
+    ["7"],
+  );
 });
 
 test("return of error-returning helper widens caller for ?", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @struct Box { n: int; }
 @func boom(): Box {
     return error("x");
@@ -369,7 +432,6 @@ test("return of error-returning helper widens caller for ?", () => {
 }
 print(make()?.n);
 `),
-		["3"],
-	);
+    ["3"],
+  );
 });
-

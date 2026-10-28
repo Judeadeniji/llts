@@ -12,29 +12,29 @@ import { expectError, expectOutput, runSource } from "./helpers";
 // ---------------------------------------------------------------------------
 
 test("@typeOf(never call) is never; @sizeOf(never) rejected", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @func die(): never { __exit(1); }
 print(@typeOf(die()));
 `),
-		["never"],
-	);
-	expectError(
-		runSource(`
+    ["never"],
+  );
+  expectError(
+    runSource(`
 print(@sizeOf(never));
 `),
-		"has no static size",
-	);
+    "has no static size",
+  );
 });
 
 test("never is a builtin type name", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @func die(): never { __exit(1); }
 print(@typeOf(die));
 `),
-		["@func(): never"],
-	);
+    ["@func(): never"],
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -42,34 +42,34 @@ print(@typeOf(die));
 // ---------------------------------------------------------------------------
 
 test(": never body ending in __exit call", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @func die(): never { __exit(1); }
 print(@typeOf(die()));
 `),
-		["never"],
-	);
+    ["never"],
+  );
 });
 
 test(": never body ending in another never call", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @func die(): never { __exit(1); }
 @func boom(): never { die(); }
 print(@typeOf(boom()));
 `),
-		["never"],
-	);
+    ["never"],
+  );
 });
 
 test("std/os.exit is never", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @const $os = @import("std/os");
 print(@typeOf(os.exit(1)));
 `),
-		["never"],
-	);
+    ["never"],
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -77,41 +77,41 @@ print(@typeOf(os.exit(1)));
 // ---------------------------------------------------------------------------
 
 test("return neverCall() legal in : type", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @func die(): never { __exit(1); }
 @func f(): i64 { return die(); }
 print(@typeOf(f));
 `),
-		["@func(): i64"],
-	);
+    ["@func(): i64"],
+  );
 });
 
 test("return neverCall() legal in : void", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @func die(): never { __exit(1); }
 @func f(): void { return die(); }
 print(@typeOf(f));
 `),
-		["@func(): void"],
-	);
+    ["@func(): void"],
+  );
 });
 
 test("return neverCall() legal in : never", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @func die(): never { __exit(1); }
 @func boom(): never { return die(); }
 print(@typeOf(boom()));
 `),
-		["never"],
-	);
+    ["never"],
+  );
 });
 
 test("$x: type = neverCall() typechecks when not executed", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @func die(): never { __exit(1); }
 @func f(): i64 {
     $x: i64 = die();
@@ -119,25 +119,25 @@ test("$x: type = neverCall() typechecks when not executed", () => {
 }
 print(@typeOf(f));
 `),
-		["@func(): i64"],
-	);
+    ["@func(): i64"],
+  );
 });
 
 test("never call as any-typed argument (unchecked at runtime)", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @func die(): never { __exit(1); }
 @func take(n: i64): i64 { return n; }
 @func f(): i64 { return take(die()); }
 print(@typeOf(f));
 `),
-		["@func(): i64"],
-	);
+    ["@func(): i64"],
+  );
 });
 
 test("code after never-call path not required to return", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @func die(): never { __exit(1); }
 @func f(n: i64): i64 {
     @if (n < 0) {
@@ -147,8 +147,8 @@ test("code after never-call path not required to return", () => {
 }
 print(f(3));
 `),
-		["3"],
-	);
+    ["3"],
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -156,59 +156,59 @@ print(f(3));
 // ---------------------------------------------------------------------------
 
 test(": never + bare return; fails", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 @func die(): never { return; }
 die();
 `),
-		"Cannot 'return;'",
-	);
+    "Cannot 'return;'",
+  );
 });
 
 test(": never + return 1 fails", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 @func die(): never { return 1; }
 die();
 `),
-		"Cannot return a value",
-	);
+    "Cannot return a value",
+  );
 });
 
 test(": never + return null fails", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 @func die(): never { return null; }
 die();
 `),
-		"Cannot return a value",
-	);
+    "Cannot return a value",
+  );
 });
 
 test(": never + return void call fails", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 @func g(): void {}
 @func die(): never { return g(); }
 die();
 `),
-		"Cannot return a value",
-	);
+    "Cannot return a value",
+  );
 });
 
 test(": never + empty body / fall-through fails", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 @func die(): never {}
 die();
 `),
-		"can complete normally",
-	);
+    "can complete normally",
+  );
 });
 
 test(": never with incomplete if path fails", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 @func die(): never {
     @if (true) {
         __exit(1);
@@ -216,38 +216,38 @@ test(": never with incomplete if path fails", () => {
 }
 die();
 `),
-		"can complete normally",
-	);
+    "can complete normally",
+  );
 });
 
 test("?never rejected", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 $x: ?never = null;
 print(x);
 `),
-		"cannot appear in a union",
-	);
+    "cannot appear in a union",
+  );
 });
 
 test("never | type rejected", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 $x: never | i64 = 1;
 print(x);
 `),
-		"cannot appear in a union",
-	);
+    "cannot appear in a union",
+  );
 });
 
 test("void | never rejected", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 $x: void | never = 1;
 print(x);
 `),
-		"cannot appear in a union",
-	);
+    "cannot appear in a union",
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -255,28 +255,30 @@ print(x);
 // ---------------------------------------------------------------------------
 
 test("never call exits the process", () => {
-	const r = runSource(`
+  const r = runSource(`
 @func die(): never { __exit(7); }
 die();
 print("unreachable");
 `);
-	if (r.exitCode !== 7) {
-		throw new Error(`Expected exit 7, got ${r.exitCode}.\nstderr: ${r.stderr}\nstdout: ${r.stdout}`);
-	}
-	if (r.stdout.includes("unreachable")) {
-		throw new Error(`never call returned to caller:\n${r.stdout}`);
-	}
+  if (r.exitCode !== 7) {
+    throw new Error(
+      `Expected exit 7, got ${r.exitCode}.\nstderr: ${r.stderr}\nstdout: ${r.stdout}`,
+    );
+  }
+  if (r.stdout.includes("unreachable")) {
+    throw new Error(`never call returned to caller:\n${r.stdout}`);
+  }
 });
 
 test("void call continues; never would not", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @func f(): void {}
 f();
 print("after-void");
 `),
-		["after-void"],
-	);
+    ["after-void"],
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -284,35 +286,35 @@ print("after-void");
 // ---------------------------------------------------------------------------
 
 test("never ≠ void", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @func v(): void {}
 @func n(): never { __exit(1); }
 print(@typeOf(v()));
 print(@typeOf(n()));
 `),
-		["void", "never"],
-	);
+    ["void", "never"],
+  );
 });
 
 test("never ≠ null", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @func n(): never { __exit(1); }
 print(@typeOf(null));
 print(@typeOf(n()));
 `),
-		["null", "never"],
-	);
+    ["null", "never"],
+  );
 });
 
 test("never ⊑ void at return (bottom)", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @func die(): never { __exit(1); }
 @func f(): void { return die(); }
 print(@typeOf(f));
 `),
-		["@func(): void"],
-	);
+    ["@func(): void"],
+  );
 });

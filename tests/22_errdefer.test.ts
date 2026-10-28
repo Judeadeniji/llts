@@ -2,8 +2,8 @@ import { test } from "bun:test";
 import { runSource, expectOutput } from "./helpers";
 
 test("errdefer runs on error exit; defer always", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @const $list = @import("std/list");
 @const $mem = @import("std/mem");
 $arena = mem.create(0);
@@ -30,13 +30,13 @@ pub @func main() {
     print(list.get(state, 2));
 }
 `),
-		["1", "1", "true", "3", "10", "1"],
-	);
+    ["1", "1", "true", "3", "10", "1"],
+  );
 });
 
 test("errdefer LIFO with defer on success path", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @const $list = @import("std/list");
 @const $mem = @import("std/mem");
 
@@ -57,13 +57,13 @@ pub @func main() {
     print(list.get(l, 1));
 }
 `),
-		["2", "3", "1"],
-	);
+    ["2", "3", "1"],
+  );
 });
 
 test("errdefer LIFO with defer on error path", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @const $list = @import("std/list");
 @const $mem = @import("std/mem");
 
@@ -87,13 +87,13 @@ pub @func main() {
     print(list.get(l, 3));
 }
 `),
-		["true", "4", "4", "3", "2", "1"],
-	);
+    ["true", "4", "4", "3", "2", "1"],
+  );
 });
 
 test("errdefer with try operator unwinding", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @const $list = @import("std/list");
 @const $mem = @import("std/mem");
 $arena = mem.create(0);
@@ -117,13 +117,13 @@ pub @func main() {
     print(list.get(state, 1));
 }
 `),
-		["true", "2", "1"],
-	);
+    ["true", "2", "1"],
+  );
 });
 
 test("errdefer does not run on break", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 pub @func main() {
     $x = 0;
     @for (true) {
@@ -134,13 +134,13 @@ pub @func main() {
     print(x);
 }
 `),
-		["1"],
-	);
+    ["1"],
+  );
 });
 
 test("errdefer does not run on continue", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 pub @func main() {
     $x = 0;
     @for (0..3) |i| {
@@ -151,13 +151,13 @@ pub @func main() {
     print(x);
 }
 `),
-		["3"],
-	);
+    ["3"],
+  );
 });
 
 test("nested block errdefer runs on ? unwind", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @const $list = @import("std/list");
 @const $mem = @import("std/mem");
 $arena = mem.create(0);
@@ -187,13 +187,13 @@ pub @func main() {
     print(list.get(state, 2));
 }
 `),
-		["true", "3", "2", "20", "1"],
-	);
+    ["true", "3", "2", "20", "1"],
+  );
 });
 
 test("return non-error after local error does not run errdefer", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @const $list = @import("std/list");
 @const $mem = @import("std/mem");
 $arena = mem.create(0);
@@ -212,13 +212,13 @@ pub @func main() {
     print(list.get(state, 0));
 }
 `),
-		["0", "1", "1"],
-	);
+    ["0", "1", "1"],
+  );
 });
 
 test("error payloads: code, message, null and value", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 $e1 = error("CodeOnly");
 $e2 = error("WithPayload", 42);
 print(e1.code);
@@ -227,13 +227,13 @@ print(e1.payload);
 print(e2.code);
 print(e2.payload);
 `),
-		["CodeOnly", "CodeOnly", "null", "WithPayload", "42"],
-	);
+    ["CodeOnly", "CodeOnly", "null", "WithPayload", "42"],
+  );
 });
 
 test("error payload can be a map", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @const $map = @import("std/map");
 @const $mem = @import("std/mem");
 $arena = mem.create(0);
@@ -243,6 +243,6 @@ $e = error("FileNotFound", m);
 print(e.code);
 print(map.get(e.payload, "path"));
 `),
-		["FileNotFound", "/tmp/x"],
-	);
+    ["FileNotFound", "/tmp/x"],
+  );
 });

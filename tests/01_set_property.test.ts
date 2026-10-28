@@ -11,42 +11,42 @@ import { test } from "bun:test";
 import { expectOutput, expectError, runSource } from "./helpers";
 
 test("rejects mutating imported module namespace", () => {
-	const result = runSource(`
+  const result = runSource(`
 @const $std = @import("std/index");
 $obj = std.fmt;
 obj.x = 42;
 print(obj.x);
 `);
-	expectError(result, "Cannot assign field 'x' on non-struct target");
+  expectError(result, "Cannot assign field 'x' on non-struct target");
 });
 
 test("rejects direct assignment to imported module property", () => {
-	const result = runSource(`
+  const result = runSource(`
 @const $std = @import("std/index");
 std.fmt.x = 42;
 `);
-	expectError(result, "Cannot assign to member 'x' of imported module");
+  expectError(result, "Cannot assign to member 'x' of imported module");
 });
 
 test("rejects dynamic property set on non-struct", () => {
-	const result = runSource(`
+  const result = runSource(`
 $x = 42;
 x.foo = 1;
 `);
-	expectError(result, "Cannot assign field 'foo'");
+  expectError(result, "Cannot assign field 'foo'");
 });
 
 test("rejects assignment to undeclared struct field", () => {
-	const result = runSource(`
+  const result = runSource(`
 @struct Counter { value: int; }
 $c = Counter { value: 0 };
 c.unknown_field = 42;
 `);
-	expectError(result, "Field 'unknown_field' does not exist on 'Counter'");
+  expectError(result, "Field 'unknown_field' does not exist on 'Counter'");
 });
 
 test("property set inside function", () => {
-	const result = runSource(`
+  const result = runSource(`
 @struct Counter {
 	value: int;
 
@@ -62,5 +62,5 @@ c.increment();
 c.increment();
 print(c.value);
 `);
-	expectOutput(result, ["3"]);
+  expectOutput(result, ["3"]);
 });

@@ -5,8 +5,8 @@ import { test } from "bun:test";
 import { expectError, expectOutput, runSource } from "./helpers";
 
 test("value @if assigns break payloads", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 $x = @if (true) {
     break 1;
 } @else {
@@ -14,37 +14,37 @@ $x = @if (true) {
 };
 print(x);
 `),
-		["1"],
-	);
+    ["1"],
+  );
 });
 
 test("value @if requires @else", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 $x = @if (true) {
     break 1;
 };
 `),
-		"requires @else",
-	);
+    "requires @else",
+  );
 });
 
 test("value @if arm must break a value", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 $x = @if (true) {
     print(1);
 } @else {
     break 2;
 };
 `),
-		"must 'break' a value",
-	);
+    "must 'break' a value",
+  );
 });
 
 test("@else @if chain produces a value", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 $n = 2;
 $x = @if (n == 1) {
     break 10;
@@ -55,25 +55,25 @@ $x = @if (n == 1) {
 };
 print(x);
 `),
-		["20"],
-	);
+    ["20"],
+  );
 });
 
 test("labeled block break :label value", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 $z = blk: {
     break :blk 42;
 };
 print(z);
 `),
-		["42"],
-	);
+    ["42"],
+  );
 });
 
 test("labeled block with locals and expression payload", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 $sum = compute: {
     $a = 10;
     $b = 32;
@@ -81,13 +81,13 @@ $sum = compute: {
 };
 print(sum);
 `),
-		["42"],
-	);
+    ["42"],
+  );
 });
 
 test("labeled block early exit via nested @if", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 $abs = absv: {
     $n = 0 - 7;
     @if (n < 0) {
@@ -97,13 +97,13 @@ $abs = absv: {
 };
 print(abs);
 `),
-		["7"],
-	);
+    ["7"],
+  );
 });
 
 test("nested labeled blocks break to the named target", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 $v = outer: {
     $inner = inner: {
         break :inner 1;
@@ -112,13 +112,13 @@ $v = outer: {
 };
 print(v);
 `),
-		["3"],
-	);
+    ["3"],
+  );
 });
 
 test("break :outer skips remaining inner statements", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 $v = outer: {
     inner: {
         break :outer 99;
@@ -127,57 +127,57 @@ $v = outer: {
 };
 print(v);
 `),
-		["99"],
-	);
+    ["99"],
+  );
 });
 
 test("labeled block result can be type-annotated", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 $flag: bool = check: {
     break :check true;
 };
 print(flag);
 print(@typeOf(flag));
 `),
-		["true", "u1"],
-	);
+    ["true", "u1"],
+  );
 });
 
 test("labeled block must break a value", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 $x = blk: {
     print(1);
 };
 `),
-		"must 'break' a value",
-	);
+    "must 'break' a value",
+  );
 });
 
 test("break to unknown block label errors", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 $x = blk: {
     break :missing 1;
 };
 `),
-		"Cannot find value expression with label",
-	);
+    "Cannot find value expression with label",
+  );
 });
 
 test("unlabeled block cannot be a value expression", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 $x = { break 1; };
 `),
-		"requires a label",
-	);
+    "requires a label",
+  );
 });
 
 test("value @switch with multi-match and @else", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @enum Color { Red, Green, Blue }
 $c = @switch (Color.Blue) {
     Color.Red => { break 1; },
@@ -186,41 +186,41 @@ $c = @switch (Color.Blue) {
 };
 print(c);
 `),
-		["2"],
-	);
+    ["2"],
+  );
 });
 
 test("statement @switch still works", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @switch (1) {
     0 => { print(0); },
     1 => { print(9); },
     @else => { print(-1); },
 }
 `),
-		["9"],
-	);
+    ["9"],
+  );
 });
 
 test("value @switch requires @else", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 $x = @switch (1) {
     1 => { break 1; },
 };
 `),
-		"requires @else",
-	);
+    "requires @else",
+  );
 });
 
 test("break with value outside value context errors", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 pub @func main() {
     break 1;
 }
 `),
-		"Break with a value",
-	);
+    "Break with a value",
+  );
 });

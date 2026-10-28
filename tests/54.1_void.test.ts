@@ -4,15 +4,20 @@
  * Distinct from `null` (optional absence) and `never` (noreturn / bottom).
  */
 import { test } from "bun:test";
-import { expectError, expectOutput, runSource, runSourceStrict } from "./helpers";
+import {
+  expectError,
+  expectOutput,
+  runSource,
+  runSourceStrict,
+} from "./helpers";
 
 // ---------------------------------------------------------------------------
 // Identity / meta
 // ---------------------------------------------------------------------------
 
 test("@typeOf / @sizeOf(void)", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @func f(): void { return; }
 print(@typeOf(f()));
 print(@sizeOf(void));
@@ -20,18 +25,18 @@ $x: void = f();
 print(@sizeOf(x));
 print(@typeOf(x));
 `),
-		["void", "0", "0", "void"],
-	);
+    ["void", "0", "0", "void"],
+  );
 });
 
 test("func type display includes void", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @func f(): void {}
 print(@typeOf(f));
 `),
-		["@func(): void"],
-	);
+    ["@func(): void"],
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -39,42 +44,42 @@ print(@typeOf(f));
 // ---------------------------------------------------------------------------
 
 test(": void + bare return;", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @func f(): void { return; }
 f();
 print("ok");
 `),
-		["ok"],
-	);
+    ["ok"],
+  );
 });
 
 test(": void + empty body fall-through", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @func f(): void {}
 f();
 print("ok");
 `),
-		["ok"],
-	);
+    ["ok"],
+  );
 });
 
 test(": void + return other void call", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @func g(): void { return; }
 @func f(): void { return g(); }
 f();
 print("ok");
 `),
-		["ok"],
-	);
+    ["ok"],
+  );
 });
 
 test("multiple early return; branches", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @func f(n: i64): void {
     @if (n < 0) { return; }
     @if (n > 10) { return; }
@@ -85,33 +90,33 @@ f(20);
 f(3);
 print("ok");
 `),
-		["ok"],
-	);
+    ["ok"],
+  );
 });
 
 test("unannotated empty fn infers void", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @func doNothing() {}
 print(@typeOf(doNothing()));
 `),
-		["void"],
-	);
+    ["void"],
+  );
 });
 
 test("unannotated return;-only infers void", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @func f() { return; }
 print(@typeOf(f()));
 `),
-		["void"],
-	);
+    ["void"],
+  );
 });
 
 test("method : void", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @struct Box {
     n: i64;
     @func bump(self: *Box): void { self.n = self.n + 1; }
@@ -120,8 +125,8 @@ $b = Box { n: 1 };
 b.bump();
 print(b.n);
 `),
-		["2"],
-	);
+    ["2"],
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -129,19 +134,19 @@ print(b.n);
 // ---------------------------------------------------------------------------
 
 test("void call as expression statement", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @func f(): void { return; }
 f();
 print("next");
 `),
-		["next"],
-	);
+    ["next"],
+  );
 });
 
 test("bind and reassign void", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @func f(): void {}
 @func g(): void { return; }
 $x: void = f();
@@ -149,37 +154,37 @@ x = g();
 print(@typeOf(x));
 print(x);
 `),
-		["void", "void"],
-	);
+    ["void", "void"],
+  );
 });
 
 test("void param and wrapper", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @func sink(v: void): void { return; }
 @func f(): void {}
 sink(f());
 print("ok");
 `),
-		["ok"],
-	);
+    ["ok"],
+  );
 });
 
 test("print returns void", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @func say(): void { print("hi"); }
 print(@typeOf(say()));
 $x: void = say();
 print(@typeOf(x));
 `),
-		["void", "hi", "void"],
-	);
+    ["void", "hi", "void"],
+  );
 });
 
 test("void equals void", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @func f(): void {}
 @func g(): void { return; }
 $a: void = f();
@@ -187,19 +192,19 @@ $b: void = g();
 print(a == b);
 print(a != b);
 `),
-		["true", "false"],
-	);
+    ["true", "false"],
+  );
 });
 
 test("void call returns to caller (contrast never)", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @func f(): void {}
 f();
 print("after");
 `),
-		["after"],
-	);
+    ["after"],
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -207,170 +212,170 @@ print("after");
 // ---------------------------------------------------------------------------
 
 test(": type + bare return; fails", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 @func f(): i64 { return; }
 print(f());
 `),
-		"not assignable",
-	);
+    "not assignable",
+  );
 });
 
 test(": type fall-through fails under strict", () => {
-	expectError(
-		runSourceStrict(`
+  expectError(
+    runSourceStrict(`
 @func f(): i64 {}
 pub @func main() { print(f()); }
 `),
-		"must return a value on all control paths",
-	);
+    "must return a value on all control paths",
+  );
 });
 
 test(": void + return 1 fails", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 @func f(): void { return 1; }
 f();
 `),
-		"not assignable",
-	);
+    "not assignable",
+  );
 });
 
 test(": void + return null fails", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 @func f(): void { return null; }
 f();
 `),
-		"not assignable",
-	);
+    "not assignable",
+  );
 });
 
 test(": void + return string fails", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 @func f(): void { return "x"; }
 f();
 `),
-		"not assignable",
-	);
+    "not assignable",
+  );
 });
 
 test("void in arithmetic fails", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 @func f(): void {}
 print(f() + 1);
 `),
-		"void",
-	);
+    "void",
+  );
 });
 
 test("void field access fails", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 @func f(): void {}
 $x: void = f();
 print(x.n);
 `),
-		"Undefined property",
-	);
+    "Undefined property",
+  );
 });
 
 test("?void rejected", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 $x: ?void = null;
 print(x);
 `),
-		"cannot appear in a union",
-	);
+    "cannot appear in a union",
+  );
 });
 
 test("void | type rejected", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 $x: void | i64 = 1;
 print(x);
 `),
-		"cannot appear in a union",
-	);
+    "cannot appear in a union",
+  );
 });
 
 test("assign void to type fails", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 @func f(): void {}
 $n: i64 = f();
 print(n);
 `),
-		"not assignable",
-	);
+    "not assignable",
+  );
 });
 
 test("assign void to null fails", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 @func f(): void {}
 $n: null = f();
 print(n);
 `),
-		"not assignable",
-	);
+    "not assignable",
+  );
 });
 
 test("assign void to ?type fails", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 @func f(): void {}
 $n: ?i64 = f();
 print(n);
 `),
-		"not assignable",
-	);
+    "not assignable",
+  );
 });
 
 test("assign null to void fails", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 $x: void = null;
 print(x);
 `),
-		"not assignable",
-	);
+    "not assignable",
+  );
 });
 
 test("assign type value to void fails", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 $x: void = 1;
 print(x);
 `),
-		"not assignable",
-	);
+    "not assignable",
+  );
 });
 
 test("& on void fails", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 @func f(): void {}
 $x: void = f();
 $p = &x;
 print(p);
 `),
-		"Address-of requires an aggregate",
-	);
+    "Address-of requires an aggregate",
+  );
 });
 
 test("@addrOf(void) fails", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 @func f(): void {}
 $x: void = f();
 print(@addrOf(x));
 `),
-		"@addrOf",
-	);
+    "@addrOf",
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -378,37 +383,37 @@ print(@addrOf(x));
 // ---------------------------------------------------------------------------
 
 test("bare return; is void not null", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @func f() { return; }
 print(@typeOf(f()));
 `),
-		["void"],
-	);
+    ["void"],
+  );
 });
 
 test("strict: unannotated empty still accepted as void", () => {
-	expectOutput(
-		runSourceStrict(`
+  expectOutput(
+    runSourceStrict(`
 @func doNothing() {}
 pub @func main() {
     doNothing();
     print(@typeOf(doNothing()));
 }
 `),
-		["void"],
-	);
+    ["void"],
+  );
 });
 
 test("mixing return; with return 1 fails once non-void expected", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 @func f(n: i64): i64 {
     @if (n > 0) { return n; }
     return;
 }
 print(f(1));
 `),
-		"not assignable",
-	);
+    "not assignable",
+  );
 });

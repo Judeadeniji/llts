@@ -2,8 +2,8 @@ import { test } from "bun:test";
 import { expectOutput, runSource } from "./helpers";
 
 test("syscall: getpid, nr, call, SYS_* agree", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @const $syscall = @import("std/syscall");
 print(syscall.getpid() > 0);
 print(syscall.SYS_getpid == syscall.nr("getpid"));
@@ -11,13 +11,13 @@ print(syscall.call(syscall.SYS_getpid) == syscall.getpid());
 print(syscall.isError(syscall.call(syscall.SYS_getpid)) == false);
 print(syscall.errName(syscall.call(syscall.SYS_getpid)) == "");
 `),
-		["true", "true", "true", "true", "true"],
-	);
+    ["true", "true", "true", "true", "true"],
+  );
 });
 
 test("syscall: open/write/read/lseek/unlink roundtrip", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @const $syscall = @import("std/syscall");
 @const $buffer = @import("std/buffer");
 @const $mem = @import("std/mem");
@@ -38,13 +38,13 @@ syscall.unlink(path);
 $missing = syscall.access(path);
 print(@isError(missing));
 `),
-		["true", "true", "true", "abc", "true", "true"],
-	);
+    ["true", "true", "true", "abc", "true", "true"],
+  );
 });
 
 test("syscall: pipe duplex", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @const $syscall = @import("std/syscall");
 @const $buffer = @import("std/buffer");
 @const $mem = @import("std/mem");
@@ -58,25 +58,25 @@ print(buffer.get(b, 0) == 122);
 syscall.close(fds[0]);
 syscall.close(fds[1]);
 `),
-		["true", "true", "true"],
-	);
+    ["true", "true", "true"],
+  );
 });
 
 test("syscall: open missing path is SyscallError", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @const $syscall = @import("std/syscall");
 $err = syscall.open("/no/such/llts/path/xyz", syscall.O_RDONLY);
 print(@isError(err));
 print(err.code);
 `),
-		["true", "SyscallError"],
-	);
+    ["true", "SyscallError"],
+  );
 });
 
 test("syscall: ids and cwd", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @const $syscall = @import("std/syscall");
 @const $os = @import("std/os");
 print(syscall.getuid() >= 0);
@@ -85,6 +85,6 @@ print(syscall.getcwd() == os.cwd());
 print(syscall.STDOUT_FILENO == 1);
 print(syscall.O_RDONLY == 0);
 `),
-		["true", "true", "true", "true", "true"],
-	);
+    ["true", "true", "true", "true", "true"],
+  );
 });

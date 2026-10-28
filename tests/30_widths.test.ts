@@ -2,8 +2,8 @@ import { test } from "bun:test";
 import { runSource, expectOutput, expectError } from "./helpers";
 
 test("all integer and float widths are distinct honest types", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 $a: i8 = 1;
 $b: i16 = 2;
 $c: i32 = 3;
@@ -28,20 +28,34 @@ print(a); print(b); print(c); print(d);
 print(e); print(f); print(g); print(h);
 print(x); print(y);
 `),
-		[
-			"i8", "i16", "i32", "i64",
-			"u8", "u16", "u32", "u64",
-			"f32", "f64",
-			"1", "2", "3", "4",
-			"5", "6", "7", "8",
-			"1.5", "2.5",
-		],
-	);
+    [
+      "i8",
+      "i16",
+      "i32",
+      "i64",
+      "u8",
+      "u16",
+      "u32",
+      "u64",
+      "f32",
+      "f64",
+      "1",
+      "2",
+      "3",
+      "4",
+      "5",
+      "6",
+      "7",
+      "8",
+      "1.5",
+      "2.5",
+    ],
+  );
 });
 
 test("aliases int/byte/float/bool normalize to i64/u8/f64/u1", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 $a: int = 1;
 $b: byte = 2;
 $c: float = 3.25;
@@ -55,13 +69,13 @@ print(@typeOf(d));
 print(@typeOf(e));
 print(@typeOf(f));
 `),
-		["i64", "u8", "f64", "i64", "u1", "u1"],
-	);
+    ["i64", "u8", "f64", "i64", "u1", "u1"],
+  );
 });
 
 test("@sizeOf matches width sizes", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 print(@sizeOf(i8));
 print(@sizeOf(u8));
 print(@sizeOf(u1));
@@ -78,13 +92,13 @@ print(@sizeOf(int));
 print(@sizeOf(byte));
 print(@sizeOf(float));
 `),
-		["1", "1", "1", "1", "2", "2", "4", "4", "4", "8", "8", "8", "8", "1", "8"],
-	);
+    ["1", "1", "1", "1", "2", "2", "4", "4", "4", "8", "8", "8", "8", "1", "8"],
+  );
 });
 
 test("@as converts between integer widths", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 $n: i64 = 200;
 $a = @as(u8, n);
 $b = @as(i16, a);
@@ -96,24 +110,24 @@ print(@typeOf(a));
 print(a);
 print(f);
 `),
-		["u8", "200", "200"],
-	);
+    ["u8", "200", "200"],
+  );
 });
 
 test("mixed integer widths require @as", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 $a: i32 = 1;
 $b: i64 = 2;
 print(a + b);
 `),
-		"mixed",
-	);
+    "mixed",
+  );
 });
 
 test("packed struct fields use real width sizes", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @struct Packed {
     a: u8;
     b: u16;
@@ -127,6 +141,6 @@ print(p.b);
 print(p.c);
 print(p.d);
 `),
-		["16", "1", "2", "3", "4.5"],
-	);
+    ["16", "1", "2", "3", "4.5"],
+  );
 });

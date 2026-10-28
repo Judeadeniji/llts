@@ -2,8 +2,8 @@ import { test } from "bun:test";
 import { expectError, expectOutput, runSource } from "./helpers";
 
 test("list: push, pop, get, set, len", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @const $list = @import("std/list");
 @const $mem = @import("std/mem");
 $a = mem.create(0);
@@ -19,13 +19,13 @@ print(list.get(l, 1));
 print(list.pop(l));
 print(list.len(l));
 `),
-		["3", "10", "30", "42", "30", "2"],
-	);
+    ["3", "10", "30", "42", "30", "2"],
+  );
 });
 
 test("array literal allows trailing comma", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @const $ops = [
     "+", "-", "*",
 ];
@@ -33,13 +33,13 @@ print(len(ops));
 print(ops[0]);
 print(ops[2]);
 `),
-		["3", "+", "*"],
-	);
+    ["3", "+", "*"],
+  );
 });
 
 test("map: set, get, has, delete, size", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @const $map = @import("std/map");
 @const $mem = @import("std/mem");
 $a = mem.create(0);
@@ -55,13 +55,13 @@ map.delete(m, "name");
 print(map.has(m, "name"));
 print(map.size(m));
 `),
-		["2", "Alice", "30", "true", "false", "false", "1"],
-	);
+    ["2", "Alice", "30", "true", "false", "false", "1"],
+  );
 });
 
 test("json.stringify handles lists and maps", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @const $json = @import("std/json");
 @const $list = @import("std/list");
 @const $map = @import("std/map");
@@ -78,13 +78,13 @@ map.set(m, "k", "v");
 print(json.stringify(l));
 print(json.stringify(m));
 `),
-		["[1,2]", `{"k":"v"}`],
-	);
+    ["[1,2]", `{"k":"v"}`],
+  );
 });
 
 test("list storage is reclaimed with arena reset", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @const $list = @import("std/list");
 @const $mem = @import("std/mem");
 $a = mem.create(0);
@@ -98,13 +98,13 @@ list.push(l2, 9);
 print(list.len(l2));
 print(list.get(l2, 0));
 `),
-		["2", "1", "9"],
-	);
+    ["2", "1", "9"],
+  );
 });
 
 test("list ops fail after arena reset", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 @const $list = @import("std/list");
 @const $mem = @import("std/mem");
 $a = mem.create(0);
@@ -113,13 +113,13 @@ list.push(l, 1);
 a.reset();
 _ = list.len(l);
 `),
-		"arena was reset",
-	);
+    "arena was reset",
+  );
 });
 
 test("map ops fail after arena reset", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 @const $map = @import("std/map");
 @const $mem = @import("std/mem");
 $a = mem.create(0);
@@ -128,6 +128,6 @@ map.set(m, "k", 1);
 a.reset();
 _ = map.size(m);
 `),
-		"arena was reset",
-	);
+    "arena was reset",
+  );
 });

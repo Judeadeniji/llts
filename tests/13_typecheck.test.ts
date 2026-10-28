@@ -5,76 +5,76 @@ import { test } from "bun:test";
 import { expectError, expectOutput, runSource } from "./helpers";
 
 test("$x: int = 1 parses and runs", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 $x: int = 1;
 print(x);
 `),
-		["1"],
-	);
+    ["1"],
+  );
 });
 
 test("$x: i32 is a real width (not an int alias)", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 $x: i32 = 42;
 print(@typeOf(x));
 print(x);
 `),
-		["i32", "42"],
-	);
+    ["i32", "42"],
+  );
 });
 
 test("$x: int = string is a type error", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 $x: int = "hi";
 print(x);
 `),
-		"not assignable",
-	);
+    "not assignable",
+  );
 });
 
 test("annotated param mismatch is a type error", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 @func add(a: int, b: int): int {
     return a + b;
 }
 print(add(1, "x"));
 `),
-		"not assignable",
-	);
+    "not assignable",
+  );
 });
 
 test("annotated return mismatch is a type error", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 @func bad(): int {
     return "nope";
 }
 print(bad());
 `),
-		"not assignable",
-	);
+    "not assignable",
+  );
 });
 
 test("unannotated wrong call still compiles (gradual)", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @func id(a) {
     return a;
 }
 print(id(1));
 print(id("hi"));
 `),
-		["1", "hi"],
-	);
+    ["1", "hi"],
+  );
 });
 
 test("struct field type mismatch", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 @struct Point {
     x: int;
     y: int;
@@ -82,13 +82,13 @@ test("struct field type mismatch", () => {
 $p = Point { x: 1, y: "bad" };
 print(p.x);
 `),
-		"not assignable",
-	);
+    "not assignable",
+  );
 });
 
 test("struct usable as type annotation", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @struct Point {
     x: int;
     y: int;
@@ -97,79 +97,79 @@ $p: Point = Point { x: 1, y: 2 };
 print(@typeOf(p));
 print(p.x);
 `),
-		["Point", "1"],
-	);
+    ["Point", "1"],
+  );
 });
 
 test("unknown type name is an error", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 $x: NoSuchType = 1;
 print(x);
 `),
-		"Unknown type",
-	);
+    "Unknown type",
+  );
 });
 
 test("[]int array type annotation", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 $a: []int = [1, 2, 3];
 print(a[0]);
 print(len(a));
 `),
-		["1", "3"],
-	);
+    ["1", "3"],
+  );
 });
 
 test("sized [N]int annotation and inference", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @const $a: [3]int = [1, 2, 3];
 @const $b = [4, 5];
 print(@typeOf(a));
 print(@typeOf(b));
 print(a[1]);
 `),
-		["[3]i64", "[2]i64", "2"],
-	);
+    ["[3]i64", "[2]i64", "2"],
+  );
 });
 
 test("sized length mismatch is an error", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 $a: [2]int = [1, 2, 3];
 print(a[0]);
 `),
-		"not assignable",
-	);
+    "not assignable",
+  );
 });
 
 test("multidimensional [2][3]int", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @const $grid: [2][3]int = [[1, 2, 3], [4, 5, 6]];
 print(@typeOf(grid));
 print(@typeOf(grid[0]));
 print(grid[1][2]);
 `),
-		["[2][3]i64", "[3]i64", "6"],
-	);
+    ["[2][3]i64", "[3]i64", "6"],
+  );
 });
 
 test("nested literal lengths form a tuple", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 $g = [[1, 2], [3, 4, 5]];
 print(g[0][0]);
 `),
-		["1"],
-	);
+    ["1"],
+  );
 });
 
 test("string is []byte; literals are [N]byte", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @const $msg = "hi";
 $open: string = "hello";
 $raw: []byte = "hello";
@@ -180,23 +180,23 @@ print(@typeOf(raw));
 print(@typeOf(exact));
 print(open);
 `),
-		['"hi"', "[]byte", "[]byte", "[5]byte", "hello"],
-	);
+    ['"hi"', "[]byte", "[]byte", "[5]byte", "hello"],
+  );
 });
 
 test("string length mismatch [3]byte = hi", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 $s: [3]byte = "hi";
 print(s);
 `),
-		"not assignable",
-	);
+    "not assignable",
+  );
 });
 
 test("T | error and ? unwrap", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @func ok(): string | error {
     return "yes";
 }
@@ -206,24 +206,24 @@ pub @func main(): string | error {
     return s;
 }
 `),
-		["yes"],
-	);
+    ["yes"],
+  );
 });
 
 test("boolean alias normalizes to u1", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 $b: boolean = true;
 print(b);
 print(@typeOf(b));
 `),
-		["true", "u1"],
-	);
+    ["true", "u1"],
+  );
 });
 
 test("@typeOf prints annotated and inferred types", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 $x: int = 1;
 $y = "hi";
 $z: []int = [1, 2];
@@ -232,13 +232,13 @@ print(@typeOf(y));
 print(@typeOf(z));
 print(@typeOf(true));
 `),
-		["i64", "[]byte", "[]i64", "u1"],
-	);
+    ["i64", "[]byte", "[]i64", "u1"],
+  );
 });
 
 test("empty string $x = '' infers as []byte unless const or specified", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 $x = "";
 print(@typeOf(x));
 x = "hello";
@@ -248,13 +248,13 @@ print(@typeOf(c));
 $exact: [0]byte = "";
 print(@typeOf(exact));
 `),
-		["[]byte", "hello", '""', "[0]byte"],
-	);
+    ["[]byte", "hello", '""', "[0]byte"],
+  );
 });
 
 test("@typeOf on T | error and after ?", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @func f(): string | error {
     return "ok";
 }
@@ -262,34 +262,34 @@ print(@typeOf(f()));
 $s = f()?;
 print(@typeOf(s));
 `),
-		["[]byte | error", "[]byte"],
-	);
+    ["[]byte | error", "[]byte"],
+  );
 });
 
 test("@typeOf arity must be 1", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 print(@typeOf(1, 2));
 `),
-		"@typeOf expects exactly 1 argument",
-	);
+    "@typeOf expects exactly 1 argument",
+  );
 });
 
 test("?T is sugar for T | null", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 $x: ?int = null;
 print(@typeOf(x));
 x = 7;
 print(x);
 `),
-		["?i64", "7"],
-	);
+    ["?i64", "7"],
+  );
 });
 
 test("Node | null is the same optional as ?Node", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @struct Node {
     value: int;
     next: Node | null;
@@ -299,26 +299,26 @@ print(@typeOf(n));
 print(n.value);
 print(n.next);
 `),
-		["?Node", "1", "null"],
-	);
+    ["?Node", "1", "null"],
+  );
 });
 
 test("null is not assignable to a non-optional struct", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 @struct Node {
     value: int;
 }
 $n: Node = null;
 print(n);
 `),
-		"not assignable",
-	);
+    "not assignable",
+  );
 });
 
 test("self-referential ?*Node linked list", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @const $mem = @import("std/mem");
 @struct Node {
     value: i64;
@@ -343,13 +343,13 @@ pub @func main() {
     print(head.next.next);
 }
 `),
-		["?*Node", "*Node", "2", "1", "null"],
-	);
+    ["?*Node", "*Node", "2", "1", "null"],
+  );
 });
 
 test("@typeOf of a bare type is `type`", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @struct Point { x: i64; y: i64; }
 $p: Point = { x: 1, y: 2 };
 $x: i64 = 42;
@@ -370,31 +370,31 @@ print(@typeOf(@typeOf(i64)));
 print(@sizeOf([]i64));
 print(@sizeOf([10]i64));
 `),
-		[
-			"type",
-			"type",
-			"type",
-			"type",
-			"type",
-			"type",
-			"type",
-			"type",
-			"type",
-			"type",
-			"i64",
-			"Point",
-			"type",
-			"8",
-			"8",
-		],
-	);
+    [
+      "type",
+      "type",
+      "type",
+      "type",
+      "type",
+      "type",
+      "type",
+      "type",
+      "type",
+      "type",
+      "i64",
+      "Point",
+      "type",
+      "8",
+      "8",
+    ],
+  );
 });
 
 test("@typeOf rejects unknown identifier", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 print(@typeOf(UnknownType));
 `),
-		"Unknown identifier 'UnknownType'",
-	);
+    "Unknown identifier 'UnknownType'",
+  );
 });

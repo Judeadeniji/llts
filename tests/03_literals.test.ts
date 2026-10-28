@@ -8,28 +8,40 @@ import { test } from "bun:test";
 import { runSource, expectOutput } from "./helpers";
 
 test("hex literal works", () => {
-	expectOutput(runSource(`
+  expectOutput(
+    runSource(`
 $a = 0xFF;
 print(a);
-`), ["255"]);
+`),
+    ["255"],
+  );
 });
 
 test("binary literal works", () => {
-	expectOutput(runSource(`
+  expectOutput(
+    runSource(`
 $a = 0b1010;
 print(a);
-`), ["10"]);
+`),
+    ["10"],
+  );
 });
 
 test("octal literal works", () => {
-	expectOutput(runSource(`
+  expectOutput(
+    runSource(`
 $a = 0o17;
 print(a);
-`), ["15"]);
+`),
+    ["15"],
+  );
 });
 
 test("literals parse into correct values inline", () => {
-	expectOutput(runSource(`
+  expectOutput(
+    runSource(`
 print(0x10 + 0b0100 + 0o10);
-`), ["28"]);
+`),
+    ["28"],
+  );
 });

@@ -13,27 +13,27 @@ import { spawnSync } from "bun";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import {
-	runCli,
-	runFile,
-	withNativeProgram,
-	nativeStagedLeftovers,
+  runCli,
+  runFile,
+  withNativeProgram,
+  nativeStagedLeftovers,
 } from "./helpers";
 
 const ROOT = path.resolve(import.meta.dir, "..");
 
 test("build --native links a binary that matches the VM", () => {
-	withNativeProgram((sourcePath, dir) => {
-		const out = path.join(dir, "prog_native");
-		const build = runCli(["build", sourcePath, "--native", "-o", out]);
-		expect(build.stderr + build.stdout).toBe("");
-		expect(build.exitCode).toBe(0);
-		expect(fs.existsSync(out)).toBe(true);
+  withNativeProgram((sourcePath, dir) => {
+    const out = path.join(dir, "prog_native");
+    const build = runCli(["build", sourcePath, "--native", "-o", out]);
+    expect(build.stderr + build.stdout).toBe("");
+    expect(build.exitCode).toBe(0);
+    expect(fs.existsSync(out)).toBe(true);
 
-		const native = spawnSync([out], { cwd: ROOT });
-		const vm = runFile(sourcePath);
-		expect(native.exitCode).toBe(vm.exitCode);
-		expect(native.stdout.toString()).toBe(vm.stdout);
+    const native = spawnSync([out], { cwd: ROOT });
+    const vm = runFile(sourcePath);
+    expect(native.exitCode).toBe(vm.exitCode);
+    expect(native.stdout.toString()).toBe(vm.stdout);
 
-		expect(nativeStagedLeftovers()).toEqual([]);
-	});
+    expect(nativeStagedLeftovers()).toEqual([]);
+  });
 }, 180_000);

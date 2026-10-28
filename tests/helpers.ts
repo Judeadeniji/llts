@@ -11,208 +11,214 @@ const ROOT = path.resolve(import.meta.dir, "..");
 const ENTRY = path.join(ROOT, "zig-out/bin/llts");
 
 export interface RunResult {
-	stdout: string;
-	stderr: string;
-	exitCode: number;
-	lines: string[];
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+  lines: string[];
 }
 
 function requireBinary() {
-	if (!fs.existsSync(ENTRY)) {
-		throw new Error(
-			`Missing ${ENTRY}. Run \`zig build\` from the repo root first.`,
-		);
-	}
+  if (!fs.existsSync(ENTRY)) {
+    throw new Error(
+      `Missing ${ENTRY}. Run \`zig build\` from the repo root first.`,
+    );
+  }
 }
 
 function hasMain(source: string): boolean {
-	return /(?:pub\s+)?@func\s+main\s*\(/.test(source);
+  return /(?:pub\s+)?@func\s+main\s*\(/.test(source);
 }
 
 /** Append an empty `main` so snippet tests stay valid programs. */
 function ensureMain(source: string): string {
-	if (hasMain(source)) return source;
-	return `${source}\npub @func main() {}\n`;
+  if (hasMain(source)) return source;
+  return `${source}\npub @func main() {}\n`;
 }
 
 /** Compile and run an inline .lls source string. */
 export function runSource(source: string): RunResult {
-	requireBinary();
-	const tmp = path.join(
-		os.tmpdir(),
-		`llts_test_${Date.now()}_${Math.random().toString(36).slice(2)}.lls`,
-	);
-	fs.writeFileSync(tmp, ensureMain(source), "utf-8");
-	try {
-		return runFile(tmp);
-	} finally {
-		fs.unlinkSync(tmp);
-	}
+  requireBinary();
+  const tmp = path.join(
+    os.tmpdir(),
+    `llts_test_${Date.now()}_${Math.random().toString(36).slice(2)}.lls`,
+  );
+  fs.writeFileSync(tmp, ensureMain(source), "utf-8");
+  try {
+    return runFile(tmp);
+  } finally {
+    fs.unlinkSync(tmp);
+  }
 }
 
 /** Compile and run inline source exactly as written (no injected `main`). */
 export function runSourceAsWritten(source: string): RunResult {
-	requireBinary();
-	const tmp = path.join(
-		os.tmpdir(),
-		`llts_test_${Date.now()}_${Math.random().toString(36).slice(2)}.lls`,
-	);
-	fs.writeFileSync(tmp, source, "utf-8");
-	try {
-		return runFile(tmp);
-	} finally {
-		fs.unlinkSync(tmp);
-	}
+  requireBinary();
+  const tmp = path.join(
+    os.tmpdir(),
+    `llts_test_${Date.now()}_${Math.random().toString(36).slice(2)}.lls`,
+  );
+  fs.writeFileSync(tmp, source, "utf-8");
+  try {
+    return runFile(tmp);
+  } finally {
+    fs.unlinkSync(tmp);
+  }
 }
 
 /** Compile and run a .lls file (absolute or relative to repo root). */
-export function runFile(filePath: string, scriptArgs: string[] = []): RunResult {
-	requireBinary();
-	const result = spawnSync([ENTRY, "run", filePath, ...scriptArgs], {
-		cwd: ROOT,
-	});
-	const stdout = result.stdout.toString();
-	const stderr = result.stderr.toString();
-	const allLines = stdout.split(/\r?\n/);
-	while (allLines.length > 0 && allLines[allLines.length - 1] === "") {
-		allLines.pop();
-	}
-	return {
-		stdout,
-		stderr,
-		exitCode: result.exitCode ?? 1,
-		lines: allLines,
-	};
+export function runFile(
+  filePath: string,
+  scriptArgs: string[] = [],
+): RunResult {
+  requireBinary();
+  const result = spawnSync([ENTRY, "run", filePath, ...scriptArgs], {
+    cwd: ROOT,
+  });
+  const stdout = result.stdout.toString();
+  const stderr = result.stderr.toString();
+  const allLines = stdout.split(/\r?\n/);
+  while (allLines.length > 0 && allLines[allLines.length - 1] === "") {
+    allLines.pop();
+  }
+  return {
+    stdout,
+    stderr,
+    exitCode: result.exitCode ?? 1,
+    lines: allLines,
+  };
 }
 
 /** Compile and run a .lls file with --strict. */
-export function runFileStrict(filePath: string, scriptArgs: string[] = []): RunResult {
-	requireBinary();
-	const result = spawnSync([ENTRY, "run", "-s", filePath, ...scriptArgs], {
-		cwd: ROOT,
-	});
-	const stdout = result.stdout.toString();
-	const stderr = result.stderr.toString();
-	const allLines = stdout.split(/\r?\n/);
-	while (allLines.length > 0 && allLines[allLines.length - 1] === "") {
-		allLines.pop();
-	}
-	return {
-		stdout,
-		stderr,
-		exitCode: result.exitCode ?? 1,
-		lines: allLines,
-	};
+export function runFileStrict(
+  filePath: string,
+  scriptArgs: string[] = [],
+): RunResult {
+  requireBinary();
+  const result = spawnSync([ENTRY, "run", "-s", filePath, ...scriptArgs], {
+    cwd: ROOT,
+  });
+  const stdout = result.stdout.toString();
+  const stderr = result.stderr.toString();
+  const allLines = stdout.split(/\r?\n/);
+  while (allLines.length > 0 && allLines[allLines.length - 1] === "") {
+    allLines.pop();
+  }
+  return {
+    stdout,
+    stderr,
+    exitCode: result.exitCode ?? 1,
+    lines: allLines,
+  };
 }
 
 /** Compile and run an inline .lls source string with --strict. */
 export function runSourceStrict(source: string): RunResult {
-	requireBinary();
-	const tmp = path.join(
-		os.tmpdir(),
-		`llts_strict_test_${Date.now()}_${Math.random().toString(36).slice(2)}.lls`,
-	);
-	fs.writeFileSync(tmp, ensureMain(source), "utf-8");
-	try {
-		return runFileStrict(tmp);
-	} finally {
-		fs.unlinkSync(tmp);
-	}
+  requireBinary();
+  const tmp = path.join(
+    os.tmpdir(),
+    `llts_strict_test_${Date.now()}_${Math.random().toString(36).slice(2)}.lls`,
+  );
+  fs.writeFileSync(tmp, ensureMain(source), "utf-8");
+  try {
+    return runFileStrict(tmp);
+  } finally {
+    fs.unlinkSync(tmp);
+  }
 }
 
 /** Compile and run inline source exactly as written with --strict. */
 export function runSourceStrictAsWritten(source: string): RunResult {
-	requireBinary();
-	const tmp = path.join(
-		os.tmpdir(),
-		`llts_strict_test_${Date.now()}_${Math.random().toString(36).slice(2)}.lls`,
-	);
-	fs.writeFileSync(tmp, source, "utf-8");
-	try {
-		return runFileStrict(tmp);
-	} finally {
-		fs.unlinkSync(tmp);
-	}
+  requireBinary();
+  const tmp = path.join(
+    os.tmpdir(),
+    `llts_strict_test_${Date.now()}_${Math.random().toString(36).slice(2)}.lls`,
+  );
+  fs.writeFileSync(tmp, source, "utf-8");
+  try {
+    return runFileStrict(tmp);
+  } finally {
+    fs.unlinkSync(tmp);
+  }
 }
 
 /** Compile and run inline source with trailing script argv (`os.args()[1..]`). */
-export function runSourceWithArgs(source: string, scriptArgs: string[]): RunResult {
-	requireBinary();
-	const tmp = path.join(
-		os.tmpdir(),
-		`llts_test_${Date.now()}_${Math.random().toString(36).slice(2)}.lls`,
-	);
-	fs.writeFileSync(tmp, ensureMain(source), "utf-8");
-	try {
-		return runFile(tmp, scriptArgs);
-	} finally {
-		fs.unlinkSync(tmp);
-	}
+export function runSourceWithArgs(
+  source: string,
+  scriptArgs: string[],
+): RunResult {
+  requireBinary();
+  const tmp = path.join(
+    os.tmpdir(),
+    `llts_test_${Date.now()}_${Math.random().toString(36).slice(2)}.lls`,
+  );
+  fs.writeFileSync(tmp, ensureMain(source), "utf-8");
+  try {
+    return runFile(tmp, scriptArgs);
+  } finally {
+    fs.unlinkSync(tmp);
+  }
 }
 
 /** Compile and run inline source with custom environment variables. */
 export function runSourceWithEnv(
-	source: string,
-	env: Record<string, string>,
+  source: string,
+  env: Record<string, string>,
 ): RunResult {
-	requireBinary();
-	const tmp = path.join(
-		os.tmpdir(),
-		`llts_test_${Date.now()}_${Math.random().toString(36).slice(2)}.lls`,
-	);
-	fs.writeFileSync(tmp, ensureMain(source), "utf-8");
-	try {
-		const result = spawnSync([ENTRY, "run", tmp], {
-			cwd: ROOT,
-			env: { ...process.env, ...env },
-		});
-		const stdout = result.stdout.toString();
-		const stderr = result.stderr.toString();
-		const allLines = stdout.split(/\r?\n/);
-		while (allLines.length > 0 && allLines[allLines.length - 1] === "") {
-			allLines.pop();
-		}
-		return {
-			stdout,
-			stderr,
-			exitCode: result.exitCode ?? 1,
-			lines: allLines,
-		};
-	} finally {
-		fs.unlinkSync(tmp);
-	}
+  requireBinary();
+  const tmp = path.join(
+    os.tmpdir(),
+    `llts_test_${Date.now()}_${Math.random().toString(36).slice(2)}.lls`,
+  );
+  fs.writeFileSync(tmp, ensureMain(source), "utf-8");
+  try {
+    const result = spawnSync([ENTRY, "run", tmp], {
+      cwd: ROOT,
+      env: { ...process.env, ...env },
+    });
+    const stdout = result.stdout.toString();
+    const stderr = result.stderr.toString();
+    const allLines = stdout.split(/\r?\n/);
+    while (allLines.length > 0 && allLines[allLines.length - 1] === "") {
+      allLines.pop();
+    }
+    return {
+      stdout,
+      stderr,
+      exitCode: result.exitCode ?? 1,
+      lines: allLines,
+    };
+  } finally {
+    fs.unlinkSync(tmp);
+  }
 }
 
 /** Compile and run inline source with custom CLI flags. */
-export function runSourceWithFlags(
-	source: string,
-	flags: string[],
-): RunResult {
-	requireBinary();
-	const tmp = path.join(
-		os.tmpdir(),
-		`llts_test_${Date.now()}_${Math.random().toString(36).slice(2)}.lls`,
-	);
-	fs.writeFileSync(tmp, ensureMain(source), "utf-8");
-	try {
-		const result = spawnSync([ENTRY, "run", ...flags, tmp], {
-			cwd: ROOT,
-		});
-		const stdout = result.stdout.toString();
-		const stderr = result.stderr.toString();
-		const allLines = stdout.split(/\r?\n/);
-		while (allLines.length > 0 && allLines[allLines.length - 1] === "") {
-			allLines.pop();
-		}
-		return {
-			stdout,
-			stderr,
-			exitCode: result.exitCode ?? 1,
-			lines: allLines,
-		};
-	} finally {
-		fs.unlinkSync(tmp);
-	}
+export function runSourceWithFlags(source: string, flags: string[]): RunResult {
+  requireBinary();
+  const tmp = path.join(
+    os.tmpdir(),
+    `llts_test_${Date.now()}_${Math.random().toString(36).slice(2)}.lls`,
+  );
+  fs.writeFileSync(tmp, ensureMain(source), "utf-8");
+  try {
+    const result = spawnSync([ENTRY, "run", ...flags, tmp], {
+      cwd: ROOT,
+    });
+    const stdout = result.stdout.toString();
+    const stderr = result.stderr.toString();
+    const allLines = stdout.split(/\r?\n/);
+    while (allLines.length > 0 && allLines[allLines.length - 1] === "") {
+      allLines.pop();
+    }
+    return {
+      stdout,
+      stderr,
+      exitCode: result.exitCode ?? 1,
+      lines: allLines,
+    };
+  } finally {
+    fs.unlinkSync(tmp);
+  }
 }
 
 /**
@@ -220,55 +226,55 @@ export function runSourceWithFlags(
  * `["build", "--native", file]`). For subcommands other than `run`.
  */
 export function runCli(args: string[]): RunResult {
-	requireBinary();
-	const result = spawnSync([ENTRY, ...args], {
-		cwd: ROOT,
-	});
-	const stdout = result.stdout.toString();
-	const stderr = result.stderr.toString();
-	const allLines = stdout.split(/\r?\n/);
-	while (allLines.length > 0 && allLines[allLines.length - 1] === "") {
-		allLines.pop();
-	}
-	return {
-		stdout,
-		stderr,
-		exitCode: result.exitCode ?? 1,
-		lines: allLines,
-	};
+  requireBinary();
+  const result = spawnSync([ENTRY, ...args], {
+    cwd: ROOT,
+  });
+  const stdout = result.stdout.toString();
+  const stderr = result.stderr.toString();
+  const allLines = stdout.split(/\r?\n/);
+  while (allLines.length > 0 && allLines[allLines.length - 1] === "") {
+    allLines.pop();
+  }
+  return {
+    stdout,
+    stderr,
+    exitCode: result.exitCode ?? 1,
+    lines: allLines,
+  };
 }
 
 /** Assert the run succeeded (exit 0) and produced exactly the expected output lines. */
 export function expectOutput(result: RunResult, expected: string[]) {
-	if (result.exitCode !== 0) {
-		throw new Error(
-			`Expected exit 0, got ${result.exitCode}.\nstderr: ${result.stderr}\nstdout: ${result.stdout}`,
-		);
-	}
-	for (let i = 0; i < expected.length; i++) {
-		const line = result.lines[i];
-		const want = expected[i];
-		if (line !== want) {
-			throw new Error(
-				`Output line ${i + 1} mismatch:\n  expected: ${JSON.stringify(want)}\n  got:      ${JSON.stringify(line)}\nFull output:\n${result.stdout}`,
-			);
-		}
-	}
+  if (result.exitCode !== 0) {
+    throw new Error(
+      `Expected exit 0, got ${result.exitCode}.\nstderr: ${result.stderr}\nstdout: ${result.stdout}`,
+    );
+  }
+  for (let i = 0; i < expected.length; i++) {
+    const line = result.lines[i];
+    const want = expected[i];
+    if (line !== want) {
+      throw new Error(
+        `Output line ${i + 1} mismatch:\n  expected: ${JSON.stringify(want)}\n  got:      ${JSON.stringify(line)}\nFull output:\n${result.stdout}`,
+      );
+    }
+  }
 }
 
 /** Assert the run failed (non-zero exit) and stderr/stdout contains the given message. */
 export function expectError(result: RunResult, containing: string) {
-	if (result.exitCode === 0) {
-		throw new Error(
-			`Expected a non-zero exit but process succeeded.\nstdout: ${result.stdout}`,
-		);
-	}
-	const combined = result.stderr + result.stdout;
-	if (!combined.includes(containing)) {
-		throw new Error(
-			`Expected error containing ${JSON.stringify(containing)}\nbut got:\n${combined}`,
-		);
-	}
+  if (result.exitCode === 0) {
+    throw new Error(
+      `Expected a non-zero exit but process succeeded.\nstdout: ${result.stdout}`,
+    );
+  }
+  const combined = result.stderr + result.stdout;
+  if (!combined.includes(containing)) {
+    throw new Error(
+      `Expected error containing ${JSON.stringify(containing)}\nbut got:\n${combined}`,
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -292,18 +298,20 @@ pub @func main() {
 `;
 
 /** Write `NATIVE_PROGRAM` into a fresh temp dir, run `fn`, always clean up. */
-export function withNativeProgram(fn: (sourcePath: string, dir: string) => void) {
-	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "llts_native_build_"));
-	const sourcePath = path.join(dir, "prog.lls");
-	fs.writeFileSync(sourcePath, NATIVE_PROGRAM, "utf-8");
-	try {
-		fn(sourcePath, dir);
-	} finally {
-		fs.rmSync(dir, { recursive: true, force: true });
-	}
+export function withNativeProgram(
+  fn: (sourcePath: string, dir: string) => void,
+) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "llts_native_build_"));
+  const sourcePath = path.join(dir, "prog.lls");
+  fs.writeFileSync(sourcePath, NATIVE_PROGRAM, "utf-8");
+  try {
+    fn(sourcePath, dir);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 /** `.llts_native_*.zig` staging files left behind in the repo root (must be none). */
 export function nativeStagedLeftovers(): string[] {
-	return fs.readdirSync(ROOT).filter((n) => n.startsWith(".llts_native_"));
+  return fs.readdirSync(ROOT).filter((n) => n.startsWith(".llts_native_"));
 }
