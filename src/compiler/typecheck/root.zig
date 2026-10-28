@@ -992,6 +992,41 @@ fn resolveCalleeName(state: *state_mod.CompilerState, call: *const ast.Call) ?[]
     return null;
 }
 
+/// `lhs |> f(a)` typechecks as the call `f(lhs, a)`: the left operand is the
+/// callee's first argument, so arity, argument types, and the result type all
+/// come from the callee's signature.
+fn inferPipe(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, b: *const ast.Binary) TypecheckError!ir.Type {
+    const right = b.right;
+    const callee: *ast.Node = if (right.* == .call) right.call.callee else right;
+    const explicit: []const *ast.Node = if (right.* == .call) right.call.args else &.{};
+    const args = try ta.allocator.alloc(*ast.Node, explicit.len + 1);
+    args[0] = b.left;
+    @memcpy(args[1..], explicit);
+    const synth = ast.Call{ .callee = callee, .args = args, .loc = right.loc() };
+    try checkPipeTarget(state, env, ta, &synth);
+    return try inferCall(state, env, ta, right, &synth);
+}
+
+/// A pipe target must be callable: literals, fields, and plain values are
+/// rejected here instead of crashing the VM with "Cannot call <value>".
+/// Methods and module exports resolve through the call machinery itself, so
+/// only plain values are type-checked as values.
+fn checkPipeTarget(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, c: *const ast.Call) TypecheckError!void {
+    if (c.callee.* == .member) {
+        const is_static = (path.tryResolveStaticPath(state, c.callee) catch null) != null;
+        if (is_static) {
+            // A module export: a function is callable, anything else isn't.
+            if (resolveCalleeName(state, c)) |name| {
+                if (state.functions.contains(name)) return;
+            }
+        } else if (try resolveMethodCallee(state, env, ta, c)) |_| return;
+    }
+    const target = ir.peelDefined(try inferExpr(state, env, ta, c.callee));
+    if (target == .unknown or target == .func) return;
+    const d = try ownDisplay(state, target);
+    return compiler_errors.compileFailFmt(state, "Pipe target must be a function, got '{s}'", .{d});
+}
+
 fn noteDiag(state: *state_mod.CompilerState, node: *ast.Node) void {
     const loc = node.loc();
     if (loc.line > 0) state.diag_line = loc.line;
@@ -1165,6 +1200,7 @@ fn inferExprInner(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, 
             break :blk t;
         },
         .binary => |b| blk: {
+            if (std.mem.eql(u8, b.operator, "|>")) break :blk try inferPipe(state, env, ta, &b);
             if (std.mem.eql(u8, b.operator, "==") or std.mem.eql(u8, b.operator, "!=")) {
                 if (intrinsics.isTypeValueNode(state, env, b.left) or intrinsics.isTypeValueNode(state, env, b.right)) {
                     try checkTypeComparison(state, env, ta, b);

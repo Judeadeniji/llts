@@ -230,34 +230,18 @@ fn finishCall(state: *CompilerState, addr: ?u32, argc: u8) !void {
     try emit.emitByte(state, argc);
 }
 
+/// `lhs |> f(a)` compiles as the call `f(lhs, a)`: the left operand is the
+/// callee's first argument. Delegating to `compileCall` keeps pipes on the
+/// same path as ordinary calls (methods, module exports, generics, cast sugar).
 pub fn compilePipe(state: *CompilerState, bin: *const ast.Binary) !void {
-    if (bin.right.* == .call) {
-        const c = &bin.right.call;
-        // Build a synthetic call: callee(left, ...args)
-        if (try resolveCalleeName(state, c.callee)) |name| {
-            if (state.functions.getPtr(name)) |def| {
-                const argc: u8 = @intCast(c.args.len + 1);
-                if (needsDynamicCall(def.address)) {
-                    try emit.emitNameGet(state, .OP_GET_FUNCTION, name);
-                }
-                try expr.compileExpression(state, bin.left);
-                for (c.args) |arg| try expr.compileExpression(state, arg);
-                try finishCall(state, def.address, argc);
-                return;
-            }
-        }
-        try expr.compileExpression(state, c.callee);
-        try expr.compileExpression(state, bin.left);
-        for (c.args) |arg| try expr.compileExpression(state, arg);
-        try emit.emitOp(state, .OP_CALL);
-        try emit.emitByte(state, @intCast(c.args.len + 1));
-        return;
-    }
-
-    try expr.compileExpression(state, bin.right);
-    try expr.compileExpression(state, bin.left);
-    try emit.emitOp(state, .OP_CALL);
-    try emit.emitByte(state, 1);
+    const right = bin.right;
+    const callee: *ast.Node = if (right.* == .call) right.call.callee else right;
+    const explicit: []const *ast.Node = if (right.* == .call) right.call.args else &.{};
+    const args = try state.allocator.alloc(*ast.Node, explicit.len + 1);
+    args[0] = bin.left;
+    @memcpy(args[1..], explicit);
+    const c = ast.Call{ .callee = callee, .args = args, .loc = right.loc() };
+    try compileCall(state, &c, right);
 }
 
 fn resolveCalleeName(state: *CompilerState, callee: *ast.Node) !?[]const u8 {
