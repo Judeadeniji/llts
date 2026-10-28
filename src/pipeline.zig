@@ -10,6 +10,7 @@ const builtins = @import("vm/builtins/root.zig");
 const zig_backend = @import("compiler/codegen/root.zig");
 const print_fmt = @import("vm/builtins/print.zig");
 const report = @import("errors/report.zig");
+const diag = @import("errors/diag.zig");
 
 pub const RunOptions = struct {
     debug: bool = true,
@@ -43,6 +44,11 @@ pub const EmitZigOptions = struct {
     pub const EmitMode = enum {
         bin,
         asm_code,
+        llvm_ir,
+        llvm_bc,
+        c_header,
+        docs,
+        implib,
         zig_source,
     };
 };
@@ -194,9 +200,17 @@ pub fn emitZigCode(
 /// invoking `zig build-exe`.
 ///
 /// The full front half (scan → parse → strict typecheck → emit) runs here, so
-/// soundness is enforced at the native entry point even before Phase 4 lands.
+/// soundness is enforced at the native entry point before LLVM is invoked.
 ///
-/// Phase 4 implementation pending — returns NotImplemented after emission.
+/// The emitted unit is staged inside the current directory and deleted after
+/// the build: zig's root module path is the directory of the root source file,
+/// and the emitter resolves the runtime `@import` against the cwd, so the two
+/// only overlap when the staged file lives under the cwd.
+///
+/// Every `emit_mode` maps one-to-one onto a `zig build-exe` `-femit-*`
+/// artifact flag (bin, asm, llvm-ir, llvm-bc, h, docs, implib). `zig_source`
+/// never reaches here (`build --emit-zig` handles source output without
+/// invoking zig).
 pub fn compileNativeBinary(
     allocator: std.mem.Allocator,
     path: []const u8,
@@ -209,8 +223,88 @@ pub fn compileNativeBinary(
 
     try emitZigCode(allocator, path, source, out.writer(allocator), options);
 
-    _ = out_binary_path;
-    // TODO Phase 4: write `out.items` to a temp file and spawn
-    //   `zig build-exe <tmp> -Mruntime=… -O <zig_optimize> -femit-bin=<out_binary_path>`
-    return error.NotImplemented;
+    switch (options.emit_mode) {
+        .bin, .asm_code, .llvm_ir, .llvm_bc, .c_header, .docs, .implib => {},
+        .zig_source => {
+            std.debug.print("error: `build --native` cannot output Zig source; use `llts emit-zig`\n", .{});
+            diag.markEmitted();
+            return error.UnsupportedEmitMode;
+        },
+    }
+
+    const tmp_name = try std.fmt.allocPrint(
+        allocator,
+        ".llts_native_{d}.zig",
+        .{std.time.milliTimestamp()},
+    );
+    defer allocator.free(tmp_name);
+    try std.fs.cwd().writeFile(.{ .sub_path = tmp_name, .data = out.items });
+    defer std.fs.cwd().deleteFile(tmp_name) catch {};
+
+    var args: std.ArrayList([]const u8) = .empty;
+    defer args.deinit(allocator);
+
+    var out_flag_buf: [std.fs.max_path_bytes + 32]u8 = undefined;
+
+    try args.append(allocator, options.zig_bin);
+    try args.append(allocator, "build-exe");
+    if (options.target) |target| {
+        try args.append(allocator, "-target");
+        try args.append(allocator, target);
+    }
+    if (options.zig_optimize) |mode| {
+        try args.append(allocator, "-O");
+        try args.append(allocator, mode);
+    }
+    // One artifact per invocation. `-fllvm` is required where the default
+    // self-hosted x86 backend has no printer (asm) and for the artifacts
+    // that zig documents as requiring LLVM extensions (llvm-ir, llvm-bc).
+    const Spec = struct { kind: []const u8, no_bin: bool, llvm: bool };
+    const spec: Spec = switch (options.emit_mode) {
+        .bin => .{ .kind = "emit-bin", .no_bin = false, .llvm = false },
+        .asm_code => .{ .kind = "emit-asm", .no_bin = true, .llvm = true },
+        .llvm_ir => .{ .kind = "emit-llvm-ir", .no_bin = true, .llvm = true },
+        .llvm_bc => .{ .kind = "emit-llvm-bc", .no_bin = true, .llvm = true },
+        .c_header => .{ .kind = "emit-h", .no_bin = true, .llvm = false },
+        .docs => .{ .kind = "emit-docs", .no_bin = true, .llvm = false },
+        .implib => .{ .kind = "emit-implib", .no_bin = true, .llvm = false },
+        .zig_source => unreachable,
+    };
+    if (spec.no_bin) try args.append(allocator, "-fno-emit-bin");
+    if (spec.llvm) try args.append(allocator, "-fllvm");
+    try args.append(allocator, try std.fmt.bufPrint(&out_flag_buf, "-f{s}={s}", .{ spec.kind, out_binary_path }));
+    try args.append(allocator, "-lc");
+    for (options.zig_args) |extra| try args.append(allocator, extra);
+    try args.append(allocator, tmp_name);
+
+    var child = std.process.Child.init(args.items, allocator);
+    child.stdout_behavior = .Ignore;
+    child.stderr_behavior = .Pipe;
+    child.spawn() catch |err| {
+        std.debug.print("error: failed to run '{s}': {s} (set --zig-bin or LLTS_ZIG_BIN)\n", .{
+            options.zig_bin,
+            @errorName(err),
+        });
+        diag.markEmitted();
+        return error.NativeBuildFailed;
+    };
+    const zig_stderr = child.stderr.?.readToEndAlloc(allocator, 8 * 1024 * 1024) catch {
+        _ = child.wait() catch {};
+        std.debug.print("error: failed to read zig build output\n", .{});
+        diag.markEmitted();
+        return error.NativeBuildFailed;
+    };
+    defer allocator.free(zig_stderr);
+    const term = child.wait() catch |err| {
+        std.debug.print("error: waiting for zig failed: {s}\n", .{@errorName(err)});
+        diag.markEmitted();
+        return error.NativeBuildFailed;
+    };
+    switch (term) {
+        .Exited => |code| if (code == 0) return,
+        else => {},
+    }
+    if (zig_stderr.len > 0) std.debug.print("{s}", .{zig_stderr});
+    diag.markEmitted();
+    return error.NativeBuildFailed;
 }

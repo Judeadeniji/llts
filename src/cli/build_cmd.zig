@@ -11,9 +11,10 @@ pub fn execute(ctx: zli.CommandContext) !void {
     const flag_emit_bin = ctx.flag("emit-bin", bool);
     const flag_emit_zig = ctx.flag("emit-zig", bool);
     const flag_emit_asm = ctx.flag("emit-asm", bool);
+    const emit_kind = ctx.flag("emit", []const u8);
     _ = ctx.flag("emit-bytecode", bool);
 
-    const is_native = flag_native or flag_emit_bin or flag_emit_asm;
+    const is_native = flag_native or flag_emit_bin or flag_emit_asm or emit_kind.len > 0;
     const is_emit_zig = flag_emit_zig;
 
     // Native targets and Zig emission require strict mode by default.
@@ -47,7 +48,12 @@ pub fn execute(ctx: zli.CommandContext) !void {
             ctx.allocator.free(zig_args);
         }
 
-        const emit_mode: llts.pipeline.EmitZigOptions.EmitMode = if (flag_emit_asm)
+        const emit_mode: llts.pipeline.EmitZigOptions.EmitMode = if (emit_kind.len > 0)
+            parseEmitKind(emit_kind) orelse common.failExit(
+                "Unknown --emit kind '{s}' (expected bin, asm, llvm-ir, llvm-bc, h, docs, implib)",
+                .{emit_kind},
+            )
+        else if (flag_emit_asm)
             .asm_code
         else
             .bin;
@@ -70,4 +76,25 @@ pub fn execute(ctx: zli.CommandContext) !void {
         const out_path = if (out_val.len > 0) out_val else "out.llb";
         try pipeline.compileToFile(ctx.allocator, file, release, strict, out_path, comptime_iters);
     }
+}
+
+fn parseEmitKind(kind: []const u8) ?llts.pipeline.EmitZigOptions.EmitMode {
+    const Mode = llts.pipeline.EmitZigOptions.EmitMode;
+    const entry = struct {
+        name: []const u8,
+        mode: Mode,
+    };
+    const kinds = [_]entry{
+        .{ .name = "bin", .mode = .bin },
+        .{ .name = "asm", .mode = .asm_code },
+        .{ .name = "llvm-ir", .mode = .llvm_ir },
+        .{ .name = "llvm-bc", .mode = .llvm_bc },
+        .{ .name = "h", .mode = .c_header },
+        .{ .name = "docs", .mode = .docs },
+        .{ .name = "implib", .mode = .implib },
+    };
+    for (kinds) |k| {
+        if (std.mem.eql(u8, kind, k.name)) return k.mode;
+    }
+    return null;
 }

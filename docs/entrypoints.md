@@ -30,7 +30,7 @@ The CLI is built with [zli](https://github.com/xcaeser/zli) and uses a modular a
 | `-m, --max-memory` | — | yes | — | — | — | — | Max memory slots (default 1048576, env `LLTS_MAX_MEMORY`) |
 | `-o, --output` | — | — | yes | yes | yes | — | Output file path |
 
-Native-only flags on `build --native`: `--optimize/-O` (Debug, ReleaseFast, ReleaseSafe, ReleaseSmall), `--target` (triple), `--emit`/`--emit-zig`/`--emit-bin`/`--emit-asm`, `--zig-bin`, `--zig-opt`, `--zig-args`, `--runtime-path` (see `src/cli/flags.zig`).
+Native-only flags on `build --native`: `--optimize/-O` (Debug, ReleaseFast, ReleaseSafe, ReleaseSmall), `--target` (triple), `--emit <kind>` (one of `bin`, `asm`, `llvm-ir`, `llvm-bc`, `h`, `docs`, `implib` — each maps onto the matching `zig build-exe -femit-*` flag and implies `--native`), plus the legacy booleans `--emit-bin`/`--emit-asm` (and `--emit-zig`, handled without invoking zig), `--zig-bin`, `--zig-opt`, `--zig-args`, `--runtime-path` (see `src/cli/flags.zig`).
 
 Program arguments: trailing positionals after the source path are forwarded as `os.args()[1..]`. `os.args()[0]` is always the source path.
 
@@ -89,7 +89,7 @@ The native backend branches off after the parser, before bytecode emission:
 1. **Scan → Parse** (same phases 1–2 as the VM path).
 2. **Strict analysis:** `compiler.analyze` runs with `EmitZigOptions.strict`, which **defaults to `true`** — native compilation assumes strict soundness (Core Principle #1 in [native-backend.md](native-backend.md)); callers may only opt out by passing `false` explicitly.
 3. **Emission:** `zig_backend.emitRuntimeZig` lowers the analyzed, typed AST to a monolithic runtime-driving Zig unit (`src/compiler/codegen/emitter/`).
-4. **Link (Phase 4, pending):** `compileNativeBinary` will spawn `zig build-exe <tmp> -O <mode> -femit-bin=<out>`; today it runs steps 1–3 for their soundness checks and then returns `error.NotImplemented`.
+4. **Link:** `compileNativeBinary` stages the emitted unit as `.llts_native_<timestamp>.zig` in the cwd (zig's root module path is the root file's directory, and the emitter resolves the runtime `@import` against the cwd), spawns `zig build-exe -lc` with a single artifact flag — `-femit-bin=<out>` by default; `--emit=<kind>`/`--emit-asm` select the matching `-femit-*` flag instead (`-fno-emit-bin`, plus `-fllvm` for `asm`/`llvm-ir`/`llvm-bc`) — forwarding `-O`, `-target`, and `--zig-args`, and deletes the staged file afterwards. On failure, zig's stderr is passed through and `error.NativeBuildFailed` is returned.
 
 ## Public API (`src/root.zig`)
 

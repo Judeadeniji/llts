@@ -219,10 +219,11 @@ Behavior:
    ```
 
 #### `src/pipeline.zig`
-1. Implement `emitZigCode(allocator, path, source, out_path, options)`.
-2. Implement `compileNativeBinary(allocator, path, source, out_binary_path, options)`:
-   - Emits the runtime Zig code to a cached / temporary file.
-   - Spawns `zig build-exe <temp.zig> -Mruntime=<path_to_runtime> -O ReleaseFast -femit-bin=<out_binary_path>`.
+1. `emitZigCode(allocator, path, source, writer, options)`: scan → parse → strict `compiler.analyze` → `emitRuntimeZig` into any writer.
+2. `compileNativeBinary(allocator, path, source, out_binary_path, options)`:
+   - Emits the runtime Zig code and stages it as `.llts_native_<timestamp>.zig` in the cwd — zig's root module path is the root file's directory, and the emitter resolves the runtime `@import` against the cwd, so the staged file must live under it. The staged file is deleted after the build.
+   - Spawns `zig build-exe <temp.zig> -lc` with one `-femit-*` artifact flag selected by the emit mode: `-femit-bin=<out>` (default), or via `--emit=<kind>`/`--emit-asm` any of `emit-asm`, `emit-llvm-ir`, `emit-llvm-bc`, `emit-h`, `emit-docs`, `emit-implib` (each with `-fno-emit-bin`, and `-fllvm` where the self-hosted backend has no printer — asm — or zig requires LLVM extensions — llvm-ir/llvm-bc). `-O <mode>` (`--optimize`/`--release`), `-target <triple>`, and any `--zig-args` are forwarded.
+   - On nonzero exit (or a failed spawn), zig's stderr is printed, the `diag` API is marked (so the CLI does not double-report), and `error.NativeBuildFailed` is returned.
 
 #### `src/compiler/llvm/root.zig`
 Cleanly remove the inactive LLVM stub module.
@@ -256,10 +257,10 @@ Cleanly remove the inactive LLVM stub module.
    - Remaining: labeled block values, `@errdefer`, error-union values (`?`, `error(...)`, `@isError`), `@new`/`@addrOf`, and struct printing.
    - Enforce RAII frame watermark cleanup in all emitted functions.
 
-4. **Phase 4: Full Native Compilation (`llts build --native`)**
-   - Implement subprocess invocation of `zig build-exe` in `src/pipeline.zig`.
-   - Support `-O ReleaseFast` and `-O Debug`.
-   - Verify with existing examples (`examples/hello-world.lls`, `examples/functions.lls`, `examples/test-std.lls`).
+4. **Phase 4: Full Native Compilation (`llts build --native`)** — implemented
+   - `compileNativeBinary` in `src/pipeline.zig` emits the runtime unit, stages it in the cwd, and spawns `zig build-exe` with the `-femit-*` flag for the selected artifact (`bin`, `asm`, `llvm-ir`, `llvm-bc`, `h`, `docs`, `implib` via `--emit=<kind>`); the staged file is removed afterwards.
+   - Supports `-O Debug` / `-O ReleaseFast` / `--target` / `--zig-bin` / `--zig-args` passthrough; zig's stderr surfaces on failure as `error.NativeBuildFailed`.
+   - Verified end-to-end by `tests/57_native_build.test.ts` (binary-vs-VM stdout/exit-code parity, asm output, llvm-ir/docs emission, implib Windows-only rejection, unknown-kind validation, staging cleanup).
 
 5. **Phase 5: Conformance Testing & Parity**
    - Run the Bun test suite across both the bytecode VM runner and the native binary runner to ensure 100% output and error parity.
