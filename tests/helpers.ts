@@ -270,3 +270,40 @@ export function expectError(result: RunResult, containing: string) {
 		);
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Native-build pipeline fixtures (tests/57.*)
+// ---------------------------------------------------------------------------
+
+/** Phase 2 + @if subset that the native emitter lowers at parity with the VM. */
+export const NATIVE_PROGRAM = `
+@func dbl(a: int): int { return a * 2; }
+@func add(a: int, b: int): int { return a + b; }
+@func isEven(a: int): bool { return a % 2 == 0; }
+
+pub @func main() {
+	print(21 |> dbl);
+	print(10 |> add(5));
+	@if (4 |> isEven) {
+		print("even");
+	}
+	print("done");
+}
+`;
+
+/** Write `NATIVE_PROGRAM` into a fresh temp dir, run `fn`, always clean up. */
+export function withNativeProgram(fn: (sourcePath: string, dir: string) => void) {
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "llts_native_build_"));
+	const sourcePath = path.join(dir, "prog.lls");
+	fs.writeFileSync(sourcePath, NATIVE_PROGRAM, "utf-8");
+	try {
+		fn(sourcePath, dir);
+	} finally {
+		fs.rmSync(dir, { recursive: true, force: true });
+	}
+}
+
+/** `.llts_native_*.zig` staging files left behind in the repo root (must be none). */
+export function nativeStagedLeftovers(): string[] {
+	return fs.readdirSync(ROOT).filter((n) => n.startsWith(".llts_native_"));
+}

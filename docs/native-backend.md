@@ -260,7 +260,7 @@ Cleanly remove the inactive LLVM stub module.
 4. **Phase 4: Full Native Compilation (`llts build --native`)** — implemented
    - `compileNativeBinary` in `src/pipeline.zig` emits the runtime unit, stages it in the cwd, and spawns `zig build-exe` with the `-femit-*` flag for the selected artifact (`bin`, `asm`, `llvm-ir`, `llvm-bc`, `h`, `docs`, `implib` via `--emit=<kind>`); the staged file is removed afterwards.
    - Supports `-O Debug` / `-O ReleaseFast` / `--target` / `--zig-bin` / `--zig-args` passthrough; zig's stderr surfaces on failure as `error.NativeBuildFailed`.
-   - Verified end-to-end by `tests/57_native_build.test.ts` (binary-vs-VM stdout/exit-code parity, asm output, llvm-ir/docs emission, implib Windows-only rejection, unknown-kind validation, staging cleanup).
+   - Verified end-to-end by `tests/57.1_native_binary.test.ts` (binary-vs-VM stdout/exit-code parity, staging cleanup), `tests/57.2_native_artifacts.test.ts` (asm/llvm-ir/docs emission), and `tests/57.3_native_emit_errors.test.ts` (implib Windows-only rejection, unknown-kind validation).
 
 5. **Phase 5: Conformance Testing & Parity**
    - Run the Bun test suite across both the bytecode VM runner and the native binary runner to ensure 100% output and error parity.
