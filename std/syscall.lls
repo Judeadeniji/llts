@@ -4,9 +4,9 @@
 # only when you need a raw trap. SYS_* numbers come from the host kernel ABI.
 #
 # Result convention: a wrapper returns the syscall result on success, or a
-# runtime error value (with `.code` / `.payload`) on failure. Because the error
-# channel is dynamic, results are typed `unknown` — inspect with `@isError`
-# and narrow with `@as` once the success path is known.
+# runtime error value whose `.message` is the host error name (e.g. "FileNotFound")
+# on failure. Because the error channel is dynamic, results are typed `unknown`
+# — inspect with `@isError` and narrow with `@as` once the success path is known.
 
 @const $buffer = @import("./buffer.lls");
 

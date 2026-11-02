@@ -812,6 +812,6 @@ pub @func assert(condition) {
     @if (condition) {
         return null;
     } @else {
-        return error("AssertFailed", condition);
+        return error("AssertFailed");
     }
 }

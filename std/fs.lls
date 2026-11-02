@@ -23,14 +23,14 @@ pub @struct Stat {
     @if (!@isError(err)) {
         return err;
     }
-    $name = err.payload;
+    $name = err.message;
     @switch (name) {
         "FileNotFound", "AccessDenied", "IsDir", "NotDir",
         "PathAlreadyExists", "FileBusy", "SharingViolation" => {
-            return error(name, path);
+            return error(name);
         }
         @else => {
-            return error("IoError", path);
+            return error("IoError");
         }
     }
 }

@@ -101,6 +101,5 @@ pub @func fprintln(file, ...args) {
 }
 
 pub @func errorf(format, ...args) {
-    $msg = __sprintf(format, args);
-    return error("Error", msg);
+    return error(__sprintf(format, args));
 }

@@ -213,7 +213,7 @@ pub @struct Writer {
 
 pub @func dial(network: string, raddr: string, priority: int, tag: string) {
     @if (priority < 0 || priority > (LOG_LOCAL7 | LOG_DEBUG)) {
-        return error("SyslogError", "log/syslog: invalid priority");
+        return error("SyslogError");
     }
     $t = tag;
     @if (len(t) == 0) {
