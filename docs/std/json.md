@@ -27,7 +27,7 @@ Returns a value representing the parsed JSON structure. The mapping from JSON ty
 - JSON Object -> `.module` (object with properties)
 
 **Errors:**
-If the JSON parsing fails, it throws a `JsonError` with the error description payload.
+If the JSON parsing fails, it throws an error with code `"JsonError"`.
 
 **Example:**
 ```javascript
@@ -58,7 +58,7 @@ Returns a string containing the serialized JSON representation of `val`.
 - Error values stored in arrays are serialized as the string `"[Error]"`.
 
 **Errors:**
-If serialization fails, it throws a `JsonError` with the corresponding error message payload.
+If serialization fails, it throws an error with code `"JsonError"`.
 
 **Example:**
 ```javascript

@@ -15,6 +15,9 @@ const err_mod = @import("err.zig");
 /// Wrapper used by emitted `print(@addrOf(x))` to render raw hex pointers.
 pub const Addr = struct { value: usize };
 
+/// Wrapper used by emitted `print(struct)` to render LLTS packed bytes.
+pub const Struct = struct { bytes: []const u8 };
+
 pub fn writeNull(out: *std.ArrayList(u8), alloc: std.mem.Allocator) !void {
     try out.appendSlice(alloc, "null");
 }
@@ -82,44 +85,10 @@ pub fn writeBytes(out: *std.ArrayList(u8), alloc: std.mem.Allocator, data: []con
     try out.append(alloc, ']');
 }
 
-/// `Error: <code>` with ` — <payload>` when present (VM error-arm parity).
+/// `Error: <code>` (VM error-arm parity).
 pub fn writeError(out: *std.ArrayList(u8), alloc: std.mem.Allocator, e: err_mod.Error) !void {
     try out.appendSlice(alloc, "Error: ");
-    try out.appendSlice(alloc, e.code);
-    switch (e.payload) {
-        .none => {},
-        .int => |n| {
-            try out.appendSlice(alloc, " — ");
-            try writeInt(out, alloc, n);
-        },
-        .float => |n| {
-            try out.appendSlice(alloc, " — ");
-            try writeFloat(out, alloc, n);
-        },
-        .boolean => |b| {
-            try out.appendSlice(alloc, " — ");
-            try writeBool(out, alloc, b);
-        },
-        .str => |s| {
-            try out.appendSlice(alloc, " — ");
-            try writeStr(out, alloc, s);
-        },
-        .agg => |a| {
-            try out.appendSlice(alloc, " — ");
-            switch (a.kind) {
-                .list => try out.appendSlice(alloc, "<list>"),
-                .map => try out.appendSlice(alloc, "<map>"),
-                .buffer => {
-                    var tmp: [32]u8 = undefined;
-                    const s = try std.fmt.bufPrint(&tmp, "<Buffer {d} bytes>", .{a.len});
-                    try out.appendSlice(alloc, s);
-                },
-                .module => try out.appendSlice(alloc, "<module>"),
-                .function => try out.appendSlice(alloc, "<fn>"),
-                .other => try out.appendSlice(alloc, "<ptr>"),
-            }
-        },
-    }
+    try out.appendSlice(alloc, e.message);
 }
 
 /// Array formatting (`writeArray` parity): empty → `[]`; an all-integer array
@@ -231,32 +200,14 @@ pub fn writeValue(out: *std.ArrayList(u8), alloc: std.mem.Allocator, v: anytype)
                 var tmp: [32]u8 = undefined;
                 const s = try std.fmt.bufPrint(&tmp, "0x{x}", .{v.value});
                 try out.appendSlice(alloc, s);
+            } else if (T == Struct) {
+                try writeBytes(out, alloc, v.bytes);
             } else {
                 @compileError("print: unsupported struct type " ++ @typeName(T));
             }
         },
         .@"union" => {
-            if (T == err_mod.Payload) {
-                switch (v) {
-                    .none => try writeNull(out, alloc),
-                    .int => |n| try writeInt(out, alloc, n),
-                    .float => |n| try writeFloat(out, alloc, n),
-                    .boolean => |b| try writeBool(out, alloc, b),
-                    .str => |s| try writeStr(out, alloc, s),
-                    .agg => |a| switch (a.kind) {
-                        .list => try out.appendSlice(alloc, "<list>"),
-                        .map => try out.appendSlice(alloc, "<map>"),
-                        .buffer => {
-                            var tmp: [32]u8 = undefined;
-                            const s = try std.fmt.bufPrint(&tmp, "<Buffer {d} bytes>", .{a.len});
-                            try out.appendSlice(alloc, s);
-                        },
-                        .module => try out.appendSlice(alloc, "<module>"),
-                        .function => try out.appendSlice(alloc, "<fn>"),
-                        .other => try out.appendSlice(alloc, "<ptr>"),
-                    },
-                }
-            } else if (comptime @hasField(T, "ok") and @hasField(T, "err") and
+            if (comptime @hasField(T, "ok") and @hasField(T, "err") and
                 @FieldType(T, "err") == err_mod.Error)
             {
                 switch (v) {

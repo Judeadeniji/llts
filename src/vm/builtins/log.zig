@@ -29,11 +29,6 @@ fn isErrorValue(vm: *VMState, v: Value) bool {
 /// Format an LLTS error for host logs (no redundant `Error:` prefix).
 fn writeErrorArg(vm: *VMState, out: *std.ArrayList(u8), p: i32) !void {
     try print_fmt.writeValue(vm, out, vm.slot(p).*);
-    const payload = vm.slot(p + 1).*;
-    if (payload != .null) {
-        try out.appendSlice(vm.allocator, " — ");
-        try print_fmt.writeValue(vm, out, payload);
-    }
 }
 
 fn writeLogArg(vm: *VMState, out: *std.ArrayList(u8), v: Value) !void {
@@ -60,17 +55,9 @@ fn logFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
         defer code_buf.deinit(vm.allocator);
         try print_fmt.writeValue(vm, &code_buf, vm.slot(p).*);
 
-        const payload = vm.slot(p + 1).*;
         // Scope stays empty: these lines are the *program's* log output, not a
-        // compiler subsystem, so they render as `ERROR: code` / `  payload: …`.
-        if (payload == .null) {
-            io_log.log(.err, "", "{s}", .{code_buf.items});
-        } else {
-            var pay_buf: std.ArrayList(u8) = .empty;
-            defer pay_buf.deinit(vm.allocator);
-            try print_fmt.writeValue(vm, &pay_buf, payload);
-            io_log.log(.err, "", "{s}\n  payload: {s}", .{ code_buf.items, pay_buf.items });
-        }
+        // compiler subsystem, so they render as `ERROR: code`.
+        io_log.log(.err, "", "{s}", .{code_buf.items});
         return .null;
     }
 
@@ -252,11 +239,8 @@ fn syslogDialFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     if (network.len == 0 or std.mem.eql(u8, network, "unix") or std.mem.eql(u8, network, "unixgram")) {
         if (raddr.len > 0) {
             const sock_type: u32 = if (std.mem.eql(u8, network, "unix")) std.posix.SOCK.STREAM else std.posix.SOCK.DGRAM;
-            if (connectUnix(raddr, sock_type)) |fd| {
-                return .{ .i64 = fd };
-            } else |err| {
-                return try util.makeErrorWithPayload(vm, "SyslogError", try util.writeSlice(vm, @errorName(err)));
-            }
+            const fd = connectUnix(raddr, sock_type) catch return try util.makeError(vm, "SyslogError");
+            return .{ .i64 = fd };
         }
         const paths = [_][]const u8{ "/dev/log", "/var/run/syslog", "/var/run/log" };
         for (paths) |p| {
@@ -267,7 +251,7 @@ fn syslogDialFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
                 return .{ .i64 = fd };
             } else |_| {}
         }
-        return try util.makeErrorWithPayload(vm, "SyslogError", try util.writeSlice(vm, "Unix syslog delivery error"));
+        return try util.makeError(vm, "SyslogError");
     }
 
     if (std.mem.eql(u8, network, "udp") or std.mem.eql(u8, network, "tcp")) {
@@ -281,21 +265,21 @@ fn syslogDialFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
         }
         const port = std.fmt.parseInt(u16, port_str, 10) catch 514;
         const sock_type: u32 = if (std.mem.eql(u8, network, "tcp")) std.posix.SOCK.STREAM else std.posix.SOCK.DGRAM;
-        const fd = std.posix.socket(std.posix.AF.INET, sock_type, 0) catch |err| {
-            return try util.makeErrorWithPayload(vm, "SyslogError", try util.writeSlice(vm, @errorName(err)));
+        const fd = std.posix.socket(std.posix.AF.INET, sock_type, 0) catch {
+            return try util.makeError(vm, "SyslogError");
         };
         errdefer std.posix.close(fd);
 
         const parsed_ip = std.net.Address.parseIp4(host, port) catch {
-            return try util.makeErrorWithPayload(vm, "SyslogError", try util.writeSlice(vm, "InvalidAddress"));
+            return try util.makeError(vm, "SyslogError");
         };
-        std.posix.connect(fd, &parsed_ip.any, parsed_ip.getOsSockLen()) catch |err| {
-            return try util.makeErrorWithPayload(vm, "SyslogError", try util.writeSlice(vm, @errorName(err)));
+        std.posix.connect(fd, &parsed_ip.any, parsed_ip.getOsSockLen()) catch {
+            return try util.makeError(vm, "SyslogError");
         };
         return .{ .i64 = fd };
     }
 
-    return try util.makeErrorWithPayload(vm, "SyslogError", try util.writeSlice(vm, "Unknown network"));
+    return try util.makeError(vm, "SyslogError");
 }
 
 pub fn register(vm: *VMState) !void {

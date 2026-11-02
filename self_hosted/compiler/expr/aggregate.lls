@@ -30,7 +30,7 @@ pub @func compileIndex(em: *state_mod.EmState, idx: *nodes.Index) {
         return;
     }
     @if (idx.index == null) {
-        return error("CompileError", "Expected index expression");
+        return error("CompileError");
     }
     expr.compileExpression(em, @as(*nodes.Node, idx.index))?;
     em.chunk.writeOp(opcode.OpCode.OP_GET_ARRAY);
@@ -51,7 +51,7 @@ pub @func compileTry(em: *state_mod.EmState, try_expr: *nodes.TryExpr) {
     $disp = typecheck.resolveType(em, try_expr.expression);
     @if (disp != null) {
         @if (typecheck.typeAllowsError(@as(string, disp)) == false) {
-            return error("CompileError", string.concat("'?' operator used on non-error-union type '", string.concat(@as(string, disp), "'")));
+            return error("CompileError");
         }
     }
     expr.compileExpression(em, try_expr.expression)?;
@@ -96,12 +96,12 @@ pub @func compileStructInit(em: *state_mod.EmState, init: *nodes.StructInit) {
 # `@new(allocator, Type | Foo{…} | […])` — allocate into a library Allocator (Arena).
 pub @func compileNew(em: *state_mod.EmState, c: *nodes.Call) {
     @if (list.len(c.args) != 2 && list.len(c.args) != 3) {
-        return error("CompileError", "@new expects (allocator, type_or_value) or (allocator, []T|string, length)");
+        return error("CompileError");
     }
     $value: *nodes.Node = @as(*nodes.Node, list.get(c.args, 1));
     @if (value.kind == common.NodeKind.StructInit) {
         @if (list.len(c.args) != 2) {
-            return error("CompileError", "@new struct literal takes (allocator, value)");
+            return error("CompileError");
         }
         $init: *nodes.StructInit = @as(*nodes.StructInit, value);
         $sd = resolveStructDef(em, init)?;
@@ -111,7 +111,7 @@ pub @func compileNew(em: *state_mod.EmState, c: *nodes.Call) {
     }
     @if (value.kind == common.NodeKind.ArrayLiteral) {
         @if (list.len(c.args) != 2) {
-            return error("CompileError", "@new array literal takes (allocator, value)");
+            return error("CompileError");
         }
         $arr: *nodes.ArrayLiteral = @as(*nodes.ArrayLiteral, value);
         emitArenaAllocArray(em, @as(*nodes.Node, list.get(c.args, 0)), null, list.len(arr.elements))?;
@@ -124,10 +124,10 @@ pub @func compileNew(em: *state_mod.EmState, c: *nodes.Call) {
             $text: string = @as(string, at.length_text);
             $length = string.parseInt(text, 10);
             @if (@isError(length)) {
-                return error("CompileError", string.concat("Invalid array length '", string.concat(text, "'")));
+                return error("CompileError");
             }
             @if (list.len(c.args) != 2) {
-                return error("CompileError", "@new([N]T) takes (allocator, [N]T) — length is in the type");
+                return error("CompileError");
             }
             @if (isByteElemType(at.elem)) {
                 emitArenaAllocBytes(em, @as(*nodes.Node, list.get(c.args, 0)), null, length)?;
@@ -137,7 +137,7 @@ pub @func compileNew(em: *state_mod.EmState, c: *nodes.Call) {
             }
         } @else {
             @if (list.len(c.args) != 3) {
-                return error("CompileError", "@new slice type needs a length: @new(allocator, []T, n)");
+                return error("CompileError");
             }
             @if (isByteElemType(at.elem)) {
                 emitArenaAllocBytes(em, @as(*nodes.Node, list.get(c.args, 0)), @as(*nodes.Node, list.get(c.args, 2)), null)?;
@@ -150,17 +150,17 @@ pub @func compileNew(em: *state_mod.EmState, c: *nodes.Call) {
     @if (value.kind == common.NodeKind.Primary) {
         $p: *nodes.Primary = @as(*nodes.Primary, value);
         @if (p.primary_kind != nodes.PrimaryKind.Identifier) {
-            return error("CompileError", "@new type must be a struct, string, or array type");
+            return error("CompileError");
         }
         @if (isStringyTypeName(p.name)) {
             @if (list.len(c.args) != 3) {
-                return error("CompileError", "@new string/[]byte needs a length: @new(allocator, string, n)");
+                return error("CompileError");
             }
             emitArenaAllocBytes(em, @as(*nodes.Node, list.get(c.args, 0)), @as(*nodes.Node, list.get(c.args, 2)), null)?;
             return;
         }
         @if (list.len(c.args) != 2) {
-            return error("CompileError", "@new struct type takes (allocator, Type)");
+            return error("CompileError");
         }
         $struct_name = p.name;
         @if (string.contains(struct_name, ".")) {
@@ -168,14 +168,14 @@ pub @func compileNew(em: *state_mod.EmState, c: *nodes.Call) {
         }
         $sd2 = state_mod.emFindStruct(em, struct_name);
         @if (sd2 == null) {
-            return error("CompileError", string.concat("@new unknown type '", string.concat(p.name, "'")));
+            return error("CompileError");
         }
         $def: *state_mod.EmStructDef = @as(*state_mod.EmStructDef, sd2);
         emitArenaAllocBytes(em, @as(*nodes.Node, list.get(c.args, 0)), null, def.size)?;
         zeroFillStruct(em, def)?;
         return;
     }
-    return error("CompileError", "@new expects a type, struct literal, or array literal");
+    return error("CompileError");
 }
 
 @func isStringyTypeName(name: string): bool {
@@ -243,7 +243,7 @@ pub @func emitArenaAllocBytes(em: *state_mod.EmState, allocator_expr: *nodes.Nod
         emitZeroForTypeName(em, p.name)?;
         return;
     }
-    return error("CompileError", "@new element type must be a simple named type");
+    return error("CompileError");
 }
 
 @func emitZeroForTypeName(em: *state_mod.EmState, name: string) {
@@ -277,7 +277,7 @@ pub @func emitArenaAllocBytes(em: *state_mod.EmState, allocator_expr: *nodes.Nod
 pub @func resolveStructDef(em: *state_mod.EmState, init: *nodes.StructInit) {
     $sn = typecheck.resolveStructName(em, init.type_expr);
     @if (sn == null) {
-        return error("CompileError", "Invalid struct initialization type");
+        return error("CompileError");
     }
     $struct_name: string = @as(string, sn);
     @if (string.contains(struct_name, ".")) {
@@ -285,7 +285,7 @@ pub @func resolveStructDef(em: *state_mod.EmState, init: *nodes.StructInit) {
     }
     $sdo = state_mod.emFindStruct(em, struct_name);
     @if (sdo == null) {
-        return error("CompileError", string.concat("Unknown struct: ", string.concat(@as(string, sn), "")));
+        return error("CompileError");
     }
     return @as(*state_mod.EmStructDef, sdo);
 }
@@ -305,7 +305,7 @@ pub @func resolveStructDef(em: *state_mod.EmState, init: *nodes.StructInit) {
         $field: *nodes.StructFieldInit = @as(*nodes.StructFieldInit, list.get(init.fields, fi));
         $offset = state_mod.emFieldIndex(struct_def, field.name);
         @if (offset < 0) {
-            return error("CompileError", string.concat("Unknown field ", field.name));
+            return error("CompileError");
         }
         $field_ty = list.get(struct_def.field_types, offset);
         $kind = layout.fieldKind(em, field_ty);
@@ -392,7 +392,7 @@ pub @func compileMember(em: *state_mod.EmState, mem: *nodes.Member, node: *nodes
     }
     $es: *state_mod.EmErrorSet = @as(*state_mod.EmErrorSet, ed);
     @if (errorSetHasVariant(es, variant.name) == false) {
-        return error("CompileError", string.concat("Unknown error member '", string.concat(variant.name, string.concat("' on '", string.concat(@as(string, esname), "'")))));
+        return error("CompileError");
     }
     # Code = member name (open `error("…")` uses the string message the same way).
     em.chunk.emitString(variant.name);
@@ -416,7 +416,7 @@ pub @func compileMember(em: *state_mod.EmState, mem: *nodes.Member, node: *nodes
     $en: *state_mod.EmEnumDef = @as(*state_mod.EmEnumDef, ed);
     $value = state_mod.emEnumVariantValue(en, variant.name);
     @if (value < 0) {
-        return error("CompileError", string.concat("Unknown enum variant '", string.concat(variant.name, string.concat("' on '", string.concat(@as(string, ename), "'")))));
+        return error("CompileError");
     }
     em.chunk.emitConstantInt(value);
     return true;

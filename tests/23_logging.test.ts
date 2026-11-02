@@ -99,7 +99,7 @@ pub @func main() {
     print(@isError(ok));
     $bad = slog.assert(false);
     print(@isError(bad));
-    print(bad.code);
+    print(bad.message);
 }
 `),
     ["false", "true", "AssertFailed"],
@@ -135,7 +135,7 @@ test("slog.err auto-detects error values", () => {
 @const $slog = @import("std/slog");
 pub @func main() {
     slog.err(error("boom"));
-    slog.err(error("FileNotFound", "missing.txt"));
+    slog.err(error("FileNotFound"));
     slog.err("plain string");
 }
 `,
@@ -150,11 +150,8 @@ pub @func main() {
   if (res.stderr.includes("Error: boom")) {
     throw new Error(`redundant Error: prefix:\n${res.stderr}`);
   }
-  if (
-    !res.stderr.includes("ERROR: FileNotFound") ||
-    !res.stderr.includes("payload: missing.txt")
-  ) {
-    throw new Error(`expected code + payload lines:\n${res.stderr}`);
+  if (!res.stderr.includes("ERROR: FileNotFound")) {
+    throw new Error(`expected error message line:\n${res.stderr}`);
   }
   if (!res.stderr.includes("ERROR: plain string")) {
     throw new Error(`expected plain string path:\n${res.stderr}`);

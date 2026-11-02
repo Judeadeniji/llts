@@ -21,7 +21,7 @@ fmt.println("Process completed:", true);
 
 ### General
 * `%v`: Default format for the value (strings unquoted, arrays formatted as `[1 2 3]`, maps as `map[k:v]`, structs as `{f1 f2}`).
-* `%+v`: Adds struct field names and detailed error payloads.
+* `%+v`: Adds struct field names.
 * `%#v`: Go/LLTS-syntax representation of the value (strings quoted, slices prefixed).
 * `%T`: Type of the value (`int`, `string`, `bool`, `float`, `[]byte`, `array`, `error`, etc.).
 * `%%`: Literal percent sign.

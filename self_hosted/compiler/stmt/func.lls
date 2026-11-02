@@ -53,7 +53,7 @@ pub @func compileFunction(em: *state_mod.EmState, node: *nodes.FunctionDecl, ast
     }
 
     @if (node.params.kind != common.NodeKind.Params) {
-        return error("EmitUnsupported", "function params malformed");
+        return error("EmitUnsupported");
     }
     $params: *nodes.Params = @as(*nodes.Params, node.params);
 
@@ -72,7 +72,7 @@ pub @func compileFunction(em: *state_mod.EmState, node: *nodes.FunctionDecl, ast
     }
 
     @if (node.body.kind != common.NodeKind.Block) {
-        return error("EmitUnsupported", "function body must be a block");
+        return error("EmitUnsupported");
     }
     $body: *nodes.Block = @as(*nodes.Block, node.body);
     @for (0..list.len(body.statements)) |si2| {

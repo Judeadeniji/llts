@@ -604,17 +604,6 @@ pub const Formatter = struct {
                     defer ebuf.deinit(self.vm.allocator);
                     var sub_fmt = Formatter.init(self.vm, &ebuf);
                     try sub_fmt.formatValue(self.vm.slot(p).*, 'v', depth + 1);
-                    const payload = self.vm.slot(p + 1).*;
-                    if (payload != .null) {
-                        if (self.flags.plus_v) {
-                            try ebuf.appendSlice(self.vm.allocator, " (payload: ");
-                            try sub_fmt.formatValue(payload, 'v', depth + 1);
-                            try ebuf.append(self.vm.allocator, ')');
-                        } else {
-                            try ebuf.appendSlice(self.vm.allocator, " — ");
-                            try sub_fmt.formatValue(payload, 'v', depth + 1);
-                        }
-                    }
                     try self.padBytes(ebuf.items);
                     return;
                 }

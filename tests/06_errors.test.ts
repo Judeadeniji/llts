@@ -392,11 +392,23 @@ print(final.message);
   );
 });
 
-test("error() rejects more than 2 arguments with a clear message", () => {
-  const res = runSource(`$e = error("a", "b", "c");`);
-  expectError(res, "at most 2 arguments");
+test("error() rejects a payload argument with a clear message", () => {
+  const res = runSource(`$e = error("a", "b");`);
+  expectError(res, "exactly 1 argument");
   if (!res.stderr.includes("at <compile>")) {
     throw new Error(`missing compile frame:\n${res.stderr}`);
+  }
+});
+
+test("errors expose only the message field", () => {
+  for (const field of ["payload", "code"]) {
+    expectError(
+      runSource(`
+$e = error("a");
+print(e.${field});
+`),
+      `Unknown error field '${field}'`,
+    );
   }
 });
 

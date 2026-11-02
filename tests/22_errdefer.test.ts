@@ -216,33 +216,14 @@ pub @func main() {
   );
 });
 
-test("error payloads: code, message, null and value", () => {
+test("errors carry a code and message", () => {
   expectOutput(
     runSource(`
-$e1 = error("CodeOnly");
-$e2 = error("WithPayload", 42);
-print(e1.code);
-print(e1.message);
-print(e1.payload);
-print(e2.code);
-print(e2.payload);
+$e = error("CodeOnly");
+print(e.message);
+print(e.message);
+print(@nameOf(e));
 `),
-    ["CodeOnly", "CodeOnly", "null", "WithPayload", "42"],
-  );
-});
-
-test("error payload can be a map", () => {
-  expectOutput(
-    runSource(`
-@const $map = @import("std/map");
-@const $mem = @import("std/mem");
-$arena = mem.create(0);
-$m = map.create(arena);
-map.set(m, "path", "/tmp/x");
-$e = error("FileNotFound", m);
-print(e.code);
-print(map.get(e.payload, "path"));
-`),
-    ["FileNotFound", "/tmp/x"],
+    ["CodeOnly", "CodeOnly", "CodeOnly"],
   );
 });

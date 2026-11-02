@@ -44,17 +44,17 @@ pub @func checkArity(intr: Intrinsic, name: string, got: int) {
     @switch (intr) {
         Intrinsic.import, Intrinsic.typeOf, Intrinsic.isError, Intrinsic.sizeOf, Intrinsic.nameOf => {
             @if (got != 1) {
-                return error("EmitUnsupported", "intrinsic arity");
+                return error("EmitUnsupported");
             }
         }
         Intrinsic.as => {
             @if (got != 2) {
-                return error("EmitUnsupported", "intrinsic arity");
+                return error("EmitUnsupported");
             }
         }
         Intrinsic.new => {
             @if (got < 2 || got > 3) {
-                return error("EmitUnsupported", "intrinsic arity");
+                return error("EmitUnsupported");
             }
         }
     }

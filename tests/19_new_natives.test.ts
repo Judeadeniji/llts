@@ -65,7 +65,7 @@ test("string: fromCharCode out of range is an error", () => {
     runSource(`
 @const $s = @import("std/string");
 print(@isError(s.fromCharCode(300)));
-print(s.fromCharCode(300).code);
+print(s.fromCharCode(300).message);
 print(@isError(s.fromCharCode(-1)));
 `),
     ["true", "InvalidCharCode", "true"],
@@ -394,11 +394,10 @@ test("fs: readFile missing path returns FileNotFound error", () => {
 @const $fs = @import("std/fs");
 $missing = fs.readFile("test_llts_no_such_file_xyz");
 print(@isError(missing));
-print(missing.code);
-print(missing.payload);
+print(missing.message);
 print(fs.exists("test_llts_no_such_file_xyz"));
 `),
-    ["true", "FileNotFound", "test_llts_no_such_file_xyz", "false"],
+    ["true", "FileNotFound", "false"],
   );
 });
 

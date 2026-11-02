@@ -63,7 +63,7 @@ pub @func compileExpression(em: *state_mod.EmState, node: *nodes.Node) {
             control.compileBlockValue(em, @as(*nodes.Block, node))?;
         }
         @else => {
-            return error("EmitUnsupported", "expr kind");
+            return error("EmitUnsupported");
         }
     }
 }

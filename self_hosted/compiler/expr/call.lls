@@ -28,7 +28,7 @@ pub @func compileCall(em: *state_mod.EmState, c: *nodes.Call, node: *nodes.Node)
         @if (string.startsWith(cal.name, "@")) {
             $intr = intrinsics.match(cal.name);
             @if (intr == null) {
-                return error("CompileError", string.concat("unknown intrinsic '", string.concat(cal.name, "'")));
+                return error("CompileError");
             }
             intrinsics.compile(em, intr, node, c)?;
             return;
@@ -85,7 +85,7 @@ pub @func compileCall(em: *state_mod.EmState, c: *nodes.Call, node: *nodes.Node)
                     $pp: *nodes.Primary = @as(*nodes.Primary, mem2.property);
                     prop_name = pp.name;
                 }
-                return error("CompileError", string.concat("'", string.concat(mod_name, string.concat("' has no export '", string.concat(prop_name, "'")))));
+                return error("CompileError");
             }
         }
         @if (emitNamedCall(em, n, c.args)) {
@@ -105,7 +105,7 @@ pub @func emitMethodCall(em: *state_mod.EmState, name: string, self_obj: *nodes.
     $argc = list.len(args) + 1;
     $fn_o = state_mod.emFindFunc(em, name);
     @if (fn_o == null) {
-        return error("CompileError", string.concat("Unknown method ", name));
+        return error("CompileError");
     }
     $fn: *state_mod.EmFunc = @as(*state_mod.EmFunc, fn_o);
     $addr: i64 = fn.address;

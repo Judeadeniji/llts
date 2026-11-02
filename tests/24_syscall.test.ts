@@ -62,15 +62,15 @@ syscall.close(fds[1]);
   );
 });
 
-test("syscall: open missing path is SyscallError", () => {
+test("syscall: open missing path returns the host error message", () => {
   expectOutput(
     runSource(`
 @const $syscall = @import("std/syscall");
 $err = syscall.open("/no/such/llts/path/xyz", syscall.O_RDONLY);
 print(@isError(err));
-print(err.code);
+print(err.message);
 `),
-    ["true", "SyscallError"],
+    ["true", "FileNotFound"],
   );
 });
 

@@ -651,11 +651,6 @@ pub fn execute(vm: *VMState, start_ip: usize) RuntimeError!void {
                 try heap.makeError(vm);
                 sp = vm.sp;
             },
-            .OP_MAKE_ERROR_PAYLOAD => {
-                syncVM(vm, sp);
-                try heap.makeErrorPayload(vm);
-                sp = vm.sp;
-            },
             .OP_IS_ERROR => {
                 syncVM(vm, sp);
                 try heap.isError(vm);
@@ -823,24 +818,12 @@ fn getProperty(vm: *VMState, const_idx: u16) RuntimeError!void {
     });
     const obj = stack.pop(vm);
     // error.message → heap slot at ptr
-    if (std.mem.eql(u8, name, "message") or std.mem.eql(u8, name, "code")) {
+    if (std.mem.eql(u8, name, "message")) {
         switch (obj) {
             .ptr => |p| {
                 const tag = vm.slot(p - 1).*;
                 if (tag == .i64 and tag.i64 == state_mod.ERROR_TAG) {
                     try stack.push(vm, vm.slot(p).*);
-                    return;
-                }
-            },
-            else => {},
-        }
-    }
-    if (std.mem.eql(u8, name, "payload")) {
-        switch (obj) {
-            .ptr => |p| {
-                const tag = vm.slot(p - 1).*;
-                if (tag == .i64 and tag.i64 == state_mod.ERROR_TAG) {
-                    try stack.push(vm, vm.slot(p + 1).*);
                     return;
                 }
             },

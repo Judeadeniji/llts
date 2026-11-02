@@ -1303,13 +1303,18 @@ fn inferExprInner(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, 
                 const field_obj = ir.peelDefined(obj);
                 if (field_obj == .error_ or field_obj == .error_set or field_obj == .error_lit) {
                     const prop = m.property.primary.name;
-                    if (std.mem.eql(u8, prop, "message") or std.mem.eql(u8, prop, "code")) {
+                    if (std.mem.eql(u8, prop, "message")) {
                         break :blk ir.TString;
                     }
-                    if (std.mem.eql(u8, prop, "payload")) {
-                        break :blk ir.TUnknown;
-                    }
                     return compiler_errors.compileFailFmt(state, "Unknown error field '{s}'", .{prop});
+                }
+                // Error unions (`T | error`) expose the message too; the
+                // emitter unwraps the error arm at runtime.
+                if (ir.isErrorUnion(field_obj)) {
+                    const prop = m.property.primary.name;
+                    if (std.mem.eql(u8, prop, "message")) {
+                        break :blk ir.TString;
+                    }
                 }
                 // Tuple / array numeric field access: `.0`, `.1`, …
                 if (field_obj == .tuple) {
@@ -1421,14 +1426,11 @@ fn inferExprInner(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, 
         .array_literal => |a| try inferArrayLiteral(state, env, ta, a),
         .struct_init => |init| try inferStructInit(state, env, ta, init),
         .error_expr => |e| blk: {
-            if (e.args.len == 0 or e.args.len > 2) {
-                return compiler_errors.compileFailFmt(state, "error() takes at most 2 arguments (message, payload)", .{});
+            if (e.args.len != 1) {
+                return compiler_errors.compileFailFmt(state, "error() takes exactly 1 argument (a code string)", .{});
             }
             const msg = try inferExpr(state, env, ta, e.args[0]);
             try requireAssign(state, msg, ir.TString, "error(...)");
-            if (e.args.len == 2) {
-                _ = try inferExpr(state, env, ta, e.args[1]);
-            }
             break :blk ir.TError;
         },
         .try_expr => |t| blk: {

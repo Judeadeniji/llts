@@ -11,8 +11,8 @@ The `std/slog` package implements structured logging with severity levels and ke
 slog.info("Server started", "port", 8080, "env", "production");
 slog.warn("Database connection pool high", "active", 45, "max", 50);
 
-// Error values are automatically formatted with code and payload
-slog.err(error("FileNotFound", "config.json"));
+// Error values are automatically formatted with their code
+slog.err(error("FileNotFound"));
 
 // Child loggers with persistent context attributes
 $reqLogger = slog.with("request_id", "req-1234");
@@ -40,7 +40,7 @@ Logs a message at `info` severity, optionally followed by alternating key-value 
 Logs a message at `warn` severity, optionally followed by alternating key-value pairs.
 
 ### `error(msg, ...keyValues)` / `err(msg, ...keyValues)`
-Logs a message at `error` severity. When passed an LLTS error object, automatically extracts and displays the error code and payload.
+Logs a message at `error` severity. When passed an LLTS error object, automatically extracts and displays the error message.
 
 ### `log(level: int, msg, ...keyValues)`
 Logs a message at the specified integer severity level.
@@ -49,4 +49,4 @@ Logs a message at the specified integer severity level.
 Creates a child `Logger` that includes the specified key-value attributes on every subsequent log call.
 
 ### `assert(condition)`
-Condition assertion utility. Returns `null` if the condition is truthy, or returns `error("AssertFailed", condition)` if false.
+Condition assertion utility. Returns `null` if the condition is truthy, or returns `error("AssertFailed")` if false.

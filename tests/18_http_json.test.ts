@@ -164,7 +164,7 @@ test("http.fetch: invalid URL returns an error value", () => {
 @const $http = @import("std/http");
 $err = http.fetch("not-a-url");
 print(@isError(err));
-print(err.code);
+print(err.message);
 `),
     ["true", "HttpError"],
   );

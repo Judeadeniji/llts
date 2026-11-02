@@ -127,7 +127,7 @@ pub fn emitCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) any
             return switch (plan) {
                 .fold => |spelling| self.zigString(spelling),
                 .decl_name => |spelling| self.zigString(spelling),
-                .error_code => std.fmt.allocPrint(a, "({s}).code", .{try errorOperandCode(self, c.args[0])}),
+                .error_code => std.fmt.allocPrint(a, "({s}).message", .{try errorOperandCode(self, c.args[0])}),
                 .enum_type => self.failAt(node, "native backend cannot lower runtime @nameOf on enums yet", .{}),
             };
         }
@@ -339,7 +339,7 @@ pub fn writeErrorReturn(self: *Emitter, node: *ast_mod.Node, err_code: []const u
     }
     if (self.cur_ret.kind == .void) {
         try self.writeIndent();
-        try self.writer.print("return rt.io.failMsg({s}.code);\n", .{err_code});
+        try self.writer.print("return rt.io.failMsg({s}.message);\n", .{err_code});
         return;
     }
     return self.failAt(node, "cannot propagate an error from a function returning '{s}'", .{self.cur_ret.display});
@@ -397,23 +397,11 @@ pub fn emitTryExpr(self: *Emitter, node: *ast_mod.Node, t: *const ast_mod.TryExp
 
 pub fn emitErrorExpr(self: *Emitter, node: *ast_mod.Node, e: *const ast_mod.ErrorExpr) ![]const u8 {
     const a = self.arena.allocator();
-    if (e.args.len == 0 or e.args.len > 2) {
-        return self.failAt(node, "error() takes at most 2 arguments (message, payload)", .{});
+    if (e.args.len != 1) {
+        return self.failAt(node, "error() takes exactly 1 argument (a message string)", .{});
     }
-    const code = try emitExpr(self, e.args[0]);
-    if (e.args.len == 1) {
-        return std.fmt.allocPrint(a, "rt.err.makeCode({s})", .{code});
-    }
-    const payload_t = try self.valueType(e.args[1]);
-    const payload = switch (payload_t.kind) {
-        .null_value => ".{ .none = {} }",
-        .int => try std.fmt.allocPrint(a, ".{{ .int = {s} }}", .{try emitExpr(self, e.args[1])}),
-        .float => try std.fmt.allocPrint(a, ".{{ .float = {s} }}", .{try emitExpr(self, e.args[1])}),
-        .bool => try std.fmt.allocPrint(a, ".{{ .boolean = {s} }}", .{try emitExpr(self, e.args[1])}),
-        .string => try std.fmt.allocPrint(a, ".{{ .str = {s} }}", .{try emitExpr(self, e.args[1])}),
-        else => return self.failAt(e.args[1], "native backend cannot store an error payload of type '{s}'", .{payload_t.display}),
-    };
-    return std.fmt.allocPrint(a, "rt.err.make({s}, {s})", .{ code, payload });
+    const message = try emitExpr(self, e.args[0]);
+    return std.fmt.allocPrint(a, "rt.err.make({s})", .{message});
 }
 
 pub fn emitF32Operand(self: *Emitter, node: *ast_mod.Node) ![]const u8 {
@@ -838,11 +826,8 @@ pub fn emitMember(self: *Emitter, node: *ast_mod.Node, m: *const ast_mod.Member)
                 object_code
             else
                 try std.fmt.allocPrint(a, "rt.err.expectError({s})", .{object_code});
-            if (std.mem.eql(u8, prop, "message") or std.mem.eql(u8, prop, "code")) {
-                return std.fmt.allocPrint(a, "({s}).code", .{err_code});
-            }
-            if (std.mem.eql(u8, prop, "payload")) {
-                return std.fmt.allocPrint(a, "({s}).payload", .{err_code});
+            if (std.mem.eql(u8, prop, "message")) {
+                return std.fmt.allocPrint(a, "({s}).message", .{err_code});
             }
         }
     }

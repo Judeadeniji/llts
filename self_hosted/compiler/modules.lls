@@ -70,7 +70,7 @@ pub @func getImportSite(node: *nodes.Node) {
     @if (@isError(src3) == false) {
         return joined;
     }
-    return error("CompileError", "Unknown module");
+    return error("CompileError");
 }
 
 @func collectLocalBindings(arena: mem.Arena, statements, module_path: string) {
@@ -386,7 +386,7 @@ pub @func getImportSite(node: *nodes.Node) {
 
     $source = __readFile(resolved);
     @if (@isError(source)) {
-        return error("CompileError", "cannot read import");
+        return error("CompileError");
     }
     $mod_doc = parser.parse(em.arena, source, resolved)?;
     resolveImportsInner(em, mod_doc, key, visited)?;

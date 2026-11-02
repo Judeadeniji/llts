@@ -80,15 +80,15 @@ For detailed information on struct methods, see [Structs and Methods](structs_an
 - `@func`: Declares a function.
 - `@struct`: Declares a struct.
 - `@new(heap, Type)`: Zero-fills a `Type` on the given heap and yields `*Type`.
-- `error(code, payload)`: Creates an error value with an optional payload.
+- `error(message)`: Creates an error value carrying a message string.
 
 ## 6. Error Handling, Diagnostics, and Logging
 
 ### 6.1 Error Values
-Errors are first-class values created via `error(code, payload)`. They carry a `.code` string and an optional `.payload`.
+Errors are first-class values created via `error(message)`. They carry a `.message` string; use a wrapper value when a failure needs extra data.
 ```llts
-$err = error("FileNotFound", "missing.txt");
-std.fmt.printf("Error: %s\n", err.code);
+$err = error("FileNotFound");
+std.fmt.printf("Error: %s\n", err.message);
 ```
 
 ### 6.2 Error-Path Cleanup (errdefer)
@@ -102,11 +102,11 @@ The `std/slog` and `std/log` modules provide structured and leveled logging back
 ```llts
 @const $slog = @import("std/slog");
 slog.info("System initialized");
-slog.err(error("FailCode", "Details")); # Auto-formats error objects
+slog.err(error("FailCode")); # Auto-formats error objects
 ```
 
 ### 6.4 Assertions
-The `std.slog.assert(condition)` function ensures invariants. It returns `null` on success and `error("AssertFailed", condition)` on failure.
+The `std.slog.assert(condition)` function ensures invariants. It returns `null` on success and `error("AssertFailed")` on failure.
 
 ## 7. Example: Hello World Program
 
@@ -161,4 +161,4 @@ std.fmt.printf("Final counter value: %d\n", final_val);
 3. **Escaping Local Scope:** Returning a bare `Foo{…}` / `[…]` literal immortalizes it (process-lifetime). Returning a flat scalar struct variable auto-clones it into immortal storage. Returning a nested/aggregate frame-local (or embedding one) is a compile error — use `@new(arena, …)` when the value should live in a reclaimable arena.
 4. **Method Receivers:** Struct methods may declare `self` as their first parameter. Omit `self` when the method does not need the receiver handle (calling `m.get()` still works — `self` is skippable by name convention).
 5. **Formatting:** `std.fmt` supports Go-compatible format verbs (e.g. `%d` for integers, `%s` for strings, `%v` for default representation).
-6. **Error Handling & Logging:** Use `error(code, payload)` for structured error objects. Use `std.slog.info()`, `warn()`, and `err()` (or `std.log`) for diagnostic logging.
+6. **Error Handling & Logging:** Use `error(code)` for error objects. Use `std.slog.info()`, `warn()`, and `err()` (or `std.log`) for diagnostic logging.

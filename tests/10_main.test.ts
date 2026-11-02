@@ -80,10 +80,10 @@ pub @func main() {
 test("main returning an error fails with non-zero exit and prints error diagnostic", () => {
   const res = runSource(`
 pub @func main() {
-    return error("MainError", 500);
+    return error("MainError");
 }
 `);
-  expectError(res, "MainError — 500");
+  expectError(res, "MainError");
   if (res.exitCode === 0) {
     throw new Error("expected non-zero exit code");
   }

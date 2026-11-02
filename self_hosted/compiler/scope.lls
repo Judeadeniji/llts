@@ -58,7 +58,7 @@ pub @func resolveVariable(em: *state_mod.EmState, name: string) {
     } @else {
         $type_key = string.concat("$", name);
         @if (map.has(em.var_types, type_key) == false) {
-            return error("CompileError", string.concat("Unknown identifier '", string.concat(name, "'")));
+            return error("CompileError");
         }
     }
     @if (state_mod.emHasFunction(em, name)) {
@@ -75,7 +75,7 @@ pub @func pushDefer(em: *state_mod.EmState, node: *nodes.Node, is_errdefer: bool
 
 @func deferStackAt(em: *state_mod.EmState, depth: i64) {
     @if (depth < 1 || depth > list.len(em.defer_stacks)) {
-        return error("Emit", "internal: defer stack out of range");
+        return error("Emit");
     }
     return @as(unknown, list.get(em.defer_stacks, depth - 1));
 }

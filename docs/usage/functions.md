@@ -100,7 +100,7 @@ These three types have **non-overlapping** roles:
 ## Error Handling and Cleanup
 Functions can return error objects and manage cleanup using `defer` and `errdefer`.
 
-*   **Error Objects:** Created via `error("Code")` or `error("Code", payload)`. They expose `.code`, `.message`, and `.payload` properties.
+*   **Error Objects:** Created via `error("message")`. They expose `.message`. Extra data belongs in a wrapper value, not the error.
 *   **`defer`:** Executes a statement at the end of the current block, regardless of success or failure.
 *   **`errdefer`:** Executes a statement **only** if the block exits via an error (e.g., an explicit `return error(...)` or stack unwinding via the `?` operator). Cleanups run in LIFO order.
 

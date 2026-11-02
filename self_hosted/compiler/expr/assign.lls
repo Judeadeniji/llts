@@ -29,7 +29,7 @@ pub @func compileAssignment(em: *state_mod.EmState, assign: *nodes.Assignment) {
         assignPrimary(em, @as(*nodes.Primary, assign.left), assign.right, arith)?;
         return;
     }
-    return error("EmitUnsupported", "assign target");
+    return error("EmitUnsupported");
 }
 
 # Compound operator → base arith op, or null for plain `=`.
@@ -49,10 +49,10 @@ pub @func compoundOp(op: string) {
 
 @func assignIndex(em: *state_mod.EmState, idx: *nodes.Index, right: *nodes.Node, arith) {
     @if (idx.is_slice) {
-        return error("CompileError", "Cannot assign to a slice view");
+        return error("CompileError");
     }
     @if (idx.index == null) {
-        return error("CompileError", "Expected index expression");
+        return error("CompileError");
     }
     $start: *nodes.Node = @as(*nodes.Node, idx.index);
     @if (arith != null) {
@@ -153,7 +153,7 @@ pub @func compoundOp(op: string) {
         em.chunk.emitSetProperty(prop3.name);
         return;
     }
-    return error("EmitUnsupported", "assign member prop");
+    return error("EmitUnsupported");
 }
 
 @func assignPrimary(em: *state_mod.EmState, prim: *nodes.Primary, right: *nodes.Node, arith) {
@@ -169,7 +169,7 @@ pub @func compoundOp(op: string) {
         is_const = map.has(em.global_consts, prim.name);
     }
     @if (is_const) {
-        return error("CompileError", string.concat("Cannot reassign to constant variable '", string.concat(prim.name, "'")));
+        return error("CompileError");
     }
     @if (arith != null) {
         $op: opcode.OpCode = @as(opcode.OpCode, arith);

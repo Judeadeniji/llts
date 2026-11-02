@@ -29,16 +29,16 @@ fn execFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     child.stdout_behavior = .Pipe;
     child.stderr_behavior = .Ignore;
 
-    child.spawn() catch |err| {
-        return try util.makeErrorWithPayload(vm, "ExecError", try util.writeSlice(vm, @errorName(err)));
+    child.spawn() catch {
+        return try util.makeError(vm, "ExecError");
     };
-    const stdout = child.stdout.?.readToEndAlloc(vm.allocator, 1024 * 1024 * 10) catch |err| {
+    const stdout = child.stdout.?.readToEndAlloc(vm.allocator, 1024 * 1024 * 10) catch {
         _ = child.wait() catch {};
-        return try util.makeErrorWithPayload(vm, "ExecError", try util.writeSlice(vm, @errorName(err)));
+        return try util.makeError(vm, "ExecError");
     };
     defer vm.allocator.free(stdout);
-    _ = child.wait() catch |err| {
-        return try util.makeErrorWithPayload(vm, "ExecError", try util.writeSlice(vm, @errorName(err)));
+    _ = child.wait() catch {
+        return try util.makeError(vm, "ExecError");
     };
 
     return try util.writeSlice(vm, stdout);
@@ -87,8 +87,8 @@ fn cwdFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
     _ = args;
     var buf: [std.fs.max_path_bytes]u8 = undefined;
-    const cwd = std.process.getCwd(&buf) catch |err| {
-        return try util.makeErrorWithPayload(vm, "CwdError", try util.writeSlice(vm, @errorName(err)));
+    const cwd = std.process.getCwd(&buf) catch {
+        return try util.makeError(vm, "CwdError");
     };
     return try util.writeSlice(vm, cwd);
 }
@@ -99,7 +99,7 @@ fn chdirFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const dir = try util.valueToOwnedString(vm, args[0]);
     defer vm.allocator.free(dir);
     std.posix.chdir(dir) catch {
-        return try util.makeErrorWithPayload(vm, "ChdirError", try util.writeSlice(vm, dir));
+        return try util.makeError(vm, "ChdirError");
     };
     return .null;
 }

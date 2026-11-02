@@ -379,16 +379,14 @@ test "mem: allocArray / cloneArrayBytes" {
 
 // --- err --------------------------------------------------------------------
 
-test "err: construction and code-only equality" {
-    const a = err.makeCode("Boom");
-    const b = err.make("Boom", .{ .int = 42 });
-    const c = err.make("Other", .{ .int = 42 });
-    // VM valuesEqual compares codes only — payloads are ignored.
+test "err: construction and message-only equality" {
+    const a = err.make("Boom");
+    const b = err.make("Boom");
+    const c = err.make("Other");
     try testing.expect(err.eq(a, b));
     try testing.expect(!err.eq(a, c));
     try testing.expect(err.isError(a));
-    try testing.expectEqualStrings("Boom", b.code);
-    try testing.expectEqual(@as(i64, 42), b.payload.int);
+    try testing.expectEqualStrings("Boom", b.message);
 }
 
 // --- print ------------------------------------------------------------------
@@ -451,13 +449,8 @@ test "print: arrays" {
 }
 
 test "print: error values" {
-    try expectFmt("Error: Boom", err.makeCode("Boom"));
-    try expectFmt("Error: E — 42", err.make("E", .{ .int = 42 }));
-    try expectFmt("Error: E — why", err.make("E", .{ .str = "why" }));
-    try expectFmt("Error: E — true", err.make("E", .{ .boolean = true }));
-    try expectFmt("Error: E — <map>", err.make("E", .{
-        .agg = .{ .ptr = undefined, .kind = .map },
-    }));
+    try expectFmt("Error: Boom", err.make("Boom"));
+    try expectFmt("Error: E", err.make("E"));
 }
 
 test "print: print() joins args with spaces and appends a newline" {

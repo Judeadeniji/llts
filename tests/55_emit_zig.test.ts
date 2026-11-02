@@ -522,7 +522,6 @@ test("emits error values, sets, fields, equality, and @nameOf", () => {
 pub @func main() {
     $e: IoError = IoError.Denied;
     print(e);
-    print(e.code);
     print(e.message);
     print(@isError(e));
     print(@nameOf(e));
@@ -532,16 +531,15 @@ pub @func main() {
 
     $open: error = fail("Nope");
     print(open);
-    print(open.code);
+    print(open.message);
     print(@nameOf(open));
-    print(open.payload);
     print(open == fail("Nope"));
     print(@isError(42));
 }
 `);
 }, 60_000);
 
-test("emits error unions, ?, narrowing, payloads, and @switch", () => {
+test("emits error unions, ?, narrowing, and @switch", () => {
   expectParity(`
 @error IoError { NotFound, Denied }
 @error HttpError { Timeout, Forbidden }
@@ -553,9 +551,9 @@ test("emits error unions, ?, narrowing, payloads, and @switch", () => {
     return n;
 }
 
-@func payload(flag: bool): int | error {
+@func maybeFail(flag: bool): int | error {
     @if (flag) { return 7; }
-    return error("bad", 42);
+    return error("bad");
 }
 
 @func openfail(): int | error {
@@ -566,7 +564,7 @@ pub @func main() {
     print(pick(0)?);
     $a = pick(1);
     @if (@isError(a)) {
-        print(a.code);
+        print(a.message);
         print(@nameOf(a));
         print(a == IoError.NotFound);
         @switch (a) {
@@ -581,11 +579,11 @@ pub @func main() {
         print(b.message);
         print(@nameOf(b));
     }
-    $p = payload(false);
+    $p = maybeFail(false);
     @if (@isError(p)) {
-        print(p.payload);
+        print(p.message);
     }
-    print(payload(true)?);
+    print(maybeFail(true)?);
 }
 `);
 }, 60_000);
@@ -618,6 +616,31 @@ pub @func main() {
 }
 `);
 }, 60_000);
+
+test("both backends reject error() with a payload argument", () => {
+  const emitted = emitZig(`
+pub @func main() {
+    $e = error("a", "b");
+}
+`);
+  try {
+    const vm = runCli(["run", emitted.sourcePath]);
+    expect(vm.exitCode).not.toBe(0);
+    expect(vm.stderr).toContain("exactly 1 argument");
+
+    const native = runCli([
+      "emit-zig",
+      emitted.sourcePath,
+      "-o",
+      emitted.outputPath,
+    ]);
+    expect(native.exitCode).not.toBe(0);
+    expect(native.stderr).toContain("exactly 1 argument");
+    expect(fs.existsSync(emitted.outputPath)).toBe(false);
+  } finally {
+    emitted.cleanup();
+  }
+});
 
 test("prints @addrOf as a raw hex pointer", () => {
   const emitted = emitZig(`

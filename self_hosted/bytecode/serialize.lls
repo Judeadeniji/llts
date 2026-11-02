@@ -99,7 +99,7 @@ pub @func writeToBuffer(c: *chunk_mod.Chunk, out) {
             }
         }
         @if (name_idx < 0) {
-            return error("Serialize", "function name missing from string table");
+            return error("Serialize");
         }
         writeU32LE(out, name_idx);
         writeU32LE(out, fn.address);

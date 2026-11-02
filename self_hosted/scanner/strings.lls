@@ -18,7 +18,7 @@ pub @func scanString(self: *ctx.Scanner) {
         }
         @if (string.eql(c, "\n")) {
             slog.err("Multiline string literal");
-            return error("MultilineString", "Multiline string literal");
+            return error("MultilineString");
         }
         @if (string.eql(c, "\\")) {
             _ = self.advance();
@@ -44,7 +44,7 @@ pub @func scanString(self: *ctx.Scanner) {
                 continue;
             } @else {
                 slog.err("Unterminated string");
-                return error("UnterminatedString", "Unterminated string");
+                return error("UnterminatedString");
             }
         }
         buffer.appendString(buf, c);
@@ -52,7 +52,7 @@ pub @func scanString(self: *ctx.Scanner) {
     }
     @if (self.peek(0) == null) {
         slog.err("Unterminated string");
-        return error("UnterminatedString", "Unterminated string");
+        return error("UnterminatedString");
     }
     _ = self.advance();
     $final_str = buffer.readString(buf, 0, buffer.len(buf));

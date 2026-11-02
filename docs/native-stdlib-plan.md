@@ -291,7 +291,7 @@ Order (from 0.4; **json must land before http** — tier-2 `res.json()` needs it
   ```
   Built entirely on tier 1 + `buffer` + `string` + the LLTS JSON parser.
 - **Error contract is fixed by tests** (`tests/18_http_json.test.ts:167-193`):
-  `@isError(res)` is true with `err.code == "HttpError"` for `"not-a-url"`,
+  `@isError(res)` is true with `err.message == "HttpError"` for `"not-a-url"`,
   `""` and `"://"`.
 - **TLS:** `https` needs crypto ⇒ extern by the locked rule: one declared
   `@extern __tlsConnect(fd, host)` whose runtime implementation wraps a TLS

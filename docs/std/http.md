@@ -31,7 +31,7 @@ Performs a simple HTTP GET request to the specified `url`.
 * **Parameters**: 
   * `url`: A string representing the endpoint to fetch.
 * **Returns**: A `Response` object containing the HTTP status and body.
-* **Throws**: An error named `"HttpError"` if the request fails (e.g., network error, DNS resolution failure). The error payload contains the underlying native error name.
+* **Throws**: An error with code `"HttpError"` if the request fails (e.g., network error, DNS resolution failure).
 
 #### Example
 
@@ -75,4 +75,4 @@ print.print_ln(res.body);   // The JSON response from httpbin
 
 ## Error Handling
 
-Both `fetch` and `request` can throw an error if there is a problem reaching the server or executing the request. The error name will be `"HttpError"`, and the error payload will contain a string detailing the underlying native error reason (e.g., `UnknownHostName`, `ConnectionRefused`).
+Both `fetch` and `request` can throw an error if there is a problem reaching the server or executing the request. The error message will be `"HttpError"`; wrap the call if you need to attach request details.

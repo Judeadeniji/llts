@@ -10,7 +10,7 @@
 //!     capacity and stable pointers, plus the LLTS shadow call stack.
 //!   * `mem`     — allocation/clone/concat primitives (VM heap builtins).
 //!   * `arith`   — arithmetic/bitwise/comparison ops with VM-exact traps.
-//!   * `err`     — LLTS error values (`error(code, payload)`).
+//!   * `err`     — LLTS error values (`error(code)`).
 //!   * `print`   — VM-parity value formatting and `print(...)`.
 //!   * `io`      — minimal fd writes + trap reporting + process exit.
 //!   * `trace`   — shadow-stack frames and VM-parity trace formatting.
@@ -45,7 +45,6 @@ pub const Width = widths_mod.Width;
 
 // Error values.
 pub const Error = err_mod.Error;
-pub const Payload = err_mod.Payload;
 
 // Shadow-stack diagnostics.
 pub const ShadowStack = trace_mod.ShadowStack;

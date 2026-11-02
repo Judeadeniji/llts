@@ -268,7 +268,7 @@ Preferred tagged-data spelling with `@type`:
 
 ## ⏸ Deferred
 
-- [x] **`errdefer`** — error-path defer; richer `error(code, payload)` with `.code` / `.message` / `.payload`.
+- [x] **`errdefer`** — error-path defer with code-only `error(code)` values (`.code` / `.message`); use a wrapper value for extra data.
 
 ---
 

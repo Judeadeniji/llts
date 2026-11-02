@@ -63,7 +63,7 @@ pub fn emitEntry(self: *Emitter) !void {
             try self.writer.print("const lls_main_result = {s}(&ctx) catch |err| lls_finish(err);\n", .{try self.fnName("main")});
             try self.writeIndent();
             if (t.kind == .error_value) {
-                try self.writer.writeAll("rt.io.failMsg(lls_main_result.code) catch {};\n");
+                try self.writer.writeAll("rt.io.failMsg(lls_main_result.message) catch {};\n");
                 try self.writeIndent();
                 try self.writer.writeAll("rt.exitProcess(1);\n");
             } else {
@@ -75,7 +75,7 @@ pub fn emitEntry(self: *Emitter) !void {
                 try self.writer.writeAll(".err => |e| {\n");
                 self.indent += 1;
                 try self.writeIndent();
-                try self.writer.writeAll("rt.io.failMsg(e.code) catch {};\n");
+                try self.writer.writeAll("rt.io.failMsg(e.message) catch {};\n");
                 try self.writeIndent();
                 try self.writer.writeAll("rt.exitProcess(1);\n");
                 self.indent -= 1;

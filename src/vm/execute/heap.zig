@@ -565,20 +565,9 @@ pub fn makeString(vm: *VMState) HeapError!void {
 
 pub fn makeError(vm: *VMState) HeapError!void {
     const msg = stack.pop(vm);
-    const p = try vm.allocImmortal(3);
+    const p = try vm.allocImmortal(2);
     vm.slot(p).* = .{ .i64 = ERROR_TAG };
     vm.slot(p + 1).* = msg;
-    vm.slot(p + 2).* = .null;
-    try stack.push(vm, .{ .ptr = p + 1 });
-}
-
-pub fn makeErrorPayload(vm: *VMState) HeapError!void {
-    const payload = stack.pop(vm);
-    const msg = stack.pop(vm);
-    const p = try vm.allocImmortal(3);
-    vm.slot(p).* = .{ .i64 = ERROR_TAG };
-    vm.slot(p + 1).* = msg;
-    vm.slot(p + 2).* = payload;
     try stack.push(vm, .{ .ptr = p + 1 });
 }
 

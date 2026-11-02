@@ -22,7 +22,7 @@ Decode a raw `call` result. `errName` returns `""` on success, otherwise a Linux
 
 ## Typed wrappers
 
-These use the host POSIX layer, return values or a `SyscallError` (`.code == "SyscallError"`, `.payload` is a short reason / errno name).
+These use the host POSIX layer and return values or an error whose `.message` is the host error name (for example `"FileNotFound"`).
 
 | Function | Notes |
 |---|---|

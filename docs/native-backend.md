@@ -119,7 +119,7 @@ pub const Context = @import("context.zig").Context;
 pub const io      = @import("io.zig");      // fd writes, fail(), failMsg(), exitProcess()
 pub const mem     = @import("mem.zig");     // cloneBytes, concat, allocArray…
 pub const arith   = @import("arith.zig");   // add/div/shl/typed ops/compare…
-pub const err     = @import("err.zig");     // Error{code, payload}, eq()
+pub const err     = @import("err.zig");     // Error{message}, eq()
 pub const print   = @import("print.zig");   // VM-parity writeValue/print()
 pub const widths  = @import("widths.zig");  // canonical Width table
 pub const trace   = @import("trace.zig");   // shadow-stack frames + formatting
@@ -138,9 +138,9 @@ Typed ops with VM-exact trap messages and formats (verified against
   wrapping `powi`, 0..63 shifts, bitwise, exact comparisons, f32/f64 paths (`@mod`, zero traps).
 - `mem`: `cloneBytes` (`[]byte` value semantics), `concat` (immortal, `stringAdd` parity),
   `cloneArrayBytes`, `allocArray` (slice-length, no header).
-- `err`: `Error{ code, payload: none|int|float|bool|str|agg }`; equality compares codes only.
+- `err`: `Error{ message }`; equality compares messages.
 - `print`: raw strings, printable-checked byte buffers, integer-array string heuristic,
-  f64 exact-int special case, `Error: code — payload` rendering.
+  f64 exact-int special case, `Error: message` rendering.
 - `io`: libc `write`/`exit` (no `std.posix`/`std.process`); `fail()` / `failMsg()` print
   `Error: <msg>` then the shadow-stack trace and return `error.RuntimeError` — emitted
   `main` exits 1; LLTS `defer` is explicit-on-return (not Zig `defer`), so it never runs on traps.
@@ -201,7 +201,7 @@ Behavior:
 - **Entry Wrapper**: Emits `pub fn main() void` initializing `rt.Context`, running top-level code and LLTS `main`, and mapping errors to process exit.
 - **Control Flow**: `@if`, scalar `@switch`, range `@for (start..end) |i|`, condition `@for (cond)`, and iterable `@for` over arrays/slices/strings lower to native structured Zig. Value-producing arms and labeled blocks use labeled-block results and `break` payloads; loop `break`/`continue` preserve labels. Optional `@if`/`@for` captures unwrap through Zig optional captures. Switch scrutinees are evaluated once and prongs use the same runtime equality helpers as the VM. Conditions rely on the LLTS typechecker's guarantees; the emitter adds no runtime truthiness or type assertions.
 - **Aggregates & Pointers**: Structs lower to typed Zig structs with stable field names; fixed arrays, slices (including heap-allocated slice literals), optionals, and pointers use their native Zig representations. Struct fields, array/slice indexing, slicing, `len`, optional unwrap, address-of `&`, `@addrOf`, and `@new` are lowered; slice assignment clones to match VM value semantics. `@addrOf` yields the native address as `i64`; `print(@addrOf(x))` renders the raw pointer in hex (native-only). `@new(allocator, T)` and `@new(allocator, []T, n)` allocate zero-filled immortal native storage (the allocator argument is not modeled); `@new(string, n)` is unsupported.
-- **Errors**: Error values use `rt.err.Error`; error unions lower to `rt.err.Result(T)`. `error(...)`, `?`, `return` coercion, `@isError`, `@nameOf`, `.code`/`.message`/`.payload`, equality, `@switch` over narrowed errors, and error printing match the VM. Error-set typedefs are expanded during classification.
+- **Errors**: Error values use `rt.err.Error`; error unions lower to `rt.err.Result(T)`. `error(...)`, `?`, `return` coercion, `@isError`, `@nameOf`, `.message`, equality, `@switch` over narrowed errors, and error printing match the VM. Error-set typedefs are expanded during classification.
 - **Cleanup**: `@defer` and `@errdefer` are tracked explicitly per lexical scope and emitted LIFO on scope exit, `break`, `continue`, and `return`, so they never run on runtime traps. `@errdefer` runs only on error returns.
 - **Remaining**: struct printing and `@new(string, n)`.
 

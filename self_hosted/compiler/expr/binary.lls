@@ -205,7 +205,7 @@ pub @func emitBinOp(em: *state_mod.EmState, bin: *nodes.Binary) {
         em.chunk.writeOp(opcode.OpCode.OP_GREATER_EQUAL);
         return;
     }
-    return error("EmitUnsupported", string.concat("binary op ", op));
+    return error("EmitUnsupported");
 }
 
 pub @func compileUnary(em: *state_mod.EmState, un: *nodes.Unary) {
@@ -223,5 +223,5 @@ pub @func compileUnary(em: *state_mod.EmState, un: *nodes.Unary) {
         em.chunk.writeOp(opcode.OpCode.OP_BIT_NOT);
         return;
     }
-    return error("EmitUnsupported", string.concat("unary op ", un.operator));
+    return error("EmitUnsupported");
 }

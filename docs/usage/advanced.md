@@ -24,7 +24,7 @@ Use `@import("path")` to include modules, binding them to constants via `@const`
 *   **`std.slog` & `std.log`**: Structured and leveled logging.
     *   **Leveled Logging**: `slog.debug(msg, ...attrs)`, `slog.info(msg, ...attrs)`, `slog.warn(msg, ...attrs)`, `slog.err(msg, ...attrs)`.
     *   `slog.with(...attrs)`: Create a child logger with contextual key-value attributes.
-    *   `slog.assert(condition)`: Validates state during execution. If condition is false, returns `error("AssertFailed", condition)`.
+    *   `slog.assert(condition)`: Validates state during execution. If condition is false, returns `error("AssertFailed")`.
     *   Output levels can be configured via the `--log-level <LEVEL>` CLI flag or `LLTS_LOG_LEVEL` environment variable.
 *   **`std.io`**: System input/output.
     *   `std.io.readLine()`: Synchronous terminal input capture.
@@ -82,7 +82,7 @@ $doubled = 5 |> dbl |> dbl;  // == dbl(dbl(5))
 ## Error Handling and Diagnostics
 
 The language and VM feature an advanced diagnostic subsystem (`src/errors/`) and a robust IO subsystem (`src/io/`):
-*   **Error Payloads**: Error values can carry an optional payload via `error(code, payload)`. The error object exposes `.code`, `.message`, and `.payload` properties.
+*   **Error Messages**: Error values are created via `error(message)` and expose `.message`. If a caller needs extra data, return a wrapper value (for example a struct) instead of attaching it to the error.
 *   **Rich Traces**: Both compile-time and runtime errors produce precise, cross-module stack traces (e.g., `--> file.lls:line:col`), including full module import chains when resolving dependencies.
 *   **Error Path Cleanup**: The `@errdefer` keyword executes deferred statements in LIFO order during error unwinds.
 

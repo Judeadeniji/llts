@@ -56,7 +56,7 @@ fn rcToInt(rc: usize) i64 {
 }
 
 fn makeSyscallError(vm: *VMState, err: anyerror) !Value {
-    return try util.makeErrorWithPayload(vm, "SyscallError", try util.writeSlice(vm, @errorName(err)));
+    return try util.makeError(vm, @errorName(err));
 }
 
 /// Raw Linux syscall: `call(nr, ...args)` via `__syscall(nr)` or `__syscall(nr, args_array)`.
@@ -128,7 +128,7 @@ fn nrFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
             return .{ .i64 = @intCast(f.value) };
         }
     }
-    return try util.makeErrorWithPayload(vm, "SyscallError", try util.writeSlice(vm, "UnknownSyscall"));
+    return try util.makeError(vm, "UnknownSyscall");
 }
 
 fn isErrFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
@@ -214,7 +214,7 @@ fn writeAllFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     var remaining = bytes;
     while (remaining.len > 0) {
         const n = std.posix.write(fd, remaining) catch |err| return try makeSyscallError(vm, err);
-        if (n == 0) return try util.makeErrorWithPayload(vm, "SyscallError", try util.writeSlice(vm, "ShortWrite"));
+        if (n == 0) return try util.makeError(vm, "ShortWrite");
         remaining = remaining[n..];
     }
     return .{ .i64 = @intCast(bytes.len) };
@@ -256,7 +256,7 @@ fn lseekFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
         std.posix.SEEK.END => std.posix.lseek_END(fd, offset) catch |err| {
             return try makeSyscallError(vm, err);
         },
-        else => return try util.makeErrorWithPayload(vm, "SyscallError", try util.writeSlice(vm, "INVAL")),
+        else => return try util.makeError(vm, "INVAL"),
     }
     const pos = std.posix.lseek_CUR_get(fd) catch |err| return try makeSyscallError(vm, err);
     return .{ .i64 = @intCast(pos) };

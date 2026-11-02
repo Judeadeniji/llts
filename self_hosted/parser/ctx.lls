@@ -161,7 +161,7 @@ pub @struct Parser {
     @func fail(self: *Parser, message: string) {
         slog.err(message);
         fmt.printf("  --> %s:%d:%d\n", self.path, self.line(), self.column());
-        return error("ParseFailed", message);
+        return error("ParseFailed");
     }
 }
 

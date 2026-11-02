@@ -114,13 +114,11 @@ fn parseConstInt(raw: []const u8) ?i64 {
 }
 
 pub fn compileError(state: *CompilerState, err: *const ast.ErrorExpr) !void {
-    try expr.compileExpression(state, err.args[0]);
-    if (err.args.len == 2) {
-        try expr.compileExpression(state, err.args[1]);
-        try emit.emitOp(state, .OP_MAKE_ERROR_PAYLOAD);
-    } else {
-        try emit.emitOp(state, .OP_MAKE_ERROR);
+    if (err.args.len != 1) {
+        return compiler_errors.compileFailFmt(state, "error() takes exactly 1 argument (a code string)", .{});
     }
+    try expr.compileExpression(state, err.args[0]);
+    try emit.emitOp(state, .OP_MAKE_ERROR);
 }
 
 pub fn compileTry(state: *CompilerState, try_expr: *const ast.TryExpr) !void {

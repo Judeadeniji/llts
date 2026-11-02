@@ -111,11 +111,6 @@ pub fn runChunk(
         var msg_buf: std.ArrayList(u8) = .empty;
         defer msg_buf.deinit(state.allocator);
         try print_fmt.writeValue(&state, &msg_buf, state.slot(p).*);
-        const payload = state.slot(p + 1).*;
-        if (payload != .null) {
-            try msg_buf.appendSlice(state.allocator, " — ");
-            try print_fmt.writeValue(&state, &msg_buf, payload);
-        }
 
         const file = if (state.current_source_index < state.chunk.sources.items.len)
             state.chunk.sources.items[state.current_source_index].path

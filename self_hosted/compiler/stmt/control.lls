@@ -21,7 +21,7 @@ pub @func compileIf(em: *state_mod.EmState, if_expr: *nodes.If) {
     @if (if_expr.pipe_value != null) {
         $pv: *nodes.Node = @as(*nodes.Node, if_expr.pipe_value);
         @if (pv.kind != common.NodeKind.Primary) {
-            return error("CompileError", "if capture must be an identifier");
+            return error("CompileError");
         }
         $cap: *nodes.Primary = @as(*nodes.Primary, pv);
         $slot = scope.addLocal(em, cap.name, true);
@@ -41,7 +41,7 @@ pub @func compileIf(em: *state_mod.EmState, if_expr: *nodes.If) {
     }
 
     @if (if_expr.body.kind != common.NodeKind.Block) {
-        return error("CompileError", "if body must be block");
+        return error("CompileError");
     }
     $body: *nodes.Block = @as(*nodes.Block, if_expr.body);
     @for (0..list.len(body.statements)) |si| {
@@ -76,7 +76,7 @@ pub @func compileIf(em: *state_mod.EmState, if_expr: *nodes.If) {
 # Value-producing `@if`: every arm must `break <value>`; result left on the stack.
 pub @func compileIfValue(em: *state_mod.EmState, if_expr: *nodes.If) {
     @if (if_expr.else_body == null) {
-        return error("CompileError", "value-producing @if requires @else");
+        return error("CompileError");
     }
     beginExprFrame(em, if_expr.label);
     compileIfValueBody(em, if_expr)?;
@@ -95,7 +95,7 @@ pub @func compileIfValue(em: *state_mod.EmState, if_expr: *nodes.If) {
     em.chunk.writeOp(opcode.OpCode.OP_POP);
 
     @if (if_expr.else_body == null) {
-        return error("CompileError", "value-producing @if requires @else");
+        return error("CompileError");
     }
     $else_body: *nodes.Node = @as(*nodes.Node, if_expr.else_body);
     @if (else_body.kind == common.NodeKind.If) {
@@ -112,7 +112,7 @@ pub @func compileSwitch(em: *state_mod.EmState, sw: *nodes.Switch) {
 
 pub @func compileSwitchValue(em: *state_mod.EmState, sw: *nodes.Switch) {
     @if (hasElseProng(sw) == false) {
-        return error("CompileError", "value-producing @switch requires @else");
+        return error("CompileError");
     }
     beginExprFrame(em, sw.label);
     compileSwitchInner(em, sw, true)?;
@@ -147,7 +147,7 @@ pub @func compileSwitchValue(em: *state_mod.EmState, sw: *nodes.Switch) {
             continue;
         }
         @if (list.len(prong.patterns) == 0) {
-            return error("CompileError", "switch prong requires at least one pattern");
+            return error("CompileError");
         }
         @if (list.len(prong.patterns) != 1) {
             # Multi-pattern: chain equality tests through short-circuit jumps.
@@ -215,7 +215,7 @@ pub @func compileSwitchValue(em: *state_mod.EmState, sw: *nodes.Switch) {
 # Labeled block as a value: `blk: { break :blk v; }`
 pub @func compileBlockValue(em: *state_mod.EmState, block: *nodes.Block) {
     @if (block.label == null) {
-        return error("CompileError", "value-producing block requires a label (e.g. blk: { break :blk value; })");
+        return error("CompileError");
     }
     beginExprFrame(em, block.label);
     $jumps_before = list.len(frameTop(em).break_jumps);
@@ -225,7 +225,7 @@ pub @func compileBlockValue(em: *state_mod.EmState, block: *nodes.Block) {
     }
     scope.endScope(em)?;
     @if (list.len(frameTop(em).break_jumps) == jumps_before) {
-        return error("CompileError", "value-producing block must `break` a value");
+        return error("CompileError");
     }
     finishExprFrame(em)?;
 }
@@ -245,7 +245,7 @@ pub @func compileBlockValue(em: *state_mod.EmState, block: *nodes.Block) {
 
 @func compileValueArmCapture(em: *state_mod.EmState, body: *nodes.Node, arm_name: string, pipe_value: ?*nodes.Node, pop_if_no_capture: bool) {
     @if (list.len(em.exprs) == 0) {
-        return error("Emit", "internal: value arm without expr frame");
+        return error("Emit");
     }
     $jumps_before = list.len(frameTop(em).break_jumps);
     scope.beginScope(em);
@@ -253,7 +253,7 @@ pub @func compileBlockValue(em: *state_mod.EmState, block: *nodes.Block) {
     @if (pipe_value != null) {
         $pv: *nodes.Node = @as(*nodes.Node, pipe_value);
         @if (pv.kind != common.NodeKind.Primary) {
-            return error("CompileError", "if capture must be an identifier");
+            return error("CompileError");
         }
         $cap: *nodes.Primary = @as(*nodes.Primary, pv);
         _ = scope.addLocal(em, cap.name, true);
@@ -272,7 +272,7 @@ pub @func compileBlockValue(em: *state_mod.EmState, block: *nodes.Block) {
     }
     scope.endScope(em)?;
     @if (list.len(frameTop(em).break_jumps) == jumps_before) {
-        return error("CompileError", string.concat(arm_name, " arm of value expression must `break` a value"));
+        return error("CompileError");
     }
 }
 
@@ -300,12 +300,12 @@ pub @func compileBreak(em: *state_mod.EmState, brk: *nodes.Break) {
     @if (brk.label != null) {
         $lab: string = @as(string, brk.label);
         @if (findExprLabel(em, lab) != null) {
-            return error("CompileError", "break to a value expression requires a value (break :label value;)");
+            return error("CompileError");
         }
     }
 
     @if (list.len(em.loops) == 0) {
-        return error("CompileError", "Cannot break outside of a loop");
+        return error("CompileError");
     }
     $loop_target = findLoop(em, brk.label)?;
     scope.emitDefersUntil(em, loop_target.scope_depth, scope.ExitKind.normal)?;
@@ -316,7 +316,7 @@ pub @func compileBreak(em: *state_mod.EmState, brk: *nodes.Break) {
 
 pub @func compileContinue(em: *state_mod.EmState, cont: *nodes.Continue) {
     @if (list.len(em.loops) == 0) {
-        return error("CompileError", "Cannot continue outside of a loop");
+        return error("CompileError");
     }
     $loop_target = findLoop(em, cont.label)?;
     scope.emitDefersUntil(em, loop_target.scope_depth, scope.ExitKind.normal)?;
@@ -339,7 +339,7 @@ pub @func compileContinue(em: *state_mod.EmState, cont: *nodes.Continue) {
 
 @func finishExprFrame(em: *state_mod.EmState) {
     @if (list.len(em.exprs) == 0) {
-        return error("Emit", "internal: finishExprFrame with empty exprs");
+        return error("Emit");
     }
     $tracker: *state_mod.EmExprFrame = @as(*state_mod.EmExprFrame, list.pop(em.exprs));
     @for (0..list.len(tracker.break_jumps)) |j| {
@@ -348,11 +348,11 @@ pub @func compileContinue(em: *state_mod.EmState, cont: *nodes.Continue) {
 
     # Leave the result value on the stack; drop only the compiler local entry.
     @if (list.len(em.locals) == 0) {
-        return error("Emit", "internal: expr result local missing");
+        return error("Emit");
     }
     $local: *state_mod.EmLocal = @as(*state_mod.EmLocal, list.get(em.locals, list.len(em.locals) - 1));
     @if (local.depth != em.scope_depth) {
-        return error("Emit", "internal: expr result local missing");
+        return error("Emit");
     }
     _ = list.pop(em.locals);
 
@@ -366,10 +366,10 @@ pub @func compileContinue(em: *state_mod.EmState, cont: *nodes.Continue) {
         @if (t != null) {
             return t;
         }
-        return error("CompileError", string.concat("Cannot find value expression with label '", string.concat(lab, "'")));
+        return error("CompileError");
     }
     @if (list.len(em.exprs) == 0) {
-        return error("CompileError", "break with value requires a value-producing @if, @switch, or labeled block");
+        return error("CompileError");
     }
     return frameTop(em);
 }
@@ -405,10 +405,10 @@ pub @func compileContinue(em: *state_mod.EmState, cont: *nodes.Continue) {
                 }
             }
         }
-        return error("CompileError", string.concat("Cannot find loop with label '", string.concat(lab, "'")));
+        return error("CompileError");
     }
     @if (list.len(em.loops) == 0) {
-        return error("CompileError", "Cannot continue outside of a loop");
+        return error("CompileError");
     }
     return @as(*state_mod.EmLoop, list.get(em.loops, list.len(em.loops) - 1));
 }

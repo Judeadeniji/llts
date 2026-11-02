@@ -37,7 +37,7 @@ pub @func compileFor(em: *state_mod.EmState, for_expr: *nodes.For) {
 
 @func bodyBlock(for_expr: *nodes.For): *nodes.Block {
     @if (for_expr.body.kind != common.NodeKind.Block) {
-        return error("CompileError", "for body must be block");
+        return error("CompileError");
     }
     return @as(*nodes.Block, for_expr.body);
 }
@@ -90,11 +90,11 @@ pub @func compileFor(em: *state_mod.EmState, for_expr: *nodes.For) {
 
 @func compileRangeFor(em: *state_mod.EmState, for_expr: *nodes.For) {
     @if (for_expr.expr.kind != common.NodeKind.Binary) {
-        return error("CompileError", "Range loops must have a start and end.");
+        return error("CompileError");
     }
     $bin: *nodes.Binary = @as(*nodes.Binary, for_expr.expr);
     @if (string.eql(bin.operator, "..") == false) {
-        return error("CompileError", "Range loops must have a start and end.");
+        return error("CompileError");
     }
     $start = bin.left;
     $end = bin.right;

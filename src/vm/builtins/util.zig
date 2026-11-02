@@ -80,22 +80,12 @@ pub fn appendStr(vm: *VMState, v: Value) !void {
     }
 }
 
-/// Allocate an error object `[ERROR_TAG, codePtr, payload]` and return ptr to codePtr slot.
+/// Allocate an error object `[ERROR_TAG, codePtr]` and return ptr to codePtr slot.
 pub fn makeError(vm: *VMState, msg: []const u8) !Value {
     const msg_val = try writeSlice(vm, msg);
-    const p = try vm.allocImmortal(3);
+    const p = try vm.allocImmortal(2);
     vm.slot(p).* = .{ .i64 = ERROR_TAG };
     vm.slot(p + 1).* = msg_val;
-    vm.slot(p + 2).* = .null;
-    return .{ .ptr = p + 1 };
-}
-
-pub fn makeErrorWithPayload(vm: *VMState, msg: []const u8, payload: Value) !Value {
-    const msg_val = try writeSlice(vm, msg);
-    const p = try vm.allocImmortal(3);
-    vm.slot(p).* = .{ .i64 = ERROR_TAG };
-    vm.slot(p + 1).* = msg_val;
-    vm.slot(p + 2).* = payload;
     return .{ .ptr = p + 1 };
 }
 
@@ -113,8 +103,8 @@ pub fn ioErrorCode(err: anyerror) []const u8 {
     };
 }
 
-pub fn makeIoError(vm: *VMState, err: anyerror, path: []const u8) !Value {
-    return makeErrorWithPayload(vm, ioErrorCode(err), try writeSlice(vm, path));
+pub fn makeIoError(vm: *VMState, err: anyerror) !Value {
+    return makeError(vm, ioErrorCode(err));
 }
 
 /// Write an array of values into a packed immortal `.array`.

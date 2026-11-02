@@ -167,7 +167,7 @@ pub @func compileDeclaration(em: *state_mod.EmState, decl: *nodes.Declaration) {
             break;
         }
         @if (string.eql(local.name, name)) {
-            return error("CompileError", string.concat("Variable '", string.concat(name, "' already declared in this scope")));
+            return error("CompileError");
         }
     }
 }
@@ -229,7 +229,7 @@ pub @func compileEnum(em: *state_mod.EmState, e: *nodes.EnumDecl) {
         $name = list.get(e.variants, i);
         @for (0..list.len(vNames)) |j| {
             @if (string.eql(list.get(vNames, j), name)) {
-                return error("CompileError", string.concat("Duplicate enum variant '", string.concat(@as(string, name), string.concat("' in '", string.concat(e.name, "'")))));
+                return error("CompileError");
             }
         }
         list.push(vNames, name);
@@ -244,7 +244,7 @@ pub @func compileEnum(em: *state_mod.EmState, e: *nodes.EnumDecl) {
 
 pub @func compileErrorDecl(em: *state_mod.EmState, e: *nodes.ErrorDecl) {
     @if (state_mod.emHasStruct(em, e.name) || state_mod.emHasEnum(em, e.name) || state_mod.emHasTypedef(em, e.name)) {
-        return error("CompileError", "Type name already used");
+        return error("CompileError");
     }
     $vNames = list.create(em.arena);
     $origins = list.create(em.arena);
@@ -252,7 +252,7 @@ pub @func compileErrorDecl(em: *state_mod.EmState, e: *nodes.ErrorDecl) {
         $name = list.get(e.variants, i);
         @for (0..list.len(vNames)) |j| {
             @if (string.eql(list.get(vNames, j), name)) {
-                return error("CompileError", string.concat("Duplicate error member '", string.concat(@as(string, name), string.concat("' in '", string.concat(e.name, "'")))));
+                return error("CompileError");
             }
         }
         list.push(vNames, name);
@@ -267,21 +267,21 @@ pub @func compileErrorDecl(em: *state_mod.EmState, e: *nodes.ErrorDecl) {
 
 pub @func compileTypeDecl(em: *state_mod.EmState, td: *nodes.TypeDecl) {
     @if (state_mod.emHasStruct(em, td.name) || state_mod.emHasEnum(em, td.name) || state_mod.emHasErrorSet(em, td.name)) {
-        return error("CompileError", "Type name already used by a struct, enum, or error set");
+        return error("CompileError");
     }
     $existing = state_mod.emFindTypedef(em, td.name);
     @if (existing != null) {
         $ex: *state_mod.EmTypedef = @as(*state_mod.EmTypedef, existing);
         @if (ex.stub == false) {
-            return error("CompileError", string.concat("Duplicate type '", string.concat(td.name, "'")));
+            return error("CompileError");
         }
     }
     @if (string.eql(td.name, "int") || string.eql(td.name, "string") || string.eql(td.name, "bool")) {
-        return error("CompileError", string.concat("Cannot redefine builtin type '", string.concat(td.name, "'")));
+        return error("CompileError");
     }
     $disp_o = typecheck.typeAstToDisplay(em, td.type_expr);
     @if (disp_o == null) {
-        return error("CompileError", string.concat("Invalid type expression for '", string.concat(td.name, "'")));
+        return error("CompileError");
     }
     $disp: string = @as(string, disp_o);
     map.set(em.typedefs, td.name, @new(em.arena, state_mod.EmTypedef {

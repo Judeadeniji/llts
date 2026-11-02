@@ -73,14 +73,14 @@ pub @func emitBytecode(em: *state_mod.EmState, doc: *ast.Document) {
     # Language entry: pub zero-arg `main` runs after top-level statements.
     $main_fn = state_mod.emFindFunc(em, "main");
     @if (main_fn == null) {
-        return error("CompileError", "missing entry point 'main'");
+        return error("CompileError");
     }
     $main_def: *state_mod.EmFunc = @as(*state_mod.EmFunc, main_fn);
     @if (main_def.is_public == false) {
-        return error("CompileError", "entry point 'main' must be pub");
+        return error("CompileError");
     }
     @if (main_def.arity != 0) {
-        return error("CompileError", "'main' must take 0 arguments");
+        return error("CompileError");
     }
     @if (main_def.address >= 0 && main_def.address <= 65535) {
         em.chunk.emitCallStatic(main_def.address, 0);
@@ -463,7 +463,7 @@ pub @func compileFile(arena: mem.Arena, source: string, path: string, out_path: 
         @if (s.kind == common.NodeKind.Declaration) {
             $d: *nodes.Declaration = @as(*nodes.Declaration, s);
             @if (map.has(em.global_vars, d.name)) {
-                return error("CompileError", string.concat("Variable '", string.concat(d.name, "' already declared in this scope")));
+                return error("CompileError");
             }
             map.set(em.global_vars, d.name, true);
             @if (d.is_const) {

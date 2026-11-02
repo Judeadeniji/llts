@@ -16,7 +16,7 @@ pub @const $TokenType = tokens.TokenType;
 
 @func failScan(self: *ctx.Scanner, code: string, message: string) {
     slog.err(message);
-    return error(code, message);
+    return error(code);
 }
 
 # Caller owns `arena`. Token rows live there and are invalid after reset/deinit.

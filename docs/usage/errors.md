@@ -9,11 +9,10 @@ The language provides an `error` builtin function to construct explicit error va
 ### Syntax
 ```llts
 @const $err = error("this is an error");
-@const $err_with_payload = error("FileNotFound", "missing.txt");
 print(err);
 ```
-- **Behavior**: Instantiates an error object with a message string and an optional payload string.
-- **Usage**: Error objects can be assigned to variables, printed, returned to the host environment, or passed to the logging subsystem.
+- **Behavior**: Instantiates an error object carrying a message string. `error()` takes exactly one argument.
+- **Usage**: Error objects can be assigned to variables, printed, returned to the host environment, or passed to the logging subsystem. If you need to ship extra data with a failure, return a wrapper value instead (for example `{ code: string; detail: string }`).
 
 ## Typed error sets (`@error`)
 
@@ -61,7 +60,7 @@ pub @func main() {
     slog.info("Application starting");
     slog.warn("Disk space low");
     
-    @const $err = error("FileNotFound", "missing.txt");
+    @const $err = error("FileNotFound");
     slog.err(err);
 }
 ```
@@ -69,7 +68,7 @@ pub @func main() {
 - **Environment Controls**:
   - `LLTS_LOG_LEVEL`: Set the minimum log level (e.g., `trace`, `debug`, `info`, `warn`, `error`).
   - `NO_COLOR` / `FORCE_COLOR`: Control ANSI color output.
-- **Error Formatting**: Passing an `error()` object to `slog.err()` automatically formats it as a structured log without redundant `Error:` prefixes, displaying both the error code and its payload.
+- **Error Formatting**: Passing an `error()` object to `slog.err()` automatically formats it as a structured log without redundant `Error:` prefixes, displaying the error message.
 - **Assertions**: `slog.assert(condition)` is available and returns an `AssertFailed` error value if the condition is false.
 
 ## Diagnostics and Stack Traces
