@@ -13,6 +13,30 @@ pub fn emitAssignment(self: *Emitter, node: *ast_mod.Node, asn: *const ast_mod.A
     if (!std.mem.eql(u8, asn.operator, "=")) {
         return self.failAt(node, "native backend (Phase 3) does not support '{s}' yet", .{asn.operator});
     }
+    if (asn.left.* == .primary and
+        (asn.left.primary.kind == .identifier or asn.left.primary.kind == .register) and
+        std.mem.eql(u8, asn.left.primary.name, "_"))
+    {
+        // `_ = expr;` evaluates for effect. Function values and module names
+        // have no native representation and exist only to silence unused
+        // analysis, so a bare name discards to nothing.
+        if (asn.right.* == .primary) {
+            const n = asn.right.primary;
+            if (n.kind == .identifier or n.kind == .register) {
+                if (self.state.functions.contains(n.name)) return;
+                if (self.lookupBindingOptional(n.name)) |b| {
+                    if (b.fn_key != null or b.module_path != null) return;
+                }
+                if (self.globals.get(n.name)) |g| {
+                    if (g.fn_key != null or g.module_path != null) return;
+                }
+            }
+        }
+        const code = try expr_mod.emitExpr(self, asn.right);
+        try self.writeIndent();
+        try self.writer.print("_ = {s};\n", .{code});
+        return;
+    }
     switch (asn.left.*) {
         .primary => |p| {
             if (p.kind != .identifier and p.kind != .register) {
@@ -729,6 +753,12 @@ pub fn emitLocalDeclaration(self: *Emitter, node: *ast_mod.Node, d: *const ast_m
     const info = self.infos.get(node) orelse {
         return self.failAt(node, "internal: missing binding for local '{s}'", .{d.name});
     };
+    // Function values and module namespaces are devirtualized at their call
+    // sites; they have no Zig variable.
+    if (info.fn_key != null or info.module_path != null) {
+        try self.scopes.items[self.scopes.items.len - 1].put(d.name, info);
+        return;
+    }
     const vt = try self.classify(node, info.display);
     try self.requireValueType(node, vt);
     if (info.zig_name.len == 0) info.zig_name = try self.localName(d.name);

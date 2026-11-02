@@ -43,6 +43,39 @@ function runEmitted(outputPath: string) {
   };
 }
 
+/** Emit a multi-file program (entry imports `./lib.lls`) and compare with the VM. */
+function expectModuleParity(
+  libSource: string,
+  entrySource: string,
+  extraFiles: Record<string, string> = {},
+  emitFlags: string[] = [],
+) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "llts_emit_mod_"));
+  fs.writeFileSync(path.join(dir, "lib.lls"), libSource, "utf-8");
+  for (const [name, source] of Object.entries(extraFiles)) {
+    fs.writeFileSync(path.join(dir, name), source, "utf-8");
+  }
+  const entry = path.join(dir, "main.lls");
+  fs.writeFileSync(entry, entrySource, "utf-8");
+  const outputPath = path.join(
+    ROOT,
+    `.tmp_emit_zig_mod_${Date.now()}_${Math.random().toString(36).slice(2)}.zig`,
+  );
+  try {
+    const emit = runCli(["emit-zig", entry, "-o", outputPath, ...emitFlags]);
+    expect(emit.stderr + emit.stdout).toBe("");
+    expect(emit.exitCode).toBe(0);
+
+    const native = runEmitted(outputPath);
+    const vm = runFile(entry);
+    expect(native.exitCode).toBe(vm.exitCode);
+    expect(native.stdout).toBe(vm.stdout);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+    if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
+  }
+}
+
 function expectParity(source: string, checkGenerated?: (code: string) => void) {
   const emitted = emitZig(source);
   try {
@@ -586,6 +619,187 @@ pub @func main() {
     print(maybeFail(true)?);
 }
 `);
+}, 60_000);
+
+test("emits pointer-receiver methods and method chains", () => {
+  expectParity(`
+@struct Counter {
+    value: int;
+
+    @func bump(self) {
+        self.value = self.value + 1;
+        return self;
+    }
+
+    @func get(self) {
+        return self.value;
+    }
+}
+
+pub @func main() {
+    $local: Counter = { value: 10 };
+    $p = &local;
+    print(p.bump().get());
+    $other: Counter = { value: 1 };
+    other.bump();
+    print(other.get());
+    print(local.get());
+}
+`);
+}, 60_000);
+
+test("emits by-value `self` methods without mutating the receiver", () => {
+  expectParity(`
+@struct Acc {
+    v: int;
+
+    @func bumped(self: Acc) {
+        self.v = self.v + 1;
+        return self.v;
+    }
+}
+
+pub @func main() {
+    $a: Acc = { v: 1 };
+    print(a.bumped());
+    print(a.v);
+}
+`);
+}, 60_000);
+
+test("emits module function calls, structs, and module constants", () => {
+  expectModuleParity(
+    `
+pub @const $TWO = 2;
+pub @const $NAME = "lib";
+
+pub @struct Point { x: int; y: int; }
+
+pub @func dbl(a: int): int { return a * 2; }
+
+pub @func make(x: int, y: int): Point { return Point { x: x, y: y }; }
+`,
+    `
+@const $lib = @import("./lib.lls");
+
+pub @func main() {
+    print(lib.dbl(21));
+    print(lib.TWO);
+    print(lib.NAME);
+    $p = lib.make(1, 2);
+    print(p.x);
+    print(p.y);
+}
+`,
+  );
+}, 60_000);
+
+test("emits nested module imports", () => {
+  expectModuleParity(
+    `
+pub @const $sub = @import("./sub.lls");
+pub @func dbl(a: int): int { return a * 2; }
+`,
+    `
+@const $lib = @import("./lib.lls");
+
+pub @func main() {
+    print(lib.dbl(3));
+    print(lib.sub.quad(3));
+}
+`,
+    { "sub.lls": `pub @func quad(a: int): int { return a * 4; }` },
+  );
+}, 60_000);
+
+test("devirtualizes first-class function values into direct calls", () => {
+  expectModuleParity(
+    `
+pub @func mul(a: int, b: int): int { return a * b; }
+`,
+    `
+@const $lib = @import("./lib.lls");
+
+@func add(x: int, y: int): int { return x + y; }
+
+@func getAdder(n: int) {
+    _ = n;
+    return add;
+}
+
+@struct Iter {
+    value: int;
+
+    @func next(self) { return add; }
+}
+
+@func get(): Iter {
+    return Iter { value: 0 };
+}
+
+$pick = lib.mul;
+
+pub @func main() {
+    print(getAdder(1)(2, 3));
+    print((get().next())(4, 5));
+    print(pick(6, 7));
+    _ = pick;
+}
+`,
+    { "lib.lls": `pub @func mul(a: int, b: int): int { return a * b; }` },
+    // Function-value declarations have no inferred type yet, so strict mode
+    // rejects them at typecheck; the emitter's devirtualization is what's tested.
+    ["--strict=false"],
+  );
+}, 60_000);
+
+test("rejects materializing a function value at runtime", () => {
+  const emitted = emitZig(`
+@func add(x: int, y: int): int { return x + y; }
+
+@func getAdder() { return add; }
+
+pub @func main() {
+    print(getAdder());
+}
+`);
+  try {
+    const emit = runCli([
+      "emit-zig",
+      emitted.sourcePath,
+      "-o",
+      emitted.outputPath,
+    ]);
+    expect(emit.exitCode).not.toBe(0);
+    expect(emit.stderr).toContain("cannot materialize function value");
+    expect(emit.stderr).not.toContain("panic");
+  } finally {
+    emitted.cleanup();
+  }
+});
+
+test("emits stateful module globals", () => {
+  expectModuleParity(
+    `
+$count = 0;
+
+pub @func bump(): int {
+    count = count + 1;
+    return count;
+}
+
+pub @func peek(): int { return count; }
+`,
+    `
+@const $lib = @import("./lib.lls");
+
+pub @func main() {
+    print(lib.bump());
+    print(lib.bump());
+    print(lib.peek());
+}
+`,
+  );
 }, 60_000);
 
 test("emits errdefer and defer in LIFO order on success and error paths", () => {

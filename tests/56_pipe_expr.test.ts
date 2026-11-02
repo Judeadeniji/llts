@@ -486,8 +486,8 @@ pub @func main() {
   );
 }, 60_000);
 
-test("native: method pipe fails cleanly on the native backend", () => {
-  const emitted = emitZig(
+test("native: method pipe lowers to a direct method call", () => {
+  expectNativeParity(
     `
 @struct Counter {
 	value: i64;
@@ -499,25 +499,13 @@ pub @func main() {
 	print(d.value);
 }
 `,
+    (generated) => {
+      expect(generated).toContain("lls_fn_Counter_3A_3Aadd(ctx, ");
+      expect(generated).toMatch(/lls_fn_Counter_3A_3Aadd\(ctx, lls_l\d+_c, 4\)/);
+      expect(generated).not.toContain("panic");
+    },
   );
-  try {
-    const emit = runCli([
-      "emit-zig",
-      emitted.sourcePath,
-      "-o",
-      emitted.outputPath,
-    ]);
-    expect(emit.exitCode).not.toBe(0);
-    // Depending on how much of struct/method lowering the backend has,
-    // this stops at struct types ("does not support type 'Counter'") or
-    // at the pipe itself ("only supports direct function calls").
-    // Either way it must be a clean Phase 2 capability error, not a crash.
-    expect(emit.stderr).toContain("native backend (Phase 2)");
-    expect(emit.stderr).not.toContain("panic");
-  } finally {
-    emitted.cleanup();
-  }
-});
+}, 60_000);
 
 test("native: non-callable pipe target is rejected before emission", () => {
   const emitted = emitZig(

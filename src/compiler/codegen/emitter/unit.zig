@@ -21,7 +21,13 @@ pub fn collectGlobals(self: *Emitter) !void {
             if (!r.shouldEmitTopLevel(self.doc, s)) continue;
         }
         if (self.globals.contains(d.name)) continue;
-        const display = self.displayForDeclValue(d) catch |err| switch (err) {
+        const fn_key = self.resolveFunctionValue(d.value, 0) catch null;
+        const module_path = if (fn_key == null) self.resolveModuleValue(d.value) else null;
+        const display = if (fn_key != null)
+            "func"
+        else if (module_path != null)
+            "module"
+        else self.displayForDeclValue(d) catch |err| switch (err) {
             error.CompileError => return error.CompileError,
             else => return err,
         };
@@ -31,6 +37,8 @@ pub fn collectGlobals(self: *Emitter) !void {
             .zig_name = try self.globalName(d.name),
             .display = display,
             .node = s,
+            .fn_key = fn_key,
+            .module_path = module_path,
         };
         try self.globals.put(d.name, g);
     }
@@ -107,7 +115,7 @@ pub fn emitFunction(self: *Emitter, name: []const u8, def: state_mod.FunctionDef
         return self.failAt(f.params, "native backend does not support variadic functions yet", .{});
     }
 
-    try prepareFunction(self, f, params);
+    try prepareFunction(self, f, params, self.methodStructFor(name));
     const ret = try functionReturnType(self, name, def);
     self.cur_ret = ret;
 
@@ -190,6 +198,9 @@ pub fn emitFunctions(self: *Emitter) !void {
 
     for (names.items) |name| {
         const def = self.state.functions.get(name) orelse continue;
+        // Pure function factories are devirtualized into direct calls and have
+        // no emit-able body (their result is a function, not a value).
+        if (try self.functionReturnsFunction(name, 0) != null) continue;
         try emitFunction(self, name, def);
     }
 }
@@ -206,6 +217,7 @@ pub fn emitGlobalDecls(self: *Emitter) !void {
     }.lessThan);
     for (names.items) |name| {
         const g = self.globals.get(name).?;
+        if (g.fn_key != null or g.module_path != null) continue;
         const vt = try self.classify(g.node, g.display);
         try self.requireValueType(g.node, vt);
         try self.writer.print("var {s}: {s} = {s};\n", .{ g.zig_name, vt.zig, try zeroValue(self, vt) });
@@ -232,6 +244,7 @@ pub fn emitTopLevel(self: *Emitter) !void {
             const g = self.globals.get(d.name) orelse {
                 return self.failAt(s, "native backend (Phase 2) does not support this top-level declaration", .{});
             };
+            if (g.fn_key != null or g.module_path != null) continue;
             try stmt_mod.emitLineMarker(self, s);
             const vt = try self.classify(s, g.display);
             const code = try expr_mod.emitValueCoerced(self, d.value, vt);
@@ -277,7 +290,12 @@ pub fn functionReturnType(self: *Emitter, name: []const u8, def: state_mod.Funct
     return t;
 }
 
-pub fn prepareFunction(self: *Emitter, f: *const ast_mod.FunctionDecl, params: []const ast_mod.Param) !void {
+pub fn prepareFunction(
+    self: *Emitter,
+    f: *const ast_mod.FunctionDecl,
+    params: []const ast_mod.Param,
+    method_struct: ?[]const u8,
+) !void {
     const a = self.arena.allocator();
     self.infos.clearRetainingCapacity();
     self.scopes.clearRetainingCapacity();
@@ -286,12 +304,19 @@ pub fn prepareFunction(self: *Emitter, f: *const ast_mod.FunctionDecl, params: [
     self.defer_scopes.clearRetainingCapacity();
 
     var base = std.StringHashMap(*Binding).init(a);
-    for (params) |p| {
+    for (params, 0..) |p, i| {
         if (p.is_rest) return self.failAt(f.params, "native backend does not support rest parameters yet", .{});
-        const display = if (p.type_annotation) |ann|
+        var display = if (p.type_annotation) |ann|
             (try from_ast.typeAstToDisplay(ann, self.state)) orelse "unknown"
         else
             "unknown";
+        // Unannotated method `self` is pointer-like (`*T`): mutations through it
+        // are visible to the caller, matching the VM's shared-handle receiver.
+        if (i == 0 and method_struct != null and p.type_annotation == null and
+            std.mem.eql(u8, p.name, "self"))
+        {
+            display = try std.fmt.allocPrint(a, "*{s}", .{method_struct.?});
+        }
         const vt = try self.classify(f.params, display);
         try self.requireValueType(f.params, vt);
         const b = try a.create(Binding);
@@ -324,7 +349,7 @@ pub fn zeroValue(self: *Emitter, t: ValType) ![]const u8 {
         .string => "\"\"",
         .optional, .null_value => "null",
         .struct_, .array, .slice, .pointer => "undefined",
-        .error_value, .error_payload => "undefined",
+        .error_value => "undefined",
         else => if (t.may_error)
             "undefined"
         else

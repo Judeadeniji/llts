@@ -67,6 +67,17 @@ pub fn preScanExpr(self: *Emitter, node: *ast_mod.Node) anyerror!void {
         },
         .literal => {},
         .binary => |b| {
+            if (std.mem.eql(u8, b.operator, "|>")) {
+                // `x |> obj.method` is a method call at emission; mark the
+                // receiver mutable just like `obj.method(x)`.
+                const callee: *ast_mod.Node = if (b.right.* == .call) b.right.call.callee else b.right;
+                if (callee.* == .member and callee.member.property.* == .primary) {
+                    const m = &callee.member;
+                    if (self.methodTarget(m.object, m.property.primary.name) catch null) |t| {
+                        if (t.mode == .pointer) try markPlaceRootAssigned(self, m.object);
+                    }
+                }
+            }
             try preScanExpr(self, b.left);
             try preScanExpr(self, b.right);
         },
@@ -83,7 +94,20 @@ pub fn preScanExpr(self: *Emitter, node: *ast_mod.Node) anyerror!void {
         },
         .call => |c| {
             for (c.args) |arg| try preScanExpr(self, arg);
-            if (c.callee.* == .member) try preScanExpr(self, c.callee.member.object);
+            if (c.callee.* == .member) {
+                const m = &c.callee.member;
+                if (m.property.* == .primary) {
+                    // A pointer-receiver method mutates its receiver in place, so
+                    // the local must be emitted as `var` (Zig UB otherwise).
+                    if (self.methodTarget(m.object, m.property.primary.name) catch null) |t| {
+                        if (t.mode == .pointer) {
+                            try markPlaceRootAssigned(self, m.object);
+                            return;
+                        }
+                    }
+                }
+                try preScanExpr(self, m.object);
+            }
         },
         .member => |m| {
             try preScanExpr(self, m.object);
@@ -117,10 +141,14 @@ pub fn preScanStmt(self: *Emitter, node: *ast_mod.Node) anyerror!void {
         .declaration => |d| {
             try preScanExpr(self, d.value);
             const b = try self.arena.allocator().create(Binding);
+            const fn_key = self.resolveFunctionValue(d.value, 0) catch null;
+            const module_path = if (fn_key == null) self.resolveModuleValue(d.value) else null;
             b.* = .{
                 .name = d.name,
                 .zig_name = "",
-                .display = self.displayForDeclValue(&d) catch "unknown",
+                .display = if (fn_key != null) "func" else if (module_path != null) "module" else self.displayForDeclValue(&d) catch "unknown",
+                .fn_key = fn_key,
+                .module_path = module_path,
             };
             try self.infos.put(node, b);
             try self.scopes.items[self.scopes.items.len - 1].put(d.name, b);

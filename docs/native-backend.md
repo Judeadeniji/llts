@@ -244,7 +244,7 @@ Cleanly remove the inactive LLVM stub module.
 
 2. **Phase 2: Emitter Core & `llts emit-zig`** — implemented for the basic subset
    - `src/compiler/codegen/emitter/` generates runtime-driving Zig for arithmetic, functions, returns, locals, strings, top-level code, and `print`.
-   - Pipes (`|>`) over direct callees desugar to ordinary calls in the emitter and match the VM output; method pipes (`lhs |> obj.method`) fail cleanly with the Phase 2 direct-calls-only error until method calls are lowered.
+   - Pipes (`|>`) desugar to ordinary calls in the emitter and match the VM output, for direct callees and method calls (`lhs |> obj.method`).
    - `llts emit-zig <file.lls> -o <out.zig>` is wired (strict mode on by default).
    - Generated files are verified by `tests/55_emit_zig.test.ts` (emit → `zig run -lc` → compare against the VM); pipe parity is covered in `tests/56_pipe_expr.test.ts` (native section).
    - Generated Zig must reside inside the repo module root so the absolute runtime import resolves; Phase 4 `zig build-exe` remains.
@@ -257,13 +257,28 @@ Cleanly remove the inactive LLVM stub module.
    - `@defer` runs LIFO on scope exit, `break`, `continue`, and `return`.
    - Labeled block values lower to Zig labeled blocks; `break :label value` runs pending defers before yielding.
    - `@addrOf` lowers to native addresses; direct printing uses raw hex (native-only).
-   - `@new` lowers to zero-filled immortal storage for structs, arrays, and slices.
-   - Remaining: struct printing and `@new(string, n)`.
+   - `@new` lowers to zero-filled immortal storage for structs, arrays, slices, and string buffers.
+   - Methods lower to direct `Type::method` calls: pointer receivers call through the
+     receiver's address (the receiver local is emitted as `var`), by-value `self`
+     passes a copy, and method chains/optional receives work. Struct printing emits
+     the LLTS packed-byte representation.
+   - `@import` modules lower as one Zig program: module-qualified calls
+     (`mod.fn(...)`, `mod.sub.fn(...)`), module structs, and module globals
+     (including stateful ones) resolve through the module's qualified keys and
+     match the VM.
+   - First-class function values are **devirtualized**: a function name, module
+     export, or a call whose callee statically returns a function (e.g.
+     `getAdder()(1, 2)`, `(get().next())(4, 5)`) lowers to a direct call, and
+     global/local function-value bindings (`$f = mod.fn;`) carry a symbolic key
+     with no Zig variable. There is no runtime function type: materializing one
+     (`print(getAdder())`) is a compile error.
+   - Remaining: native implementations of the `__*` std backends while `std/`
+     is rewritten in plain LLTS.
    - Enforce RAII frame watermark cleanup in all emitted functions.
 
 4. **Phase 3.5: Error Semantics** — implemented
-   - `error(...)` values and payloads, custom `@error` sets and unions, error-set typedefs, error-union `?` propagation, and implicit `.ok` wrapping.
-   - `@isError` narrowing, `@nameOf`, `.code`/`.message`/`.payload`, error equality, `@switch` over narrowed errors, and error printing.
+   - `error(...)` values, custom `@error` sets and unions, error-set typedefs, error-union `?` propagation, and implicit `.ok` wrapping.
+   - `@isError` narrowing, `@nameOf`, `.message`, error equality, `@switch` over narrowed errors, and error printing.
    - `@errdefer` interleaves with `@defer` in LIFO order and runs only on error exits.
    - Unhandled errors from `main` and top-level code print `Error: <code>` and exit nonzero.
    - Covered by `tests/55_emit_zig.test.ts` native parity tests.

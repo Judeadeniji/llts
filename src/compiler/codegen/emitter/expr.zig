@@ -1,5 +1,8 @@
 const std = @import("std");
 const ast_mod = @import("../../../ast/root.zig");
+const state_mod = @import("../../state.zig");
+const path_mod = @import("../../expr/path.zig");
+const from_ast = @import("../../typecheck/from_ast.zig");
 const widths = @import("../../widths.zig");
 const root_mod = @import("root.zig");
 const unit_mod = @import("unit.zig");
@@ -150,10 +153,18 @@ pub fn emitCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) any
         return self.failAt(node, "native backend (Phase 2) does not support intrinsic '{s}'", .{intrinsic});
     }
 
-    if (c.callee.* != .primary) {
+    if (c.callee.* == .member) {
+        // Module exports resolve by static path; struct methods by receiver type.
+        if (try emitModuleCall(self, node, c)) |code| return code;
+        if (try emitMethodCall(self, node, c)) |code| return code;
+    }
+
+    if (c.callee.* != .primary and c.callee.* != .call) {
         return self.failAt(node, "native backend (Phase 2) only supports direct function calls", .{});
     }
-    const callee = c.callee.primary.name;
+    // A `.call` callee is a devirtualized function value (`f()()`), handled by
+    // `resolveFunctionValue` below; it has no builtin name.
+    const callee: []const u8 = if (c.callee.* == .primary) c.callee.primary.name else "";
 
     if (std.mem.eql(u8, callee, "print")) {
         var args_buf: std.ArrayList([]const u8) = .empty;
@@ -199,11 +210,19 @@ pub fn emitCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) any
     }
 
     var target_name: ?[]const u8 = null;
-    if (self.state.generic_calls.get(node)) |gc| target_name = gc.instance;
-    if (target_name == null and self.state.functions.contains(callee)) target_name = callee;
+    if (self.state.generic_calls.get(node)) |gc| {
+        target_name = gc.instance;
+    } else if (try self.resolveFunctionValue(c.callee, 0)) |key| {
+        target_name = key;
+    }
     const name = target_name orelse {
-        return self.failAt(node, "native backend cannot resolve function '{s}' (imports are Phase 3)", .{callee});
+        return self.failAt(node, "native backend cannot resolve function '{s}' (function values must be called directly)", .{callee});
     };
+    // Pure factories are devirtualized at their call sites and never emitted;
+    // using one as a runtime value has no representation.
+    if (try self.functionReturnsFunction(name, 0)) |_| {
+        return self.failAt(node, "native backend cannot materialize function value '{s}'; call it directly", .{name});
+    }
     if (self.reach) |*r| {
         if (!r.isFunctionReachable(name)) {
             return self.failAt(node, "internal: function '{s}' not marked reachable", .{name});
@@ -220,6 +239,75 @@ pub fn emitCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) any
         return std.fmt.allocPrint(a, "(try {s}(ctx))", .{zig_fn});
     }
     return std.fmt.allocPrint(a, "(try {s}(ctx, {s}))", .{ zig_fn, args_joined });
+}
+
+/// `mod.fn(args)` / `mod.sub.fn(args)` — resolves the static path to a
+/// `module::export` function and emits a direct call.
+fn emitModuleCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) !?[]const u8 {
+    const a = self.arena.allocator();
+    const resolved = (path_mod.tryResolveStaticPath(self.state, c.callee) catch null) orelse return null;
+    const name = if (self.state.generic_calls.get(node)) |gc| gc.instance else resolved;
+    if (!self.state.functions.contains(name)) return null;
+    if (self.reach) |*r| {
+        if (!r.isFunctionReachable(name)) {
+            return self.failAt(node, "internal: function '{s}' not marked reachable", .{name});
+        }
+    }
+    var args_buf: std.ArrayList([]const u8) = .empty;
+    for (c.args) |arg| {
+        try args_buf.append(a, try emitExpr(self, arg));
+    }
+    const zig_fn = try self.fnName(name);
+    if (args_buf.items.len == 0) {
+        return try std.fmt.allocPrint(a, "(try {s}(ctx))", .{zig_fn});
+    }
+    return try std.fmt.allocPrint(a, "(try {s}(ctx, {s}))", .{ zig_fn, try std.mem.join(a, ", ", args_buf.items) });
+}
+
+/// `obj.method(args)` — resolves `Type::method` and emits a direct call with
+/// the receiver prepended. Returns null when the callee is not a struct method
+/// (fields and module exports fall through to the generic path).
+fn emitMethodCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) !?[]const u8 {
+    const a = self.arena.allocator();
+    const m = &c.callee.member;
+    if (m.property.* != .primary) return null;
+    const target = (self.methodTarget(m.object, m.property.primary.name) catch null) orelse return null;
+    if (self.reach) |*r| {
+        if (!r.isFunctionReachable(target.key)) {
+            return self.failAt(node, "internal: function '{s}' not marked reachable", .{target.key});
+        }
+    }
+
+    var args_buf: std.ArrayList([]const u8) = .empty;
+    switch (target.mode) {
+        .none => {},
+        .value => try args_buf.append(a, try emitExpr(self, m.object)),
+        .pointer => {
+            if (target.receiver_is_pointer) {
+                try args_buf.append(a, try emitExpr(self, m.object));
+            } else if (Emitter.isPlaceNode(m.object)) {
+                // Locals are `const` in emitted Zig unless reassigned; the LLTS
+                // const rules already rejected mutating a `@const` receiver, so
+                // taking the address here is sound.
+                const lvalue = try stmt_mod.emitPlaceLvalue(self, m.object);
+                try args_buf.append(a, try std.fmt.allocPrint(a, "@constCast(&({s}))", .{lvalue}));
+            } else {
+                self.counter += 1;
+                try args_buf.append(a, try std.fmt.allocPrint(a,
+                    "blk: {{ var lls_recv_{d} = {s}; break :blk &lls_recv_{d}; }}",
+                    .{ self.counter, try emitExpr(self, m.object), self.counter },
+                ));
+            }
+        },
+    }
+    for (c.args) |arg| {
+        try args_buf.append(a, try emitExpr(self, arg));
+    }
+    const zig_fn = try self.fnName(target.key);
+    if (args_buf.items.len == 0) {
+        return try std.fmt.allocPrint(a, "(try {s}(ctx))", .{zig_fn});
+    }
+    return try std.fmt.allocPrint(a, "(try {s}(ctx, {s}))", .{ zig_fn, try std.mem.join(a, ", ", args_buf.items) });
 }
 
 pub fn emitComparison(self: *Emitter, node: *ast_mod.Node, b: *const ast_mod.Binary) ![]const u8 {
@@ -735,10 +823,16 @@ pub fn emitValueCoercedMode(self: *Emitter, node: *ast_mod.Node, target: ValType
     if (target.kind == .bool and src.kind == .bool) return code;
     if (target.kind == .string and src.kind == .string) return code;
     if (target.kind == .struct_ and src.kind == .struct_) return code;
+    // `return self` from a pointer-receiver method: the VM reports the struct
+    // display, so native copies the pointee to match the declared type.
+    if (target.kind == .struct_ and src.kind == .pointer and src.payload != null and
+        src.payload.?.kind == .struct_ and std.mem.eql(u8, src.payload.?.zig, target.zig))
+    {
+        return std.fmt.allocPrint(a, "({s}).*", .{code});
+    }
     if (target.kind == .array and src.kind == .array) return code;
     if (target.kind == .slice and src.kind == .slice) return code;
     if (target.kind == .pointer and src.kind == .pointer) return code;
-    if (target.kind == .error_payload and src.kind == .error_payload) return code;
     return self.failAt(node, "cannot assign '{s}' to '{s}' in native emission", .{ src.display, target.display });
 }
 
@@ -812,12 +906,17 @@ pub fn emitMember(self: *Emitter, node: *ast_mod.Node, m: *const ast_mod.Member)
         }
         if (self.state.error_sets.get(object_name)) |ed| {
             if (ed.variants.contains(member_name)) {
-                return std.fmt.allocPrint(a, "rt.err.makeCode({s})", .{try self.zigString(member_name)});
+                return std.fmt.allocPrint(a, "rt.err.make({s})", .{try self.zigString(member_name)});
             }
             return self.failAt(node, "native backend cannot resolve error member '{s}'", .{member_name});
         }
     }
     if (m.property.* == .primary) {
+        // `mod.CONST` / `mod.sub.CONST`: module globals are emitted under their
+        // qualified `module::NAME` keys, so read the emitted binding directly.
+        if ((path_mod.tryResolveStaticPath(self.state, node) catch null)) |import_key| {
+            if (self.globals.get(import_key)) |g| return g.zig_name;
+        }
         const obj_t = try self.storageValueType(m.object);
         if (obj_t.kind == .error_value or obj_t.may_error) {
             const prop = m.property.primary.name;
