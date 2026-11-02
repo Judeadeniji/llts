@@ -69,6 +69,10 @@ pub fn emitIndexAssignment(self: *Emitter, node: *ast_mod.Node, asn: *const ast_
     if (ix.is_slice) {
         return self.failAt(node, "Cannot assign to a slice view", .{});
     }
+    // Reject `"hi"[0] = …` before place lowering (literals are not lvalues).
+    if (isStringLiteralExpr(ix.object)) {
+        return self.failAt(node, "cannot mutate a string literal", .{});
+    }
     const a = self.arena.allocator();
     var obj_t = try self.valueType(ix.object);
     var obj_code = try emitPlaceLvalue(self, ix.object);
@@ -84,9 +88,8 @@ pub fn emitIndexAssignment(self: *Emitter, node: *ast_mod.Node, asn: *const ast_
         .string => "String",
         else => return self.failAt(node, "native backend cannot assign into '{s}' yet", .{obj_t.display}),
     };
-    if (obj_t.kind == .string and !was_pointer) {
-        return self.failAt(node, "native backend only supports mutating @new string buffers", .{});
-    }
+    // Allow stores into `[]byte` / byte-slice views (including `@as([]byte, @new-buf)`
+    // and `v[i..j]`). String-literal objects are rejected above.
     const use: []const u8 = switch (obj_t.kind) {
         .slice => "slice",
         .string => "str",
@@ -781,7 +784,10 @@ pub fn emitLocalDeclaration(self: *Emitter, node: *ast_mod.Node, d: *const ast_m
     else
         try expr_mod.emitExpr(self, d.value);
 
-    const needs_var = info.reassigned or (info.assigned and vt.kind != .pointer and vt.kind != .slice);
+    // Index stores into `[]byte` / string views don't reassign the slice header,
+    // so Zig wants `const` (same as `.slice` / `.pointer`). Use `var` only when
+    // the binding is actually reassigned.
+    const needs_var = info.reassigned or (info.assigned and vt.kind != .pointer and vt.kind != .slice and vt.kind != .string);
     const kw = if (needs_var) "var" else "const";
     try self.writeIndent();
     try self.writer.print("{s} {s}: {s} = {s};\n", .{ kw, info.zig_name, vt.zig, init_code });
@@ -1207,4 +1213,8 @@ pub fn switchScrutineeType(self: *Emitter, node: *ast_mod.Node, sw: *const ast_m
         else => return self.failAt(node, "native backend (Phase 3) does not support @switch on '{s}' yet", .{vt.display}),
     }
     return vt;
+}
+
+fn isStringLiteralExpr(node: *ast_mod.Node) bool {
+    return node.* == .literal and node.literal.literal_type == .string;
 }

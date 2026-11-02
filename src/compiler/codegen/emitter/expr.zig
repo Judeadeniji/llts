@@ -26,20 +26,7 @@ pub fn emitBinary(self: *Emitter, node: *ast_mod.Node, b: *const ast_mod.Binary)
     }
 
     if (std.mem.eql(u8, op, "+") and (try isStringy(self, b.left) or try isStringy(self, b.right) or try isStringBufferPtr(self, b.left) or try isStringBufferPtr(self, b.right))) {
-        const lt = try self.valueType(b.left);
-        const rt = try self.valueType(b.right);
-        if (lt.kind != .string or rt.kind != .string) {
-            if ((lt.kind == .pointer and lt.payload != null and lt.payload.?.kind == .string) or
-                (rt.kind == .pointer and rt.payload != null and rt.payload.?.kind == .string))
-            {
-                return self.failAt(node, "string concatenation requires two string operands; use @as([]byte, buf) to load a @new string buffer", .{});
-            }
-            return self.failAt(node, "string concatenation requires two string operands", .{});
-        }
-        return std.fmt.allocPrint(a, "(try rt.mem.concat(ctx, {s}, {s}))", .{
-            try emitExpr(self, b.left),
-            try emitExpr(self, b.right),
-        });
+        return self.failAt(node, "string concatenation requires @concat(allocator, a, b) or @concat(buffer, a, b); '+' no longer concatenates strings", .{});
     }
 
     if (isComparison(op)) return emitComparison(self, node, b);
@@ -149,6 +136,26 @@ pub fn emitCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) any
                 return self.failAt(node, "native backend (Phase 2) does not support @as to '{s}'", .{target.display});
             }
             return emitStrongCoercion(self, c.args[1], target);
+        }
+        if (std.mem.eql(u8, intrinsic, "@concat")) {
+            if (c.args.len != 3) return self.failAt(node, "@concat expects (allocator|buffer, a, b)", .{});
+            const dest_t = try self.valueType(c.args[0]);
+            const a_code = try emitExpr(self, c.args[1]);
+            const b_code = try emitExpr(self, c.args[2]);
+            // Buffer form: first arg is `*[]byte` (a `@new` string buffer).
+            if (dest_t.kind == .pointer and dest_t.payload != null and dest_t.payload.?.kind == .string) {
+                return std.fmt.allocPrint(a, "(try rt.mem.concatInto(@constCast(({s}).*), {s}, {s}))", .{
+                    try emitExpr(self, c.args[0]), a_code, b_code,
+                });
+            }
+            // Allocator form: dest is evaluated for effect then ignored (until #16);
+            // operands are stringified (template holes, ints, …) into the frame.
+            // Unique label — templates nest `@concat` and Zig rejects reused `blk:`.
+            self.counter += 1;
+            const label = try std.fmt.allocPrint(a, "lls_concat_{d}", .{self.counter});
+            return std.fmt.allocPrint(a, "{s}: {{ _ = {s}; break :{s} (try rt.print.concatDisplay(ctx, {s}, {s})); }}", .{
+                label, try emitExpr(self, c.args[0]), label, a_code, b_code,
+            });
         }
         if (std.mem.eql(u8, intrinsic, "len")) {
             if (c.args.len != 1) return self.failAt(node, "len expects 1 argument", .{});

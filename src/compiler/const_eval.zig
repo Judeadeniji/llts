@@ -323,6 +323,18 @@ fn noteDiag(state: *CompilerState, node: *ast.Node) void {
     if (loc.path.len > 0) state.diag_path = loc.path;
 }
 
+/// Stringify a const value for `@concat` folding (mirrors runtime `concatDisplay`).
+fn constValueToString(state: *CompilerState, val: ConstValue) anyerror!?[]const u8 {
+    return switch (val) {
+        .string => |s| s,
+        .i64 => |n| try std.fmt.allocPrint(state.allocator, "{d}", .{n}),
+        .f64 => |f| try std.fmt.allocPrint(state.allocator, "{d}", .{f}),
+        .bool => |b| if (b) "true" else "false",
+        .null => "null",
+        else => null,
+    };
+}
+
 pub fn evalBinaryOp(state: *CompilerState, op: []const u8, left_val: ConstValue, right_val: ConstValue) anyerror!?ConstValue {
     if (std.mem.eql(u8, op, "+")) {
         if (left_val == .i64 and right_val == .i64) {
@@ -643,6 +655,17 @@ fn evalExprInner(state: *CompilerState, scope: ?*ComptimeScope, n: *ast.Node) an
                         .string => |s| return .{ .i64 = @intCast(s.len) },
                         else => return null,
                     }
+                }
+                // `@concat(dest, a, b)` — fold when both operands are const-foldable
+                // (templates desugar to this; dest is ignored at comptime).
+                if (std.mem.eql(u8, callee_name, "@concat")) {
+                    if (c.args.len != 3) return null;
+                    const left_val = (try evalExpr(state, scope, c.args[1])) orelse return null;
+                    const right_val = (try evalExpr(state, scope, c.args[2])) orelse return null;
+                    const left_s = (try constValueToString(state, left_val)) orelse return null;
+                    const right_s = (try constValueToString(state, right_val)) orelse return null;
+                    const joined = try std.mem.concat(state.allocator, u8, &[_][]const u8{ left_s, right_s });
+                    return .{ .string = joined };
                 }
             }
             return try evalComptimeCall(state, scope, &c);

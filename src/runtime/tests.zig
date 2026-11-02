@@ -335,7 +335,7 @@ test "mem: cloneBytes is a deep copy ([]byte value semantics)" {
     try testing.expectEqualStrings("abc", copy);
 }
 
-test "mem: concat lands in immortal and survives leaveFrame" {
+test "mem: concat lands in the frame and is rewound by leaveFrame" {
     var ctx = try Context.init(.{
         .allocator = testing.allocator,
         .frame_capacity = 256,
@@ -345,8 +345,16 @@ test "mem: concat lands in immortal and survives leaveFrame" {
 
     const mark = ctx.enterFrame();
     const joined = try mem.concat(&ctx, "Hello, ", "world");
-    ctx.leaveFrame(mark);
     try testing.expectEqualStrings("Hello, world", joined);
+    ctx.leaveFrame(mark);
+    // Frame rewind reclaims the concat bytes; do not read `joined` after leave.
+}
+
+test "mem: concatInto writes into a caller buffer" {
+    var buf: [16]u8 = undefined;
+    const joined = try mem.concatInto(buf[0..], "Hello, ", "world");
+    try testing.expectEqualStrings("Hello, world", joined);
+    try testing.expectError(error.OutOfMemory, mem.concatInto(buf[0..4], "Hello, ", "world"));
 }
 
 test "mem: concat with empty operands" {

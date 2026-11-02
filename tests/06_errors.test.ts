@@ -151,7 +151,7 @@ test("? stops propagation at the first level that manually checks", () => {
 @func outer(): string {
     $res = middle();
     @if (@isError(res)) {
-        return "caught: " + res.message;
+        return @concat(0, "caught: ", res.message);
     }
     return "no error";
 }
@@ -172,7 +172,7 @@ test("multiple ? calls in the same function, first one fails", () => {
     $x = a()?;
     $y = b()?;
     print("unreachable");
-    return x + y;
+    return @concat(0, x, y);
 }
 
 print(doWork());
@@ -191,7 +191,7 @@ test("multiple ? calls in the same function, second one fails", () => {
     $x = a()?;
     $y = b()?;
     print("unreachable");
-    return x + y;
+    return @concat(0, x, y);
 }
 
 print(doWork());

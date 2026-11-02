@@ -127,7 +127,7 @@ test("emits strings, booleans, len, and @as", () => {
   expectParity(
     `
 pub @func main() {
-    $s: string = "foo" + "bar";
+    $s: string = @concat(0, "foo", "bar");
     print(s);
     print(len(s));
     print(s == "foobar");
@@ -807,7 +807,7 @@ test("emits errdefer and defer in LIFO order on success and error paths", () => 
 $log = "";
 
 @func note(s: string) {
-    log = log + s;
+    log = @concat(0, log, s);
 }
 
 @func work(fail: bool): bool | error {
@@ -979,7 +979,7 @@ pub @func main() {
     buf[2] = 67;
     $s = @as([]byte, buf);
     print(s);
-    print(s + "!");
+    print(@concat(0, s, "!"));
 }
 `,
   );

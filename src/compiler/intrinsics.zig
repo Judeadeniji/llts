@@ -27,6 +27,7 @@ pub const Intrinsic = enum {
     as,
     new,
     addrOf,
+    concat,
 };
 
 const intrinsics = std.StaticStringMap(Intrinsic).initComptime(.{
@@ -38,6 +39,7 @@ const intrinsics = std.StaticStringMap(Intrinsic).initComptime(.{
     .{ "@as", .as },
     .{ "@new", .new },
     .{ "@addrOf", .addrOf },
+    .{ "@concat", .concat },
 });
 
 pub fn match(callee: []const u8) ?Intrinsic {
@@ -59,6 +61,7 @@ pub fn arity(intr: Intrinsic) Arity {
         .as => .{ .exact = 2 },
         .new => .{ .range = .{ .min = 2, .max = 3 } },
         .addrOf => .{ .exact = 1 },
+        .concat => .{ .exact = 3 },
     };
 }
 
@@ -160,6 +163,23 @@ pub fn typecheck(state: *CompilerState, env: *typecheck_root.Env, ta: ir.TypeAll
         },
         .as => {
             return try typecheckCast(state, env, ta, c.args[0], c.args[1]);
+        },
+        .concat => {
+            // `@concat(dest, a, b)` — `dest` is an allocator placeholder (like
+            // `@new`) or a `*[]byte` buffer. Operands are stringified like the
+            // old VM `+` (ints/bools/etc. render, then join). Result is `[]byte`.
+            _ = try typecheck_root.inferExpr(state, env, ta, c.args[0]);
+            const a_t = try typecheck_root.inferExpr(state, env, ta, c.args[1]);
+            const b_t = try typecheck_root.inferExpr(state, env, ta, c.args[2]);
+            if (a_t == .void or a_t == .type_ or a_t == .never) {
+                const d = try typecheck_root.ownDisplay(state, a_t);
+                return compile_errors.compileFailFmt(state, "@concat cannot stringify '{s}'", .{d});
+            }
+            if (b_t == .void or b_t == .type_ or b_t == .never) {
+                const d = try typecheck_root.ownDisplay(state, b_t);
+                return compile_errors.compileFailFmt(state, "@concat cannot stringify '{s}'", .{d});
+            }
+            return ir.TString;
         },
         .new => {
             _ = try typecheck_root.inferExpr(state, env, ta, c.args[0]);
@@ -303,6 +323,15 @@ pub fn compile(state: *CompilerState, intr: Intrinsic, node: *ast.Node, c: *cons
         },
         .as => {
             try compileCast(state, c.args[0], c.args[1]);
+        },
+        .concat => {
+            // Bytecode: evaluate dest for effect (allocator / buffer), then
+            // string-add the two operands. Native emits a real frame/buffer path.
+            try expr.compileExpression(state, c.args[0]);
+            try emit.emitOp(state, .OP_POP);
+            try expr.compileExpression(state, c.args[1]);
+            try expr.compileExpression(state, c.args[2]);
+            try emit.emitOp(state, .OP_STRING_ADD);
         },
         .new => {
             try aggregate.compileNew(state, c);

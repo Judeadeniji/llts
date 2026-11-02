@@ -471,7 +471,7 @@ fn stringLiteralNode(self: *Parser, value: []const u8, loc: ast.Location) ParseE
     } });
 }
 
-/// Parse a fenced template token and desugar to a left-folded string `+` chain.
+/// Parse a fenced template token and desugar to a left-folded `@concat(0, …, …)` chain.
 fn parseTemplate(self: *Parser, token: ctx.Token) ParseError!*Node {
     _ = self.advance(); // consume .template
     const parts = token.template_parts orelse {
@@ -517,8 +517,8 @@ fn parseTemplate(self: *Parser, token: ctx.Token) ParseError!*Node {
     if (pieces.items.len == 0) {
         return stringLiteralNode(self, "", base_loc);
     }
-    // Pure text → string literal(s). Any `${…}` → `"" + …` so a lone hole
-    // still yields a string (`${n}` → `"" + n`), matching desugar-to-+.
+    // Pure text → string literal(s). Any `${…}` → `@concat(0, "", …)` so a lone
+    // hole still yields a string (`${n}` → `@concat(0, "", n)`).
     if (pieces.items.len == 1 and !has_hole) {
         return pieces.items[0];
     }
@@ -529,14 +529,32 @@ fn parseTemplate(self: *Parser, token: ctx.Token) ParseError!*Node {
         pieces.items[0];
     const start: usize = if (has_hole) 0 else 1;
     for (pieces.items[start..]) |right| {
-        acc = try self.create(.{ .binary = .{
-            .left = acc,
-            .operator = try self.dupe("+"),
-            .right = right,
-            .loc = base_loc,
-        } });
+        acc = try concatCallNode(self, acc, right, base_loc);
     }
     return acc;
+}
+
+/// `@concat(0, left, right)` — allocator placeholder `0` matches `@new(0, …)`.
+fn concatCallNode(self: *Parser, left: *Node, right: *Node, loc: ast.Location) ParseError!*Node {
+    const callee = try self.create(.{ .primary = .{
+        .name = try self.dupe("@concat"),
+        .kind = .identifier,
+        .loc = loc,
+    } });
+    const zero = try self.create(.{ .literal = .{
+        .value = try self.dupe("0"),
+        .literal_type = .number,
+        .loc = loc,
+    } });
+    const args = try self.arena.alloc(*Node, 3);
+    args[0] = zero;
+    args[1] = left;
+    args[2] = right;
+    return self.create(.{ .call = .{
+        .callee = callee,
+        .args = args,
+        .loc = loc,
+    } });
 }
 
 /// Tokenize and parse a single-expression `${…}` hole.

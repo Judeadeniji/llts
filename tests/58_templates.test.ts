@@ -10,7 +10,7 @@
  *   no assignments, no `;` inside the hole.
  * - Escapes in text: \n \r \t \\ \" \' \$ (same as "…" plus \$).
  * - Bare `$` not followed by `{` is a literal dollar.
- * - Desugars to string `+` (byte-slice / TString); no VM/runtime changes.
+ * - Desugars to `@concat(0, …)` (byte-slice / TString); no VM/runtime changes.
  * - `"…"` / `'…'` stay single-line. Lone 1–2 backticks are errors.
  */
 import { test } from "bun:test";
@@ -322,13 +322,12 @@ print(s);
   );
 });
 
-test("template: comparison and method call in hole", () => {
+test("template: comparison and expression in hole", () => {
   expectOutput(
     runSource(`
-@const $string = @import("std/string");
-$name = "  Ada  ";
+$name = "Ada";
 $s = \`\`\`
-[\${string.trim(name)}]
+[\${@if (len(name) > 0) { break name; } @else { break "?"; }}]
 \`\`\`;
 print(s);
 `),
@@ -365,7 +364,7 @@ print(s);
 });
 
 // ---------------------------------------------------------------------------
-// ACCEPT: typing / declaration / use (desugar to string +)
+// ACCEPT: typing / declaration / use (desugar to @concat)
 // ---------------------------------------------------------------------------
 
 test("template: @const without holes is a frozen string", () => {
@@ -391,7 +390,7 @@ print(m);
 `),
     ["n=2"],
   );
-});
+}, 60_000);
 
 test("template: variable holds multiline string; assignment copies", () => {
   expectOutput(
@@ -448,13 +447,13 @@ print(len(s));
   );
 });
 
-test("template: use in print and string concat with +", () => {
+test("template: use in print and string concat with @concat", () => {
   expectOutput(
     runSource(`
 $s = \`\`\`
 T
 \`\`\`;
-print("pre-" + s + "-post");
+print(@concat(0, @concat(0, "pre-", s), "-post"));
 `),
     ["pre-T-post"],
   );

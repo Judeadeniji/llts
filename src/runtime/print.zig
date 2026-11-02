@@ -11,6 +11,7 @@ const std = @import("std");
 const io = @import("io.zig");
 const Context = @import("context.zig").Context;
 const err_mod = @import("err.zig");
+const mem = @import("mem.zig");
 
 /// Wrapper used by emitted `print(@addrOf(x))` to render raw hex pointers.
 pub const Addr = struct { value: usize };
@@ -233,4 +234,19 @@ pub fn print(ctx: *Context, args: anytype) !void {
     }
     try buf.append(ctx.allocator, '\n');
     io.writeStdout(buf.items);
+}
+
+fn displayToFrame(ctx: *Context, value: anytype) ![]const u8 {
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(ctx.allocator);
+    try writeValue(&buf, ctx.allocator, value);
+    return mem.concat(ctx, buf.items, "");
+}
+
+/// `@concat(allocator, a, b)` — stringify both operands (VM `+` parity) and
+/// join into a fresh frame allocation.
+pub fn concatDisplay(ctx: *Context, a: anytype, b: anytype) ![]const u8 {
+    const left = try displayToFrame(ctx, a);
+    const right = try displayToFrame(ctx, b);
+    return mem.concat(ctx, left, right);
 }

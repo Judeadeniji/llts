@@ -68,13 +68,23 @@ pub fn newSlice(ctx: *Context, comptime Elem: type, len: usize) error{OutOfMemor
     return holder;
 }
 
-/// Concatenate two string views into the immortal buffer — `stringAdd`
-/// parity (VM marks concatenation as immortal growth, so results survive
-/// frame exits).
+/// Concatenate two string views into the **frame** buffer. Results do not
+/// survive `leaveFrame`; returning them needs an explicit immortalize /
+/// `@new` buffer. Prefer `@concat(allocator, a, b)` or `@concat(buf, a, b)`.
 pub fn concat(ctx: *Context, a: []const u8, b: []const u8) error{OutOfMemory}![]const u8 {
     const total = std.math.add(usize, a.len, b.len) catch return error.OutOfMemory;
-    const dst = try ctx.allocImmortal(total, 1);
+    const dst = try ctx.allocFrame(total, 1);
     @memcpy(dst[0..a.len], a);
     @memcpy(dst[a.len..], b);
     return dst;
+}
+
+/// Write `a ++ b` into a caller-provided mutable buffer. `buf.len` is the
+/// capacity; returns the written prefix. Errors if `a.len + b.len > buf.len`.
+pub fn concatInto(buf: []u8, a: []const u8, b: []const u8) error{OutOfMemory}![]u8 {
+    const total = std.math.add(usize, a.len, b.len) catch return error.OutOfMemory;
+    if (total > buf.len) return error.OutOfMemory;
+    @memcpy(buf[0..a.len], a);
+    @memcpy(buf[a.len..total], b);
+    return buf[0..total];
 }
