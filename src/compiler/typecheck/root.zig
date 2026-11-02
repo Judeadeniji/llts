@@ -491,6 +491,11 @@ fn intLiteralFits(node: *ast.Node, width: widths.Width) bool {
     return widths.i64Fits(width, n);
 }
 
+/// True when `node` is an integer literal that fits in `u8` (for `@as(string, […])`).
+pub fn intLiteralFitsU8(node: *ast.Node) bool {
+    return intLiteralFits(node, .u8);
+}
+
 /// Integer width to coerce an untyped literal into for `expected`, including `?T`.
 fn integerAssignTarget(expected: ir.Type) ?ir.Type {
     const pe = ir.peelDefined(expected);

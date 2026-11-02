@@ -992,6 +992,30 @@ pub @func main() {
   }
 }, 60_000);
 
+test("@as(string, [104, 105]) coerces integer-literal arrays to bytes", () => {
+  const id = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
+  const sourcePath = path.join(os.tmpdir(), `llts_as_str_${id}.lls`);
+  fs.writeFileSync(
+    sourcePath,
+    `
+pub @func main() {
+    $s = @as(string, [104, 105]);
+    print(s);
+    $a = @as([2]u8, [104, 105]);
+    print(a[0]);
+    print(a[1]);
+}
+`,
+  );
+  try {
+    const viaRun = runCli(["run", "--native", sourcePath]);
+    expect(viaRun.exitCode).toBe(0);
+    expect(viaRun.stdout).toBe("hi\n104\n105\n");
+  } finally {
+    fs.unlinkSync(sourcePath);
+  }
+}, 60_000);
+
 test("print of a @new string buffer is an LLTS error (no auto-deref)", () => {
   const id = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
   const sourcePath = path.join(os.tmpdir(), `llts_buf_print_${id}.lls`);

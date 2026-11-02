@@ -616,7 +616,7 @@ pub fn typecheckCast(state: *CompilerState, env: *typecheck_root.Env, ta: ir.Typ
     try resolveTypeExprs(state, env, ta, type_node);
     const target = try from_ast.typeFromAst(type_node, state, ta);
     const src = try typecheck_root.inferExpr(state, env, ta, value);
-    try checkAsCast(state, src, target);
+    try checkAsCast(state, src, target, value);
     return target;
 }
 
@@ -644,7 +644,7 @@ pub fn asCastKind(state: *CompilerState, type_node: *ast.Node) !?u8 {
     return null;
 }
 
-pub fn checkAsCast(state: *CompilerState, src: ir.Type, target: ir.Type) !void {
+pub fn checkAsCast(state: *CompilerState, src: ir.Type, target: ir.Type, value: ?*ast.Node) !void {
     if (ir.involvesUnknown(src) or ir.involvesUnknown(target)) return;
     const su = ir.peelDefined(src);
     const tu = ir.peelDefined(target);
@@ -660,6 +660,11 @@ pub fn checkAsCast(state: *CompilerState, src: ir.Type, target: ir.Type) !void {
         if (ir.typeEquals(pointee, tu) or ir.isSubtype(pointee, tu) or ir.isSubtype(tu, pointee)) return;
         if (isStringyIr(pointee) and isStringyIr(tu)) return;
     }
+    // `@as(string, [104, 105])` / `@as([2]u8, [104, 105])`: integer-literal arrays
+    // coerce element-wise into bytes when every element fits in u8.
+    if (value) |node| {
+        if (try intLiteralArrayToBytes(state, node, su, tu)) return;
+    }
     const ds = try typecheck_root.ownDisplay(state, src);
     const dt = try typecheck_root.ownDisplay(state, target);
     return compile_errors.compileFailFmt(state, "Cannot cast to '{s}' from '{s}'", .{ dt, ds });
@@ -670,4 +675,45 @@ fn isStringyIr(t: ir.Type) bool {
         .array => |a| a.elem.* == .u8 and a.length == null,
         else => false,
     };
+}
+
+fn isByteArrayOrString(t: ir.Type) bool {
+    const p = ir.peelDefined(t);
+    if (isStringyIr(p)) return true;
+    return p == .array and p.array.elem.* == .u8;
+}
+
+fn intLiteralArrayToBytes(
+    state: *CompilerState,
+    node: *ast.Node,
+    src: ir.Type,
+    target: ir.Type,
+) !bool {
+    if (!isByteArrayOrString(target)) return false;
+    if (node.* != .array_literal) return false;
+    const elems = node.array_literal.elements;
+    const tu = ir.peelDefined(target);
+    if (tu == .array and tu.array.length != null and tu.array.length.? != elems.len) {
+        return compile_errors.compileFailFmt(
+            state,
+            "Cannot cast to '{s}' from '{s}': length mismatch",
+            .{ try typecheck_root.ownDisplay(state, target), try typecheck_root.ownDisplay(state, src) },
+        );
+    }
+    // Source must be a homogeneous integer array (literals infer as i64 / int_lit).
+    if (src != .array or !ir.isInteger(ir.peelDefined(src.array.elem.*))) {
+        if (src != .tuple) return false;
+    }
+    for (elems) |el| {
+        // Non-literals fall through to the generic cast error (no silent truncating).
+        if (el.* != .literal) return false;
+        if (!typecheck_root.intLiteralFitsU8(el)) {
+            return compile_errors.compileFailFmt(
+                state,
+                "Literal {s} overflows target type 'u8'",
+                .{el.literal.value},
+            );
+        }
+    }
+    return true;
 }

@@ -794,7 +794,9 @@ pub fn emitValueCoercedMode(self: *Emitter, node: *ast_mod.Node, target: ValType
     if (node.* == .array_literal and target.kind == .array) {
         return emitArrayLiteral(self, node, &node.array_literal, target);
     }
-    if (node.* == .array_literal and target.kind == .slice) {
+    // `@as(string, [104, 105])` / `@as([]byte, […])` — integer-literal arrays
+    // become a fresh byte slice (same path as slice literals).
+    if (node.* == .array_literal and (target.kind == .slice or target.kind == .string)) {
         return emitSliceLiteral(self, node, &node.array_literal, target);
     }
     if (node.* == .struct_init and target.kind == .struct_) {
