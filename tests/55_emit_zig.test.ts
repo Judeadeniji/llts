@@ -966,6 +966,55 @@ pub @func main() {
   }
 }, 60_000);
 
+test("@as([]byte, buf) explicitly loads a @new string buffer", () => {
+  const id = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
+  const sourcePath = path.join(os.tmpdir(), `llts_buf_as_${id}.lls`);
+  fs.writeFileSync(
+    sourcePath,
+    `
+pub @func main() {
+    $buf = @new(0, string, 3);
+    buf[0] = 65;
+    buf[1] = 66;
+    buf[2] = 67;
+    $s = @as([]byte, buf);
+    print(s);
+    print(s + "!");
+}
+`,
+  );
+  try {
+    const viaRun = runCli(["run", "--native", sourcePath]);
+    expect(viaRun.exitCode).toBe(0);
+    expect(viaRun.stdout).toBe("ABC\nABC!\n");
+  } finally {
+    fs.unlinkSync(sourcePath);
+  }
+}, 60_000);
+
+test("print of a @new string buffer is an LLTS error (no auto-deref)", () => {
+  const id = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
+  const sourcePath = path.join(os.tmpdir(), `llts_buf_print_${id}.lls`);
+  fs.writeFileSync(
+    sourcePath,
+    `
+pub @func main() {
+    $buf = @new(0, string, 3);
+    print(buf);
+}
+`,
+  );
+  try {
+    const res = runCli(["run", "--native", sourcePath]);
+    expect(res.exitCode).not.toBe(0);
+    expect(res.stderr).toContain("cannot print pointer type");
+    expect(res.stderr).toContain("@as(");
+    expect(res.stderr).not.toContain("pointer printing not supported");
+  } finally {
+    fs.unlinkSync(sourcePath);
+  }
+}, 60_000);
+
 test("propagates an unhandled main error and exits nonzero", () => {
   const emitted = emitZig(`
 @func fail(): int | error {

@@ -653,7 +653,21 @@ pub fn checkAsCast(state: *CompilerState, src: ir.Type, target: ir.Type) !void {
     if (num_ok) return;
     // Same underlying shape (UUID ↔ ID, Expr ↔ Literal|Add, etc.).
     if (ir.typeEquals(su, tu) or ir.isSubtype(su, tu) or ir.isSubtype(tu, su)) return;
+    // Explicit deref via `@as(T, ptr)` — `*T → T`. No implicit pointee load elsewhere
+    // (keeps control flow / loads visible at the cast site).
+    if (su == .ptr) {
+        const pointee = ir.peelDefined(su.ptr.*);
+        if (ir.typeEquals(pointee, tu) or ir.isSubtype(pointee, tu) or ir.isSubtype(tu, pointee)) return;
+        if (isStringyIr(pointee) and isStringyIr(tu)) return;
+    }
     const ds = try typecheck_root.ownDisplay(state, src);
     const dt = try typecheck_root.ownDisplay(state, target);
     return compile_errors.compileFailFmt(state, "Cannot cast to '{s}' from '{s}'", .{ dt, ds });
+}
+
+fn isStringyIr(t: ir.Type) bool {
+    return switch (ir.peelDefined(t)) {
+        .array => |a| a.elem.* == .u8 and a.length == null,
+        else => false,
+    };
 }

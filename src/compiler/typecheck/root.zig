@@ -513,6 +513,12 @@ fn floatAssignTarget(expected: ir.Type) ?ir.Type {
     return null;
 }
 
+fn isStringBufferPtr(t: ir.Type) bool {
+    const pe = ir.peelDefined(t);
+    if (pe != .ptr) return false;
+    return ir.isByteSlice(pe.ptr.*);
+}
+
 fn isFloatLiteral(node: *ast.Node) bool {
     if (node.* != .literal) return false;
     const lit = node.literal;
@@ -1251,7 +1257,21 @@ fn inferExprInner(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, 
                 break :blk ir.TBool;
             }
             if (std.mem.eql(u8, op, "+")) {
-                if (ir.isByteSlice(l) or ir.isByteSlice(r)) break :blk ir.TString;
+                if (ir.isByteSlice(l) or ir.isByteSlice(r)) {
+                    // Both sides must be byte sequences. A `@new` buffer is `*[]byte`
+                    // and must be loaded explicitly — no hidden pointee deref here.
+                    if (isStringBufferPtr(l) or isStringBufferPtr(r)) {
+                        return compiler_errors.compileFailFmt(
+                            state,
+                            "string concatenation requires two string operands; use @as([]byte, buf) to load a @new string buffer",
+                            .{},
+                        );
+                    }
+                    if (!ir.isByteSlice(l) or !ir.isByteSlice(r)) {
+                        return compiler_errors.compileFailFmt(state, "string concatenation requires two string operands", .{});
+                    }
+                    break :blk ir.TString;
+                }
                 if (!ir.involvesUnknown(l) and !ir.involvesUnknown(r)) {
                     break :blk try coerceNumericPair(state, l, r, b.left, b.right, "numeric +");
                 }

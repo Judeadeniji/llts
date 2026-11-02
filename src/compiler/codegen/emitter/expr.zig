@@ -25,10 +25,15 @@ pub fn emitBinary(self: *Emitter, node: *ast_mod.Node, b: *const ast_mod.Binary)
         return std.fmt.allocPrint(a, "({s} {s} {s})", .{ try emitExpr(self, b.left), zig_op, try emitExpr(self, b.right) });
     }
 
-    if (std.mem.eql(u8, op, "+") and (try isStringy(self, b.left) or try isStringy(self, b.right))) {
+    if (std.mem.eql(u8, op, "+") and (try isStringy(self, b.left) or try isStringy(self, b.right) or try isStringBufferPtr(self, b.left) or try isStringBufferPtr(self, b.right))) {
         const lt = try self.valueType(b.left);
         const rt = try self.valueType(b.right);
         if (lt.kind != .string or rt.kind != .string) {
+            if ((lt.kind == .pointer and lt.payload != null and lt.payload.?.kind == .string) or
+                (rt.kind == .pointer and rt.payload != null and rt.payload.?.kind == .string))
+            {
+                return self.failAt(node, "string concatenation requires two string operands; use @as([]byte, buf) to load a @new string buffer", .{});
+            }
             return self.failAt(node, "string concatenation requires two string operands", .{});
         }
         return std.fmt.allocPrint(a, "(try rt.mem.concat(ctx, {s}, {s}))", .{
@@ -197,6 +202,12 @@ pub fn emitCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) any
                     info.zig_name, object,
                 }));
                 continue;
+            }
+            // Pointers are not printable values — require an explicit `@as(T, ptr)`
+            // (or `@addrOf` above). Do not auto-deref; that would hide the load.
+            if (at.kind == .pointer) {
+                const pointee = if (at.payload) |p| p.display else "T";
+                return self.failAt(arg, "cannot print pointer type '{s}'; use @as({s}, ...) to load the pointee", .{ at.display, pointee });
             }
             if (containsStruct(at)) {
                 return self.failAt(arg, "native backend cannot print aggregates containing structs yet; print fields individually", .{});
@@ -850,10 +861,30 @@ pub fn emitValueCoercedMode(self: *Emitter, node: *ast_mod.Node, target: ValType
     {
         return std.fmt.allocPrint(a, "({s}).*", .{code});
     }
+    // Explicit `@as(T, ptr)` only (`force`): load the pointee. Never auto-deref
+    // on ordinary assign/argument conversion — that would hide the load.
+    if (force and src.kind == .pointer) {
+        if (src.payload) |p| {
+            if (pointerPointeeMatches(p.*, target)) {
+                return std.fmt.allocPrint(a, "({s}).*", .{code});
+            }
+        }
+    }
     if (target.kind == .array and src.kind == .array) return code;
     if (target.kind == .slice and src.kind == .slice) return code;
     if (target.kind == .pointer and src.kind == .pointer) return code;
     return self.failAt(node, "cannot assign '{s}' to '{s}' in native emission", .{ src.display, target.display });
+}
+
+fn pointerPointeeMatches(pointee: ValType, target: ValType) bool {
+    if (pointee.kind == target.kind and std.mem.eql(u8, pointee.zig, target.zig)) return true;
+    // string ≡ []byte ≡ []const u8 at the ValType layer.
+    if (pointee.kind == .string and target.kind == .string) return true;
+    if (pointee.kind == .slice and target.kind == .slice) {
+        if (pointee.elem == null or target.elem == null) return false;
+        return std.mem.eql(u8, pointee.elem.?.zig, target.elem.?.zig);
+    }
+    return false;
 }
 
 pub fn isNullLiteral(node: *ast_mod.Node) bool {
@@ -1202,6 +1233,11 @@ pub fn i64Code(self: *Emitter, code: []const u8, t: ValType) ![]const u8 {
 pub fn isStringy(self: *Emitter, node: *ast_mod.Node) !bool {
     const t = try self.valueType(node);
     return t.kind == .string;
+}
+
+fn isStringBufferPtr(self: *Emitter, node: *ast_mod.Node) !bool {
+    const t = try self.valueType(node);
+    return t.kind == .pointer and t.payload != null and t.payload.?.kind == .string;
 }
 
 pub fn wrapWidth(self: *Emitter, t: ValType, expr: []const u8) ![]const u8 {
