@@ -4,8 +4,6 @@
 //! source file. The emitted file @imports src/runtime/ and calls its ops
 //! directly, so LLVM (via zig build-exe -O ReleaseFast) can inline and
 //! optimize the hot paths without LLTS maintaining its own LLVM backend.
-//!
-//! See docs/native-backend.md for the full architectural rationale.
 const std = @import("std");
 const ast = @import("../../ast/root.zig");
 const state_mod = @import("../state.zig");

@@ -1,6 +1,6 @@
 //! Zig code emitter — translates analyzed LLTS AST into runtime-driving Zig source.
 //!
-//! Emission strategy (see docs/native-backend.md):
+//! Emission strategy:
 //!   - Each LLTS @func → `fn lls_fn_*(ctx: *rt.Context, ...) anyerror!RetType`
 //!   - Local variables and parameters → unboxed native Zig variables
 //!   - Frame watermark RAII → `const mark = ctx.enterFunction(...); defer ctx.leaveFunction(mark);`

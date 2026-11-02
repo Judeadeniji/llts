@@ -1,7 +1,7 @@
 /**
  * Native backend prep: strict mode must be ON BY DEFAULT whenever LLTS is
- * compiled natively or lowered to runtime Zig (docs/native-backend.md,
- * Core Architectural Principle #1 "Strict by Default").
+ * compiled natively or lowered to runtime Zig (Core Architectural
+ * Principle #1 "Strict by Default").
  *
  * Covered here:
  *   - `llts emit-zig <file>`            → strict by default

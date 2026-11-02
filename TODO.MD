@@ -72,9 +72,9 @@ Perf gate: `bun benchmarks/run.ts` (1M loop median).
 
 ### P0 — Memory model (layout)
 
-Packed byte heap + honest numeric widths. See [`docs/memory-model.md`](docs/memory-model.md).
+Packed byte heap + honest numeric widths.
 
-- [x] **Write RFC** — [`docs/memory-model.md`](docs/memory-model.md).
+- [x] **Write RFC** — memory model design finalized.
 - [x] **Packed heap region** — one byte bump (frame watermark + immortal/pass region policy).
 - [x] **Unify slices** — strings, `[]byte`, structs, and **value arrays** share `vm.bytes` (`.slice` / `.bytes` / `.array`).
 - [x] **Widths as real types** — full matrix `u1`/`i8`/`i16`/`i32`/`i64`, `u8`/`u16`/`u32`/`u64`, `f32`/`f64` honest end-to-end; aliases `int`/`number`→`i64`, `byte`→`u8`, `float`→`f64`, `bool`/`boolean`→`u1`; convert only via `@as` / `T(x)` sugar (integer literals may coerce into any integer width that fits; float literals are `f64` and may coerce into `f32`).
@@ -123,7 +123,7 @@ Packed byte heap + honest numeric widths. See [`docs/memory-model.md`](docs/memo
 - [x] **Debug type asserts**; strip with `--release`.
 - [x] **`@typeOf(expr)`** — returns a compile-time `type` value; operand never evaluated.
 - [x] **`@sizeOf(T_or_expr)`** — static sizes for types / typed values; runtime `OP_SIZEOF` fallback (`tests/26_sizeof.test.ts`).
-- [x] **Types as compile-time values** — meta type `type`; `@typeOf(...)` usable anywhere a type is (annotations, params, returns, struct fields, `@alias`, composites, `@as`, `@new`, `@sizeOf`); type `==`/`!=` folded at compile time; type values rejected in runtime slots (`tests/50_type_values.test.ts`, `docs/usage/shapes_and_types.md`).
+- [x] **Types as compile-time values** — meta type `type`; `@typeOf(...)` usable anywhere a type is (annotations, params, returns, struct fields, `@alias`, composites, `@as`, `@new`, `@sizeOf`); type `==`/`!=` folded at compile time; type values rejected in runtime slots (`tests/50_type_values.test.ts`).
 - [x] **User-defined type functions and generics** — `@func Opt(T: type): type { return ?T; }` evaluated at compile time; `@func max(T: type, a: T, b: T): T` monomorphized per type argument (`src/compiler/generics.zig`, `tests/52_type_functions.test.ts`). Gaps tracked below.
 - [ ] **Type functions / generics follow-ups** — gaps verified 2026-10-26:
   - [ ] **Type params on struct methods** — `@func get(self: S, T: type)` is rejected (`src/compiler/generics.zig:71`); blocks generic containers with methods (Zig `Box(T).get` style).

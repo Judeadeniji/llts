@@ -12,8 +12,7 @@ This repository is the **Zig** implementation (the forward path). The TypeScript
 - Hand-written scanner, recursive-descent parser, AST, bytecode compiler, stack VM
 - Modules (`@import`), `pub` visibility, gradual typecheck + `@typeOf` / `@sizeOf`
 - Explicit errors (`error(...)`, `?`), arenas + `defer` (no tracing GC)
-- Frame-local heap (bare `Foo{}` / `[…]`); escape is a compile error — use `@new(allocator, …)` with `std.mem.Arena`
-- Standard library under `std/` (`math`, `string`, `io`, `debug`, `mem`)
+- Frame-local heap (bare `Foo{}` / `[…]`); escape is a compile error — use `@new(allocator, …)`
 
 ## Requirements
 
@@ -80,7 +79,6 @@ pub @func main() {
 | Path | Role |
 |------|------|
 | `src/` | Scanner → parser → compiler → VM |
-| `std/` | Standard library (`.lls`) |
 | `examples/` | Sample programs |
 | `tests/` | Zig `integration.zig` + Bun language suite (`*.test.ts`) |
 | `TODO.MD` | Status & roadmap |
