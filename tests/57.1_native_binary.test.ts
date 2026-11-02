@@ -37,3 +37,12 @@ test("build --native links a binary that matches the VM", () => {
     expect(nativeStagedLeftovers()).toEqual([]);
   });
 }, 180_000);
+
+test("run --native compiles and executes via the native backend", () => {
+  withNativeProgram((sourcePath) => {
+    const viaRun = runCli(["run", "--native", sourcePath]);
+    expect(viaRun.exitCode).toBe(0);
+    expect(viaRun.stdout).toBe("42\n15\neven\ndone\n");
+    expect(nativeStagedLeftovers()).toEqual([]);
+  });
+}, 180_000);

@@ -38,13 +38,15 @@ pub fn getComptimeMaxLoopIterations(allocator: std.mem.Allocator, ctx: zli.Comma
     return null;
 }
 
-pub fn getZigBin(allocator: std.mem.Allocator, ctx: zli.CommandContext) []const u8 {
+/// Resolve the zig compiler path from `--zig-bin`, `LLTS_ZIG_BIN`, or `"zig"`.
+/// Caller owns the returned slice and must free it.
+pub fn getZigBin(allocator: std.mem.Allocator, ctx: zli.CommandContext) ![]u8 {
     const flag_val = ctx.flag("zig-bin", []const u8);
-    if (flag_val.len > 0) return flag_val;
+    if (flag_val.len > 0) return try allocator.dupe(u8, flag_val);
     if (std.process.getEnvVarOwned(allocator, "LLTS_ZIG_BIN")) |env_val| {
         return env_val;
     } else |_| {}
-    return "zig";
+    return try allocator.dupe(u8, "zig");
 }
 
 pub fn getOptimize(ctx: zli.CommandContext) ?[]const u8 {
@@ -105,6 +107,16 @@ fn appendSplitTokens(allocator: std.mem.Allocator, list: *std.ArrayList([]const 
 }
 
 pub fn getZigArgs(allocator: std.mem.Allocator, ctx: zli.CommandContext) ![]const []const u8 {
+    return collectZigArgs(allocator, ctx, true);
+}
+
+/// Like `getZigArgs`, but never treats trailing positionals as zig args.
+/// Use for `llts run --native`, where positionals after the file are program argv.
+pub fn getZigArgsFlagsOnly(allocator: std.mem.Allocator, ctx: zli.CommandContext) ![]const []const u8 {
+    return collectZigArgs(allocator, ctx, false);
+}
+
+fn collectZigArgs(allocator: std.mem.Allocator, ctx: zli.CommandContext, include_positionals: bool) ![]const []const u8 {
     var args: std.ArrayList([]const u8) = .empty;
     errdefer {
         for (args.items) |arg| allocator.free(arg);
@@ -121,7 +133,7 @@ pub fn getZigArgs(allocator: std.mem.Allocator, ctx: zli.CommandContext) ![]cons
         try appendSplitTokens(allocator, &args, flag_val);
     }
 
-    if (ctx.positional_args.len > 1) {
+    if (include_positionals and ctx.positional_args.len > 1) {
         for (ctx.positional_args[1..]) |arg| {
             try args.append(allocator, try allocator.dupe(u8, arg));
         }

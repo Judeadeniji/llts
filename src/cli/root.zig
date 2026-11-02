@@ -38,7 +38,7 @@ pub fn build(stdout: anytype, stdin: anytype, gpa: std.mem.Allocator) !*zli.Comm
 
     const run_cmd = try zli.Command.init(stdout, stdin, gpa, .{
         .name = "run",
-        .description = "Run an LLTS source or bytecode file",
+        .description = "Run an LLTS source or bytecode file (use --native to compile and run natively)",
     }, run.execute);
     try flags.addRunFlags(run_cmd);
     try run_cmd.addPositionalArg(.{

@@ -38,7 +38,8 @@ pub fn execute(ctx: zli.CommandContext) !void {
 
     if (is_native) {
         const out_path = if (out_val.len > 0) out_val else "out";
-        const zig_bin = common.getZigBin(ctx.allocator, ctx);
+        const zig_bin = try common.getZigBin(ctx.allocator, ctx);
+        defer ctx.allocator.free(zig_bin);
         const target = common.getTarget(ctx);
         const opt = common.getOptimize(ctx);
         const runtime_path = common.getRuntimePath(ctx);
