@@ -113,7 +113,10 @@ pub fn emitCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) any
                 });
             }
             if (payload.kind == .string) {
-                return self.failAt(node, "native backend does not support @new(string, n) yet", .{});
+                if (c.args.len != 3) return self.failAt(node, "@new string type needs a length", .{});
+                return std.fmt.allocPrint(a, "@as(*[]const u8, @ptrCast(try rt.mem.newSlice(ctx, u8, @as(usize, @intCast({s})))))", .{
+                    try emitI64Operand(self, c.args[2]),
+                });
             }
             return std.fmt.allocPrint(a, "try rt.mem.newZero(ctx, {s})", .{payload.zig});
         }
@@ -178,8 +181,25 @@ pub fn emitCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) any
                 continue;
             }
             const at = try self.valueType(arg);
+            if (at.kind == .struct_ or
+                (at.kind == .pointer and at.payload != null and at.payload.?.kind == .struct_))
+            {
+                var display = at.display;
+                var object = try emitExpr(self, arg);
+                if (at.kind == .pointer) {
+                    display = at.payload.?.display;
+                    object = try std.fmt.allocPrint(a, "({s}).*", .{object});
+                }
+                const info = (try self.structInfoForDisplay(arg, display)) orelse {
+                    return self.failAt(arg, "native backend cannot resolve struct type '{s}'", .{display});
+                };
+                try args_buf.append(a, try std.fmt.allocPrint(a, "rt.print.Struct{{ .bytes = &lls_bytes_{s}({s}) }}", .{
+                    info.zig_name, object,
+                }));
+                continue;
+            }
             if (containsStruct(at)) {
-                return self.failAt(arg, "native backend cannot print struct values yet; print fields individually", .{});
+                return self.failAt(arg, "native backend cannot print aggregates containing structs yet; print fields individually", .{});
             }
             if (at.kind == .null_value) {
                 try args_buf.append(a, std.fmt.allocPrint(a, "@as(?u8, {s})", .{try emitExpr(self, arg)}) catch unreachable);

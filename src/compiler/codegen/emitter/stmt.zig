@@ -72,7 +72,8 @@ pub fn emitIndexAssignment(self: *Emitter, node: *ast_mod.Node, asn: *const ast_
     const a = self.arena.allocator();
     var obj_t = try self.valueType(ix.object);
     var obj_code = try emitPlaceLvalue(self, ix.object);
-    if (obj_t.kind == .pointer) {
+    const was_pointer = obj_t.kind == .pointer;
+    if (was_pointer) {
         const payload = obj_t.payload orelse return self.failAt(node, "native backend cannot determine the pointee type of '{s}'", .{obj_t.display});
         obj_t = payload.*;
         obj_code = try std.fmt.allocPrint(a, "({s}).*", .{obj_code});
@@ -80,9 +81,17 @@ pub fn emitIndexAssignment(self: *Emitter, node: *ast_mod.Node, asn: *const ast_
     const word: []const u8 = switch (obj_t.kind) {
         .array => "Array",
         .slice => "Slice",
+        .string => "String",
         else => return self.failAt(node, "native backend cannot assign into '{s}' yet", .{obj_t.display}),
     };
-    const use: []const u8 = if (obj_t.kind == .slice) "slice" else "arr";
+    if (obj_t.kind == .string and !was_pointer) {
+        return self.failAt(node, "native backend only supports mutating @new string buffers", .{});
+    }
+    const use: []const u8 = switch (obj_t.kind) {
+        .slice => "slice",
+        .string => "str",
+        else => "arr",
+    };
     const index_node = ix.index orelse return self.failAt(node, "expected index expression", .{});
     const elem_t = obj_t.elem orelse {
         return self.failAt(node, "native backend cannot determine the element type of '{s}'", .{obj_t.display});
@@ -104,8 +113,12 @@ pub fn emitIndexAssignment(self: *Emitter, node: *ast_mod.Node, asn: *const ast_
     try self.writer.print("if ({s} < 0 or {s} >= @as(i64, @intCast(({s}).len))) return rt.io.fail({s}, .{{ {s}, @as(i64, @intCast(({s}).len)) }});\n", .{
         idx_name, idx_name, obj_code, try self.zigString(fmt), idx_name, obj_code,
     });
+    const target_code = if (obj_t.kind == .string)
+        try std.fmt.allocPrint(a, "@constCast({s})", .{obj_code})
+    else
+        obj_code;
     try self.writeIndent();
-    try self.writer.print("{s}[@intCast({s})] = {s};\n", .{ obj_code, idx_name, rhs_name });
+    try self.writer.print("{s}[@intCast({s})] = {s};\n", .{ target_code, idx_name, rhs_name });
 }
 
 pub fn emitPlaceLvalue(self: *Emitter, node: *ast_mod.Node) ![]const u8 {

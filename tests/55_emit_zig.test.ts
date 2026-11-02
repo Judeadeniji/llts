@@ -924,6 +924,48 @@ pub @func main() {
   }
 }, 60_000);
 
+test("prints structs as LLTS packed bytes", () => {
+  expectParity(`
+@struct Point { x: int; y: int; }
+@struct Tiny { a: byte; b: byte; }
+@struct Mixed { a: byte; b: bool; f: f64; n: int; }
+
+pub @func main() {
+    $p = Point { x: 1, y: 2 };
+    print(p);
+    $q = &p;
+    print(q);
+    $t = Tiny { a: 65, b: 66 };
+    print(t);
+    $m = Mixed { a: 7, b: true, f: 1.5, n: 2 };
+    print(m);
+}
+`);
+});
+
+test("emits @new string buffers", () => {
+  const emitted = emitZig(`
+pub @func main() {
+    $s = @new(0, string, 3);
+    print(len(s));
+    s[0] = 65;
+    s[1] = 66;
+    s[2] = 67;
+    print(s[0]);
+    print(s[2]);
+}
+`);
+  try {
+    const emit = runCli(["emit-zig", emitted.sourcePath, "-o", emitted.outputPath]);
+    expect(emit.stderr + emit.stdout).toBe("");
+    const native = runEmitted(emitted.outputPath);
+    expect(native.exitCode).toBe(0);
+    expect(native.stdout).toBe("3\n65\n67\n");
+  } finally {
+    emitted.cleanup();
+  }
+}, 60_000);
+
 test("propagates an unhandled main error and exits nonzero", () => {
   const emitted = emitZig(`
 @func fail(): int | error {
