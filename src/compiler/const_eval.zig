@@ -1147,8 +1147,7 @@ fn emitArrayValue(state: *CompilerState, elems: []const ConstValue) anyerror!voi
     const alloc = if (state.alloc_immortal) "__allocImmortalArray" else "__allocArray";
     try emit.emitNameGet(state, .OP_GET_GLOBAL, alloc);
     try emit.emitConstant(state, .{ .i64 = @intCast(elems.len) });
-    try emit.emitOp(state, .OP_CALL);
-    try emit.emitByte(state, 1);
+    try emit.emitCall(state, 1);
     for (elems, 0..) |el, i| {
         try emit.emitOp(state, .OP_DUP);
         try emit.emitConstant(state, .{ .i64 = @intCast(i) });
@@ -1165,8 +1164,7 @@ fn emitStructValue(state: *CompilerState, s: *ConstStruct) anyerror!void {
     const alloc = if (state.alloc_immortal) "__allocImmortalBytes" else "__allocBytes";
     try emit.emitNameGet(state, .OP_GET_GLOBAL, alloc);
     try emit.emitConstant(state, .{ .i64 = sd.size });
-    try emit.emitOp(state, .OP_CALL);
-    try emit.emitByte(state, 1);
+    try emit.emitCall(state, 1);
     var it = s.fields.iterator();
     while (it.next()) |entry| {
         const offset = sd.offsets.get(entry.key_ptr.*) orelse continue;

@@ -48,8 +48,7 @@ fn emitValueRHS(state: *CompilerState, right: *ast.Node) !void {
     if (value_clone.cloneBuiltin(state, right)) |clone_name| {
         try emit.emitNameGet(state, .OP_GET_GLOBAL, clone_name);
         try expr.compileExpression(state, right);
-        try emit.emitOp(state, .OP_CALL);
-        try emit.emitByte(state, 1);
+        try emit.emitCall(state, 1);
     } else {
         try expr.compileExpression(state, right);
     }

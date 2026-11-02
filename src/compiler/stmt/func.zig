@@ -41,8 +41,7 @@ pub fn compileReturn(state: *CompilerState, ret: *const ast.Return) !void {
                 // Flat scalar struct — shallow-copy into immortal.
                 try emit.emitNameGet(state, .OP_GET_GLOBAL, "__cloneBytesImmortal");
                 try expr.compileExpression(state, v);
-                try emit.emitOp(state, .OP_CALL);
-                try emit.emitByte(state, 1);
+                try emit.emitCall(state, 1);
             }
         } else {
             try expr.compileExpression(state, v);
@@ -92,8 +91,7 @@ fn emitDeepCloneFromLocal(state: *CompilerState, src_idx: u8, tn: []const u8) !v
     try emit.emitNameGet(state, .OP_GET_GLOBAL, "__cloneBytesImmortal");
     try emit.emitOp(state, .OP_GET_LOCAL);
     try emit.emitByte(state, src_idx);
-    try emit.emitOp(state, .OP_CALL);
-    try emit.emitByte(state, 1);
+    try emit.emitCall(state, 1);
     const shell_idx: u8 = @intCast(state.locals.items.len);
     try state.locals.append(state.allocator, .{ .name = ".dc_shell", .depth = state.scope_depth });
 

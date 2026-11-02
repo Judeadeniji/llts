@@ -66,8 +66,7 @@ pub fn compileDeclaration(state: *CompilerState, decl: *const ast.Declaration) !
         // sharing requires explicit `*T` / `&x`.
         try emit.emitNameGet(state, .OP_GET_GLOBAL, clone_name);
         try expr.compileExpression(state, decl.value);
-        try emit.emitOp(state, .OP_CALL);
-        try emit.emitByte(state, 1);
+        try emit.emitCall(state, 1);
     } else {
         try expr.compileExpression(state, decl.value);
     }
@@ -144,8 +143,7 @@ pub fn compileDeclaration(state: *CompilerState, decl: *const ast.Declaration) !
             try emit.emitNameGet(state, .OP_GET_GLOBAL, "__freeze");
             try emit.emitOp(state, .OP_GET_LOCAL);
             try emit.emitByte(state, slot);
-            try emit.emitOp(state, .OP_CALL);
-            try emit.emitByte(state, 1);
+            try emit.emitCall(state, 1);
             try emit.emitOp(state, .OP_POP);
         }
     } else {
@@ -157,8 +155,7 @@ pub fn compileDeclaration(state: *CompilerState, decl: *const ast.Declaration) !
             // aliases (`$r = A`, `f(A)`) cannot write through to the constant.
             try emit.emitNameGet(state, .OP_GET_GLOBAL, "__freeze");
             try emit.emitNameGet(state, .OP_GET_GLOBAL, decl.name);
-            try emit.emitOp(state, .OP_CALL);
-            try emit.emitByte(state, 1);
+            try emit.emitCall(state, 1);
             try emit.emitOp(state, .OP_POP);
             try state.ready_global_consts.put(decl.name, {});
         }

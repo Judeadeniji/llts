@@ -25,7 +25,7 @@ fn applyStackEffect(state: *CompilerState, op: OpCode) void {
         // pop2 push1
         .OP_ADD, .OP_ADD_WRAP, .OP_STRING_ADD, .OP_SUB, .OP_SUB_WRAP, .OP_MUL, .OP_MUL_WRAP, .OP_DIV, .OP_MOD, .OP_POW, .OP_EQUAL, .OP_NOT_EQUAL, .OP_STRING_EQUAL, .OP_STRING_NOT_EQUAL, .OP_LESS, .OP_LESS_EQUAL, .OP_GREATER, .OP_GREATER_EQUAL, .OP_BIT_AND, .OP_BIT_OR, .OP_BIT_XOR, .OP_SHL, .OP_SHR, .OP_ADD_TYPED, .OP_SUB_TYPED, .OP_MUL_TYPED, .OP_LT_TYPED, .OP_ADD_TYPED_WRAP, .OP_SUB_TYPED_WRAP, .OP_MUL_TYPED_WRAP => scope.notePop(state),
         // in-place / pop1 push1 (net 0)
-        .OP_MAKE_STRING, .OP_MAKE_ERROR, .OP_MAKE_ERROR_PAYLOAD, .OP_NEGATE, .OP_NOT, .OP_BIT_NOT, .OP_IS_ERROR, .OP_SET_LOCAL, .OP_SET_GLOBAL, .OP_MARK_CONST, .OP_ASSERT_TYPE, .OP_AS, .OP_ADDR_OF, .OP_ERROR_NAME, .OP_GET_PROPERTY, .OP_LOAD_FIELD, .OP_JUMP, .OP_JUMP_IF_NULL, .OP_LOOP, .OP_LINE, .OP_SOURCE, .OP_RETURN, .OP_IMPORT, .OP_SIZEOF, .OP_FOR_PREP, .OP_FOR_LOOP, .OP_PACK_REST => {},
+        .OP_MAKE_STRING, .OP_MAKE_ERROR, .OP_NEGATE, .OP_NOT, .OP_BIT_NOT, .OP_IS_ERROR, .OP_SET_LOCAL, .OP_SET_GLOBAL, .OP_MARK_CONST, .OP_ASSERT_TYPE, .OP_AS, .OP_ADDR_OF, .OP_ERROR_NAME, .OP_GET_PROPERTY, .OP_LOAD_FIELD, .OP_JUMP, .OP_JUMP_IF_NULL, .OP_LOOP, .OP_LINE, .OP_SOURCE, .OP_RETURN, .OP_IMPORT, .OP_SIZEOF, .OP_FOR_PREP, .OP_FOR_LOOP, .OP_PACK_REST => {},
         // pop2 push1
         .OP_GET_INDEX, .OP_GET_ARRAY, .OP_GET_ARRAY_OR_NULL => scope.notePop(state),
         // pop3 push1
@@ -101,6 +101,13 @@ pub fn emitCallStatic(state: *CompilerState, addr: u16, argc: u8) !void {
     try emitByte(state, @intCast((addr >> 8) & 0xff));
     try emitByte(state, @intCast(addr & 0xff));
     try emitByte(state, argc);
+}
+
+pub fn emitCall(state: *CompilerState, argc: u8) !void {
+    try emitOp(state, .OP_CALL);
+    try emitByte(state, argc);
+    scope.notePopN(state, @as(u32, argc) + 1);
+    scope.notePush(state);
 }
 
 /// Packed struct field load/store: u16 byte offset + u8 FieldKind.
