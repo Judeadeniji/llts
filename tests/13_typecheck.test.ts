@@ -287,6 +287,21 @@ print(x);
   );
 });
 
+test("integer literals coerce into optional sized integers", () => {
+  expectOutput(
+    runSource(`
+$a: usize = 112;
+$b: ?usize = 112;
+$c: ?i32 = 112;
+print(a);
+print(b);
+print(c);
+print(@typeOf(b));
+`),
+    ["112", "112", "112", "?usize"],
+  );
+});
+
 test("Node | null is the same optional as ?Node", () => {
   expectOutput(
     runSource(`

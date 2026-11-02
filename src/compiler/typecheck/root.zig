@@ -288,35 +288,40 @@ fn requireAssignAt(state: *state_mod.CompilerState, got: ir.Type, expected: ir.T
     if (from) |node| {
         if (matchesValueLiteralToType(node, expected)) return;
     }
-    // Zig-style: integer literals may coerce into any integer width that fits.
-    if (ir.isInteger(ir.peelDefined(expected)) and (got == .i64 or ir.peelDefined(got) == .int_lit)) {
-        if (from) |node| {
-            if (intLiteralFits(node, ir.widthOf(expected).?)) {
-                try recordExprType(state, node, expected);
-                return;
-            } else if (isIntegerLiteral(node)) {
-                const exp_name = try ownDisplay(state, expected);
-                const file_path = if (loc.path.len > 0) loc.path else state.chunk.file;
-                const line = if (loc.line > 0) loc.line else 1;
-                const col = if (loc.column > 0) loc.column else 1;
-                return compiler_errors.compileFailAt(
-                    state,
-                    file_path,
-                    sourceFor(state, file_path),
-                    line,
-                    col,
-                    "Literal {s} overflows target type '{s}'",
-                    .{ node.literal.value, exp_name },
-                );
+    // Zig-style: integer literals may coerce into any integer width that fits,
+    // including optional integer targets (`?usize`, `?i32`, …).
+    if (integerAssignTarget(expected)) |target| {
+        if (got == .i64 or ir.peelDefined(got) == .int_lit) {
+            if (from) |node| {
+                if (intLiteralFits(node, ir.widthOf(target).?)) {
+                    try recordExprType(state, node, target);
+                    return;
+                } else if (isIntegerLiteral(node)) {
+                    const exp_name = try ownDisplay(state, expected);
+                    const file_path = if (loc.path.len > 0) loc.path else state.chunk.file;
+                    const line = if (loc.line > 0) loc.line else 1;
+                    const col = if (loc.column > 0) loc.column else 1;
+                    return compiler_errors.compileFailAt(
+                        state,
+                        file_path,
+                        sourceFor(state, file_path),
+                        line,
+                        col,
+                        "Literal {s} overflows target type '{s}'",
+                        .{ node.literal.value, exp_name },
+                    );
+                }
             }
         }
     }
-    // Float literals are f64; may coerce into f32.
-    if (ir.peelDefined(expected) == .f32 and got == .f64) {
-        if (from) |node| {
-            if (isFloatLiteral(node)) {
-                try recordExprType(state, node, expected);
-                return;
+    // Float literals are f64; may coerce into f32 (and `?f32`).
+    if (floatAssignTarget(expected)) |target| {
+        if (target == .f32 and got == .f64) {
+            if (from) |node| {
+                if (isFloatLiteral(node)) {
+                    try recordExprType(state, node, target);
+                    return;
+                }
             }
         }
     }
@@ -484,6 +489,28 @@ fn intLiteralFits(node: *ast.Node, width: widths.Width) bool {
         else => return false,
     };
     return widths.i64Fits(width, n);
+}
+
+/// Integer width to coerce an untyped literal into for `expected`, including `?T`.
+fn integerAssignTarget(expected: ir.Type) ?ir.Type {
+    const pe = ir.peelDefined(expected);
+    if (ir.isInteger(pe)) return pe;
+    if (ir.optionalPayload(pe)) |payload| {
+        const pp = ir.peelDefined(payload);
+        if (ir.isInteger(pp)) return pp;
+    }
+    return null;
+}
+
+/// Float width for literal coercion into `expected`, including `?f32`.
+fn floatAssignTarget(expected: ir.Type) ?ir.Type {
+    const pe = ir.peelDefined(expected);
+    if (pe == .f32 or pe == .f64) return pe;
+    if (ir.optionalPayload(pe)) |payload| {
+        const pp = ir.peelDefined(payload);
+        if (pp == .f32 or pp == .f64) return pp;
+    }
+    return null;
 }
 
 fn isFloatLiteral(node: *ast.Node) bool {

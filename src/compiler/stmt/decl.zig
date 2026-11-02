@@ -205,10 +205,16 @@ fn typesAssignable(state: *CompilerState, got: []const u8, expected: []const u8)
     const ep = ir.peelDefined(e);
     if (literalTypeAcceptsDisplay(ep, got, g)) return true;
     // Untyped integer literal display still spells "int" (not "i64"); may coerce into any integer width,
-    // including nested `[N]int` / `[2][3]int` into matching integer arrays.
+    // including nested `[N]int` / `[2][3]int` and optional integer targets (`?usize`).
     if (isUntypedIntDisplay(got) and untypedIntCoerces(g, e)) return true;
-    // Untyped / f64 float literal may narrow to f32.
-    if ((std.mem.eql(u8, got, "float") or std.mem.eql(u8, got, "f64")) and ir.peelDefined(e) == .f32) return true;
+    // Untyped / f64 float literal may narrow to f32 (and `?f32`).
+    if (std.mem.eql(u8, got, "float") or std.mem.eql(u8, got, "f64")) {
+        const pe = ir.peelDefined(e);
+        if (pe == .f32) return true;
+        if (ir.optionalPayload(pe)) |payload| {
+            if (ir.peelDefined(payload) == .f32) return true;
+        }
+    }
     return false;
 }
 
@@ -234,12 +240,16 @@ fn isUntypedIntDisplay(s: []const u8) bool {
 }
 
 fn untypedIntCoerces(g: ir.Type, e: ir.Type) bool {
-    if (ir.isInteger(e) and g == .i64) return true;
-    if (g == .array and e == .array) {
-        if (!untypedIntCoerces(g.array.elem.*, e.array.elem.*)) return false;
-        if (e.array.length == null) return true;
+    const pe = ir.peelDefined(e);
+    if (ir.isInteger(pe) and (g == .i64 or ir.peelDefined(g) == .int_lit)) return true;
+    if (ir.optionalPayload(pe)) |payload| {
+        if (untypedIntCoerces(g, payload)) return true;
+    }
+    if (g == .array and pe == .array) {
+        if (!untypedIntCoerces(g.array.elem.*, pe.array.elem.*)) return false;
+        if (pe.array.length == null) return true;
         if (g.array.length == null) return false;
-        return g.array.length.? == e.array.length.?;
+        return g.array.length.? == pe.array.length.?;
     }
     return false;
 }
