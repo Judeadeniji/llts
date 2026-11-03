@@ -168,6 +168,12 @@ test "arith: typed within-range results" {
     try testing.expectEqual(@as(i64, 0), try arith.subChecked(.u8, 0, 0));
 }
 
+test "arith: proven operations match checked results" {
+    try testing.expectEqual(try arith.add(20, 22), arith.addProven(.i64, 20, 22));
+    try testing.expectEqual(try arith.subChecked(.i16, -100, 27), arith.subProven(.i16, -100, 27));
+    try testing.expectEqual(try arith.mulChecked(.u32, 20_000, 20_000), arith.mulProven(.u32, 20_000, 20_000));
+}
+
 test "arith: ltWidth" {
     try testing.expect(arith.ltWidth(.i64, 1, 2));
     try testing.expect(!arith.ltWidth(.i64, 2, 1));

@@ -99,6 +99,15 @@ pub const DeferEntry = struct {
     is_errdefer: bool,
 };
 
+pub const IntRange = struct {
+    min: i64,
+    max: i64,
+
+    pub fn point(value: i64) IntRange {
+        return .{ .min = value, .max = value };
+    }
+};
+
 pub const Binding = struct {
     /// Original LLTS spelling (for diagnostics).
     name: []const u8,
@@ -165,6 +174,7 @@ pub const Emitter = struct {
     struct_types: std.ArrayList(*StructType) = .empty,
     struct_by_key: std.StringHashMap(*StructType),
     scopes: std.ArrayList(std.StringHashMap(*Binding)) = .empty,
+    int_ranges: std.AutoHashMap(usize, IntRange),
     defer_scopes: std.ArrayList(std.ArrayList(DeferEntry)) = .empty,
     infos: std.AutoHashMap(*ast_mod.Node, *Binding),
     params: std.ArrayList(ParamInfo) = .empty,
@@ -491,6 +501,7 @@ pub const Emitter = struct {
         self.globals.deinit();
         self.struct_by_key.deinit();
         self.infos.deinit();
+        self.int_ranges.deinit();
         self.arena.deinit();
     }
 
@@ -787,6 +798,7 @@ pub const Emitter = struct {
             .globals = std.StringHashMap(*Global).init(allocator),
             .struct_by_key = std.StringHashMap(*StructType).init(allocator),
             .infos = std.AutoHashMap(*ast_mod.Node, *Binding).init(allocator),
+            .int_ranges = std.AutoHashMap(usize, IntRange).init(allocator),
         };
     }
 

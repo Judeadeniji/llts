@@ -7,6 +7,7 @@ const widths = @import("../../widths.zig");
 const root_mod = @import("root.zig");
 const unit_mod = @import("unit.zig");
 const stmt_mod = @import("stmt.zig");
+const range_mod = @import("range.zig");
 const Emitter = root_mod.Emitter;
 const ValType = root_mod.ValType;
 const MemberTarget = root_mod.MemberTarget;
@@ -313,7 +314,8 @@ fn emitMethodCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) !
                 try args_buf.append(a, try std.fmt.allocPrint(a, "@constCast(&({s}))", .{lvalue}));
             } else {
                 self.counter += 1;
-                try args_buf.append(a, try std.fmt.allocPrint(a,
+                try args_buf.append(a, try std.fmt.allocPrint(
+                    a,
                     "blk: {{ var lls_recv_{d} = {s}; break :blk &lls_recv_{d}; }}",
                     .{ self.counter, try emitExpr(self, m.object), self.counter },
                 ));
@@ -597,7 +599,11 @@ pub fn emitIntBinary(self: *Emitter, node: *ast_mod.Node, b: *const ast_mod.Bina
             '-' => "sub",
             else => "mul",
         };
-        if (!wrap_needed) {
+        if (range_mod.resultFits(self, b.left, b.right, op, w)) {
+            plain_call = try std.fmt.allocPrint(a, "(rt.arith.{s}Proven(.{s}, {s}, {s}))", .{
+                base, @tagName(w), try emitI64Operand(self, b.left), try emitI64Operand(self, b.right),
+            });
+        } else if (!wrap_needed) {
             plain_call = try std.fmt.allocPrint(a, "(try rt.arith.{s}({s}, {s}))", .{
                 base, try emitI64Operand(self, b.left), try emitI64Operand(self, b.right),
             });

@@ -6,6 +6,7 @@ const root_mod = @import("root.zig");
 const prescan_mod = @import("prescan.zig");
 const stmt_mod = @import("stmt.zig");
 const expr_mod = @import("expr.zig");
+const range_mod = @import("range.zig");
 const Emitter = root_mod.Emitter;
 const ValType = root_mod.ValType;
 const Binding = root_mod.Binding;
@@ -27,10 +28,11 @@ pub fn collectGlobals(self: *Emitter) !void {
             "func"
         else if (module_path != null)
             "module"
-        else self.displayForDeclValue(d) catch |err| switch (err) {
-            error.CompileError => return error.CompileError,
-            else => return err,
-        };
+        else
+            self.displayForDeclValue(d) catch |err| switch (err) {
+                error.CompileError => return error.CompileError,
+                else => return err,
+            };
         const g = try a.create(Global);
         g.* = .{
             .name = d.name,
@@ -41,6 +43,11 @@ pub fn collectGlobals(self: *Emitter) !void {
             .module_path = module_path,
         };
         try self.globals.put(d.name, g);
+        if (d.is_const) {
+            if (range_mod.ofExpr(self, d.value)) |int_range| {
+                try self.int_ranges.put(@intFromPtr(g), int_range);
+            }
+        }
     }
 }
 

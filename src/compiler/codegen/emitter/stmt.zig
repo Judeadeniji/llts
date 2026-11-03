@@ -3,6 +3,7 @@ const ast_mod = @import("../../../ast/root.zig");
 const root_mod = @import("root.zig");
 const prescan_mod = @import("prescan.zig");
 const expr_mod = @import("expr.zig");
+const range_mod = @import("range.zig");
 const Emitter = root_mod.Emitter;
 const ValType = root_mod.ValType;
 const Binding = root_mod.Binding;
@@ -783,6 +784,11 @@ pub fn emitLocalDeclaration(self: *Emitter, node: *ast_mod.Node, d: *const ast_m
         try expr_mod.emitValueCoerced(self, d.value, vt)
     else
         try expr_mod.emitExpr(self, d.value);
+    if (d.is_const) {
+        if (range_mod.ofExpr(self, d.value)) |int_range| {
+            try self.int_ranges.put(@intFromPtr(info), int_range);
+        }
+    }
 
     // Index stores into `[]byte` / string views don't reassign the slice header,
     // so Zig wants `const` (same as `.slice` / `.pointer`). Use `var` only when
@@ -853,7 +859,14 @@ pub fn emitRangeFor(self: *Emitter, node: *ast_mod.Node, f: *const ast_mod.For) 
     defer self.popScope();
     if (f.captures.len > 0) {
         const b = try a.create(Binding);
-        b.* = .{ .name = f.captures[0].name, .zig_name = cap_name, .display = "int" };
+        b.* = .{
+            .name = f.captures[0].name,
+            .zig_name = cap_name,
+            .display = "int",
+        };
+        if (range_mod.loopCapture(self, f)) |int_range| {
+            try self.int_ranges.put(@intFromPtr(b), int_range);
+        }
         try self.scopes.items[self.scopes.items.len - 1].put(f.captures[0].name, b);
     }
 

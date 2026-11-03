@@ -123,6 +123,51 @@ pub @func main() {
   );
 }, 60_000);
 
+test("emits proven loop arithmetic without runtime overflow checks", () => {
+  expectParity(
+    `
+@const $N = 20;
+@const $factor = 3;
+$acc = 0;
+@for (0..N) |i| {
+    acc = acc + (i * factor);
+}
+print(acc);
+
+pub @func main() {}
+`,
+    (generated) => {
+      expect(generated).toContain("rt.arith.mulProven(.i64");
+      expect(generated).not.toContain("try rt.arith.mul(");
+      expect(generated).toContain("try rt.arith.add(");
+    },
+  );
+}, 60_000);
+
+test("keeps runtime overflow checks when an integer range is unknown", () => {
+  expectParity(
+    `
+@func multiply(a: int, b: int): int {
+    return a * b;
+}
+
+@func addThenWiden(a: i8, b: i8): i64 {
+    return @as(i64, a + b);
+}
+
+pub @func main() {
+    print(multiply(6, 7));
+    print(addThenWiden(100, 20));
+}
+`,
+    (generated) => {
+      expect(generated).toContain("try rt.arith.mul(");
+      expect(generated).not.toContain("rt.arith.mulProven");
+      expect(generated).toContain("try rt.arith.addChecked(.i8");
+    },
+  );
+}, 60_000);
+
 test("emits strings, booleans, len, and @as", () => {
   expectParity(
     `
