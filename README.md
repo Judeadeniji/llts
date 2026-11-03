@@ -10,7 +10,10 @@ LLTS is a name, not an acronym, and it is not TypeScript — just as LLVM is not
 
 - **Gradual, checked types.** Untyped code runs; annotated code is checked. Strict mode (`--strict`) enforces sound null and union narrowing and is on by default for native compilation.
 - **Honest numeric widths.** `i8`–`i64`, `u8`–`u64`, `u1`/`bool`, `f32`, `f64`, with packed struct layout and explicit `@as` conversions.
-- **Explicit memory.** Frame-local aggregates, compile-time escape checks, arenas, `defer`/`errdefer`, and `@new(allocator, T)`. No tracing garbage collector.
+- **Explicit memory.** Frame-local aggregates, compile-time escape checks, and
+  `defer`/`errdefer`. Native allocation is intentionally outside the core
+  language and will be supplied by the standard library. No tracing garbage
+  collector.
 - **Type-level metaprogramming.** `@typeOf`, `@sizeOf`, types as compile-time values, and type functions such as `@func Opt(T: type): type { return ?T; }`.
 - **Real abstractions.** First-class functions, structs with methods, enums, tagged unions, typed error sets, modules with `pub` visibility, and pipes (`|>`).
 - **Two backends.** A bytecode compiler with a stack VM, and a native pipeline that emits Zig and builds a standalone binary with the Zig compiler.
@@ -94,7 +97,8 @@ pub @func main() {
 
 ### Memory
 
-Aggregates created without an allocator are frame-local. Returning them is rejected unless the value is a flat scalar struct that can be cloned safely, or the value was allocated explicitly:
+Aggregates are frame-local. Returning them is rejected unless the value is a
+flat scalar struct that can be cloned safely:
 
 ```lls
 @struct Node {
@@ -113,7 +117,13 @@ pub @func main() {
 }
 ```
 
-For values that must outlive their frame, use `@new(allocator, T)`. Arenas are ordinary values supplied by the program; `defer` and `errdefer` run cleanup on scope exit and on the error path respectively.
+Native allocation is not currently a core-language operation. A future
+standard-library API will own allocation policy, growth, resizing, freeing,
+and failure behavior; it will not require a compiler-known allocator method
+name or a total capacity known in advance. The bytecode compiler temporarily
+retains the legacy `@new(allocator, T)` intrinsic for VM compatibility.
+`defer` and `errdefer` run cleanup on scope exit and on the error path
+respectively.
 
 ### Errors
 

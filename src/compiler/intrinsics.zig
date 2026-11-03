@@ -37,6 +37,8 @@ const intrinsics = std.StaticStringMap(Intrinsic).initComptime(.{
     .{ "@sizeOf", .sizeOf },
     .{ "@nameOf", .nameOf },
     .{ "@as", .as },
+    // Legacy bytecode/VM compatibility only. The native emitter rejects
+    // `@new`; allocation will return as an ordinary standard-library facility.
     .{ "@new", .new },
     .{ "@addrOf", .addrOf },
     .{ "@concat", .concat },

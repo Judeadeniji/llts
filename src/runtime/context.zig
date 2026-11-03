@@ -5,8 +5,8 @@
 //! the runtime never move, so emitted code can hold raw slices/pointers across
 //! calls):
 //!   * `frame`   — per-call-frame scratch; rewound by `leaveFrame`.
-//!   * `immortal` — program-lifetime values (string literals, concatenated
-//!     strings, anything the compiler marks immortal); never rewound.
+//!   * `immortal` — program-lifetime values (string literals and anything the
+//!     compiler marks immortal); never rewound.
 //!
 //! Exhaustion traps (`error.OutOfMemory` for now; the emitter maps it to a
 //! runtime diagnostic) instead of reallocating, because a realloc would move
