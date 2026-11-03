@@ -88,29 +88,11 @@ pub fn emitCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) any
             return std.fmt.allocPrint(a, "blk: {{ _ = {s}; break :blk false; }}", .{try emitExpr(self, c.args[0])});
         }
         if (std.mem.eql(u8, intrinsic, "@new")) {
-            if (c.args.len != 2 and c.args.len != 3) {
-                return self.failAt(node, "@new expects (allocator, type) or (allocator, []T, length)", .{});
-            }
-            const target = try self.valueType(node);
-            const payload = target.payload orelse {
-                return self.failAt(node, "native backend cannot determine the @new element type", .{});
-            };
-            if (payload.kind == .slice) {
-                if (c.args.len != 3) return self.failAt(node, "@new slice type needs a length", .{});
-                const elem = payload.elem orelse {
-                    return self.failAt(node, "native backend cannot determine the @new slice element type", .{});
-                };
-                return std.fmt.allocPrint(a, "try rt.mem.newSlice(ctx, {s}, @as(usize, @intCast({s})))", .{
-                    elem.zig, try emitI64Operand(self, c.args[2]),
-                });
-            }
-            if (payload.kind == .string) {
-                if (c.args.len != 3) return self.failAt(node, "@new string type needs a length", .{});
-                return std.fmt.allocPrint(a, "@as(*[]const u8, @ptrCast(try rt.mem.newSlice(ctx, u8, @as(usize, @intCast({s})))))", .{
-                    try emitI64Operand(self, c.args[2]),
-                });
-            }
-            return std.fmt.allocPrint(a, "try rt.mem.newZero(ctx, {s})", .{payload.zig});
+            return self.failAt(
+                node,
+                "@new is not part of the native core language; native allocation will move to the standard library",
+                .{},
+            );
         }
         if (std.mem.eql(u8, intrinsic, "@addrOf")) {
             if (c.args.len != 1) return self.failAt(node, "@addrOf expects 1 argument", .{});
@@ -142,7 +124,7 @@ pub fn emitCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) any
             const dest_t = try self.valueType(c.args[0]);
             const a_code = try emitExpr(self, c.args[1]);
             const b_code = try emitExpr(self, c.args[2]);
-            // Buffer form: first arg is `*[]byte` (a `@new` string buffer).
+            // Buffer form: first arg is a caller-owned `*[]byte`.
             if (dest_t.kind == .pointer and dest_t.payload != null and dest_t.payload.?.kind == .string) {
                 return std.fmt.allocPrint(a, "(try rt.mem.concatInto(@constCast(({s}).*), {s}, {s}))", .{
                     try emitExpr(self, c.args[0]), a_code, b_code,

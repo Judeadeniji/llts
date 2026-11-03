@@ -882,47 +882,37 @@ pub @func main() {
   }
 }, 60_000);
 
-test("emits @new allocations for structs and slices", () => {
+test("native rejects @new while bytecode compilation retains it", () => {
   const emitted = emitZig(`
-@struct Point { x: int; y: int; }
-
 pub @func main() {
-    $p = @new(0, Point);
-    print(p.x);
-    p.x = 5;
-    print(p.x);
-    $q = p;
-    q.x = 9;
-    print(p.x);
-
     $buf = @new(0, [4]byte);
     print(len(buf));
-    buf[1] = 7;
-    print(buf[1]);
-    $s = buf[0..2];
-    print(len(s));
-    print(s[1]);
-
-    $xs = @new(0, []int, 3);
-    print(len(xs));
-    xs[0] = 10;
-    print(xs[0]);
-    print(xs[1]);
-    $ys = xs;
-    ys[1] = 11;
-    print(xs[1]);
 }
 `);
+  const bytecodePath = emitted.outputPath.replace(/\.zig$/, ".llb");
   try {
-    const emit = runCli(["emit-zig", emitted.sourcePath, "-o", emitted.outputPath]);
-    expect(emit.stderr + emit.stdout).toBe("");
-    const native = runEmitted(emitted.outputPath);
-    expect(native.exitCode).toBe(0);
-    expect(native.stdout).toBe("0\n5\n9\n4\n7\n2\n7\n3\n10\n0\n11\n");
+    const bytecode = runCli(["build", emitted.sourcePath, "-o", bytecodePath]);
+    expect(bytecode.exitCode).toBe(0);
+    expect(bytecode.stderr + bytecode.stdout).toBe("");
+    expect(fs.existsSync(bytecodePath)).toBe(true);
+
+    const native = runCli([
+      "emit-zig",
+      emitted.sourcePath,
+      "-o",
+      emitted.outputPath,
+    ]);
+    expect(native.exitCode).not.toBe(0);
+    expect(native.stderr).toContain(
+      "@new is not part of the native core language",
+    );
+    expect(native.stderr).toContain("standard library");
+    expect(fs.existsSync(emitted.outputPath)).toBe(false);
   } finally {
+    if (fs.existsSync(bytecodePath)) fs.unlinkSync(bytecodePath);
     emitted.cleanup();
   }
-}, 60_000);
+});
 
 test("prints structs as LLTS packed bytes", () => {
   expectParity(`
@@ -942,55 +932,6 @@ pub @func main() {
 }
 `);
 });
-
-test("emits @new string buffers", () => {
-  const emitted = emitZig(`
-pub @func main() {
-    $s = @new(0, string, 3);
-    print(len(s));
-    s[0] = 65;
-    s[1] = 66;
-    s[2] = 67;
-    print(s[0]);
-    print(s[2]);
-}
-`);
-  try {
-    const emit = runCli(["emit-zig", emitted.sourcePath, "-o", emitted.outputPath]);
-    expect(emit.stderr + emit.stdout).toBe("");
-    const native = runEmitted(emitted.outputPath);
-    expect(native.exitCode).toBe(0);
-    expect(native.stdout).toBe("3\n65\n67\n");
-  } finally {
-    emitted.cleanup();
-  }
-}, 60_000);
-
-test("@as([]byte, buf) explicitly loads a @new string buffer", () => {
-  const id = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
-  const sourcePath = path.join(os.tmpdir(), `llts_buf_as_${id}.lls`);
-  fs.writeFileSync(
-    sourcePath,
-    `
-pub @func main() {
-    $buf = @new(0, string, 3);
-    buf[0] = 65;
-    buf[1] = 66;
-    buf[2] = 67;
-    $s = @as([]byte, buf);
-    print(s);
-    print(@concat(0, s, "!"));
-}
-`,
-  );
-  try {
-    const viaRun = runCli(["run", "--native", sourcePath]);
-    expect(viaRun.exitCode).toBe(0);
-    expect(viaRun.stdout).toBe("ABC\nABC!\n");
-  } finally {
-    fs.unlinkSync(sourcePath);
-  }
-}, 60_000);
 
 test("@as(string, [104, 105]) coerces integer-literal arrays to bytes", () => {
   const id = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
@@ -1016,14 +957,15 @@ pub @func main() {
   }
 }, 60_000);
 
-test("print of a @new string buffer is an LLTS error (no auto-deref)", () => {
+test("print of an aggregate pointer is an LLTS error (no auto-deref)", () => {
   const id = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
   const sourcePath = path.join(os.tmpdir(), `llts_buf_print_${id}.lls`);
   fs.writeFileSync(
     sourcePath,
     `
 pub @func main() {
-    $buf = @new(0, string, 3);
+    $bytes = [65, 66, 67];
+    $buf = &bytes;
     print(buf);
 }
 `,

@@ -534,7 +534,8 @@ fn parseTemplate(self: *Parser, token: ctx.Token) ParseError!*Node {
     return acc;
 }
 
-/// `@concat(0, left, right)` — allocator placeholder `0` matches `@new(0, …)`.
+/// `@concat(0, left, right)` — `0` selects the current frame-backed concat
+/// path until allocation moves to the standard library.
 fn concatCallNode(self: *Parser, left: *Node, right: *Node, loc: ast.Location) ParseError!*Node {
     const callee = try self.create(.{ .primary = .{
         .name = try self.dupe("@concat"),

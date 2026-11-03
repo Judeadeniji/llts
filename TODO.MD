@@ -139,12 +139,14 @@ Packed byte heap + honest numeric widths.
 
 ### P5 — Memory
 
-- [x] **Arenas + allocators** — growable `Arena` (Zig-style chunks) + `defer`.
+- [x] **VM arenas + allocators (legacy)** — growable `Arena` (Zig-style chunks) + `defer`.
 - [x] **`defer` / `errdefer`** — LIFO scope-exit cleanup; `errdefer` on error path only (`?` / error returns).
 - [x] **No tracing GC** — ownership is explicit (allocator + defer).
 - [x] **Frame regions** — VM rewinds heap bump on return; bare `Foo{}` / `[…]` are frame-local.
-- [x] **Escape = compile error** — cannot return frame-local heap (except flat scalar structs, which auto-clone into immortal storage on return); use `@new(allocator, …)` for arena-managed values.
-- [x] **`@new`** — compiler intrinsic (Go `make`-style); type-directed only: `@new(allocator, T)` zero-fills and yields `*T` for structs, arrays, `[]T`, and `[]byte` alike; literal value forms are rejected (return the literal directly — flat scalar structs clone automatically).
+- [x] **Escape = compile error** — cannot return frame-local heap (except flat scalar structs, which auto-clone into immortal storage on return).
+- [x] **Remove native `@new`** — native compilation rejects the intrinsic instead of ignoring its allocator and placing every result in immortal storage. The bytecode compiler retains it temporarily for VM compatibility.
+- [ ] **Move allocation to the standard library** — after generic struct methods (or an equivalent type-parameterized library mechanism) and raw typed-memory construction exist, provide allocator implementations as ordinary library code. The compiler must not require an `alloc`/`resize`/`free` method set, a fixed arena representation, or a total capacity known in advance. Libraries choose their own API, chunking/growth strategy, lifecycle, and failure type.
+- [ ] **Remove legacy VM `@new`** — migrate bytecode users to the standard-library allocation API, then delete the intrinsic and `__arena_alloc*` compiler/runtime coupling.
 
 ### P6 — Language (make the low-level story honest)
 
@@ -152,7 +154,7 @@ Forcing function: keep writing the self-hosted compiler. Whatever that parser ca
 
 #### Pointers vs values
 
-- [x] **`*T` / `?*T` as types** — pointer IR + parse; `@new` yields `*T` for structs and arrays; field/index access auto-resolves through `*` / `?*`; `?Node` still works as optional struct (compat).
+- [x] **`*T` / `?*T` as types** — pointer IR + parse; field/index access auto-resolves through `*` / `?*`; `?Node` still works as optional struct (compat). The legacy VM `@new` yields `*T` for structs and arrays.
 - [x] **Address-of (`&x`)** — `&aggregate` → `*T` for structs, arrays (`[N]T` / `[]T` / `[]byte`), tuples, shapes (same packed handle; type-level). Indexing auto-derefs `*T` / `?*T`. Rejects scalars, optionals, and already-`*T` (no `**T` / interiors / stack scalars yet).
 - [x] **`@addrOf(x)`** — packed-heap identity as `i64` (offset); equal for aliases, diverges after value copy. Exhaustive suite: structs/arrays/`[]byte`/tuples/shapes/`@new`/`@const`/`*T` params; rejects scalars/enums/optionals (`tests/53_addr_of.test.ts`, 37).
 - [x] **`void` / `null` / `never`** — distinct roles: `void` = unit (no result), `null` = optional absence only, `never` = noreturn/bottom. `Value.void` + `OP_VOID`; reject `: null` returns and `void`/`never` in unions. Exhaustive: `tests/54.1_void`, `54.2_null`, `54.3_never`.

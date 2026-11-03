@@ -47,30 +47,10 @@ pub fn allocArray(
     return ctx.allocFrame(len, elem_align);
 }
 
-/// Zero-filled immortal allocation for `@new(allocator, T)`.
-pub fn newZero(ctx: *Context, comptime T: type) error{OutOfMemory}!*T {
-    const bytes = try ctx.allocImmortal(@sizeOf(T), @alignOf(T));
-    const ptr: *T = @ptrCast(@alignCast(bytes.ptr));
-    ptr.* = std.mem.zeroes(T);
-    return ptr;
-}
-
-/// Zero-filled immortal slice header + backing storage for `@new(allocator, []T, n)`.
-pub fn newSlice(ctx: *Context, comptime Elem: type, len: usize) error{OutOfMemory}!*[]Elem {
-    const bytes = try ctx.allocImmortal(
-        std.math.mul(usize, len, @sizeOf(Elem)) catch return error.OutOfMemory,
-        @alignOf(Elem),
-    );
-    const data: [*]Elem = @ptrCast(@alignCast(bytes.ptr));
-    @memset(data[0..len], std.mem.zeroes(Elem));
-    const holder = try newZero(ctx, []Elem);
-    holder.* = data[0..len];
-    return holder;
-}
-
 /// Concatenate two string views into the **frame** buffer. Results do not
 /// survive `leaveFrame`; returning them needs an explicit immortalize /
-/// `@new` buffer. Prefer `@concat(allocator, a, b)` or `@concat(buf, a, b)`.
+/// caller-owned buffer. Prefer `@concat(allocator, a, b)` or
+/// `@concat(buf, a, b)`.
 pub fn concat(ctx: *Context, a: []const u8, b: []const u8) error{OutOfMemory}![]const u8 {
     const total = std.math.add(usize, a.len, b.len) catch return error.OutOfMemory;
     const dst = try ctx.allocFrame(total, 1);

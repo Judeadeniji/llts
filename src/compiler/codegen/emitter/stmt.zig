@@ -88,8 +88,8 @@ pub fn emitIndexAssignment(self: *Emitter, node: *ast_mod.Node, asn: *const ast_
         .string => "String",
         else => return self.failAt(node, "native backend cannot assign into '{s}' yet", .{obj_t.display}),
     };
-    // Allow stores into `[]byte` / byte-slice views (including `@as([]byte, @new-buf)`
-    // and `v[i..j]`). String-literal objects are rejected above.
+    // Allow stores into `[]byte` / byte-slice views (including `v[i..j]`).
+    // String-literal objects are rejected above.
     const use: []const u8 = switch (obj_t.kind) {
         .slice => "slice",
         .string => "str",
