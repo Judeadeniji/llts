@@ -35,6 +35,45 @@ function ensureMain(source: string): string {
   return `${source}\npub @func main() {}\n`;
 }
 
+interface NativeRunOptions {
+  flags?: string[];
+  scriptArgs?: string[];
+  env?: Record<string, string>;
+}
+
+function runNativeFile(
+  filePath: string,
+  options: NativeRunOptions = {},
+): RunResult {
+  requireBinary();
+  const result = spawnSync(
+    [
+      ENTRY,
+      "run",
+      "--native",
+      ...(options.flags ?? []),
+      filePath,
+      ...(options.scriptArgs ?? []),
+    ],
+    {
+      cwd: ROOT,
+      env: options.env ? { ...process.env, ...options.env } : process.env,
+    },
+  );
+  const stdout = result.stdout.toString();
+  const stderr = result.stderr.toString();
+  const allLines = stdout.split(/\r?\n/);
+  while (allLines.length > 0 && allLines[allLines.length - 1] === "") {
+    allLines.pop();
+  }
+  return {
+    stdout,
+    stderr,
+    exitCode: result.exitCode ?? 1,
+    lines: allLines,
+  };
+}
+
 /** Compile and run an inline .lls source string. */
 export function runSource(source: string): RunResult {
   requireBinary();
@@ -65,50 +104,20 @@ export function runSourceAsWritten(source: string): RunResult {
   }
 }
 
-/** Compile and run a .lls file (absolute or relative to repo root). */
+/** Compile and run a .lls file through the native backend. */
 export function runFile(
   filePath: string,
   scriptArgs: string[] = [],
 ): RunResult {
-  requireBinary();
-  const result = spawnSync([ENTRY, "run", filePath, ...scriptArgs], {
-    cwd: ROOT,
-  });
-  const stdout = result.stdout.toString();
-  const stderr = result.stderr.toString();
-  const allLines = stdout.split(/\r?\n/);
-  while (allLines.length > 0 && allLines[allLines.length - 1] === "") {
-    allLines.pop();
-  }
-  return {
-    stdout,
-    stderr,
-    exitCode: result.exitCode ?? 1,
-    lines: allLines,
-  };
+  return runNativeFile(filePath, { scriptArgs });
 }
 
-/** Compile and run a .lls file with --strict. */
+/** Compile and run a .lls file through the native backend with --strict. */
 export function runFileStrict(
   filePath: string,
   scriptArgs: string[] = [],
 ): RunResult {
-  requireBinary();
-  const result = spawnSync([ENTRY, "run", "-s", filePath, ...scriptArgs], {
-    cwd: ROOT,
-  });
-  const stdout = result.stdout.toString();
-  const stderr = result.stderr.toString();
-  const allLines = stdout.split(/\r?\n/);
-  while (allLines.length > 0 && allLines[allLines.length - 1] === "") {
-    allLines.pop();
-  }
-  return {
-    stdout,
-    stderr,
-    exitCode: result.exitCode ?? 1,
-    lines: allLines,
-  };
+  return runNativeFile(filePath, { flags: ["-s"], scriptArgs });
 }
 
 /** Compile and run an inline .lls source string with --strict. */
@@ -171,22 +180,7 @@ export function runSourceWithEnv(
   );
   fs.writeFileSync(tmp, ensureMain(source), "utf-8");
   try {
-    const result = spawnSync([ENTRY, "run", tmp], {
-      cwd: ROOT,
-      env: { ...process.env, ...env },
-    });
-    const stdout = result.stdout.toString();
-    const stderr = result.stderr.toString();
-    const allLines = stdout.split(/\r?\n/);
-    while (allLines.length > 0 && allLines[allLines.length - 1] === "") {
-      allLines.pop();
-    }
-    return {
-      stdout,
-      stderr,
-      exitCode: result.exitCode ?? 1,
-      lines: allLines,
-    };
+    return runNativeFile(tmp, { env });
   } finally {
     fs.unlinkSync(tmp);
   }
@@ -201,21 +195,7 @@ export function runSourceWithFlags(source: string, flags: string[]): RunResult {
   );
   fs.writeFileSync(tmp, ensureMain(source), "utf-8");
   try {
-    const result = spawnSync([ENTRY, "run", ...flags, tmp], {
-      cwd: ROOT,
-    });
-    const stdout = result.stdout.toString();
-    const stderr = result.stderr.toString();
-    const allLines = stdout.split(/\r?\n/);
-    while (allLines.length > 0 && allLines[allLines.length - 1] === "") {
-      allLines.pop();
-    }
-    return {
-      stdout,
-      stderr,
-      exitCode: result.exitCode ?? 1,
-      lines: allLines,
-    };
+    return runNativeFile(tmp, { flags });
   } finally {
     fs.unlinkSync(tmp);
   }
