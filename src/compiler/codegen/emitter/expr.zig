@@ -64,6 +64,16 @@ pub fn emitCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) any
 
     if (c.callee.* == .primary and std.mem.startsWith(u8, c.callee.primary.name, "@")) {
         const intrinsic = c.callee.primary.name;
+        if (std.mem.eql(u8, intrinsic, "@asm")) {
+            if (c.args.len != 1) return self.failAt(node, "@asm expects 1 argument", .{});
+            const template = c.args[0];
+            if (template.* != .literal or template.literal.literal_type != .string) {
+                return self.failAt(template, "@asm expects a string literal template", .{});
+            }
+            return std.fmt.allocPrint(a, "asm volatile ({s})", .{
+                try self.zigString(template.literal.value),
+            });
+        }
         if (std.mem.eql(u8, intrinsic, "@isError")) {
             if (c.args.len != 1) return self.failAt(node, "@isError expects 1 argument", .{});
             const t = try self.valueType(c.args[0]);
