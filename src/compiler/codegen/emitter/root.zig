@@ -160,6 +160,13 @@ pub const LoopTarget = struct {
     scope_depth: usize = 0,
 };
 
+pub const TraceSite = struct {
+    func_name: []const u8,
+    file: []const u8,
+    line: u32,
+    column: u32,
+};
+
 pub const Emitter = struct {
     allocator: std.mem.Allocator,
     writer: std.io.AnyWriter,
@@ -180,6 +187,9 @@ pub const Emitter = struct {
     params: std.ArrayList(ParamInfo) = .empty,
     break_targets: std.ArrayList(BreakTarget) = .empty,
     loop_targets: std.ArrayList(LoopTarget) = .empty,
+    trace_sites: std.ArrayList(TraceSite) = .empty,
+    current_trace_func: ?[]const u8 = null,
+    current_trace_file: []const u8 = "",
     cur_ret: ValType = undefined,
     counter: usize = 0,
     indent: usize = 1,
@@ -546,8 +556,36 @@ pub const Emitter = struct {
         try unit_mod.emitGlobalDecls(self);
         try unit_mod.emitFunctions(self);
         try unit_mod.emitTopLevel(self);
+        try self.emitTraceSiteTable();
         try unit_mod.emitEntry(self);
         try self.emitStructTypeDecls();
+    }
+
+    pub fn addTraceSite(self: *Emitter, func_name: []const u8, file: []const u8, line: u32, column: u32) !u32 {
+        if (self.trace_sites.items.len > std.math.maxInt(u32)) {
+            return self.failNoLoc("native trace site table exceeds {d} entries", .{std.math.maxInt(u32)});
+        }
+        const id: u32 = @intCast(self.trace_sites.items.len);
+        try self.trace_sites.append(self.arena.allocator(), .{
+            .func_name = func_name,
+            .file = file,
+            .line = line,
+            .column = column,
+        });
+        return id;
+    }
+
+    pub fn emitTraceSiteTable(self: *Emitter) !void {
+        try self.writer.writeAll("const lls_trace_sites = [_]rt.trace.Site{\n");
+        for (self.trace_sites.items) |site| {
+            try self.writer.print("    .{{ .func_name = {s}, .file = {s}, .line = {d}, .column = {d} }},\n", .{
+                try self.zigString(site.func_name),
+                try self.zigString(site.file),
+                site.line,
+                site.column,
+            });
+        }
+        try self.writer.writeAll("};\n\n");
     }
 
     pub fn failAt(self: *Emitter, node: *ast_mod.Node, comptime fmt: []const u8, args: anytype) error{CompileError} {

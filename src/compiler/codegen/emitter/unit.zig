@@ -65,6 +65,7 @@ pub fn emitEntry(self: *Emitter) !void {
         \\        rt.io.writeStderr("Error: out of memory\n");
         \\        rt.exitProcess(1);
         \\    };
+        \\    ctx.setTraceSites(lls_trace_sites[0..]);
         \\    ctx.activate();
         \\    defer ctx.deinit();
         \\    _ = lls_top_level(&ctx) catch |err| lls_finish(err);
@@ -135,11 +136,11 @@ pub fn emitFunction(self: *Emitter, name: []const u8, def: state_mod.FunctionDef
     self.indent = 1;
 
     const file = if (f.loc.path.len > 0) f.loc.path else self.doc.path;
+    self.current_trace_func = name;
+    self.current_trace_file = file;
+    const entry_site = try self.addTraceSite(name, file, 0, 0);
     try self.writeIndent();
-    try self.writer.print("const _mark = try ctx.enterFunction({s}, {s});\n", .{
-        try self.zigString(name),
-        try self.zigString(file),
-    });
+    try self.writer.print("const _mark = try ctx.enterFunction({d});\n", .{entry_site});
     try self.writeIndent();
     try self.writer.writeAll("defer ctx.leaveFunction(_mark);\n");
 
@@ -234,10 +235,12 @@ pub fn emitGlobalDecls(self: *Emitter) !void {
 
 pub fn emitTopLevel(self: *Emitter) !void {
     self.cur_ret = .{ .display = "void", .clean = "void", .kind = .void, .zig = "void" };
+    self.current_trace_func = null;
+    self.current_trace_file = "";
     try self.writer.writeAll("fn lls_top_level(ctx: *rt.Context) anyerror!void {\n");
     self.indent = 1;
     try self.writeIndent();
-    try self.writer.writeAll("ctx.setLine(0, 0);\n");
+    try self.writer.writeAll("ctx.setSite(0);\n");
     self.pushScope();
     for (self.doc.statements) |s| {
         if (s.* == .function_decl or s.* == .struct_decl or s.* == .enum_decl or

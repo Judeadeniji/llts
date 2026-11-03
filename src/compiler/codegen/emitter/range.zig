@@ -41,6 +41,55 @@ pub fn loopCapture(self: *Emitter, f: *const ast_mod.For) ?IntRange {
     return .{ .min = start.min, .max = last[0] };
 }
 
+/// Refine an immutable parameter after the true branch of an early guard
+/// terminates. Only direct function-body guards are considered; branch-local
+/// facts never leak into sibling control-flow paths.
+pub fn refineAfterFalseGuard(self: *Emitter, condition: *ast_mod.Node) !void {
+    if (self.scopes.items.len != 2 or condition.* != .binary) return;
+    const binary_condition = &condition.binary;
+    if (!isOrderedComparison(binary_condition.operator)) return;
+
+    var name_node = binary_condition.left;
+    var bound_node = binary_condition.right;
+    var op = binary_condition.operator;
+    if (!isIdentifier(name_node)) {
+        if (!isIdentifier(bound_node)) return;
+        name_node = binary_condition.right;
+        bound_node = binary_condition.left;
+        op = reverseComparison(op);
+    }
+
+    const binding = self.lookupBindingOptional(name_node.primary.name) orelse return;
+    if (!binding.is_param or binding.assigned or binding.reassigned) return;
+    const value_type = try self.classify(condition, binding.display);
+    const width = value_type.width orelse return;
+    var refined = integerTypeRange(width) orelse return;
+    const bound = ofExpr(self, bound_node) orelse return;
+    if (bound.min != bound.max) return;
+
+    if (std.mem.eql(u8, op, "<")) {
+        refined.min = @max(refined.min, bound.min);
+    } else if (std.mem.eql(u8, op, "<=")) {
+        const next = @addWithOverflow(bound.min, 1);
+        if (next[1] != 0) return;
+        refined.min = @max(refined.min, next[0]);
+    } else if (std.mem.eql(u8, op, ">")) {
+        refined.max = @min(refined.max, bound.max);
+    } else if (std.mem.eql(u8, op, ">=")) {
+        const previous = @subWithOverflow(bound.max, 1);
+        if (previous[1] != 0) return;
+        refined.max = @min(refined.max, previous[0]);
+    }
+
+    if (self.int_ranges.get(@intFromPtr(binding))) |existing| {
+        refined.min = @max(refined.min, existing.min);
+        refined.max = @min(refined.max, existing.max);
+    }
+    if (refined.min <= refined.max) {
+        try self.int_ranges.put(@intFromPtr(binding), refined);
+    }
+}
+
 fn primary(self: *Emitter, p: ast_mod.Primary) ?IntRange {
     if (p.kind != .identifier and p.kind != .register) return null;
     if (self.lookupBindingOptional(p.name)) |binding| {
@@ -50,6 +99,38 @@ fn primary(self: *Emitter, p: ast_mod.Primary) ?IntRange {
         return self.int_ranges.get(@intFromPtr(global));
     }
     return null;
+}
+
+fn isIdentifier(node: *ast_mod.Node) bool {
+    return node.* == .primary and
+        (node.primary.kind == .identifier or node.primary.kind == .register);
+}
+
+fn isOrderedComparison(op: []const u8) bool {
+    return std.mem.eql(u8, op, "<") or std.mem.eql(u8, op, "<=") or
+        std.mem.eql(u8, op, ">") or std.mem.eql(u8, op, ">=");
+}
+
+fn reverseComparison(op: []const u8) []const u8 {
+    if (std.mem.eql(u8, op, "<")) return ">";
+    if (std.mem.eql(u8, op, "<=")) return ">=";
+    if (std.mem.eql(u8, op, ">")) return "<";
+    return "<=";
+}
+
+fn integerTypeRange(width: widths.Width) ?IntRange {
+    return switch (width.concrete()) {
+        .i8 => .{ .min = std.math.minInt(i8), .max = std.math.maxInt(i8) },
+        .i16 => .{ .min = std.math.minInt(i16), .max = std.math.maxInt(i16) },
+        .i32 => .{ .min = std.math.minInt(i32), .max = std.math.maxInt(i32) },
+        .i64 => .{ .min = std.math.minInt(i64), .max = std.math.maxInt(i64) },
+        .u1 => .{ .min = 0, .max = 1 },
+        .u8 => .{ .min = 0, .max = std.math.maxInt(u8) },
+        .u16 => .{ .min = 0, .max = std.math.maxInt(u16) },
+        .u32 => .{ .min = 0, .max = std.math.maxInt(u32) },
+        .u64, .f32, .f64 => null,
+        else => null,
+    };
 }
 
 fn literal(lit: ast_mod.Literal) ?IntRange {

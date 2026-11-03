@@ -49,6 +49,7 @@ pub const Error = err_mod.Error;
 // Shadow-stack diagnostics.
 pub const ShadowStack = trace_mod.ShadowStack;
 pub const Frame = trace_mod.Frame;
+pub const Site = trace_mod.Site;
 
 // Trap reporting (message + shadow stack), shared by all runtime primitives.
 pub const fail = io_mod.fail;

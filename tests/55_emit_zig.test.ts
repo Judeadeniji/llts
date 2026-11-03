@@ -168,6 +168,32 @@ pub @func main() {
   );
 }, 60_000);
 
+test("refines recursive parameters after a terminating guard", () => {
+  expectParity(
+    `
+@func fib(n: int): int {
+    @if (n < 2) {
+        return n;
+    }
+    return fib(n - 1) + fib(n - 2);
+}
+
+pub @func main() {
+    print(fib(10));
+}
+`,
+    (generated) => {
+      expect(generated.match(/rt\.arith\.subProven\(\.i64/g)?.length).toBe(2);
+      expect(generated).not.toContain("try rt.arith.sub(");
+      expect(generated).toContain("try rt.arith.add(");
+      expect(generated).toContain("const lls_trace_sites = [_]rt.trace.Site");
+      expect(generated).toContain("ctx.setTraceSites(lls_trace_sites[0..])");
+      expect(generated).toContain("ctx.setSite(");
+      expect(generated).not.toContain("ctx.setLine(");
+    },
+  );
+}, 60_000);
+
 test("emits strings, booleans, len, and @as", () => {
   expectParity(
     `

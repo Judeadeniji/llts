@@ -760,10 +760,13 @@ pub fn emitDefer(self: *Emitter, node: *ast_mod.Node, d: *const ast_mod.Defer) !
 
 pub fn emitLineMarker(self: *Emitter, node: *ast_mod.Node) !void {
     if (self.options.release) return;
+    const func_name = self.current_trace_func orelse return;
     const loc = node.loc();
     if (loc.line == 0) return;
+    const file = if (loc.path.len > 0) loc.path else self.current_trace_file;
+    const site_id = try self.addTraceSite(func_name, file, loc.line, loc.column);
     try self.writeIndent();
-    try self.writer.print("ctx.setLine({d}, {d});\n", .{ loc.line, loc.column });
+    try self.writer.print("ctx.setSite({d});\n", .{site_id});
 }
 
 pub fn emitLocalDeclaration(self: *Emitter, node: *ast_mod.Node, d: *const ast_mod.Declaration) !void {
@@ -936,7 +939,12 @@ pub fn emitStmt(self: *Emitter, node: *ast_mod.Node) anyerror!void {
             try self.writer.writeAll("}\n");
         },
         .assignment => |*asn| try emitAssignment(self, node, asn),
-        .if_expr => |i| try emitIfStmt(self, node, &i),
+        .if_expr => |i| {
+            try emitIfStmt(self, node, &i);
+            if (i.else_body == null and prescan_mod.stmtTerminates(self, i.body)) {
+                try range_mod.refineAfterFalseGuard(self, i.condition);
+            }
+        },
         .switch_expr => |sw| try emitSwitchStmt(self, node, &sw),
         .for_expr => |f| try emitForStmt(self, node, &f),
         .break_expr => |b| try emitBreak(self, node, &b),

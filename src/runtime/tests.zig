@@ -502,20 +502,30 @@ test "widths: table integrity after the runtime move" {
 
 // --- ShadowStack -----------------------------------------------------------
 
-test "trace: push / pop / setLoc track the innermost frame" {
-    var stack: trace.ShadowStack = .{};
-    try stack.push("add", "functions.lls");
-    stack.setLoc(3, 12);
-    try testing.expectEqual(@as(usize, 1), stack.count);
-    try testing.expectEqualStrings("add", stack.frames[0].func_name);
-    try testing.expectEqual(@as(u32, 3), stack.frames[0].line);
-    try testing.expectEqual(@as(u32, 12), stack.frames[0].column);
+const test_trace_sites = [_]trace.Site{
+    .{ .func_name = "add", .file = "functions.lls" },
+    .{ .func_name = "add", .file = "functions.lls", .line = 3, .column = 12 },
+    .{ .func_name = "mul", .file = "functions.lls" },
+    .{ .func_name = "mul", .file = "functions.lls", .line = 5, .column = 8 },
+    .{ .func_name = "main", .file = "app.lls" },
+    .{ .func_name = "f", .file = "f.lls" },
+};
 
-    try stack.push("main", "functions.lls");
-    stack.setLoc(7, 4);
+test "trace: compact site push / pop track the innermost frame" {
+    var stack: trace.ShadowStack = .{};
+    stack.setSites(&test_trace_sites);
+    try stack.push(0);
+    stack.setSite(1);
+    try testing.expectEqual(@as(usize, 1), stack.count);
+    try testing.expectEqualStrings("add", stack.current().func_name);
+    try testing.expectEqual(@as(u32, 3), stack.current().line);
+    try testing.expectEqual(@as(u32, 12), stack.current().column);
+
+    try stack.push(2);
+    stack.setSite(3);
     try testing.expectEqual(@as(usize, 2), stack.count);
-    // setLoc only moves the innermost frame.
-    try testing.expectEqual(@as(u32, 3), stack.frames[0].line);
+    try testing.expectEqualStrings("mul", stack.current().func_name);
+    try testing.expectEqual(@as(u32, 1), stack.site_ids[0]);
 
     stack.pop();
     try testing.expectEqual(@as(usize, 1), stack.count);
@@ -527,9 +537,13 @@ test "trace: push / pop / setLoc track the innermost frame" {
 test "trace: push caps at MAX_FRAMES" {
     var stack: trace.ShadowStack = .{};
     var i: usize = 0;
-    while (i < trace.MAX_FRAMES) : (i += 1) try stack.push("f", "f.lls");
-    try testing.expectError(error.StackOverflow, stack.push("g", "g.lls"));
+    while (i < trace.MAX_FRAMES) : (i += 1) try stack.push(5);
+    try testing.expectError(error.StackOverflow, stack.push(5));
     try testing.expectEqual(trace.MAX_FRAMES, stack.count);
+}
+
+test "trace: shadow stack stores one u32 per frame" {
+    try testing.expect(@sizeOf(trace.ShadowStack) <= 2048);
 }
 
 // --- Frame formatting (VM `formatVmStackTrace` parity) --------------------
@@ -587,15 +601,16 @@ test "context: enterFunction / leaveFunction mirror LLTS calls" {
     defer ctx.deinit();
     ctx.activate();
     try testing.expect(trace.active == &ctx.trace_stack);
+    ctx.setTraceSites(&test_trace_sites);
 
-    const outer = try ctx.enterFunction("add", "functions.lls");
-    ctx.setLine(3, 12);
+    const outer = try ctx.enterFunction(0);
+    ctx.setSite(1);
     try testing.expectEqual(@as(usize, 1), ctx.trace_stack.count);
 
-    const inner = try ctx.enterFunction("mul", "functions.lls");
-    ctx.setLine(5, 8);
+    const inner = try ctx.enterFunction(2);
+    ctx.setSite(3);
     try testing.expectEqual(@as(usize, 2), ctx.trace_stack.count);
-    try testing.expectEqualStrings("mul", ctx.trace_stack.frames[1].func_name);
+    try testing.expectEqualStrings("mul", ctx.trace_stack.current().func_name);
 
     ctx.leaveFunction(inner);
     try testing.expectEqual(@as(usize, 1), ctx.trace_stack.count);
@@ -606,9 +621,10 @@ test "context: enterFunction / leaveFunction mirror LLTS calls" {
 test "context: enterFunction carries the heap watermark" {
     var ctx = try Context.init(.{ .allocator = testing.allocator, .frame_capacity = 64 });
     defer ctx.deinit();
+    ctx.setTraceSites(&test_trace_sites);
 
     _ = try ctx.allocFrame(8, 1);
-    const mark = try ctx.enterFunction("f", "f.lls");
+    const mark = try ctx.enterFunction(5);
     _ = try ctx.allocFrame(16, 1);
     try testing.expectEqual(@as(usize, 24), ctx.frame_len);
     ctx.leaveFunction(mark);
@@ -632,11 +648,12 @@ test "context: enterFunction traps at the frame cap" {
     var ctx = try Context.init(.{ .allocator = testing.allocator, .frame_capacity = 0 });
     defer ctx.deinit();
     ctx.activate();
+    ctx.setTraceSites(&test_trace_sites);
 
     var i: usize = 0;
-    while (i < trace.MAX_FRAMES) : (i += 1) _ = try ctx.enterFunction("f", "f.lls");
+    while (i < trace.MAX_FRAMES) : (i += 1) _ = try ctx.enterFunction(5);
 
-    try testing.expectError(error.RuntimeError, ctx.enterFunction("g", "g.lls"));
+    try testing.expectError(error.RuntimeError, ctx.enterFunction(5));
     // The failed push leaves the depth unchanged.
     try testing.expectEqual(trace.MAX_FRAMES, ctx.trace_stack.count);
 }
@@ -647,15 +664,16 @@ test "io: fail prints the message, then innermost-first frames" {
     var ctx = try Context.init(.{ .allocator = testing.allocator, .frame_capacity = 0 });
     defer ctx.deinit();
     ctx.activate();
+    ctx.setTraceSites(&test_trace_sites);
 
     var cap: CaptureGuard = .{};
     defer cap.deinit();
     cap.init();
 
-    const outer = try ctx.enterFunction("add", "functions.lls");
-    ctx.setLine(3, 12);
-    const inner = try ctx.enterFunction("mul", "functions.lls");
-    ctx.setLine(5, 8);
+    const outer = try ctx.enterFunction(0);
+    ctx.setSite(1);
+    const inner = try ctx.enterFunction(2);
+    ctx.setSite(3);
 
     try testing.expect(io.fail("boom {d}", .{@as(u32, 1)}) == error.RuntimeError);
     try testing.expectEqualStrings(
@@ -673,12 +691,13 @@ test "io: failMsg prints the trace too" {
     var ctx = try Context.init(.{ .allocator = testing.allocator, .frame_capacity = 0 });
     defer ctx.deinit();
     ctx.activate();
+    ctx.setTraceSites(&test_trace_sites);
 
     var cap: CaptureGuard = .{};
     defer cap.deinit();
     cap.init();
 
-    _ = try ctx.enterFunction("main", "app.lls");
+    _ = try ctx.enterFunction(4);
     try testing.expect(io.failMsg("nope") == error.RuntimeError);
     try testing.expectEqualStrings(
         "Error: nope\n    at main (app.lls:?:?)\n",
@@ -706,12 +725,13 @@ test "io: silence_stderr suppresses trap output" {
     var ctx = try Context.init(.{ .allocator = testing.allocator, .frame_capacity = 0 });
     defer ctx.deinit();
     ctx.activate();
+    ctx.setTraceSites(&test_trace_sites);
 
     var cap: CaptureGuard = .{};
     defer cap.deinit();
     cap.init();
 
-    _ = try ctx.enterFunction("f", "f.lls");
+    _ = try ctx.enterFunction(5);
     try testing.expect(io.failMsg("quiet") == error.RuntimeError);
     try testing.expectEqualStrings("", cap.buf.items);
 }
