@@ -8,7 +8,7 @@ pub const LiteralKind = enum {
     hex,
     octal,
     binary,
-    @"null",
+    null,
 };
 
 pub const PrimaryKind = enum {
@@ -55,7 +55,35 @@ pub const Assignment = struct {
 pub const Call = struct {
     callee: *Node,
     args: []*Node,
+    inline_asm: ?InlineAsm = null,
     loc: Location,
+};
+
+pub const AsmOutput = struct {
+    name: []const u8,
+    constraint: []const u8,
+    /// Null for the single expression result (`-> Type`); otherwise the
+    /// index of the destination place in `Call.args`.
+    arg_index: ?usize = null,
+    return_type: ?[]const u8 = null,
+};
+
+pub const AsmInput = struct {
+    name: []const u8,
+    constraint: []const u8,
+    /// Index of the input expression in `Call.args`.
+    arg_index: usize,
+};
+
+/// Parsed GNU/Zig-style extended assembly attached to an `@asm` call.
+/// `Call.args[0]` is the declared result type; remaining arguments are the
+/// expressions referenced by input/output `${...}` holes.
+pub const InlineAsm = struct {
+    template: []const u8,
+    outputs: []AsmOutput,
+    inputs: []AsmInput,
+    clobbers: []const []const u8,
+    is_volatile: bool = true,
 };
 
 pub const Member = struct {

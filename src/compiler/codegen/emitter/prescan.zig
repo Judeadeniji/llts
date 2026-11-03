@@ -93,6 +93,13 @@ pub fn preScanExpr(self: *Emitter, node: *ast_mod.Node) anyerror!void {
             try preScanExpr(self, asn.right);
         },
         .call => |c| {
+            if (c.inline_asm) |spec| {
+                for (spec.outputs) |output| {
+                    if (output.arg_index) |index| try preScanAssignmentTarget(self, c.args[index]);
+                }
+                for (spec.inputs) |input| try preScanExpr(self, c.args[input.arg_index]);
+                return;
+            }
             for (c.args) |arg| try preScanExpr(self, arg);
             if (c.callee.* == .member) {
                 const m = &c.callee.member;

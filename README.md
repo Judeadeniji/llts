@@ -226,6 +226,25 @@ multi-instruction templates:
 ```);
 ````
 
+Extended assembly uses GNU/Zig-style output, input, and clobber sections.
+`${expression}` holes bind LLTS values without converting them to text:
+
+````lls
+$sum = @asm(i64, ```
+    movq %[left], %[result]
+    addq %[right], %[result]
+    : [result] "=&r" (-> i64)
+    : [left] "r" (${left}),
+      [right] "r" (${right})
+    : "cc", "memory"
+```);
+````
+
+An output may write a mutable LLTS place instead of returning:
+`[value] "+r" (${value})`. Extended assembly supports symbolic operands,
+matching and architecture-specific constraints, multiple place outputs, and
+explicit register/condition-code/memory clobbers. `asm goto` is not supported.
+
 ## Project layout
 
 | Path | Contents |

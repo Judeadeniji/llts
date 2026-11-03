@@ -42,6 +42,30 @@ svc #0`,
   }
 }
 
+function arithmeticAssembly(): {
+  sum: string;
+  increment: string;
+} {
+  switch (process.arch) {
+    case "x64":
+      return {
+        sum: `movq %[left], %[result]
+addq %[right], %[result]`,
+        increment: "addq %[delta], %[value]",
+      };
+    case "arm64":
+      return {
+        sum: `mov %[result], %[left]
+add %[result], %[result], %[right]`,
+        increment: "add %[value], %[value], %[delta]",
+      };
+    default:
+      throw new Error(
+        `Unsupported inline-assembly test architecture: ${process.arch}`,
+      );
+  }
+}
+
 test("native executes a real multiline @asm system call", () => {
   const assembly = exitAssembly();
   withSource(
@@ -81,6 +105,88 @@ ${assembly.instructions}
   );
 }, 60_000);
 
+test("extended @asm returns a typed output from input operands", () => {
+  const assembly = arithmeticAssembly();
+  withSource(
+    `
+pub @func main() {
+    $left: i64 = 20;
+    $right: i64 = 22;
+    $sum = @asm(i64, \`\`\`
+${assembly.sum}
+    : [result] "=&r" (-> i64)
+    : [left] "r" (\${left}),
+      [right] "r" (\${right})
+    :
+    \`\`\`);
+    print(sum);
+}
+`,
+    (sourcePath) => {
+      const native = runCli(["run", "--native", sourcePath]);
+      expect(native.exitCode).toBe(0);
+      expect(native.stdout).toBe("42\n");
+      expect(native.stderr).toBe("");
+    },
+  );
+}, 60_000);
+
+test("extended @asm writes an output place and declares clobbers", () => {
+  const assembly = arithmeticAssembly();
+  withSource(
+    `
+pub @func main() {
+    $value: i64 = 40;
+    $delta: i64 = 2;
+    @asm(void, \`\`\`
+${assembly.increment}
+    : [value] "+r" (\${value})
+    : [delta] "r" (\${delta})
+    : "memory", "cc"
+    \`\`\`);
+    print(value);
+}
+`,
+    (sourcePath, dir) => {
+      const zigPath = path.join(dir, "main.zig");
+      const emit = runCli(["emit-zig", sourcePath, "-o", zigPath]);
+      expect(emit.exitCode).toBe(0);
+      expect(emit.stderr + emit.stdout).toBe("");
+      expect(fs.readFileSync(zigPath, "utf8")).toContain(".memory = true");
+
+      const native = runCli(["run", "--native", sourcePath]);
+      expect(native.exitCode).toBe(0);
+      expect(native.stdout).toBe("42\n");
+      expect(native.stderr).toBe("");
+    },
+  );
+}, 60_000);
+
+test("extended @asm rejects constant output places", () => {
+  const assembly = arithmeticAssembly();
+  withSource(
+    `
+pub @func main() {
+    @const $value: i64 = 40;
+    $delta: i64 = 2;
+    @asm(void, \`\`\`
+${assembly.increment}
+    : [value] "+r" (\${value})
+    : [delta] "r" (\${delta})
+    :
+    \`\`\`);
+}
+`,
+    (sourcePath) => {
+      const result = runCli(["run", "--native", sourcePath]);
+      expect(result.exitCode).not.toBe(0);
+      expect(result.stderr).toContain(
+        "@asm cannot write to constant 'value'",
+      );
+    },
+  );
+}, 60_000);
+
 test("@asm requires a literal template", () => {
   withSource(
     `
@@ -111,6 +217,33 @@ pub @func main() {
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain(
         "@asm is only supported by the native backend",
+      );
+    },
+  );
+});
+
+test("bytecode backend rejects extended @asm", () => {
+  const assembly = arithmeticAssembly();
+  withSource(
+    `
+pub @func main() {
+    $left: i64 = 20;
+    $right: i64 = 22;
+    $sum = @asm(i64, \`\`\`
+${assembly.sum}
+    : [result] "=&r" (-> i64)
+    : [left] "r" (\${left}),
+      [right] "r" (\${right})
+    :
+    \`\`\`);
+    print(sum);
+}
+`,
+    (sourcePath) => {
+      const result = runCli(["run", sourcePath]);
+      expect(result.exitCode).not.toBe(0);
+      expect(result.stderr).toContain(
+        "Extended @asm is only supported by the native backend",
       );
     },
   );
