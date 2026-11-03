@@ -142,6 +142,29 @@ pub @func main() {
   );
 }, 60_000);
 
+test("rejects ordered string comparisons", () => {
+  const emitted = emitZig(`
+pub @func main() {
+    print("a" < "b");
+}
+`);
+  try {
+    const result = runCli([
+      "emit-zig",
+      emitted.sourcePath,
+      "-o",
+      emitted.outputPath,
+    ]);
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stderr).toContain(
+      "comparison: expected matching numeric types",
+    );
+    expect(fs.existsSync(emitted.outputPath)).toBe(false);
+  } finally {
+    emitted.cleanup();
+  }
+});
+
 test("emits top-level globals before main", () => {
   expectParity(`
 @const $base = 10;
