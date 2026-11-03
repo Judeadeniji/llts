@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { spawnSync } from "bun";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -18,15 +19,37 @@ function withSource(
   }
 }
 
-test("native lowers multiline @asm templates to volatile inline assembly", () => {
+function exitAssembly(): { instructions: string; terminal: string } {
+  switch (process.arch) {
+    case "x64":
+      return {
+        instructions: `movq $60, %%rax
+movq $42, %%rdi
+syscall`,
+        terminal: "syscall",
+      };
+    case "arm64":
+      return {
+        instructions: `mov x8, #93
+mov x0, #42
+svc #0`,
+        terminal: "svc #0",
+      };
+    default:
+      throw new Error(
+        `Unsupported inline-assembly test architecture: ${process.arch}`,
+      );
+  }
+}
+
+test("native executes a real multiline @asm system call", () => {
+  const assembly = exitAssembly();
   withSource(
     `
 pub @func main() {
     @asm(\`\`\`
-    nop
-    nop
+${assembly.instructions}
     \`\`\`);
-    print(42);
 }
 `,
     (sourcePath, dir) => {
@@ -34,14 +57,26 @@ pub @func main() {
       const emit = runCli(["emit-zig", sourcePath, "-o", zigPath]);
       expect(emit.exitCode).toBe(0);
       expect(emit.stderr + emit.stdout).toBe("");
-      expect(fs.readFileSync(zigPath, "utf8")).toContain(
-        'asm volatile ("    nop\\n    nop");',
-      );
+      expect(fs.readFileSync(zigPath, "utf8")).toContain(assembly.terminal);
 
-      const native = runCli(["run", "--native", sourcePath]);
-      expect(native.exitCode).toBe(0);
-      expect(native.stdout).toBe("42\n");
-      expect(native.stderr).toBe("");
+      const binaryPath = path.join(dir, "main");
+      const build = runCli([
+        "build",
+        sourcePath,
+        "--native",
+        "-o",
+        binaryPath,
+      ]);
+      if (build.exitCode !== 0) {
+        throw new Error(`Native build failed:\n${build.stderr}${build.stdout}`);
+      }
+      expect(build.exitCode).toBe(0);
+      expect(build.stderr + build.stdout).toBe("");
+
+      const native = spawnSync([binaryPath]);
+      expect(native.exitCode).toBe(42);
+      expect(native.stdout.toString()).toBe("");
+      expect(native.stderr.toString()).toBe("");
     },
   );
 }, 60_000);
