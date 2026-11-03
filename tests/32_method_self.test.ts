@@ -159,28 +159,6 @@ print(p.x);
   );
 });
 
-test("self: T on @new heap object does not mutate the original", () => {
-  expectOutput(
-    runSource(`
-@const $mem = @import("std/mem");
-@struct Point {
-    x: i64;
-    @func zero(self: Point) {
-        self.x = 0;
-        return self.x;
-    }
-}
-$a = mem.create(0);
-$q = @new(a, Point);
-q.x = 5;
-print(q.zero());
-print(q.x);
-a.deinit();
-`),
-    ["0", "5"],
-  );
-});
-
 test("self: T copy sees caller values at call time", () => {
   expectOutput(
     runSource(`

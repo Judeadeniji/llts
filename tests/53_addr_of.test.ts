@@ -2,7 +2,7 @@
  * Exhaustive `@addrOf(x)` coverage.
  *
  * Model: packed-heap identity as `i64` (offset). Equal for aliases (`&x` /
- * `*T` assign / `@new`); diverges after value copy. Accepts addressable
+ * `*T` assign); diverges after value copy. Accepts addressable
  * aggregates and `*T`; rejects scalars and optionals.
  */
 import { test } from "bun:test";
@@ -121,22 +121,6 @@ print(@addrOf(q) == a);
   );
 });
 
-test("@addrOf @new(Point) equals pointer aliases", () => {
-  expectOutput(
-    runSource(`
-@const $mem = @import("std/mem");
-@struct Point { x: i64; }
-$arena = mem.create(0);
-$p = @new(arena, Point);
-$q = p;
-print(@addrOf(p) == @addrOf(q));
-print(@typeOf(@addrOf(p)));
-arena.deinit();
-`),
-    ["true", "i64"],
-  );
-});
-
 test("@addrOf nested struct field is distinct from outer", () => {
   expectOutput(
     runSource(`
@@ -224,7 +208,7 @@ print(@addrOf(a) == @addrOf(b));
 });
 
 // ---------------------------------------------------------------------------
-// []byte / *[]byte / @new
+// []byte / *[]byte
 // ---------------------------------------------------------------------------
 
 test("@addrOf string ([]byte) equals @addrOf(&s)", () => {
@@ -237,38 +221,6 @@ $t = s;
 print(@addrOf(s) == @addrOf(t));
 `),
     ["true", "false"],
-  );
-});
-
-test("@addrOf @new([]byte) stable across *T aliases", () => {
-  expectOutput(
-    runSource(`
-@const $mem = @import("std/mem");
-$arena = mem.create(0);
-$buf = @new(arena, []byte, 4);
-$p = buf;
-$q = p;
-print(@typeOf(buf));
-print(@addrOf(buf) == @addrOf(p));
-print(@addrOf(p) == @addrOf(q));
-arena.deinit();
-`),
-    ["*[]byte", "true", "true"],
-  );
-});
-
-test("@addrOf @new([N]byte) shares across pointer assign", () => {
-  expectOutput(
-    runSource(`
-@const $mem = @import("std/mem");
-$arena = mem.create(0);
-$buf = @new(arena, [4]byte);
-$p = buf;
-print(@typeOf(buf));
-print(@addrOf(buf) == @addrOf(p));
-arena.deinit();
-`),
-    ["*[4]byte", "true"],
   );
 });
 

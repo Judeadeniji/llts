@@ -117,22 +117,16 @@ pub @func main() {
   );
 });
 
-test("type values: @as and @new accept type values", () => {
+test("type values: @as accepts type values", () => {
   expectOutput(
     runSource(`
-@const $mem = @import("std/mem");
-@struct N { v: i64; }
 $g: u8 = 7;
 pub @func main() {
     $c = @as(@typeOf(g), 9);
     print(@typeOf(c));
-    $a = mem.create(0);
-    $proto = N { v: 1 };
-    $p = @new(a, @typeOf(proto));
-    print(@typeOf(p));
 }
 `),
-    ["u8", "*N"],
+    ["u8"],
   );
 });
 

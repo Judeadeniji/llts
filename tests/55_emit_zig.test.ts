@@ -905,38 +905,6 @@ pub @func main() {
   }
 }, 60_000);
 
-test("native rejects @new while bytecode compilation retains it", () => {
-  const emitted = emitZig(`
-pub @func main() {
-    $buf = @new(0, [4]byte);
-    print(len(buf));
-}
-`);
-  const bytecodePath = emitted.outputPath.replace(/\.zig$/, ".llb");
-  try {
-    const bytecode = runCli(["build", emitted.sourcePath, "-o", bytecodePath]);
-    expect(bytecode.exitCode).toBe(0);
-    expect(bytecode.stderr + bytecode.stdout).toBe("");
-    expect(fs.existsSync(bytecodePath)).toBe(true);
-
-    const native = runCli([
-      "emit-zig",
-      emitted.sourcePath,
-      "-o",
-      emitted.outputPath,
-    ]);
-    expect(native.exitCode).not.toBe(0);
-    expect(native.stderr).toContain(
-      "@new is not part of the native core language",
-    );
-    expect(native.stderr).toContain("standard library");
-    expect(fs.existsSync(emitted.outputPath)).toBe(false);
-  } finally {
-    if (fs.existsSync(bytecodePath)) fs.unlinkSync(bytecodePath);
-    emitted.cleanup();
-  }
-});
-
 test("prints structs as LLTS packed bytes", () => {
   expectParity(`
 @struct Point { x: int; y: int; }

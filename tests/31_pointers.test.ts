@@ -8,61 +8,6 @@ import { test } from "bun:test";
 import { expectError, expectOutput, runSource } from "./helpers";
 
 // ---------------------------------------------------------------------------
-// @new → *T
-// ---------------------------------------------------------------------------
-
-test("@typeOf(@new(a, Point)) is *Point", () => {
-  expectOutput(
-    runSource(`
-@const $mem = @import("std/mem");
-@struct Point { x: i64; y: i64; }
-$a = mem.create(0);
-$p = @new(a, Point);
-print(@typeOf(p));
-print(p.x);
-a.deinit();
-`),
-    ["*Point", "0"],
-  );
-});
-
-test("function returning @new is *T not T", () => {
-  expectOutput(
-    runSource(`
-@const $mem = @import("std/mem");
-@struct Point { x: i64; y: i64; }
-@func mk(arena) {
-    $p = @new(arena, Point);
-    p.x = 1;
-    p.y = 2;
-    return p;
-}
-$a = mem.create(0);
-$p = mk(a);
-print(@typeOf(p));
-print(p.x);
-a.deinit();
-`),
-    ["*Point", "1"],
-  );
-});
-
-test("@new([N]byte) yields *[N]byte", () => {
-  expectOutput(
-    runSource(`
-@const $mem = @import("std/mem");
-$a = mem.create(0);
-$buf = @new(a, [4]byte);
-print(@typeOf(buf));
-buf[0] = 7;
-print(buf[0]);
-a.deinit();
-`),
-    ["*[4]byte", "7"],
-  );
-});
-
-// ---------------------------------------------------------------------------
 // Assignability
 // ---------------------------------------------------------------------------
 
@@ -314,64 +259,6 @@ print(a[0]);
 print(@typeOf(p));
 `),
     ["5", "*[]i64"],
-  );
-});
-
-test("@new([]byte) is *[]byte; assign shares storage", () => {
-  expectOutput(
-    runSource(`
-@const $mem = @import("std/mem");
-$arena = mem.create(0);
-$buf = @new(arena, []byte, 4);
-print(@typeOf(buf));
-buf[0] = 1;
-$p: *[]byte = buf;
-p[0] = 65;
-print(buf[0]);
-print(p[0]);
-arena.deinit();
-`),
-    ["*[]byte", "65", "65"],
-  );
-});
-
-test("@new([N]byte) pointer assign shares (no value-copy of *T)", () => {
-  expectOutput(
-    runSource(`
-@const $mem = @import("std/mem");
-$arena = mem.create(0);
-$buf = @new(arena, [4]byte);
-print(@typeOf(buf));
-buf[0] = 1;
-$p = buf;
-p[0] = 2;
-print(buf[0]);
-$c = buf;
-c[0] = 3;
-print(buf[0]);
-print(c[0]);
-arena.deinit();
-`),
-    ["*[4]byte", "2", "3", "3"],
-  );
-});
-
-test("@new([]byte): slice through *[]byte", () => {
-  expectOutput(
-    runSource(`
-@const $mem = @import("std/mem");
-$arena = mem.create(0);
-$buf = @new(arena, []byte, 5);
-buf[0] = 65;
-buf[1] = 66;
-buf[2] = 67;
-$s = buf[0..2];
-print(len(s));
-print(s[0]);
-print(s[1]);
-arena.deinit();
-`),
-    ["2", "65", "66"],
   );
 });
 
