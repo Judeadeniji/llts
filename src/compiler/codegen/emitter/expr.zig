@@ -65,6 +65,17 @@ pub fn emitCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) any
 
     if (c.callee.* == .primary and std.mem.startsWith(u8, c.callee.primary.name, "@")) {
         const intrinsic = c.callee.primary.name;
+        if (std.mem.eql(u8, intrinsic, "@asm")) {
+            if (c.inline_asm != null) return emitExtendedAsm(self, node, c);
+            if (c.args.len != 1) return self.failAt(node, "@asm expects 1 argument", .{});
+            const template = c.args[0];
+            if (template.* != .literal or template.literal.literal_type != .string) {
+                return self.failAt(template, "@asm expects a string literal template", .{});
+            }
+            return std.fmt.allocPrint(a, "asm volatile ({s})", .{
+                try self.zigString(template.literal.value),
+            });
+        }
         if (std.mem.eql(u8, intrinsic, "@isError")) {
             if (c.args.len != 1) return self.failAt(node, "@isError expects 1 argument", .{});
             const t = try self.valueType(c.args[0]);
@@ -260,6 +271,49 @@ pub fn emitCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) any
         return std.fmt.allocPrint(a, "(try {s}(ctx))", .{zig_fn});
     }
     return std.fmt.allocPrint(a, "(try {s}(ctx, {s}))", .{ zig_fn, args_joined });
+}
+
+fn emitExtendedAsm(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) ![]const u8 {
+    const spec = c.inline_asm orelse return self.failAt(node, "internal: missing @asm specification", .{});
+    const result_type = try self.valueType(node);
+    var buf: std.ArrayList(u8) = .empty;
+    const writer = buf.writer(self.arena.allocator());
+
+    try writer.writeAll(if (spec.is_volatile) "asm volatile (" else "asm (");
+    try writer.writeAll(try self.zigString(spec.template));
+    try writer.writeAll("\n    : ");
+    for (spec.outputs, 0..) |output, i| {
+        if (i > 0) try writer.writeAll(",\n      ");
+        try writer.print("[{s}] {s} (", .{ output.name, try self.zigString(output.constraint) });
+        if (output.return_type != null) {
+            try writer.print("-> {s}", .{result_type.zig});
+        } else {
+            const arg_index = output.arg_index orelse {
+                return self.failAt(node, "internal: missing @asm output target", .{});
+            };
+            try writer.writeAll(try stmt_mod.emitPlaceLvalue(self, c.args[arg_index]));
+        }
+        try writer.writeByte(')');
+    }
+
+    try writer.writeAll("\n    : ");
+    for (spec.inputs, 0..) |input, i| {
+        if (i > 0) try writer.writeAll(",\n      ");
+        try writer.print("[{s}] {s} ({s})", .{
+            input.name,
+            try self.zigString(input.constraint),
+            try emitExpr(self, c.args[input.arg_index]),
+        });
+    }
+
+    try writer.writeAll("\n    : .{");
+    for (spec.clobbers, 0..) |clobber, i| {
+        if (i > 0) try writer.writeAll(", ");
+        try writer.print(" .{s} = true", .{clobber});
+    }
+    if (spec.clobbers.len > 0) try writer.writeByte(' ');
+    try writer.writeAll("})");
+    return buf.toOwnedSlice(self.arena.allocator());
 }
 
 /// `mod.fn(args)` / `mod.sub.fn(args)` — resolves the static path to a

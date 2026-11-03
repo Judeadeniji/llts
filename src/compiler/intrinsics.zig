@@ -20,6 +20,7 @@ const widths = @import("widths.zig");
 
 pub const Intrinsic = enum {
     import,
+    @"asm",
     typeOf,
     isError,
     sizeOf,
@@ -32,6 +33,7 @@ pub const Intrinsic = enum {
 
 const intrinsics = std.StaticStringMap(Intrinsic).initComptime(.{
     .{ "@import", .import },
+    .{ "@asm", .@"asm" },
     .{ "@typeOf", .typeOf },
     .{ "@isError", .isError },
     .{ "@sizeOf", .sizeOf },
@@ -56,6 +58,7 @@ pub const Arity = union(enum) {
 pub fn arity(intr: Intrinsic) Arity {
     return switch (intr) {
         .import => .{ .exact = 1 },
+        .@"asm" => .{ .exact = 1 },
         .typeOf => .{ .exact = 1 },
         .isError => .{ .exact = 1 },
         .sizeOf => .{ .exact = 1 },
@@ -85,6 +88,9 @@ pub fn checkArity(state: *CompilerState, intr: Intrinsic, name: []const u8, got:
 
 pub fn typecheck(state: *CompilerState, env: *typecheck_root.Env, ta: ir.TypeAlloc, intr: Intrinsic, call_node: *ast.Node, c: *const ast.Call) !ir.Type {
     const name = c.callee.primary.name;
+    if (intr == .@"asm" and c.inline_asm != null) {
+        return typecheckExtendedAsm(state, env, ta, call_node, c);
+    }
     try checkArity(state, intr, name, c.args.len);
 
     switch (intr) {
@@ -98,6 +104,13 @@ pub fn typecheck(state: *CompilerState, env: *typecheck_root.Env, ta: ir.TypeAll
             const mod_val = try std.fmt.allocPrint(state.allocator, "module:{s}", .{key});
             try state.owned.append(state.allocator, mod_val);
             return .{ .struct_ = mod_val };
+        },
+        .@"asm" => {
+            const template = c.args[0];
+            if (template.* != .literal or template.literal.literal_type != .string) {
+                return compile_errors.compileFailFmt(state, "@asm expects a string literal template", .{});
+            }
+            return ir.TVoid;
         },
         .isError => {
             _ = try typecheck_root.inferExpr(state, env, ta, c.args[0]);
@@ -246,6 +259,9 @@ pub fn typecheck(state: *CompilerState, env: *typecheck_root.Env, ta: ir.TypeAll
 
 pub fn compile(state: *CompilerState, intr: Intrinsic, node: *ast.Node, c: *const ast.Call) !void {
     const name = c.callee.primary.name;
+    if (intr == .@"asm" and c.inline_asm != null) {
+        return compile_errors.compileFailFmt(state, "Extended @asm is only supported by the native backend", .{});
+    }
     // We assume arity was checked in typecheck, but we can assert or just check again.
     // In debug builds we could assert. For now let's just do it.
     try checkArity(state, intr, name, c.args.len);
@@ -257,6 +273,9 @@ pub fn compile(state: *CompilerState, intr: Intrinsic, node: *ast.Node, c: *cons
             // Do nothing if it's just a call, or we could compile the arg.
             try expr.compileExpression(state, c.args[0]);
             try emit.emitOp(state, .OP_POP);
+        },
+        .@"asm" => {
+            return compile_errors.compileFailFmt(state, "@asm is only supported by the native backend", .{});
         },
         .isError => {
             try expr.compileExpression(state, c.args[0]);
@@ -343,6 +362,80 @@ pub fn compile(state: *CompilerState, intr: Intrinsic, node: *ast.Node, c: *cons
             try emit.emitOp(state, .OP_ADDR_OF);
         },
     }
+}
+
+fn typecheckExtendedAsm(
+    state: *CompilerState,
+    env: *typecheck_root.Env,
+    ta: ir.TypeAlloc,
+    call_node: *ast.Node,
+    c: *const ast.Call,
+) !ir.Type {
+    const spec = c.inline_asm.?;
+    if (c.args.len == 0) {
+        return compile_errors.compileFailFmt(state, "Extended @asm requires a result type", .{});
+    }
+    try resolveTypeExprs(state, env, ta, c.args[0]);
+    const result_type = try from_ast.typeFromAst(c.args[0], state, ta);
+    if (result_type == .unknown or result_type == .type_ or result_type == .never) {
+        return compile_errors.compileFailFmt(
+            state,
+            "@asm result must be a concrete runtime type",
+            .{},
+        );
+    }
+
+    var return_outputs: usize = 0;
+    for (spec.outputs) |output| {
+        if (output.return_type) |return_display| {
+            return_outputs += 1;
+            const declared = try from_ast.parseDisplayType(state, ta, return_display, null);
+            if (!ir.typeEquals(ir.peelDefined(declared), ir.peelDefined(result_type))) {
+                return compile_errors.compileFailFmt(
+                    state,
+                    "@asm return output type '{s}' does not match declared result type '{s}'",
+                    .{ return_display, try typecheck_root.ownDisplay(state, result_type) },
+                );
+            }
+            continue;
+        }
+        const index = output.arg_index orelse {
+            return compile_errors.compileFailFmt(state, "Invalid @asm output operand", .{});
+        };
+        const target = c.args[index];
+        if (!isAsmOutputPlace(target)) {
+            return compile_errors.compileFailFmt(state, "@asm output must target a mutable place", .{});
+        }
+        if (env.anyConstPlaceRoot(target)) |name| {
+            return compile_errors.compileFailFmt(state, "@asm cannot write to constant '{s}'", .{name});
+        }
+        _ = try typecheck_root.inferExpr(state, env, ta, target);
+    }
+    for (spec.inputs) |input| {
+        _ = try typecheck_root.inferExpr(state, env, ta, c.args[input.arg_index]);
+    }
+
+    if (result_type == .void) {
+        if (return_outputs != 0) {
+            return compile_errors.compileFailFmt(state, "void @asm cannot declare a return output", .{});
+        }
+    } else if (return_outputs != 1) {
+        return compile_errors.compileFailFmt(
+            state,
+            "non-void @asm requires exactly one '(-> Type)' output",
+            .{},
+        );
+    }
+    _ = call_node;
+    return result_type;
+}
+
+fn isAsmOutputPlace(node: *ast.Node) bool {
+    return switch (node.*) {
+        .primary => |p| p.kind == .identifier or p.kind == .register,
+        .member, .index => true,
+        else => false,
+    };
 }
 
 /// Emit-time `@sizeOf` for a bare type argument the typechecker did not visit.

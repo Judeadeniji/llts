@@ -231,6 +231,11 @@ pub fn parseStructInitWithType(self: *Parser, type_expr: *Node) ParseError!*Node
 
 pub fn finishCall(self: *Parser, callee: *Node) ParseError!*Node {
     _ = try self.consume(.delimiter, "Expected '('", "(");
+    if (callee.* == .primary and std.mem.eql(u8, callee.primary.name, "@asm") and
+        !self.check(.string) and !self.check(.template))
+    {
+        return finishExtendedAsmCall(self, callee);
+    }
     var args: std.ArrayList(*Node) = .empty;
     if (!self.checkDelim(")")) {
         while (true) {
@@ -248,6 +253,279 @@ pub fn finishCall(self: *Parser, callee: *Node) ParseError!*Node {
     } });
 }
 
+const AsmSections = struct {
+    template: []const u8,
+    outputs: []const u8,
+    inputs: []const u8,
+    clobbers: []const u8,
+};
+
+const AsmTextCursor = struct {
+    text: []const u8,
+    pos: usize = 0,
+
+    fn skipSpace(self: *AsmTextCursor) void {
+        while (self.pos < self.text.len and std.ascii.isWhitespace(self.text[self.pos])) self.pos += 1;
+    }
+
+    fn consume(self: *AsmTextCursor, c: u8) bool {
+        self.skipSpace();
+        if (self.pos >= self.text.len or self.text[self.pos] != c) return false;
+        self.pos += 1;
+        return true;
+    }
+
+    fn done(self: *AsmTextCursor) bool {
+        self.skipSpace();
+        return self.pos == self.text.len;
+    }
+};
+
+fn finishExtendedAsmCall(self: *Parser, callee: *Node) ParseError!*Node {
+    var args: std.ArrayList(*Node) = .empty;
+    try args.append(self.arena, try parseExpression(self));
+    if (self.checkDelim(")")) {
+        _ = self.advance();
+        return self.create(.{ .call = .{
+            .callee = callee,
+            .args = try args.toOwnedSlice(self.arena),
+            .loc = callee.loc(),
+        } });
+    }
+    _ = try self.consume(.delimiter, "Expected ',' after @asm result type", ",");
+
+    const template_tok = try self.consume(.template, "Expected a fenced assembly template", null);
+    const encoded = try encodeAsmTemplate(self, template_tok, &args);
+    const sections = try splitAsmSections(self, template_tok, encoded);
+
+    var outputs: std.ArrayList(ast.AsmOutput) = .empty;
+    var inputs: std.ArrayList(ast.AsmInput) = .empty;
+    var clobbers: std.ArrayList([]const u8) = .empty;
+    try parseAsmOutputs(self, template_tok, sections.outputs, args.items.len, &outputs);
+    try parseAsmInputs(self, template_tok, sections.inputs, args.items.len, &inputs);
+    try parseAsmClobbers(self, template_tok, sections.clobbers, &clobbers);
+    try validateAsmOperandNames(self, template_tok, outputs.items, inputs.items);
+
+    _ = try self.consume(.delimiter, "Expected ')' after @asm template", ")");
+    return self.create(.{ .call = .{
+        .callee = callee,
+        .args = try args.toOwnedSlice(self.arena),
+        .inline_asm = .{
+            .template = try cookTemplateText(self, std.mem.trim(u8, sections.template, "\r\n")),
+            .outputs = try outputs.toOwnedSlice(self.arena),
+            .inputs = try inputs.toOwnedSlice(self.arena),
+            .clobbers = try clobbers.toOwnedSlice(self.arena),
+        },
+        .loc = callee.loc(),
+    } });
+}
+
+fn encodeAsmTemplate(self: *Parser, token: ctx.Token, args: *std.ArrayList(*Node)) ParseError![]const u8 {
+    const parts = token.template_parts orelse return self.failTok(token, "Assembly template is missing parts", .{});
+    var encoded: std.ArrayList(u8) = .empty;
+    for (parts) |part| {
+        if (!part.is_hole) {
+            try encoded.appendSlice(self.arena, part.value);
+            continue;
+        }
+        const node = try parseHoleExpression(self, part.value, .{
+            .line = part.line,
+            .column = part.column,
+            .path = self.path,
+        });
+        const arg_index = args.items.len;
+        try args.append(self.arena, node);
+        try encoded.writer(self.arena).print("__LLTS_ASM_HOLE_{d}__", .{arg_index});
+    }
+    return encoded.toOwnedSlice(self.arena) catch return error.OutOfMemory;
+}
+
+fn splitAsmSections(self: *Parser, token: ctx.Token, text: []const u8) ParseError!AsmSections {
+    var line_starts: [3]usize = undefined;
+    var colons: [3]usize = undefined;
+    var count: usize = 0;
+    var line_start: usize = 0;
+    while (line_start <= text.len) {
+        const line_end = std.mem.indexOfScalarPos(u8, text, line_start, '\n') orelse text.len;
+        var first = line_start;
+        while (first < line_end and (text[first] == ' ' or text[first] == '\t' or text[first] == '\r')) first += 1;
+        if (first < line_end and text[first] == ':') {
+            if (count == 3) return self.failTok(token, "@asm expects exactly three ':' operand sections", .{});
+            line_starts[count] = line_start;
+            colons[count] = first;
+            count += 1;
+        }
+        if (line_end == text.len) break;
+        line_start = line_end + 1;
+    }
+    if (count != 3) {
+        return self.failTok(token, "Extended @asm requires output, input, and clobber sections on separate ':' lines", .{});
+    }
+    return .{
+        .template = text[0..line_starts[0]],
+        .outputs = text[colons[0] + 1 .. line_starts[1]],
+        .inputs = text[colons[1] + 1 .. line_starts[2]],
+        .clobbers = text[colons[2] + 1 ..],
+    };
+}
+
+fn parseAsmOutputs(
+    self: *Parser,
+    token: ctx.Token,
+    text: []const u8,
+    arg_count: usize,
+    outputs: *std.ArrayList(ast.AsmOutput),
+) ParseError!void {
+    var cur = AsmTextCursor{ .text = text };
+    while (!cur.done()) {
+        const name = try parseAsmName(self, token, &cur);
+        const constraint = try parseAsmQuoted(self, token, &cur, "output constraint");
+        if (!cur.consume('(')) return self.failTok(token, "Expected '(' after @asm output constraint", .{});
+        cur.skipSpace();
+        var output = ast.AsmOutput{ .name = name, .constraint = constraint };
+        if (std.mem.startsWith(u8, cur.text[cur.pos..], "->")) {
+            cur.pos += 2;
+            const type_start = cur.pos;
+            while (cur.pos < cur.text.len and cur.text[cur.pos] != ')') cur.pos += 1;
+            if (cur.pos == cur.text.len) return self.failTok(token, "Unterminated @asm return output", .{});
+            const return_type = std.mem.trim(u8, cur.text[type_start..cur.pos], " \t\r\n");
+            if (return_type.len == 0) return self.failTok(token, "@asm return output requires a type", .{});
+            output.return_type = try self.dupe(return_type);
+        } else {
+            output.arg_index = try parseAsmHoleIndex(self, token, &cur, arg_count);
+        }
+        if (!cur.consume(')')) return self.failTok(token, "Expected ')' after @asm output", .{});
+        try outputs.append(self.arena, output);
+        if (cur.done()) break;
+        if (!cur.consume(',')) return self.failTok(token, "Expected ',' between @asm outputs", .{});
+    }
+}
+
+fn parseAsmInputs(
+    self: *Parser,
+    token: ctx.Token,
+    text: []const u8,
+    arg_count: usize,
+    inputs: *std.ArrayList(ast.AsmInput),
+) ParseError!void {
+    var cur = AsmTextCursor{ .text = text };
+    while (!cur.done()) {
+        const name = try parseAsmName(self, token, &cur);
+        const constraint = try parseAsmQuoted(self, token, &cur, "input constraint");
+        if (!cur.consume('(')) return self.failTok(token, "Expected '(' after @asm input constraint", .{});
+        const arg_index = try parseAsmHoleIndex(self, token, &cur, arg_count);
+        if (!cur.consume(')')) return self.failTok(token, "Expected ')' after @asm input", .{});
+        try inputs.append(self.arena, .{ .name = name, .constraint = constraint, .arg_index = arg_index });
+        if (cur.done()) break;
+        if (!cur.consume(',')) return self.failTok(token, "Expected ',' between @asm inputs", .{});
+    }
+}
+
+fn parseAsmClobbers(
+    self: *Parser,
+    token: ctx.Token,
+    text: []const u8,
+    clobbers: *std.ArrayList([]const u8),
+) ParseError!void {
+    var cur = AsmTextCursor{ .text = text };
+    while (!cur.done()) {
+        const clobber = try parseAsmQuoted(self, token, &cur, "clobber");
+        if (clobber.len == 0 or std.ascii.isDigit(clobber[0])) {
+            return self.failTok(token, "Invalid @asm clobber '{s}'", .{clobber});
+        }
+        for (clobber) |c| {
+            if (!std.ascii.isAlphanumeric(c) and c != '_') {
+                return self.failTok(token, "Invalid @asm clobber '{s}'", .{clobber});
+            }
+        }
+        try clobbers.append(self.arena, clobber);
+        if (cur.done()) break;
+        if (!cur.consume(',')) return self.failTok(token, "Expected ',' between @asm clobbers", .{});
+    }
+}
+
+fn parseAsmName(self: *Parser, token: ctx.Token, cur: *AsmTextCursor) ParseError![]const u8 {
+    if (!cur.consume('[')) return self.failTok(token, "Expected '[name]' in @asm operand", .{});
+    const start = cur.pos;
+    if (start >= cur.text.len or (!std.ascii.isAlphabetic(cur.text[start]) and cur.text[start] != '_')) {
+        return self.failTok(token, "Invalid @asm operand name", .{});
+    }
+    while (cur.pos < cur.text.len and
+        (std.ascii.isAlphanumeric(cur.text[cur.pos]) or cur.text[cur.pos] == '_')) cur.pos += 1;
+    const end = cur.pos;
+    if (end == start or !cur.consume(']')) return self.failTok(token, "Invalid @asm operand name", .{});
+    return self.dupe(cur.text[start..end]);
+}
+
+fn parseAsmQuoted(
+    self: *Parser,
+    token: ctx.Token,
+    cur: *AsmTextCursor,
+    what: []const u8,
+) ParseError![]const u8 {
+    cur.skipSpace();
+    if (cur.pos >= cur.text.len or cur.text[cur.pos] != '"') {
+        return self.failTok(token, "Expected quoted @asm {s}", .{what});
+    }
+    cur.pos += 1;
+    const start = cur.pos;
+    while (cur.pos < cur.text.len and cur.text[cur.pos] != '"') {
+        if (cur.text[cur.pos] == '\n' or cur.text[cur.pos] == '\r') {
+            return self.failTok(token, "Newline in @asm {s}", .{what});
+        }
+        cur.pos += 1;
+    }
+    if (cur.pos == cur.text.len) return self.failTok(token, "Unterminated quoted @asm {s}", .{what});
+    const value = try self.dupe(cur.text[start..cur.pos]);
+    cur.pos += 1;
+    return value;
+}
+
+fn parseAsmHoleIndex(
+    self: *Parser,
+    token: ctx.Token,
+    cur: *AsmTextCursor,
+    arg_count: usize,
+) ParseError!usize {
+    const prefix = "__LLTS_ASM_HOLE_";
+    const suffix = "__";
+    cur.skipSpace();
+    if (!std.mem.startsWith(u8, cur.text[cur.pos..], prefix)) {
+        return self.failTok(token, "@asm operand value must be a '${{expression}}' hole", .{});
+    }
+    cur.pos += prefix.len;
+    const start = cur.pos;
+    while (cur.pos < cur.text.len and std.ascii.isDigit(cur.text[cur.pos])) cur.pos += 1;
+    if (cur.pos == start or !std.mem.startsWith(u8, cur.text[cur.pos..], suffix)) {
+        return self.failTok(token, "Invalid @asm operand hole", .{});
+    }
+    const index = std.fmt.parseInt(usize, cur.text[start..cur.pos], 10) catch
+        return self.failTok(token, "Invalid @asm operand hole index", .{});
+    cur.pos += suffix.len;
+    if (index == 0 or index >= arg_count) return self.failTok(token, "Invalid @asm operand hole index", .{});
+    return index;
+}
+
+fn validateAsmOperandNames(
+    self: *Parser,
+    token: ctx.Token,
+    outputs: []const ast.AsmOutput,
+    inputs: []const ast.AsmInput,
+) ParseError!void {
+    for (outputs, 0..) |output, i| {
+        for (outputs[0..i]) |other| {
+            if (std.mem.eql(u8, output.name, other.name)) return self.failTok(token, "Duplicate @asm operand name '{s}'", .{output.name});
+        }
+    }
+    for (inputs, 0..) |input, i| {
+        for (outputs) |output| {
+            if (std.mem.eql(u8, input.name, output.name)) return self.failTok(token, "Duplicate @asm operand name '{s}'", .{input.name});
+        }
+        for (inputs[0..i]) |other| {
+            if (std.mem.eql(u8, input.name, other.name)) return self.failTok(token, "Duplicate @asm operand name '{s}'", .{input.name});
+        }
+    }
+}
 
 pub fn parsePrimary(self: *Parser) ParseError!*Node {
     const token = self.peek(0) orelse return self.failMsg("Unexpected end of expression");
@@ -276,7 +554,7 @@ pub fn parsePrimary(self: *Parser) ParseError!*Node {
             if (std.mem.eql(u8, token.value, "null")) {
                 _ = self.advance();
                 return self.create(.{ .literal = .{
-                    .literal_type = .@"null",
+                    .literal_type = .null,
                     .value = try self.dupe("null"),
                     .loc = self.locOf(token),
                 } });
@@ -490,8 +768,7 @@ fn parseTemplate(self: *Parser, token: ctx.Token) ParseError!*Node {
         };
         if (part.is_hole) {
             if (part.value.len == 0) {
-                return self.failTokRaw(
-                    .{ .type = .template, .value = "", .line = part.line, .column = part.column },
+                return self.failTokRaw(.{ .type = .template, .value = "", .line = part.line, .column = part.column },
                     \\empty `${}` interpolation
                     \\
                     \\help: put a single expression inside the braces:
@@ -562,8 +839,7 @@ fn concatCallNode(self: *Parser, left: *Node, right: *Node, loc: ast.Location) P
 fn parseHoleExpression(self: *Parser, src: []const u8, loc: ast.Location) ParseError!*Node {
     const scanner = @import("../scanner/root.zig");
     const scan_result = scanner.scan(self.arena, src, self.path) catch {
-        return self.failTokRaw(
-            .{ .type = .template, .value = "", .line = loc.line, .column = loc.column },
+        return self.failTokRaw(.{ .type = .template, .value = "", .line = loc.line, .column = loc.column },
             \\could not scan `${…}` interpolation
             \\
             \\help: a hole must be a single expression (call, identifier, literal, @if, …)
@@ -590,8 +866,7 @@ fn parseHoleExpression(self: *Parser, src: []const u8, loc: ast.Location) ParseE
     };
 
     if (hole_parser.isAtEnd()) {
-        return self.failTokRaw(
-            .{ .type = .template, .value = "", .line = loc.line, .column = loc.column },
+        return self.failTokRaw(.{ .type = .template, .value = "", .line = loc.line, .column = loc.column },
             \\empty `${}` interpolation
             \\
             \\help: put a single expression inside the braces:
@@ -609,8 +884,7 @@ fn parseHoleExpression(self: *Parser, src: []const u8, loc: ast.Location) ParseE
     // A hole is a single expression — no statements, no `$` declarations, no `;`.
     if (!hole_parser.isAtEnd()) {
         const bad = hole_parser.peek(0).?;
-        return hole_parser.failTokRaw(
-            bad,
+        return hole_parser.failTokRaw(bad,
             \\unexpected token in `${…}` interpolation
             \\
             \\help: a hole holds exactly one expression, for example:
@@ -627,8 +901,7 @@ fn parseHoleExpression(self: *Parser, src: []const u8, loc: ast.Location) ParseE
     }
 
     if (node.* == .assignment) {
-        return self.failTokRaw(
-            .{ .type = .template, .value = "", .line = node.loc().line, .column = node.loc().column },
+        return self.failTokRaw(.{ .type = .template, .value = "", .line = node.loc().line, .column = node.loc().column },
             \\assignment is not allowed in `${…}`
             \\
             \\help: assign before the template, then interpolate the variable:
@@ -641,8 +914,7 @@ fn parseHoleExpression(self: *Parser, src: []const u8, loc: ast.Location) ParseE
     }
 
     if (node.* == .declaration) {
-        return self.failTokRaw(
-            .{ .type = .template, .value = "", .line = node.loc().line, .column = node.loc().column },
+        return self.failTokRaw(.{ .type = .template, .value = "", .line = node.loc().line, .column = node.loc().column },
             \\variable declaration is not allowed in `${…}`
             \\
             \\help: declare outside the template, then interpolate:

@@ -127,6 +127,25 @@ pub const Env = struct {
         return null;
     }
 
+    /// Any visible `@const` at the root of a place expression, including
+    /// function and block locals. A nearer mutable binding shadows an outer
+    /// constant of the same name.
+    pub fn anyConstPlaceRoot(self: *const Env, node: *const ast.Node) ?[]const u8 {
+        const name = scope.placeRoot(node) orelse return null;
+        var i = self.locals.items.len;
+        while (i > 0) {
+            i -= 1;
+            if (!self.locals.items[i].contains(name)) continue;
+            return if (i < self.const_scopes.items.len and self.const_scopes.items[i].contains(name))
+                name
+            else
+                null;
+        }
+        if (self.const_names.contains(name)) return name;
+        if (self.top_consts) |tc| if (tc.contains(name)) return name;
+        return null;
+    }
+
     /// True when `name` is bound in a *local* scope (function body / block),
     /// not a module-level global. Locals shadow same-named module consts —
     /// including consts of other modules merged into this compilation unit.
