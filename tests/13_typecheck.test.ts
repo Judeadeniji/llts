@@ -334,25 +334,20 @@ print(n);
 test("self-referential ?*Node linked list", () => {
   expectOutput(
     runSource(`
-@const $mem = @import("std/mem");
 @struct Node {
     value: i64;
     next: ?*Node;
 }
 pub @func main() {
-    $a = mem.create(0);
-    defer a.deinit();
     $head: ?*Node = null;
-    $n1 = @new(a, Node);
-    n1.value = 1;
-    n1.next = head;
+    $node1 = Node { value: 1, next: head };
+    $n1: *Node = &node1;
     head = n1;
-    $n2 = @new(a, Node);
-    n2.value = 2;
-    n2.next = head;
+    $node2 = Node { value: 2, next: head };
+    $n2: *Node = &node2;
     head = n2;
     print(@typeOf(head));
-    print(@typeOf(@new(a, Node)));
+    print(@typeOf(n1));
     print(head.value);
     print(head.next.value);
     print(head.next.next);

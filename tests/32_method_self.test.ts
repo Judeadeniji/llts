@@ -23,22 +23,19 @@ c.kind();
 test("self: *T accepts value and pointer receivers", () => {
   expectOutput(
     runSource(`
-@const $mem = @import("std/mem");
 @struct Point {
     x: i64;
     @func bump(self: *Point) {
         self.x = self.x + 1;
     }
 }
-$a = mem.create(0);
 $p = Point { x: 1 };
-$q = @new(a, Point);
-q.x = 10;
+$qValue = Point { x: 10 };
+$q: *Point = &qValue;
 p.bump();
 q.bump();
 print(p.x);
 print(q.x);
-a.deinit();
 `),
     ["2", "11"],
   );

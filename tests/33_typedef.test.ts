@@ -245,18 +245,12 @@ test("*Arm assigns to *Union field (covariant pointers)", () => {
 @struct Lit { kind: Kind.Lit; value: i64; }
 @struct Bin { kind: Kind.Bin; left: *Expr; right: *Expr; }
 @type Expr = Lit | Bin;
-@const $mem = @import("std/mem");
-$a = mem.create(0);
-$l = @new(a, Lit);
-l.kind = Kind.Lit;
-l.value = 9;
-$b = @new(a, Bin);
-b.kind = Kind.Bin;
-b.left = l;
-b.right = l;
+$lit = Lit { kind: Kind.Lit, value: 9 };
+$l: *Lit = &lit;
+$bin = Bin { kind: Kind.Bin, left: l, right: l };
+$b: *Bin = &bin;
 print(b.kind);
 print(l.value);
-a.deinit();
 `),
     ["1", "9"],
   );
@@ -269,18 +263,12 @@ test("forward-ref: struct fields may name @type declared later", () => {
 @struct Lit { kind: Kind.Lit; value: i64; }
 @struct Bin { kind: Kind.Bin; left: *Expr; right: *Expr; }
 @type Expr = Lit | Bin;
-@const $mem = @import("std/mem");
-$a = mem.create(0);
-$l = @new(a, Lit);
-l.kind = Kind.Lit;
-l.value = 3;
-$b = @new(a, Bin);
-b.kind = Kind.Bin;
-b.left = l;
-b.right = l;
+$lit = Lit { kind: Kind.Lit, value: 3 };
+$l: *Lit = &lit;
+$bin = Bin { kind: Kind.Bin, left: l, right: l };
+$b: *Bin = &bin;
 print(l.value);
 print(@typeOf(b));
-a.deinit();
 `),
     ["3", "*Bin"],
   );
@@ -293,15 +281,11 @@ test("@as(*Union, *Arm) is allowed", () => {
 @struct Lit { kind: Kind.Lit; value: i64; }
 @struct Bin { kind: Kind.Bin; left: i64; right: i64; }
 @type Expr = Lit | Bin;
-@const $mem = @import("std/mem");
-$a = mem.create(0);
-$tmp = @new(a, Lit);
-tmp.kind = Kind.Lit;
-tmp.value = 4;
+$value = Lit { kind: Kind.Lit, value: 4 };
+$tmp: *Lit = &value;
 $l: *Expr = @as(*Expr, tmp);
 print(@typeOf(l));
 print(l.kind);
-a.deinit();
 `),
     ["*Expr", "0"],
   );
@@ -323,15 +307,10 @@ pub @type Node = Lit | Bin;
       path.join(dir, "use.lls"),
       `
 @const $n = @import("./node.lls");
-@const $mem = @import("std/mem");
-$a = mem.create(0);
-$l = @new(a, n.Lit);
-l.kind = n.Kind.Lit;
-l.value = 7;
-$b = @new(a, n.Bin);
-b.kind = n.Kind.Bin;
-b.left = l;
-b.right = l;
+$lit = n.Lit { kind: n.Kind.Lit, value: 7 };
+$l: *n.Lit = &lit;
+$bin = n.Bin { kind: n.Kind.Bin, left: l, right: l };
+$b: *n.Bin = &bin;
 print(b.kind);
 print(l.value);
 pub @func main() {}

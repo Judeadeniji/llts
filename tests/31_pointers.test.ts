@@ -14,10 +14,10 @@ import { expectError, expectOutput, runSource } from "./helpers";
 test("*Point is not assignable to Point", () => {
   expectError(
     runSource(`
-@const $mem = @import("std/mem");
 @struct Point { x: i64; }
-$a = mem.create(0);
-$p: Point = @new(a, Point);
+$value = Point { x: 0 };
+$pointer = &value;
+$p: Point = pointer;
 print(p.x);
 `),
     "not assignable",
@@ -69,17 +69,14 @@ print(o.n);
 test("?*T accepts null and *T", () => {
   expectOutput(
     runSource(`
-@const $mem = @import("std/mem");
 @struct Box { n: i64; }
-$a = mem.create(0);
 $p: ?*Box = null;
 print(@typeOf(p));
-$bx = @new(a, Box);
-bx.n = 9;
+$value = Box { n: 9 };
+$bx: *Box = &value;
 p = bx;
 print(@typeOf(p));
 print(p.n);
-a.deinit();
 `),
     ["?*Box", "?*Box", "9"],
   );
@@ -392,10 +389,9 @@ print(p);
 test("& rejects already-pointers (*T)", () => {
   expectError(
     runSource(`
-@const $mem = @import("std/mem");
 @struct Point { x: i64; }
-$a = mem.create(0);
-$p = @new(a, Point);
+$value = Point { x: 0 };
+$p: *Point = &value;
 $q = &p;
 print(q);
 `),

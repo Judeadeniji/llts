@@ -53,15 +53,12 @@ print(@sizeOf(byte));
 test("[]byte index yields u8; store accepts literal", () => {
   expectOutput(
     runSource(`
-@const $mem = @import("std/mem");
-$a = mem.create(0);
-$buf = @new(a, [3]byte);
+$buf: [3]byte = [@as(byte, 0), @as(byte, 0), @as(byte, 0)];
 buf[0] = 10;
 buf[1] = 20;
 print(@typeOf(buf[0]));
 print(buf[0]);
 print(@as(int, buf[1]) + @as(int, buf[0]));
-a.deinit();
 `),
     ["u8", "10", "30"],
   );

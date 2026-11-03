@@ -48,9 +48,13 @@ print(a + b);
 test("arr[i..j] slices []byte", () => {
   expectOutput(
     runSource(`
-@const $mem = @import("std/mem");
-$a = mem.create(0);
-$buf = @new(a, [5]byte);
+$buf: [5]byte = [
+  @as(byte, 0),
+  @as(byte, 0),
+  @as(byte, 0),
+  @as(byte, 0),
+  @as(byte, 0),
+];
 buf[0] = 10;
 buf[1] = 20;
 buf[2] = 30;
@@ -61,7 +65,6 @@ print(len(mid));
 print(mid[0]);
 print(mid[2]);
 print(@typeOf(mid));
-a.deinit();
 `),
     ["3", "20", "40", "[]byte"],
   );
@@ -106,9 +109,13 @@ print(len(s[..2]));
 test("open-ended []byte slices", () => {
   expectOutput(
     runSource(`
-@const $mem = @import("std/mem");
-$a = mem.create(0);
-$buf = @new(a, [5]byte);
+$buf: [5]byte = [
+  @as(byte, 0),
+  @as(byte, 0),
+  @as(byte, 0),
+  @as(byte, 0),
+  @as(byte, 0),
+];
 buf[0] = 1;
 buf[1] = 2;
 buf[2] = 3;
@@ -122,7 +129,6 @@ print(tail[0]);
 print(len(head));
 print(head[2]);
 print(len(all));
-a.deinit();
 `),
     ["3", "3", "3", "3", "5"],
   );

@@ -227,16 +227,18 @@ print(@addrOf(s) == @addrOf(t));
 test("@addrOf []byte stable across element writes", () => {
   expectOutput(
     runSource(`
-@const $mem = @import("std/mem");
-$arena = mem.create(0);
-$buf = @new(arena, []byte, 4);
+$buf: [4]byte = [
+  @as(byte, 0),
+  @as(byte, 0),
+  @as(byte, 0),
+  @as(byte, 0),
+];
 $a = @addrOf(buf);
 buf[0] = 65;
-$p = buf;
+$p = &buf;
 p[1] = 66;
 print(@addrOf(buf) == a);
 print(@addrOf(p) == a);
-arena.deinit();
 `),
     ["true", "true"],
   );
