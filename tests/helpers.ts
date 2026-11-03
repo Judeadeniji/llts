@@ -46,32 +46,50 @@ function runNativeFile(
   options: NativeRunOptions = {},
 ): RunResult {
   requireBinary();
-  const result = spawnSync(
-    [
-      ENTRY,
-      "run",
-      "--native",
-      ...(options.flags ?? []),
-      filePath,
-      ...(options.scriptArgs ?? []),
-    ],
-    {
-      cwd: ROOT,
-      env: options.env ? { ...process.env, ...options.env } : process.env,
-    },
-  );
-  const stdout = result.stdout.toString();
-  const stderr = result.stderr.toString();
-  const allLines = stdout.split(/\r?\n/);
-  while (allLines.length > 0 && allLines[allLines.length - 1] === "") {
-    allLines.pop();
+  const artifactsBefore = new Set(nativeRunArtifacts());
+  try {
+    const result = spawnSync(
+      [
+        ENTRY,
+        "run",
+        "--native",
+        ...(options.flags ?? []),
+        filePath,
+        ...(options.scriptArgs ?? []),
+      ],
+      {
+        cwd: ROOT,
+        env: options.env ? { ...process.env, ...options.env } : process.env,
+      },
+    );
+    const stdout = result.stdout.toString();
+    const stderr = result.stderr.toString();
+    const allLines = stdout.split(/\r?\n/);
+    while (allLines.length > 0 && allLines[allLines.length - 1] === "") {
+      allLines.pop();
+    }
+    return {
+      stdout,
+      stderr,
+      exitCode: result.exitCode ?? 1,
+      lines: allLines,
+    };
+  } finally {
+    for (const artifact of nativeRunArtifacts()) {
+      if (!artifactsBefore.has(artifact)) {
+        fs.rmSync(path.join(ROOT, artifact), { recursive: true, force: true });
+      }
+    }
   }
-  return {
-    stdout,
-    stderr,
-    exitCode: result.exitCode ?? 1,
-    lines: allLines,
-  };
+}
+
+function nativeRunArtifacts(): string[] {
+  return fs
+    .readdirSync(ROOT)
+    .filter(
+      (name) =>
+        name.startsWith(".llts_run_") || name.startsWith(".llts_native_"),
+    );
 }
 
 /** Compile and run an inline .lls source string. */
@@ -291,7 +309,7 @@ export function withNativeProgram(
   }
 }
 
-/** `.llts_native_*.zig` staging files left behind in the repo root (must be none). */
+/** Native staging files left behind in the repo root (must be none). */
 export function nativeStagedLeftovers(): string[] {
-  return fs.readdirSync(ROOT).filter((n) => n.startsWith(".llts_native_"));
+  return nativeRunArtifacts();
 }
