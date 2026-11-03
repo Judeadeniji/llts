@@ -35,7 +35,7 @@ pub fn parseStatement(self: *Parser) ParseError!*Node {
             }
             return parseExpressionStatement(self);
         },
-        .string, .number, .hex, .binary, .octal, .boolean => return parseExpressionStatement(self),
+        .string, .number, .hex, .binary, .octal, .boolean, .template => return parseExpressionStatement(self),
         .keyword => {
             if (std.mem.eql(u8, token.value, "pub")) {
                 _ = self.advance();

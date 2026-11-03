@@ -149,8 +149,7 @@ fn compileIterFor(state: *CompilerState, for_expr: *const ast.For) !void {
     try emit.emitNameGet(state, .OP_GET_GLOBAL, "len");
     try emit.emitOp(state, .OP_GET_LOCAL);
     try emit.emitByte(state, iterable_idx);
-    try emit.emitOp(state, .OP_CALL);
-    try emit.emitByte(state, 1);
+    try emit.emitCall(state, 1);
     try emit.emitOp(state, .OP_LESS);
 
     const exit_jump = try emit.emitJump(state, .OP_JUMP_IF_FALSE);

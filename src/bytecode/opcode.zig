@@ -24,7 +24,6 @@ pub const OpCode = enum(u8) {
     OP_DUP,
     OP_MAKE_STRING,
     OP_MAKE_ERROR,
-    OP_MAKE_ERROR_PAYLOAD,
     OP_IS_ERROR,
     OP_SET_GLOBAL,
     OP_GET_GLOBAL,
@@ -92,4 +91,8 @@ pub const OpCode = enum(u8) {
     OP_MUL_TYPED_WRAP,
     /// Bounds-safe index for `arr.get(i): ?T`: stack [obj, index] → element or `.null`.
     OP_GET_ARRAY_OR_NULL,
+    /// `@addrOf(x)`: pop aggregate / `*T` handle → push packed offset as `i64`.
+    OP_ADDR_OF,
+    /// Push the `void` unit value (bare `return;` / void fall-through).
+    OP_VOID,
 };

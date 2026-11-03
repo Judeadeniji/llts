@@ -66,6 +66,10 @@ pub fn isConstantExpr(state: *CompilerState, env: *const ConstEnv, node: ?*ast.N
                 if (std.mem.eql(u8, c.callee.primary.name, "len") and c.args.len == 1) {
                     break :blk isConstantExpr(state, env, c.args[0]);
                 }
+                // Templates desugar to `@concat(0, a, b)`; fold when a and b are const.
+                if (std.mem.eql(u8, c.callee.primary.name, "@concat") and c.args.len == 3) {
+                    break :blk isConstantExpr(state, env, c.args[1]) and isConstantExpr(state, env, c.args[2]);
+                }
             }
             break :blk false;
         },

@@ -388,7 +388,7 @@ fn fromCharCodeFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     if (args.len < 1) return error.ArityError;
     const code = try util.asInt(args[0]);
     
-    if (code < 0 or code > 255) return try util.makeErrorWithPayload(vm, "InvalidCharCode", .{ .i64 = code });
+    if (code < 0 or code > 255) return try util.makeError(vm, "InvalidCharCode");
     var buf: [1]u8 = .{ @intCast(code) };
     return try util.writeSlice(vm, &buf);
 }

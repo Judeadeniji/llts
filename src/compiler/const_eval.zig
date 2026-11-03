@@ -323,6 +323,18 @@ fn noteDiag(state: *CompilerState, node: *ast.Node) void {
     if (loc.path.len > 0) state.diag_path = loc.path;
 }
 
+/// Stringify a const value for `@concat` folding (mirrors runtime `concatDisplay`).
+fn constValueToString(state: *CompilerState, val: ConstValue) anyerror!?[]const u8 {
+    return switch (val) {
+        .string => |s| s,
+        .i64 => |n| try std.fmt.allocPrint(state.allocator, "{d}", .{n}),
+        .f64 => |f| try std.fmt.allocPrint(state.allocator, "{d}", .{f}),
+        .bool => |b| if (b) "true" else "false",
+        .null => "null",
+        else => null,
+    };
+}
+
 pub fn evalBinaryOp(state: *CompilerState, op: []const u8, left_val: ConstValue, right_val: ConstValue) anyerror!?ConstValue {
     if (std.mem.eql(u8, op, "+")) {
         if (left_val == .i64 and right_val == .i64) {
@@ -643,6 +655,17 @@ fn evalExprInner(state: *CompilerState, scope: ?*ComptimeScope, n: *ast.Node) an
                         .string => |s| return .{ .i64 = @intCast(s.len) },
                         else => return null,
                     }
+                }
+                // `@concat(dest, a, b)` — fold when both operands are const-foldable
+                // (templates desugar to this; dest is ignored at comptime).
+                if (std.mem.eql(u8, callee_name, "@concat")) {
+                    if (c.args.len != 3) return null;
+                    const left_val = (try evalExpr(state, scope, c.args[1])) orelse return null;
+                    const right_val = (try evalExpr(state, scope, c.args[2])) orelse return null;
+                    const left_s = (try constValueToString(state, left_val)) orelse return null;
+                    const right_s = (try constValueToString(state, right_val)) orelse return null;
+                    const joined = try std.mem.concat(state.allocator, u8, &[_][]const u8{ left_s, right_s });
+                    return .{ .string = joined };
                 }
             }
             return try evalComptimeCall(state, scope, &c);
@@ -1147,8 +1170,7 @@ fn emitArrayValue(state: *CompilerState, elems: []const ConstValue) anyerror!voi
     const alloc = if (state.alloc_immortal) "__allocImmortalArray" else "__allocArray";
     try emit.emitNameGet(state, .OP_GET_GLOBAL, alloc);
     try emit.emitConstant(state, .{ .i64 = @intCast(elems.len) });
-    try emit.emitOp(state, .OP_CALL);
-    try emit.emitByte(state, 1);
+    try emit.emitCall(state, 1);
     for (elems, 0..) |el, i| {
         try emit.emitOp(state, .OP_DUP);
         try emit.emitConstant(state, .{ .i64 = @intCast(i) });
@@ -1165,8 +1187,7 @@ fn emitStructValue(state: *CompilerState, s: *ConstStruct) anyerror!void {
     const alloc = if (state.alloc_immortal) "__allocImmortalBytes" else "__allocBytes";
     try emit.emitNameGet(state, .OP_GET_GLOBAL, alloc);
     try emit.emitConstant(state, .{ .i64 = sd.size });
-    try emit.emitOp(state, .OP_CALL);
-    try emit.emitByte(state, 1);
+    try emit.emitCall(state, 1);
     var it = s.fields.iterator();
     while (it.next()) |entry| {
         const offset = sd.offsets.get(entry.key_ptr.*) orelse continue;

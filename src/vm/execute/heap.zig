@@ -495,15 +495,36 @@ pub fn storeField(vm: *VMState, byte_offset: u16, kind: u8) HeapError!void {
         3 => {
             var off: u32 = HANDLE_NULL_OFFSET;
             var len: u32 = 0;
+            // Immortal bases (globals, `@new`) outlive the frame: any frame-local
+            // string data stored into them must be immortalized or it dangles
+            // after return (e.g. `Logger.setPrefix`). Frame-local bases can
+            // share frame-local bytes — they die together.
+            const base_is_immortal = base_off < vm.bytes_immortal_floor;
             switch (val) {
-                .null => {},
+                .null, .void => {},
                 .bytes => |b| {
-                    off = b.offset;
-                    len = b.len;
+                    if (b.len == 0) {
+                        off = 0;
+                        len = 0;
+                    } else if (base_is_immortal and b.offset >= vm.bytes_immortal_floor) {
+                        off = try vm.appendImmortal(vm.bytes.items[b.offset..][0..b.len]);
+                        len = b.len;
+                    } else {
+                        off = b.offset;
+                        len = b.len;
+                    }
                 },
                 .slice => |s| {
-                    off = s.offset;
-                    len = s.len;
+                    if (s.len == 0) {
+                        off = 0;
+                        len = 0;
+                    } else if (base_is_immortal and s.offset >= vm.bytes_immortal_floor) {
+                        off = try vm.appendImmortal(vm.bytes.items[s.offset..][0..s.len]);
+                        len = s.len;
+                    } else {
+                        off = s.offset;
+                        len = s.len;
+                    }
                 },
                 .name => |idx| {
                     const data = vm.chunk.stringAt(idx);
@@ -544,20 +565,9 @@ pub fn makeString(vm: *VMState) HeapError!void {
 
 pub fn makeError(vm: *VMState) HeapError!void {
     const msg = stack.pop(vm);
-    const p = try vm.allocImmortal(3);
+    const p = try vm.allocImmortal(2);
     vm.slot(p).* = .{ .i64 = ERROR_TAG };
     vm.slot(p + 1).* = msg;
-    vm.slot(p + 2).* = .null;
-    try stack.push(vm, .{ .ptr = p + 1 });
-}
-
-pub fn makeErrorPayload(vm: *VMState) HeapError!void {
-    const payload = stack.pop(vm);
-    const msg = stack.pop(vm);
-    const p = try vm.allocImmortal(3);
-    vm.slot(p).* = .{ .i64 = ERROR_TAG };
-    vm.slot(p + 1).* = msg;
-    vm.slot(p + 2).* = payload;
     try stack.push(vm, .{ .ptr = p + 1 });
 }
 

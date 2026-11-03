@@ -1,9 +1,10 @@
 const std = @import("std");
-const tokens = @import("tokens.zig");
+const ctx = @import("ctx.zig");
+const template = @import("template.zig");
 const keywords = @import("keywords.zig");
 const numbers = @import("numbers.zig");
 const strings = @import("strings.zig");
-const ctx = @import("ctx.zig");
+const tokens = @import("tokens.zig");
 const ops = @import("../shared/ops.zig");
 
 pub const Token = tokens.Token;
@@ -25,8 +26,12 @@ pub fn scan(allocator: std.mem.Allocator, source: []const u8, path: []const u8) 
 
 pub fn deinitScanResult(result: *ScanResult) void {
     for (result.tokens.items) |t| {
-        if (t.type == .string) {
+        if (t.type == .string or t.type == .template) {
             result.allocator.free(t.value);
+        }
+        if (t.template_parts) |parts| {
+            for (parts) |p| result.allocator.free(p.value);
+            result.allocator.free(parts);
         }
     }
     result.tokens.deinit(result.allocator);
@@ -61,6 +66,26 @@ fn scanNext(self: *ctx.Scanner) ScanError!void {
     if (ch == '"' or ch == '\'') {
         try strings.scanString(self);
         return;
+    }
+    if (ch == '`') {
+        if (self.peek(1) == '`' and self.peek(2) == '`') {
+            try template.scanTemplate(self);
+            return;
+        }
+        return failScan(
+            self,
+            error.UnexpectedCharacter,
+            \\unexpected backtick
+            \\
+            \\help: multiline strings use triple-backtick fences:
+            \\
+            \\    ```
+            \\    line1
+            \\    line2
+            \\    ```;
+            \\
+            \\note: single-line strings still use "…" or '…'
+        );
     }
     if (ch == '$') {
         try scanRegister(self);
@@ -242,4 +267,27 @@ test "scan compiler keywords" {
     try std.testing.expect(result.tokens.items[0].type == .compiler_keyword);
     try std.testing.expectEqualStrings("func", result.tokens.items[0].value);
     try std.testing.expectEqualStrings("enum", result.tokens.items[3].value);
+}
+
+test "scan simple template" {
+    var result = try scan(std.testing.allocator, "```\nhi\n```", "t.lls");
+    defer deinitScanResult(&result);
+    try std.testing.expect(result.tokens.items[0].type == .template);
+    try std.testing.expectEqualStrings("hi", result.tokens.items[0].value);
+    const parts = result.tokens.items[0].template_parts.?;
+    try std.testing.expectEqual(@as(usize, 1), parts.len);
+    try std.testing.expect(!parts[0].is_hole);
+}
+
+test "scan template with hole" {
+    var result = try scan(std.testing.allocator, "```\nhi ${name}!\n```", "t.lls");
+    defer deinitScanResult(&result);
+    try std.testing.expect(result.tokens.items[0].type == .template);
+    const parts = result.tokens.items[0].template_parts.?;
+    try std.testing.expectEqual(@as(usize, 3), parts.len);
+    try std.testing.expect(!parts[0].is_hole);
+    try std.testing.expect(parts[1].is_hole);
+    try std.testing.expectEqualStrings("name", parts[1].value);
+    try std.testing.expect(!parts[2].is_hole);
+    try std.testing.expectEqualStrings("!", parts[2].value);
 }

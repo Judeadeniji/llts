@@ -5,8 +5,8 @@ import { test } from "bun:test";
 import { expectError, expectOutput, runSource } from "./helpers";
 
 test("unannotated method self is *T", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @struct Counter {
     value: i64;
     @func kind(self) {
@@ -16,13 +16,13 @@ test("unannotated method self is *T", () => {
 $c = Counter { value: 1 };
 c.kind();
 `),
-		["*Counter"],
-	);
+    ["*Counter"],
+  );
 });
 
 test("self: *T accepts value and pointer receivers", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @const $mem = @import("std/mem");
 @struct Point {
     x: i64;
@@ -40,13 +40,13 @@ print(p.x);
 print(q.x);
 a.deinit();
 `),
-		["2", "11"],
-	);
+    ["2", "11"],
+  );
 });
 
 test("self: T is allowed for non-pointer receivers", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @struct Box {
     n: i64;
     @func get(self: Box) {
@@ -57,13 +57,13 @@ $b = Box { n: 7 };
 print(b.get());
 print((&b).get());
 `),
-		["7", "7"],
-	);
+    ["7", "7"],
+  );
 });
 
 test("self: T mutations do not alias the caller", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @struct Point {
     x: i64;
     y: i64;
@@ -77,13 +77,13 @@ $p = Point { x: 3, y: 4 };
 print(p.len2());
 print(p.x, p.y);
 `),
-		["25", "3 4"],
-	);
+    ["25", "3 4"],
+  );
 });
 
 test("self: T @typeOf is T not *T", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @struct Box {
     n: i64;
     @func kind(self: Box) {
@@ -93,13 +93,13 @@ test("self: T @typeOf is T not *T", () => {
 $b = Box { n: 1 };
 b.kind();
 `),
-		["Box"],
-	);
+    ["Box"],
+  );
 });
 
 test("self: T via &receiver still clones (auto-deref)", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @struct Point {
     x: i64;
     @func zero(self: Point) {
@@ -111,13 +111,13 @@ $p = Point { x: 9 };
 print((&p).zero());
 print(p.x);
 `),
-		["0", "9"],
-	);
+    ["0", "9"],
+  );
 });
 
 test("self: T repeated calls each get a fresh copy", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @struct Counter {
     n: i64;
     @func bumpCopy(self: Counter) {
@@ -130,13 +130,13 @@ print(c.bumpCopy());
 print(c.bumpCopy());
 print(c.n);
 `),
-		["11", "11", "10"],
-	);
+    ["11", "11", "10"],
+  );
 });
 
 test("self: *T still aliases while self: T on same type does not", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @struct Point {
     x: i64;
     @func bump(self: *Point) {
@@ -155,13 +155,13 @@ print(p.x);
 print(p.bumpCopy());
 print(p.x);
 `),
-		["2", "1", "2", "3", "2"],
-	);
+    ["2", "1", "2", "3", "2"],
+  );
 });
 
 test("self: T on @new heap object does not mutate the original", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @const $mem = @import("std/mem");
 @struct Point {
     x: i64;
@@ -177,13 +177,13 @@ print(q.zero());
 print(q.x);
 a.deinit();
 `),
-		["0", "5"],
-	);
+    ["0", "5"],
+  );
 });
 
 test("self: T copy sees caller values at call time", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @struct Point {
     x: i64;
     @func get(self: Point) {
@@ -195,15 +195,15 @@ print(p.get());
 p.x = 42;
 print(p.get());
 `),
-		["1", "42"],
-	);
+    ["1", "42"],
+  );
 });
 
 test("self: T shallow-copies nested struct handles", () => {
-	// Nested structs are handles: cloning Outer copies the handle, so
-	// mutating nested fields through by-value self still aliases the inner object.
-	expectOutput(
-		runSource(`
+  // Nested structs are handles: cloning Outer copies the handle, so
+  // mutating nested fields through by-value self still aliases the inner object.
+  expectOutput(
+    runSource(`
 @struct Inner {
     n: i64;
 }
@@ -218,13 +218,13 @@ $o = Outer { inner: Inner { n: 3 } };
 print(o.bumpInner());
 print(o.inner.n);
 `),
-		["4", "4"],
-	);
+    ["4", "4"],
+  );
 });
 
 test("self: T mutates only scalar fields of the copy when nested is untouched", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @struct Inner {
     n: i64;
 }
@@ -240,13 +240,13 @@ $o = Outer { tag: 1, inner: Inner { n: 7 } };
 print(o.retag());
 print(o.tag, o.inner.n);
 `),
-		["99", "1 7"],
-	);
+    ["99", "1 7"],
+  );
 });
 
 test("invalid self annotation is rejected", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 @struct Point {
     x: i64;
     @func bad(self: i64) {
@@ -256,13 +256,13 @@ test("invalid self annotation is rejected", () => {
 $p = Point { x: 1 };
 print(p.bad());
 `),
-		"Method self must be",
-	);
+    "Method self must be",
+  );
 });
 
 test("self typed as a different struct is rejected", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 @struct A {
     x: i64;
 }
@@ -275,13 +275,13 @@ test("self typed as a different struct is rejected", () => {
 $b = B { y: 1 };
 print(b.bad());
 `),
-		"Method self must be",
-	);
+    "Method self must be",
+  );
 });
 
 test("method arity excludes implicit self", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 @struct Point {
     x: i64;
     @func add(self: *Point, n: i64) {
@@ -291,6 +291,6 @@ test("method arity excludes implicit self", () => {
 $p = Point { x: 1 };
 p.add();
 `),
-		"expected 1 arguments, got 0",
-	);
+    "expected 1 arguments, got 0",
+  );
 });

@@ -66,6 +66,7 @@ fn formatValue(
     const w = buf.writer(allocator);
     switch (v) {
         .null => try buf.appendSlice(allocator, "null"),
+        .void => try buf.appendSlice(allocator, "void"),
         .u1 => |b| try w.print("u1 {}", .{b}),
         .i64 => |n| try w.print("{}", .{n}),
         .i8 => |n| try w.print("i8 {}", .{n}),

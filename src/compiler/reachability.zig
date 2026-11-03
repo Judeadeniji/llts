@@ -232,11 +232,9 @@ fn collectRefs(
             try collectRefs(state, func_name, b.left, result, work);
             try collectRefs(state, func_name, b.right, result, work);
             if (std.mem.eql(u8, b.operator, "|>")) {
-                if (b.right.* == .call) {
-                    try noteCall(state, func_name, b.right.call.callee, result, work);
-                } else {
-                    try noteFunctionValue(state, b.right, result, work);
-                }
+                // `lhs |> f(a)` reaches whatever `f(lhs, a)` reaches.
+                const callee: *ast.Node = if (b.right.* == .call) b.right.call.callee else b.right;
+                try noteCall(state, func_name, callee, result, work);
             }
         },
         .unary => |u| try collectRefs(state, func_name, u.arg, result, work),
@@ -411,19 +409,6 @@ fn noteCall(
                 for (targets.items) |target| try enqueueFunction(result, work, target);
             }
         }
-    }
-}
-
-fn noteFunctionValue(
-    state: *CompilerState,
-    node: *ast.Node,
-    result: *Result,
-    work: *std.ArrayList([]const u8),
-) !void {
-    try noteStaticPath(state, node, result, work);
-    if (node.* == .primary and node.primary.kind == .identifier) {
-        const name = node.primary.name;
-        if (state.functions.contains(name)) try enqueueFunction(result, work, name);
     }
 }
 

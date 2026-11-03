@@ -6,7 +6,7 @@ const std = @import("std");
 /// Returns the install step so test runners can reuse the fast binaries.
 fn addReleaseTools(b: *std.Build, target: std.Build.ResolvedTarget) *std.Build.Step {
     const opt: std.builtin.OptimizeMode = .ReleaseSafe;
-    const release = b.step("release", "Build llts, llts-lsp and llts-tokenize-zig in ReleaseSafe and install");
+    const release = b.step("release", "Build llts and llts-lsp in ReleaseSafe and install");
 
     const zli = b.dependency("zli", .{ .target = target, .optimize = opt });
 
@@ -19,7 +19,6 @@ fn addReleaseTools(b: *std.Build, target: std.Build.ResolvedTarget) *std.Build.S
 
     const tools = [_]struct { name: []const u8, root: []const u8 }{
         .{ .name = "llts", .root = "src/main.zig" },
-        .{ .name = "llts-tokenize-zig", .root = "self_hosted/tools/dump_zig_tokens.zig" },
         .{ .name = "llts-lsp", .root = "src/lsp/server.zig" },
     };
 
@@ -53,6 +52,13 @@ pub fn build(b: *std.Build) void {
     });
     const zli_mod = zli.module("zli");
 
+    const runtime_mod = b.addModule("runtime", .{
+        .root_source_file = b.path("src/runtime/root.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    runtime_mod.link_libc = true;
+
     const llts_mod = b.addModule("llts", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
@@ -75,20 +81,6 @@ pub fn build(b: *std.Build) void {
     exe.root_module.link_libc = true;
 
     b.installArtifact(exe);
-
-    const tokenize_zig = b.addExecutable(.{
-        .name = "llts-tokenize-zig",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("self_hosted/tools/dump_zig_tokens.zig"),
-            .target = target,
-            .optimize = optimize,
-            .imports = &.{
-                .{ .name = "llts", .module = llts_mod },
-            },
-        }),
-    });
-    tokenize_zig.root_module.link_libc = true;
-    b.installArtifact(tokenize_zig);
 
     const lsp_exe = b.addExecutable(.{
         .name = "llts-lsp",
@@ -157,9 +149,26 @@ pub fn build(b: *std.Build) void {
     });
     const run_lsp_unit = b.addRunArtifact(lsp_unit_tests);
 
+    const runtime_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/runtime/tests.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "runtime", .module = runtime_mod },
+            },
+        }),
+    });
+    runtime_tests.root_module.link_libc = true;
+    const run_runtime_tests = b.addRunArtifact(runtime_tests);
+
+    const runtime_test_step = b.step("runtime-test", "Run native runtime unit tests");
+    runtime_test_step.dependOn(&run_runtime_tests.step);
+
     const test_step = b.step("test", "Run unit tests");
     // test_step.dependOn(&run_mod_tests.step);
     test_step.dependOn(&run_integration.step);
     test_step.dependOn(&run_lsp_e2e.step);
     test_step.dependOn(&run_lsp_unit.step);
+    test_step.dependOn(&run_runtime_tests.step);
 }

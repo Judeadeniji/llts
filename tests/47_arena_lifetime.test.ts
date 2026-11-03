@@ -11,8 +11,8 @@ import { expectError, expectOutput, runSource } from "./helpers";
 // --- use-after-deinit ------------------------------------------------------
 
 test("use-after-deinit on an arena struct field traps", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 $mem = @import("std/mem");
 @struct Box { n: int; }
 $arena = mem.create(0);
@@ -21,13 +21,13 @@ p.n = 1;
 arena.deinit();
 print(p.n);
 `),
-		"arena is deinitialized",
-	);
+    "arena is deinitialized",
+  );
 });
 
 test("use-after-deinit on an arena []byte traps", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 $mem = @import("std/mem");
 $arena = mem.create(0);
 $b = @new(arena, []byte, 4);
@@ -35,15 +35,15 @@ b[0] = 65;
 arena.deinit();
 print(b[0]);
 `),
-		"arena is deinitialized",
-	);
+    "arena is deinitialized",
+  );
 });
 
 // --- use-after-reset -------------------------------------------------------
 
 test("use-after-reset on an arena struct field traps", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 $mem = @import("std/mem");
 @struct Box { n: int; }
 $arena = mem.create(0);
@@ -52,13 +52,13 @@ p.n = 7;
 arena.reset();
 print(p.n);
 `),
-		"arena was reset",
-	);
+    "arena was reset",
+  );
 });
 
 test("use-after-reset on an arena []int traps", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 $mem = @import("std/mem");
 $arena = mem.create(0);
 $xs = @new(arena, []int, 3);
@@ -66,15 +66,15 @@ xs[0] = 5;
 arena.reset();
 print(xs[0]);
 `),
-		"arena was reset",
-	);
+    "arena was reset",
+  );
 });
 
 // --- valid lifetimes still work -------------------------------------------
 
 test("arena memory is usable before deinit", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 $mem = @import("std/mem");
 @struct Box { n: int; }
 $arena = mem.create(0);
@@ -83,13 +83,13 @@ p.n = 42;
 print(p.n);
 arena.deinit();
 `),
-		["42"],
-	);
+    ["42"],
+  );
 });
 
 test("a fresh allocation after reset is valid", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 $mem = @import("std/mem");
 $arena = mem.create(0);
 $p = @new(arena, []int, 2);
@@ -100,13 +100,13 @@ q[0] = 99;
 print(q[0]);
 arena.deinit();
 `),
-		["99"],
-	);
+    ["99"],
+  );
 });
 
 test("frame and immortal arrays are unaffected by arena state", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 $a = [1, 2, 3];
 print(a[1]);
 $mem = @import("std/mem");
@@ -116,6 +116,6 @@ p[0] = 7;
 arena.deinit();
 print(a[2]);
 `),
-		["2", "3"],
-	);
+    ["2", "3"],
+  );
 });

@@ -48,8 +48,8 @@ fn fetchFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     };
     if (body_str) |b| fetch_opts.payload = b;
 
-    const fetch_res = client.fetch(fetch_opts) catch |err| {
-        return try util.makeErrorWithPayload(vm, "HttpError", try util.writeSlice(vm, @errorName(err)));
+    const fetch_res = client.fetch(fetch_opts) catch {
+        return try util.makeError(vm, "HttpError");
     };
 
     // Response-shaped module: .status / .body (matches std/http Response fields).

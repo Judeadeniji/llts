@@ -8,24 +8,33 @@ import { test } from "bun:test";
 import { runSource, expectOutput } from "./helpers";
 
 test("unary + does nothing but leaves value on stack", () => {
-	expectOutput(runSource(`
+  expectOutput(
+    runSource(`
 $a = 5;
 $b = +a;
 print(b);
-`), ["5"]);
+`),
+    ["5"],
+  );
 });
 
 test("unary + converts negative back to positive? No, + is an identity operator.", () => {
-	expectOutput(runSource(`
+  expectOutput(
+    runSource(`
 $a = -5;
 $b = +a;
 print(b);
-`), ["-5"]);
+`),
+    ["-5"],
+  );
 });
 
 test("unary - negates", () => {
-	expectOutput(runSource(`
+  expectOutput(
+    runSource(`
 $a = 5;
 print(-a);
-`), ["-5"]);
+`),
+    ["-5"],
+  );
 });

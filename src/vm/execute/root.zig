@@ -118,6 +118,12 @@ pub fn execute(vm: *VMState, start_ip: usize) RuntimeError!void {
                     sp += 1;
                 } else return error.OutOfMemory;
             },
+            .OP_VOID => {
+                if (sp < state_mod.STACK_MAX) {
+                    stack_buf[sp] = .void;
+                    sp += 1;
+                } else return error.OutOfMemory;
+            },
             .OP_TRUE => {
                 if (sp < state_mod.STACK_MAX) {
                     stack_buf[sp] = .{ .u1 = 1 };
@@ -645,11 +651,6 @@ pub fn execute(vm: *VMState, start_ip: usize) RuntimeError!void {
                 try heap.makeError(vm);
                 sp = vm.sp;
             },
-            .OP_MAKE_ERROR_PAYLOAD => {
-                syncVM(vm, sp);
-                try heap.makeErrorPayload(vm);
-                sp = vm.sp;
-            },
             .OP_IS_ERROR => {
                 syncVM(vm, sp);
                 try heap.isError(vm);
@@ -719,7 +720,7 @@ pub fn execute(vm: *VMState, start_ip: usize) RuntimeError!void {
                 sp -= 1;
                 const val = stack_buf[sp];
                 const size: i64 = switch (val) {
-                    .null => 0,
+                    .null, .void => 0,
                     .u1 => 1,
                     .i8, .u8 => 1,
                     .i16, .u16 => 2,
@@ -733,6 +734,26 @@ pub fn execute(vm: *VMState, start_ip: usize) RuntimeError!void {
                     .native, .function, .module, .list, .map, .buffer => 8,
                 };
                 stack_buf[sp] = .{ .i64 = size };
+                sp += 1;
+            },
+            .OP_ADDR_OF => {
+                sp -= 1;
+                const val = stack_buf[sp];
+                const addr: i64 = switch (val) {
+                    .bytes => |b| b.offset,
+                    .slice => |s| s.offset,
+                    .array => |a| a.offset,
+                    // Interned string-table id — tagged so it does not collide with
+                    // packed offsets; identity is stable for the same literal.
+                    .name => |idx| @as(i64, @intCast(idx)) | (@as(i64, 1) << 62),
+                    else => {
+                        syncVM(vm, sp);
+                        var buf: [96]u8 = undefined;
+                        const msg = std.fmt.bufPrint(&buf, "@addrOf expects an aggregate or *T handle, got '{s}'", .{val.kindName()}) catch "@addrOf expects an aggregate or *T handle";
+                        return runtime.runtimeFail(vm, msg);
+                    },
+                };
+                stack_buf[sp] = .{ .i64 = addr };
                 sp += 1;
             },
             .OP_AS => {
@@ -797,24 +818,12 @@ fn getProperty(vm: *VMState, const_idx: u16) RuntimeError!void {
     });
     const obj = stack.pop(vm);
     // error.message → heap slot at ptr
-    if (std.mem.eql(u8, name, "message") or std.mem.eql(u8, name, "code")) {
+    if (std.mem.eql(u8, name, "message")) {
         switch (obj) {
             .ptr => |p| {
                 const tag = vm.slot(p - 1).*;
                 if (tag == .i64 and tag.i64 == state_mod.ERROR_TAG) {
                     try stack.push(vm, vm.slot(p).*);
-                    return;
-                }
-            },
-            else => {},
-        }
-    }
-    if (std.mem.eql(u8, name, "payload")) {
-        switch (obj) {
-            .ptr => |p| {
-                const tag = vm.slot(p - 1).*;
-                if (tag == .i64 and tag.i64 == state_mod.ERROR_TAG) {
-                    try stack.push(vm, vm.slot(p + 1).*);
                     return;
                 }
             },

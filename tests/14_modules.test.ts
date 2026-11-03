@@ -11,22 +11,22 @@ import { expectError, expectOutput, runFile } from "./helpers";
 const ROOT = path.resolve(import.meta.dir, "..");
 
 function withTempModules(
-	files: Record<string, string>,
-	entryRel: string,
+  files: Record<string, string>,
+  entryRel: string,
 ): { dir: string; entry: string } {
-	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "llts_mod_"));
-	for (const [rel, src] of Object.entries(files)) {
-		const full = path.join(dir, rel);
-		fs.mkdirSync(path.dirname(full), { recursive: true });
-		fs.writeFileSync(full, src, "utf-8");
-	}
-	return { dir, entry: path.join(dir, entryRel) };
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "llts_mod_"));
+  for (const [rel, src] of Object.entries(files)) {
+    const full = path.join(dir, rel);
+    fs.mkdirSync(path.dirname(full), { recursive: true });
+    fs.writeFileSync(full, src, "utf-8");
+  }
+  return { dir, entry: path.join(dir, entryRel) };
 }
 
 test("pub function can call private helper in the same module", () => {
-	const { entry } = withTempModules(
-		{
-			"lib.lls": `
+  const { entry } = withTempModules(
+    {
+      "lib.lls": `
 @func double(n: int): int {
     return n + n;
 }
@@ -35,21 +35,21 @@ pub @func answer(): int {
     return double(21);
 }
 `,
-			"main.lls": `
+      "main.lls": `
 $lib = @import("./lib.lls");
 print(lib.answer());
 pub @func main() {}
 `,
-		},
-		"main.lls",
-	);
-	expectOutput(runFile(entry), ["42"]);
+    },
+    "main.lls",
+  );
+  expectOutput(runFile(entry), ["42"]);
 });
 
 test("private function is not visible to the importer", () => {
-	const { entry } = withTempModules(
-		{
-			"lib.lls": `
+  const { entry } = withTempModules(
+    {
+      "lib.lls": `
 @func secret(): int {
     return 1;
 }
@@ -58,21 +58,21 @@ pub @func open(): int {
     return 2;
 }
 `,
-			"main.lls": `
+      "main.lls": `
 $lib = @import("./lib.lls");
 print(lib.secret());
 pub @func main() {}
 `,
-		},
-		"main.lls",
-	);
-	expectError(runFile(entry), "has no export 'secret'");
+    },
+    "main.lls",
+  );
+  expectError(runFile(entry), "has no export 'secret'");
 });
 
 test("private struct is not visible to the importer", () => {
-	const { entry } = withTempModules(
-		{
-			"lib.lls": `
+  const { entry } = withTempModules(
+    {
+      "lib.lls": `
 @struct Hidden {
     x: int;
 }
@@ -81,93 +81,93 @@ pub @struct Point {
     x: int;
 }
 `,
-			"main.lls": `
+      "main.lls": `
 $lib = @import("./lib.lls");
 $h = lib.Hidden { x: 1 };
 print(h.x);
 pub @func main() {}
 `,
-		},
-		"main.lls",
-	);
-	expectError(runFile(entry), "has no export 'Hidden'");
+    },
+    "main.lls",
+  );
+  expectError(runFile(entry), "has no export 'Hidden'");
 });
 
 test("relative ./ import resolves next to the importer", () => {
-	const { entry } = withTempModules(
-		{
-			"pkg/util.lls": `
+  const { entry } = withTempModules(
+    {
+      "pkg/util.lls": `
 pub @func id(n: int): int {
     return n;
 }
 `,
-			"pkg/main.lls": `
+      "pkg/main.lls": `
 $u = @import("./util.lls");
 print(u.id(7));
 pub @func main() {}
 `,
-		},
-		"pkg/main.lls",
-	);
-	expectOutput(runFile(entry), ["7"]);
+    },
+    "pkg/main.lls",
+  );
+  expectOutput(runFile(entry), ["7"]);
 });
 
 test("inline @import with member call and member access", () => {
-	const { entry } = withTempModules(
-		{
-			"lib.lls": `
+  const { entry } = withTempModules(
+    {
+      "lib.lls": `
 pub @const $version = 3;
 
 pub @func answer(): int {
     return 42;
 }
 `,
-			"main.lls": `
+      "main.lls": `
 print(@import("./lib.lls").answer());
 print(@import("./lib.lls").version);
 pub @func main() {}
 `,
-		},
-		"main.lls",
-	);
-	expectOutput(runFile(entry), ["42", "3"]);
+    },
+    "main.lls",
+  );
+  expectOutput(runFile(entry), ["42", "3"]);
 });
 
 test("inline @import cannot access private export", () => {
-	const { entry } = withTempModules(
-		{
-			"lib.lls": `
+  const { entry } = withTempModules(
+    {
+      "lib.lls": `
 @func secret(): int {
     return 1;
 }
 `,
-			"main.lls": `
+      "main.lls": `
 print(@import("./lib.lls").secret());
 pub @func main() {}
 `,
-		},
-		"main.lls",
-	);
-	expectError(runFile(entry), "has no export 'secret'");
+    },
+    "main.lls",
+  );
+  expectError(runFile(entry), "has no export 'secret'");
 });
 
 test("existing examples/import_test_main still works", () => {
-	expectOutput(runFile(path.join(ROOT, "examples/import_test_main.lls")), [
-		"Hello!",
-		"Vector3: 10, 20, 30",
-	]);
+  expectOutput(runFile(path.join(ROOT, "examples/import_test_main.lls")), [
+    "Hello!",
+    "Vector3: 10, 20, 30",
+  ]);
 });
 
 test("imported pub struct can be used as a type annotation", () => {
-	const { entry } = withTempModules(
-		{
-			"lib.lls": `
+  const { entry } = withTempModules(
+    {
+      "lib.lls": `
 pub @struct Point {
     x: int;
     y: int;
 }
 `,
-			"main.lls": `
+      "main.lls": `
 $lib = @import("./lib.lls");
 @struct Box {
     p: lib.Point;
@@ -177,37 +177,37 @@ print(b.p.x);
 print(b.p.y);
 pub @func main() {}
 `,
-		},
-		"main.lls",
-	);
-	expectOutput(runFile(entry), ["3", "4"]);
+    },
+    "main.lls",
+  );
+  expectOutput(runFile(entry), ["3", "4"]);
 });
 
 test("private imported struct cannot be used as a type annotation", () => {
-	const { entry } = withTempModules(
-		{
-			"lib.lls": `
+  const { entry } = withTempModules(
+    {
+      "lib.lls": `
 @struct Hidden {
     x: int;
 }
 `,
-			"main.lls": `
+      "main.lls": `
 $lib = @import("./lib.lls");
 @struct Box {
     h: lib.Hidden;
 }
 pub @func main() {}
 `,
-		},
-		"main.lls",
-	);
-	expectError(runFile(entry), "has no export 'Hidden'");
+    },
+    "main.lls",
+  );
+  expectError(runFile(entry), "has no export 'Hidden'");
 });
 
 test("imported free function can call methods on self: *T param", () => {
-	const { entry } = withTempModules(
-		{
-			"box.lls": `
+  const { entry } = withTempModules(
+    {
+      "box.lls": `
 pub @struct Box {
     n: i64;
 
@@ -216,14 +216,14 @@ pub @struct Box {
     }
 }
 `,
-			"util.lls": `
+      "util.lls": `
 @const $box = @import("./box.lls");
 
 pub @func once(self: *box.Box) {
     self.bump();
 }
 `,
-			"main.lls": `
+      "main.lls": `
 @const $box = @import("./box.lls");
 @const $util = @import("./util.lls");
 $b = box.Box { n: 0 };
@@ -231,16 +231,16 @@ util.once(&b);
 print(b.n);
 pub @func main() {}
 `,
-		},
-		"main.lls",
-	);
-	expectOutput(runFile(entry), ["1"]);
+    },
+    "main.lls",
+  );
+  expectOutput(runFile(entry), ["1"]);
 });
 
 test("imported module enum used in struct fields and function params", () => {
-	const { entry } = withTempModules(
-		{
-			"tokens.lls": `
+  const { entry } = withTempModules(
+    {
+      "tokens.lls": `
 pub @enum TokenType {
     Keyword,
     Eof,
@@ -258,21 +258,21 @@ pub @func typeName(t: TokenType) {
     };
 }
 `,
-			"main.lls": `
+      "main.lls": `
 @const $tokens = @import("./tokens.lls");
 print(tokens.typeName(tokens.TokenType.Eof));
 pub @func main() {}
 `,
-		},
-		"main.lls",
-	);
-	expectOutput(runFile(entry), ["eof"]);
+    },
+    "main.lls",
+  );
+  expectOutput(runFile(entry), ["eof"]);
 });
 
 test("imported type display strips module path prefixes", () => {
-	const { entry } = withTempModules(
-		{
-			"decl.lls": `
+  const { entry } = withTempModules(
+    {
+      "decl.lls": `
 pub @struct ParamsResult {
     pos: i32;
 }
@@ -281,44 +281,44 @@ pub @func makeParams(): ParamsResult {
     return ParamsResult { pos: 0 };
 }
 `,
-			"main.lls": `
+      "main.lls": `
 @const $decl = @import("./decl.lls");
 $res = decl.makeParams();
 print(@typeOf(res));
 pub @func main() {}
 `,
-		},
-		"main.lls",
-	);
-	expectOutput(runFile(entry), ["ParamsResult"]);
+    },
+    "main.lls",
+  );
+  expectOutput(runFile(entry), ["ParamsResult"]);
 });
 
 test("imported type error message strips module path prefixes", () => {
-	const { entry } = withTempModules(
-		{
-			"decl.lls": `
+  const { entry } = withTempModules(
+    {
+      "decl.lls": `
 pub @struct ParamsResult {
     pos: i32;
 }
 `,
-			"main.lls": `
+      "main.lls": `
 @const $decl = @import("./decl.lls");
 $p: decl.ParamsResult = 123;
 pub @func main() {}
 `,
-		},
-		"main.lls",
-	);
-	const res = runFile(entry);
-	expect(res.exitCode).not.toBe(0);
-	expect(res.stderr).toContain("ParamsResult");
-	expect(res.stderr).not.toContain("decl.lls::ParamsResult");
+    },
+    "main.lls",
+  );
+  const res = runFile(entry);
+  expect(res.exitCode).not.toBe(0);
+  expect(res.stderr).toContain("ParamsResult");
+  expect(res.stderr).not.toContain("decl.lls::ParamsResult");
 });
 
 test("importer @const does not poison imported module function-local of same name (member assign)", () => {
-	const { entry } = withTempModules(
-		{
-			"lib.lls": `
+  const { entry } = withTempModules(
+    {
+      "lib.lls": `
 pub @struct Box {
     n: int;
 }
@@ -329,44 +329,44 @@ pub @func bump(): int {
     return b.n;
 }
 `,
-			"main.lls": `
+      "main.lls": `
 @const $lib = @import("./lib.lls");
 @const $b = 99;
 print(lib.bump());
 pub @func main() {}
 `,
-		},
-		"main.lls",
-	);
-	expectOutput(runFile(entry), ["2"]);
+    },
+    "main.lls",
+  );
+  expectOutput(runFile(entry), ["2"]);
 });
 
 test("importer @const does not poison imported module function-local of same name (index assign)", () => {
-	const { entry } = withTempModules(
-		{
-			"lib.lls": `
+  const { entry } = withTempModules(
+    {
+      "lib.lls": `
 pub @func setFirst(): int {
     $arr: [3]int = [0, 0, 0];
     arr[0] = 42;
     return arr[0];
 }
 `,
-			"main.lls": `
+      "main.lls": `
 @const $lib = @import("./lib.lls");
 @const $arr = 7;
 print(lib.setFirst());
 pub @func main() {}
 `,
-		},
-		"main.lls",
-	);
-	expectOutput(runFile(entry), ["42"]);
+    },
+    "main.lls",
+  );
+  expectOutput(runFile(entry), ["42"]);
 });
 
 test("genuine @const member mutation still errors", () => {
-	const { entry } = withTempModules(
-		{
-			"main.lls": `
+  const { entry } = withTempModules(
+    {
+      "main.lls": `
 @struct Point {
     x: int;
 }
@@ -374,10 +374,10 @@ test("genuine @const member mutation still errors", () => {
 ORIGIN.x = 99;
 pub @func main() {}
 `,
-		},
-		"main.lls",
-	);
-	const res = runFile(entry);
-	expect(res.exitCode).not.toBe(0);
-	expect(res.stderr).toContain("Cannot mutate field of constant");
+    },
+    "main.lls",
+  );
+  const res = runFile(entry);
+  expect(res.exitCode).not.toBe(0);
+  expect(res.stderr).toContain("Cannot mutate field of constant");
 });

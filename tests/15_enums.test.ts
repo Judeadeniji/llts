@@ -8,145 +8,145 @@ import * as path from "node:path";
 import { expectError, expectOutput, runFile, runSource } from "./helpers";
 
 function withTempModules(
-	files: Record<string, string>,
-	entryRel: string,
+  files: Record<string, string>,
+  entryRel: string,
 ): { dir: string; entry: string } {
-	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "llts_enum_"));
-	for (const [rel, src] of Object.entries(files)) {
-		const full = path.join(dir, rel);
-		fs.mkdirSync(path.dirname(full), { recursive: true });
-		fs.writeFileSync(full, src, "utf-8");
-	}
-	return { dir, entry: path.join(dir, entryRel) };
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "llts_enum_"));
+  for (const [rel, src] of Object.entries(files)) {
+    const full = path.join(dir, rel);
+    fs.mkdirSync(path.dirname(full), { recursive: true });
+    fs.writeFileSync(full, src, "utf-8");
+  }
+  return { dir, entry: path.join(dir, entryRel) };
 }
 
 test("@enum variants are auto-incrementing ints", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @enum Color { Red, Green, Blue }
 print(Color.Red);
 print(Color.Green);
 print(Color.Blue);
 `),
-		["0", "1", "2"],
-	);
+    ["0", "1", "2"],
+  );
 });
 
 test("$x: Enum = Enum.Variant typechecks and runs", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @enum Tok { EOF, ID }
 $x: Tok = Tok.ID;
 print(x);
 print(@typeOf(x));
 `),
-		["1", "Tok"],
-	);
+    ["1", "Tok"],
+  );
 });
 
 test("enum variants compare equal to their int values", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @enum Color { Red, Green }
 print(Color.Red == 0);
 print(Color.Green == 1);
 print(Color.Red == Color.Green);
 `),
-		["true", "true", "false"],
-	);
+    ["true", "true", "false"],
+  );
 });
 
 test("@const accepts enum variant initializers", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @enum Color { Red, Green }
 @const $c = Color.Green;
 print(c);
 `),
-		["1"],
-	);
+    ["1"],
+  );
 });
 
 test("@const enum variant cannot be reassigned", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 @enum Color { Red, Green }
 @const $c = Color.Green;
 c = Color.Red;
 `),
-		"constant",
-	);
+    "constant",
+  );
 });
 
 test("unknown enum variant is a compile error", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 @enum Color { Red }
 print(Color.Nope);
 `),
-		"Unknown enum variant",
-	);
+    "Unknown enum variant",
+  );
 });
 
 test("duplicate enum variant is a compile error", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 @enum Color { Red, Red }
 `),
-		"Duplicate enum variant",
-	);
+    "Duplicate enum variant",
+  );
 });
 
 test("pub @enum is visible across modules", () => {
-	const { entry } = withTempModules(
-		{
-			"lib.lls": `
+  const { entry } = withTempModules(
+    {
+      "lib.lls": `
 pub @enum Tok { EOF, ID, NUM }
 `,
-			"main.lls": `
+      "main.lls": `
 $lib = @import("./lib.lls");
 print(lib.Tok.EOF);
 print(lib.Tok.NUM);
 pub @func main() {}
 `,
-		},
-		"main.lls",
-	);
-	expectOutput(runFile(entry), ["0", "2"]);
+    },
+    "main.lls",
+  );
+  expectOutput(runFile(entry), ["0", "2"]);
 });
 
 test("private @enum is not exported", () => {
-	const { entry } = withTempModules(
-		{
-			"lib.lls": `
+  const { entry } = withTempModules(
+    {
+      "lib.lls": `
 @enum Hidden { A, B }
 `,
-			"main.lls": `
+      "main.lls": `
 $lib = @import("./lib.lls");
 print(lib.Hidden.A);
 pub @func main() {}
 `,
-		},
-		"main.lls",
-	);
-	expectError(runFile(entry), "has no export");
+    },
+    "main.lls",
+  );
+  expectError(runFile(entry), "has no export");
 });
 
 test("@switch on enum requires exhaustiveness or @else", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 @enum Color { Red, Green, Blue }
 @switch (Color.Red) {
     Color.Red => { print("r"); },
 }
 `),
-		"missing enum variant",
-	);
+    "missing enum variant",
+  );
 });
 
 test("exhaustive value @switch needs no @else", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @enum Color { Red, Green }
 $x = @switch (Color.Green) {
     Color.Red => { break 1; },
@@ -154,77 +154,77 @@ $x = @switch (Color.Green) {
 };
 print(x);
 `),
-		["2"],
-	);
+    ["2"],
+  );
 });
 
 test("@nameOf returns enum variant spelling as declared", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @enum TokenType { Keyword, VRegister, Eof }
 print(@nameOf(TokenType.Keyword));
 print(@nameOf(TokenType.VRegister));
 $t: TokenType = TokenType.Eof;
 print(@nameOf(t));
 `),
-		["Keyword", "VRegister", "Eof"],
-	);
+    ["Keyword", "VRegister", "Eof"],
+  );
 });
 
 test("@nameOf rejects non-enum non-error values", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 print(@nameOf(42));
 `),
-		"@nameOf expects an enum, error, or named declaration",
-	);
+    "@nameOf expects an enum, error, or named declaration",
+  );
 });
 
 test("@nameOf works on local variables", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 $x: i64 = 42;
 print(@nameOf(x));
 `),
-		["x"],
-	);
+    ["x"],
+  );
 });
 
 test("@nameOf works on global variables and functions", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 $counter: i64 = 0;
 @func add(a: i64, b: i64): i64 { return a + b; }
 print(@nameOf(counter));
 print(@nameOf(add));
 `),
-		["counter", "add"],
-	);
+    ["counter", "add"],
+  );
 });
 
 test("@nameOf works on enum variant via member syntax", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @enum Color { Red, Green, Blue }
 print(@nameOf(Color.Red));
 print(@nameOf(Color.Green));
 `),
-		["Red", "Green"],
-	);
+    ["Red", "Green"],
+  );
 });
 
 test("@nameOf still rejects bare arithmetic expressions", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 print(@nameOf(1 + 2));
 `),
-		"@nameOf expects an enum, error, or named declaration",
-	);
+    "@nameOf expects an enum, error, or named declaration",
+  );
 });
 
 test("discriminated struct + kind enum (preferred tagged data)", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @enum ExprKind { Literal, Add }
 @struct Expr {
     kind: ExprKind;
@@ -245,13 +245,13 @@ $m = @switch (b.kind) {
 print(n);
 print(m);
 `),
-		["42", "7"],
-	);
+    ["42", "7"],
+  );
 });
 
 test("kind: Enum.Variant singleton field types", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @enum ExprKind { Literal, Add }
 @struct Literal {
     kind: ExprKind.Literal;
@@ -261,13 +261,13 @@ $a = Literal{ kind: ExprKind.Literal, value: 42 };
 print(a.value);
 print(@typeOf(a.kind));
 `),
-		["42", "ExprKind.Literal"],
-	);
+    ["42", "ExprKind.Literal"],
+  );
 });
 
 test("wrong Enum.Variant rejected for singleton kind field", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 @enum ExprKind { Literal, Add }
 @struct Literal {
     kind: ExprKind.Literal;
@@ -276,13 +276,13 @@ test("wrong Enum.Variant rejected for singleton kind field", () => {
 $a = Literal{ kind: ExprKind.Add, value: 1 };
 print(a.value);
 `),
-		"not assignable",
-	);
+    "not assignable",
+  );
 });
 
 test("struct union Literal | Add with kind narrowing", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @enum ExprKind { Literal, Add }
 @struct Literal {
     kind: ExprKind.Literal;
@@ -304,13 +304,13 @@ $b: Literal | Add = Add{ kind: ExprKind.Add, left: 3, right: 4 };
 print(eval(a));
 print(eval(b));
 `),
-		["42", "7"],
-	);
+    ["42", "7"],
+  );
 });
 
 test("union field without narrowing is rejected", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 @enum ExprKind { Literal, Add }
 @struct Literal {
     kind: ExprKind.Literal;
@@ -326,13 +326,13 @@ test("union field without narrowing is rejected", () => {
 }
 print(bad(Literal{ kind: ExprKind.Literal, value: 1 }));
 `),
-		"not available on all arms",
-	);
+    "not available on all arms",
+  );
 });
 
 test("union kind @switch must cover all arms", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 @enum ExprKind { Literal, Add, Mul }
 @struct Literal {
     kind: ExprKind.Literal;
@@ -350,13 +350,13 @@ test("union kind @switch must cover all arms", () => {
 }
 print(bad(Literal{ kind: ExprKind.Literal, value: 1 }));
 `),
-		"missing enum variant",
-	);
+    "missing enum variant",
+  );
 });
 
 test("wrong-arm field after narrowing is rejected", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 @enum ExprKind { Literal, Add }
 @struct Literal {
     kind: ExprKind.Literal;
@@ -375,13 +375,13 @@ test("wrong-arm field after narrowing is rejected", () => {
 }
 print(bad(Literal{ kind: ExprKind.Literal, value: 1 }));
 `),
-		"does not exist on 'Literal'",
-	);
+    "does not exist on 'Literal'",
+  );
 });
 
 test("union @else narrows to remaining arm", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @enum ExprKind { Literal, Add }
 @struct Literal {
     kind: ExprKind.Literal;
@@ -401,13 +401,13 @@ test("union @else narrows to remaining arm", () => {
 print(eval(Literal{ kind: ExprKind.Literal, value: 9 }));
 print(eval(Add{ kind: ExprKind.Add, left: 2, right: 5 }));
 `),
-		["9", "7"],
-	);
+    ["9", "7"],
+  );
 });
 
 test("un-narrowed shared kind field is allowed", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @enum ExprKind { Literal, Add }
 @struct Literal {
     kind: ExprKind.Literal;
@@ -423,13 +423,13 @@ $b: Literal | Add = Add{ kind: ExprKind.Add, left: 1, right: 2 };
 print(a.kind);
 print(b.kind);
 `),
-		["0", "1"],
-	);
+    ["0", "1"],
+  );
 });
 
 test("struct outside union is not assignable", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 @enum ExprKind { Literal, Add, Mul }
 @struct Literal {
     kind: ExprKind.Literal;
@@ -448,13 +448,13 @@ test("struct outside union is not assignable", () => {
 $a: Literal | Add = Mul{ kind: ExprKind.Mul, left: 2, right: 3 };
 print(a.kind);
 `),
-		"not assignable",
-	);
+    "not assignable",
+  );
 });
 
 test("statement @switch narrows union arms", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @enum ExprKind { Literal, Add }
 @struct Literal {
     kind: ExprKind.Literal;
@@ -474,6 +474,6 @@ test("statement @switch narrows union arms", () => {
 show(Literal{ kind: ExprKind.Literal, value: 11 });
 show(Add{ kind: ExprKind.Add, left: 4, right: 5 });
 `),
-		["11", "9"],
-	);
+    ["11", "9"],
+  );
 });

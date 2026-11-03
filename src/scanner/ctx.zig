@@ -7,6 +7,8 @@ pub const ScanError = error{
     UnexpectedCharacter,
     UnterminatedString,
     MultilineString,
+    UnterminatedTemplate,
+    TemplateFence,
     ExpectedType,
     ExpectedRegister,
     ExpectedCompilerKeyword,
@@ -48,6 +50,22 @@ pub const Scanner = struct {
             .value = value,
             .line = line,
             .column = col,
+        });
+    }
+
+    pub fn pushTemplateToken(
+        self: *Scanner,
+        value: []const u8,
+        parts: []tokens.TemplatePart,
+        col: u32,
+        line: u32,
+    ) !void {
+        try self.tokens.append(self.allocator, .{
+            .type = .template,
+            .value = value,
+            .line = line,
+            .column = col,
+            .template_parts = parts,
         });
     }
 

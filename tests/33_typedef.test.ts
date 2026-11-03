@@ -8,21 +8,21 @@ import * as os from "node:os";
 import * as path from "node:path";
 
 test("@type UUID and ID are not interchangeable", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 @type UUID = string;
 @type ID = string;
 $u: UUID = "abc";
 $i: ID = u;
 print(i);
 `),
-		"not assignable",
-	);
+    "not assignable",
+  );
 });
 
 test("@as casts between distinct types with same layout", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @type UUID = string;
 @type ID = string;
 $u: UUID = "abc";
@@ -31,13 +31,13 @@ print(@typeOf(u));
 print(@typeOf(i));
 print(i);
 `),
-		["UUID", "ID", "abc"],
-	);
+    ["UUID", "ID", "abc"],
+  );
 });
 
 test("T(x) cast sugar for distinct @type names", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @type UUID = string;
 @type ID = string;
 $u: UUID = "abc";
@@ -45,60 +45,60 @@ $i: ID = ID(u);
 print(@typeOf(i));
 print(i);
 `),
-		["ID", "abc"],
-	);
+    ["ID", "abc"],
+  );
 });
 
 test("T(x) still calls functions when Name is a function", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @func add(a: i64): i64 { return a + 1; }
 print(add(41));
 `),
-		["42"],
-	);
+    ["42"],
+  );
 });
 
 test("T(x) rejects impossible cast", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 @type UUID = string;
 $n: i64 = 1;
 $u = UUID(n);
 `),
-		"Cannot cast",
-	);
+    "Cannot cast",
+  );
 });
 
 test("@alias is transparent", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @alias Str = string;
 $s: Str = "hi";
 $t: string = s;
 print(@typeOf(s));
 print(t);
 `),
-		["[]byte", "hi"],
-	);
+    ["[]byte", "hi"],
+  );
 });
 
 test("@typeOf prints distinct name; @sizeOf matches underlying", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @type UUID = string;
 $u: UUID = "xy";
 print(@typeOf(u));
 print(@sizeOf(UUID));
 print(@sizeOf(string));
 `),
-		["UUID", "8", "8"],
-	);
+    ["UUID", "8", "8"],
+  );
 });
 
 test("@type Expr = Literal | Add works with narrowing", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @enum ExprKind { Literal, Add }
 @struct Literal {
     kind: ExprKind.Literal;
@@ -119,24 +119,24 @@ test("@type Expr = Literal | Add works with narrowing", () => {
 print(eval(Literal{ kind: ExprKind.Literal, value: 7 }));
 print(eval(Add{ kind: ExprKind.Add, left: 2, right: 3 }));
 `),
-		["7", "5"],
-	);
+    ["7", "5"],
+  );
 });
 
 test("duplicate @type name is rejected", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 @type A = i64;
 @type A = string;
 pub @func main() {}
 `),
-		"Duplicate type",
-	);
+    "Duplicate type",
+  );
 });
 
 test("string literal types", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @type KindA = "a";
 @type KindB = "b";
 @type Kind = KindA | KindB;
@@ -146,24 +146,24 @@ print(k);
 $m: Kind = "b";
 print(@typeOf(m));
 `),
-		["KindA", "a", "Kind"],
-	);
+    ["KindA", "a", "Kind"],
+  );
 });
 
 test("wrong string literal is rejected", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 @type KindA = "a";
 $k: KindA = "b";
 print(k);
 `),
-		"not assignable",
-	);
+    "not assignable",
+  );
 });
 
 test("int and bool literal types", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @type Zero = 0;
 @type Yes = true;
 $z: Zero = 0;
@@ -173,37 +173,37 @@ print(@typeOf(y));
 print(z);
 print(y);
 `),
-		["Zero", "Yes", "0", "true"],
-	);
+    ["Zero", "Yes", "0", "true"],
+  );
 });
 
 test("bare literal type annotation", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 $k: "a" = "a";
 print(@typeOf(k));
 print(k);
 `),
-		['"a"', "a"],
-	);
+    ['"a"', "a"],
+  );
 });
 
 test("literal union KindA | KindB", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @type Kind = "a" | "b";
 $k: Kind = "a";
 print(k);
 $k2: Kind = "b";
 print(k2);
 `),
-		["a", "b"],
-	);
+    ["a", "b"],
+  );
 });
 
 test("function type: annotate, assign, call, @typeOf", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @func add(a: i64, b: i64): i64 { return a + b; }
 @type Handler = @func(i64, i64): i64;
 $f: Handler = add;
@@ -212,35 +212,35 @@ print(@typeOf(add));
 print(f(2, 3));
 print(@sizeOf(Handler));
 `),
-		["Handler", "@func(i64, i64): i64", "5", "8"],
-	);
+    ["Handler", "@func(i64, i64): i64", "5", "8"],
+  );
 });
 
 test("function type arity mismatch is an error", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 @func add(a: i64, b: i64): i64 { return a + b; }
 $f: @func(i64, i64): i64 = add;
 print(f(1));
 `),
-		"expected 2 arguments",
-	);
+    "expected 2 arguments",
+  );
 });
 
 test("function type assignability rejects wrong signature", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 @func add(a: i64, b: i64): i64 { return a + b; }
 $f: @func(i64): i64 = add;
 print(f(1));
 `),
-		"not assignable",
-	);
+    "not assignable",
+  );
 });
 
 test("*Arm assigns to *Union field (covariant pointers)", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @enum Kind { Lit, Bin }
 @struct Lit { kind: Kind.Lit; value: i64; }
 @struct Bin { kind: Kind.Bin; left: *Expr; right: *Expr; }
@@ -258,13 +258,13 @@ print(b.kind);
 print(l.value);
 a.deinit();
 `),
-		["1", "9"],
-	);
+    ["1", "9"],
+  );
 });
 
 test("forward-ref: struct fields may name @type declared later", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @enum Kind { Lit, Bin }
 @struct Lit { kind: Kind.Lit; value: i64; }
 @struct Bin { kind: Kind.Bin; left: *Expr; right: *Expr; }
@@ -282,13 +282,13 @@ print(l.value);
 print(@typeOf(b));
 a.deinit();
 `),
-		["3", "*Bin"],
-	);
+    ["3", "*Bin"],
+  );
 });
 
 test("@as(*Union, *Arm) is allowed", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @enum Kind { Lit, Bin }
 @struct Lit { kind: Kind.Lit; value: i64; }
 @struct Bin { kind: Kind.Bin; left: i64; right: i64; }
@@ -303,25 +303,25 @@ print(@typeOf(l));
 print(l.kind);
 a.deinit();
 `),
-		["*Expr", "0"],
-	);
+    ["*Expr", "0"],
+  );
 });
 
 test("imported @type Lit | Bin rewrites arm names", () => {
-	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "llts_typedef_"));
-	try {
-		fs.writeFileSync(
-			path.join(dir, "node.lls"),
-			`
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "llts_typedef_"));
+  try {
+    fs.writeFileSync(
+      path.join(dir, "node.lls"),
+      `
 pub @enum Kind { Lit, Bin }
 pub @struct Lit { kind: Kind.Lit; value: i64; }
 pub @struct Bin { kind: Kind.Bin; left: *Node; right: *Node; }
 pub @type Node = Lit | Bin;
 `,
-		);
-		fs.writeFileSync(
-			path.join(dir, "use.lls"),
-			`
+    );
+    fs.writeFileSync(
+      path.join(dir, "use.lls"),
+      `
 @const $n = @import("./node.lls");
 @const $mem = @import("std/mem");
 $a = mem.create(0);
@@ -336,9 +336,9 @@ print(b.kind);
 print(l.value);
 pub @func main() {}
 `,
-		);
-		expectOutput(runFile(path.join(dir, "use.lls")), ["1", "7"]);
-	} finally {
-		fs.rmSync(dir, { recursive: true, force: true });
-	}
+    );
+    expectOutput(runFile(path.join(dir, "use.lls")), ["1", "7"]);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });

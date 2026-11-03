@@ -47,6 +47,12 @@ fn diagRangeAt(analysis: anytype, line: u32, column: u32) DiagRange {
     for (analysis.scan.tokens.items) |t| {
         if (t.line != line or t.column != column) continue;
         if (t.type == .eof or t.value.len == 0) break; // zero-width: keep 1-char fallback
+        // Template `.value` is the multiline body; the token sits on the opening
+        // ``` — squiggle only that fence, not the whole body length.
+        if (t.type == .template) {
+            end_char = t.column - 1 + 3;
+            break;
+        }
         // String token values exclude the surrounding quotes — widen to them.
         const quoted: u32 = if (t.type == .string) 2 else 0;
         end_char = t.column - 1 + @as(u32, @intCast(t.value.len)) + quoted;
@@ -341,7 +347,9 @@ fn computeHover(ra: std.mem.Allocator, analysis: anytype, target_line: u32, targ
     const tokens = analysis.scan.tokens.items;
     for (tokens) |t| {
         if (t.line != target_line) continue;
-        const end_col = t.column + @as(u32, @intCast(t.value.len)); // exclusive
+        // Template `.value` is the body; hit-test only the opening ``` fence.
+        const tok_len: u32 = if (t.type == .template) 3 else @intCast(t.value.len);
+        const end_col = t.column + tok_len; // exclusive
         if (target_col < t.column or target_col >= end_col) continue;
 
         if (t.type == .delimiter or t.type == .bin_op or t.type == .unary_op or t.type == .assign_op or t.type == .keyword or t.type == .eof) {
@@ -360,9 +368,9 @@ fn computeHover(ra: std.mem.Allocator, analysis: anytype, target_line: u32, targ
                 type_str = "bool";
                 prefix = "(literal) ";
             },
-            .string => {
+            .string, .template => {
                 type_str = "[]byte";
-                prefix = "(literal) ";
+                prefix = if (t.type == .template) "(template) " else "(literal) ";
             },
             .v_register, .identifier => {
                 var is_const = false;

@@ -14,7 +14,7 @@ pub const parser = @import("parser/root.zig");
 pub const pipeline = @import("pipeline.zig");
 pub const io = @import("io/root.zig");
 pub const diag = @import("errors/diag.zig");
-pub const zig_backend = @import("compiler/zig/root.zig");
+pub const zig_backend = @import("compiler/codegen/root.zig");
 pub const runtime = @import("runtime/root.zig");
 pub const compiler = @import("compiler/root.zig");
 

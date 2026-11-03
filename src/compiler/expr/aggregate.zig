@@ -114,13 +114,11 @@ fn parseConstInt(raw: []const u8) ?i64 {
 }
 
 pub fn compileError(state: *CompilerState, err: *const ast.ErrorExpr) !void {
-    try expr.compileExpression(state, err.args[0]);
-    if (err.args.len == 2) {
-        try expr.compileExpression(state, err.args[1]);
-        try emit.emitOp(state, .OP_MAKE_ERROR_PAYLOAD);
-    } else {
-        try emit.emitOp(state, .OP_MAKE_ERROR);
+    if (err.args.len != 1) {
+        return compiler_errors.compileFailFmt(state, "error() takes exactly 1 argument (a code string)", .{});
     }
+    try expr.compileExpression(state, err.args[0]);
+    try emit.emitOp(state, .OP_MAKE_ERROR);
 }
 
 pub fn compileTry(state: *CompilerState, try_expr: *const ast.TryExpr) !void {
@@ -146,8 +144,7 @@ pub fn compileArray(state: *CompilerState, arr: *const ast.ArrayLiteral) !void {
     const alloc = if (state.alloc_immortal) "__allocImmortalArray" else "__allocArray";
     try emit.emitNameGet(state, .OP_GET_GLOBAL, alloc);
     try emit.emitConstant(state, .{ .i64 = length });
-    try emit.emitOp(state, .OP_CALL);
-    try emit.emitByte(state, 1);
+    try emit.emitCall(state, 1);
     try fillArray(state, arr);
 }
 
@@ -157,8 +154,7 @@ pub fn compileStructInit(state: *CompilerState, init: *const ast.StructInit) !vo
     const alloc = if (state.alloc_immortal) "__allocImmortalBytes" else "__allocBytes";
     try emit.emitNameGet(state, .OP_GET_GLOBAL, alloc);
     try emit.emitConstant(state, .{ .i64 = struct_def.size });
-    try emit.emitOp(state, .OP_CALL);
-    try emit.emitByte(state, 1);
+    try emit.emitCall(state, 1);
     try fillStruct(state, init, struct_def);
 }
 
@@ -278,8 +274,7 @@ fn emitArenaAlloc(state: *CompilerState, allocator_expr: *ast.Node, slots: i32) 
     try emit.emitNameGet(state, .OP_GET_GLOBAL, "__arena_alloc");
     try expr.compileExpression(state, allocator_expr);
     try emit.emitConstant(state, .{ .i64 = slots });
-    try emit.emitOp(state, .OP_CALL);
-    try emit.emitByte(state, 2);
+    try emit.emitCall(state, 2);
 }
 
 fn emitArenaAllocArray(state: *CompilerState, allocator_expr: *ast.Node, length_expr: ?*ast.Node, const_len: ?i32) !void {
@@ -290,8 +285,7 @@ fn emitArenaAllocArray(state: *CompilerState, allocator_expr: *ast.Node, length_
     } else {
         try emit.emitConstant(state, .{ .i64 = const_len orelse 0 });
     }
-    try emit.emitOp(state, .OP_CALL);
-    try emit.emitByte(state, 2);
+    try emit.emitCall(state, 2);
 }
 
 fn emitArenaAllocBytes(state: *CompilerState, allocator_expr: *ast.Node, length_expr: ?*ast.Node, const_len: ?i32) !void {
@@ -302,8 +296,7 @@ fn emitArenaAllocBytes(state: *CompilerState, allocator_expr: *ast.Node, length_
     } else {
         try emit.emitConstant(state, .{ .i64 = const_len orelse 0 });
     }
-    try emit.emitOp(state, .OP_CALL);
-    try emit.emitByte(state, 2);
+    try emit.emitCall(state, 2);
 }
 
 fn zeroFillArray(state: *CompilerState, length: i32, elem_type: *ast.Node) !void {

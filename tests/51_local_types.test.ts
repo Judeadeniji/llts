@@ -2,8 +2,8 @@ import { test } from "bun:test";
 import { expectError, expectOutput, runSource } from "./helpers";
 
 test("local types: @alias and @type inside a function body", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @func f(x: i64): i64 {
     @alias N = i64;
     $y: N = x;
@@ -16,13 +16,13 @@ pub @func main() {
     print(f(2));
 }
 `),
-		["M", "2"],
-	);
+    ["M", "2"],
+  );
 });
 
 test("local types: same name in different functions stays distinct", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @func a() {
     @type T = i64;
     $t = T(5);
@@ -41,13 +41,13 @@ pub @func main() {
     b();
 }
 `),
-		["T", "8", "T", "1", "true"],
-	);
+    ["T", "8", "T", "1", "true"],
+  );
 });
 
 test("local types: shapes, nested blocks, and methods", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @struct Box {
     n: i64;
     @func kind(self: Box) {
@@ -70,50 +70,50 @@ pub @func main() {
     bx.kind();
 }
 `),
-		["3", "Pair", "?i64", "i64"],
-	);
+    ["3", "Pair", "?i64", "i64"],
+  );
 });
 
 test("local types: not visible outside the declaring function", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 @func f() { @type T = i64; }
 @func g() { $x: T = 1; }
 pub @func main() { f(); g(); }
 `),
-		"Unknown type 'T'",
-	);
+    "Unknown type 'T'",
+  );
 });
 
 test("local types: duplicate name in one function is rejected", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 @func f() {
     @type T = i64;
     @type T = u8;
 }
 pub @func main() { f(); }
 `),
-		"Duplicate type 'T' in function 'f'",
-	);
+    "Duplicate type 'T' in function 'f'",
+  );
 });
 
 test("local types: a variable cannot share a local type's name", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 @func f() {
     @type T = i64;
     $T = 1;
 }
 pub @func main() { f(); }
 `),
-		"'T' is declared as both a type and a variable",
-	);
+    "'T' is declared as both a type and a variable",
+  );
 });
 
 test("local types: block-scoped, shadowing outer and global types", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @alias T = i64;
 pub @func main() {
     @alias U = u8;
@@ -135,37 +135,37 @@ pub @func main() {
     print(@typeOf(b));
 }
 `),
-		["u16", "u8", "u32", "u16", "i64"],
-	);
+    ["u16", "u8", "u32", "u16", "i64"],
+  );
 });
 
 test("local types: sibling blocks may reuse a name", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 pub @func main() {
     @if (true) { @type T = i64; $x: T = @as(T, 1); print(@sizeOf(T)); }
     @if (true) { @type T = u8; $y: T = @as(T, 2); print(@sizeOf(T)); }
 }
 `),
-		["8", "1"],
-	);
+    ["8", "1"],
+  );
 });
 
 test("local types: a block's type is not visible after the block", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 pub @func main() {
     @if (true) { @alias T = i64; }
     $x: T = 1;
 }
 `),
-		"Unknown type 'T'",
-	);
+    "Unknown type 'T'",
+  );
 });
 
 test("local types: @comptime and labeled block expressions", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 $g = @comptime {
     @alias G = i64;
     $v: G = 2;
@@ -183,13 +183,13 @@ pub @func main() {
     print(e);
 }
 `),
-		["6", "42", "9"],
-	);
+    ["6", "42", "9"],
+  );
 });
 
 test("local types: top-level blocks scope their types", () => {
-	expectOutput(
-		runSource(`
+  expectOutput(
+    runSource(`
 @if (true) {
     @alias H = u16;
     $h: H = 1;
@@ -202,18 +202,18 @@ test("local types: top-level blocks scope their types", () => {
 }
 pub @func main() { }
 `),
-		["u16", "u8"],
-	);
+    ["u16", "u8"],
+  );
 });
 
 test("local types: a variable visible in an enclosing block cannot share the name", () => {
-	expectError(
-		runSource(`
+  expectError(
+    runSource(`
 pub @func main() {
     $x = 1;
     @if (true) { @alias x = i64; }
 }
 `),
-		"'x' is declared as both a type and a variable",
-	);
+    "'x' is declared as both a type and a variable",
+  );
 });

@@ -20,22 +20,30 @@ const widths = @import("widths.zig");
 
 pub const Intrinsic = enum {
     import,
+    @"asm",
     typeOf,
     isError,
     sizeOf,
     nameOf,
     as,
     new,
+    addrOf,
+    concat,
 };
 
 const intrinsics = std.StaticStringMap(Intrinsic).initComptime(.{
     .{ "@import", .import },
+    .{ "@asm", .@"asm" },
     .{ "@typeOf", .typeOf },
     .{ "@isError", .isError },
     .{ "@sizeOf", .sizeOf },
     .{ "@nameOf", .nameOf },
     .{ "@as", .as },
+    // Legacy bytecode/VM compatibility only. The native emitter rejects
+    // `@new`; allocation will return as an ordinary standard-library facility.
     .{ "@new", .new },
+    .{ "@addrOf", .addrOf },
+    .{ "@concat", .concat },
 });
 
 pub fn match(callee: []const u8) ?Intrinsic {
@@ -50,12 +58,15 @@ pub const Arity = union(enum) {
 pub fn arity(intr: Intrinsic) Arity {
     return switch (intr) {
         .import => .{ .exact = 1 },
+        .@"asm" => .{ .exact = 1 },
         .typeOf => .{ .exact = 1 },
         .isError => .{ .exact = 1 },
         .sizeOf => .{ .exact = 1 },
         .nameOf => .{ .exact = 1 },
         .as => .{ .exact = 2 },
         .new => .{ .range = .{ .min = 2, .max = 3 } },
+        .addrOf => .{ .exact = 1 },
+        .concat => .{ .exact = 3 },
     };
 }
 
@@ -90,6 +101,13 @@ pub fn typecheck(state: *CompilerState, env: *typecheck_root.Env, ta: ir.TypeAll
             const mod_val = try std.fmt.allocPrint(state.allocator, "module:{s}", .{key});
             try state.owned.append(state.allocator, mod_val);
             return .{ .struct_ = mod_val };
+        },
+        .@"asm" => {
+            const template = c.args[0];
+            if (template.* != .literal or template.literal.literal_type != .string) {
+                return compile_errors.compileFailFmt(state, "@asm expects a string literal template", .{});
+            }
+            return ir.TVoid;
         },
         .isError => {
             _ = try typecheck_root.inferExpr(state, env, ta, c.args[0]);
@@ -158,6 +176,23 @@ pub fn typecheck(state: *CompilerState, env: *typecheck_root.Env, ta: ir.TypeAll
         .as => {
             return try typecheckCast(state, env, ta, c.args[0], c.args[1]);
         },
+        .concat => {
+            // `@concat(dest, a, b)` — `dest` is an allocator placeholder (like
+            // `@new`) or a `*[]byte` buffer. Operands are stringified like the
+            // old VM `+` (ints/bools/etc. render, then join). Result is `[]byte`.
+            _ = try typecheck_root.inferExpr(state, env, ta, c.args[0]);
+            const a_t = try typecheck_root.inferExpr(state, env, ta, c.args[1]);
+            const b_t = try typecheck_root.inferExpr(state, env, ta, c.args[2]);
+            if (a_t == .void or a_t == .type_ or a_t == .never) {
+                const d = try typecheck_root.ownDisplay(state, a_t);
+                return compile_errors.compileFailFmt(state, "@concat cannot stringify '{s}'", .{d});
+            }
+            if (b_t == .void or b_t == .type_ or b_t == .never) {
+                const d = try typecheck_root.ownDisplay(state, b_t);
+                return compile_errors.compileFailFmt(state, "@concat cannot stringify '{s}'", .{d});
+            }
+            return ir.TString;
+        },
         .new => {
             _ = try typecheck_root.inferExpr(state, env, ta, c.args[0]);
             const v = c.args[1];
@@ -196,10 +231,25 @@ pub fn typecheck(state: *CompilerState, env: *typecheck_root.Env, ta: ir.TypeAll
                 },
                 else => try typecheck_root.inferExpr(state, env, ta, v),
             };
-            // Heap-allocated structs / distinct `@type` values are pointers (handles).
-            if (base == .struct_ or base == .defined) return try ta.ptrType(base);
+            // Arena/heap allocation always yields a pointer handle (`*T`), matching
+            // `@new(a, Point)` → `*Point`. Arrays / `[]T` / `[]byte` / shapes too.
+            if (base == .struct_ or base == .defined or base == .array or base == .tuple or base == .shape)
+                return try ta.ptrType(base);
             if (base == .ptr) return base;
             return base;
+        },
+        .addrOf => {
+            const t = try typecheck_root.inferExpr(state, env, ta, c.args[0]);
+            if (ir.involvesUnknown(t)) return ir.TInt;
+            if (ir.optionalPayload(t) != null) {
+                return compile_errors.compileFailFmt(state, "@addrOf does not accept optionals; unwrap first", .{});
+            }
+            const pointee = if (t == .ptr) t.ptr.* else t;
+            if (!ir.isAddressableAggregate(pointee)) {
+                const d = try typecheck_root.ownDisplay(state, t);
+                return compile_errors.compileFailFmt(state, "@addrOf requires an aggregate or *T, got '{s}'", .{d});
+            }
+            return ir.TInt;
         },
     }
 }
@@ -217,6 +267,9 @@ pub fn compile(state: *CompilerState, intr: Intrinsic, node: *ast.Node, c: *cons
             // Do nothing if it's just a call, or we could compile the arg.
             try expr.compileExpression(state, c.args[0]);
             try emit.emitOp(state, .OP_POP);
+        },
+        .@"asm" => {
+            return compile_errors.compileFailFmt(state, "@asm is only supported by the native backend", .{});
         },
         .isError => {
             try expr.compileExpression(state, c.args[0]);
@@ -286,8 +339,21 @@ pub fn compile(state: *CompilerState, intr: Intrinsic, node: *ast.Node, c: *cons
         .as => {
             try compileCast(state, c.args[0], c.args[1]);
         },
+        .concat => {
+            // Bytecode: evaluate dest for effect (allocator / buffer), then
+            // string-add the two operands. Native emits a real frame/buffer path.
+            try expr.compileExpression(state, c.args[0]);
+            try emit.emitOp(state, .OP_POP);
+            try expr.compileExpression(state, c.args[1]);
+            try expr.compileExpression(state, c.args[2]);
+            try emit.emitOp(state, .OP_STRING_ADD);
+        },
         .new => {
             try aggregate.compileNew(state, c);
+        },
+        .addrOf => {
+            try expr.compileExpression(state, c.args[0]);
+            try emit.emitOp(state, .OP_ADDR_OF);
         },
     }
 }
@@ -406,8 +472,8 @@ fn isBareTypeNode(state: *CompilerState, env: *typecheck_root.Env, node: *ast.No
             if (state.native_globals.contains(name)) return false;
 
             if (widths.fromName(name) != null) return true;
-            if (std.mem.eql(u8, name, "string") or std.mem.eql(u8, name, "[]byte") or
-                std.mem.eql(u8, name, "null") or std.mem.eql(u8, name, "error")) return true;
+            if (ir.isBuiltinTypeName(name)) return true;
+            if (std.mem.eql(u8, name, "string") or std.mem.eql(u8, name, "[]byte")) return true;
             if (state.structs.contains(name) or state.enums.contains(name) or
                 state.typedefs.contains(name) or state.error_sets.contains(name)) return true;
             return false;
@@ -594,7 +660,7 @@ pub fn typecheckCast(state: *CompilerState, env: *typecheck_root.Env, ta: ir.Typ
     try resolveTypeExprs(state, env, ta, type_node);
     const target = try from_ast.typeFromAst(type_node, state, ta);
     const src = try typecheck_root.inferExpr(state, env, ta, value);
-    try checkAsCast(state, src, target);
+    try checkAsCast(state, src, target, value);
     return target;
 }
 
@@ -622,7 +688,7 @@ pub fn asCastKind(state: *CompilerState, type_node: *ast.Node) !?u8 {
     return null;
 }
 
-pub fn checkAsCast(state: *CompilerState, src: ir.Type, target: ir.Type) !void {
+pub fn checkAsCast(state: *CompilerState, src: ir.Type, target: ir.Type, value: ?*ast.Node) !void {
     if (ir.involvesUnknown(src) or ir.involvesUnknown(target)) return;
     const su = ir.peelDefined(src);
     const tu = ir.peelDefined(target);
@@ -631,7 +697,67 @@ pub fn checkAsCast(state: *CompilerState, src: ir.Type, target: ir.Type) !void {
     if (num_ok) return;
     // Same underlying shape (UUID ↔ ID, Expr ↔ Literal|Add, etc.).
     if (ir.typeEquals(su, tu) or ir.isSubtype(su, tu) or ir.isSubtype(tu, su)) return;
+    // Explicit deref via `@as(T, ptr)` — `*T → T`. No implicit pointee load elsewhere
+    // (keeps control flow / loads visible at the cast site).
+    if (su == .ptr) {
+        const pointee = ir.peelDefined(su.ptr.*);
+        if (ir.typeEquals(pointee, tu) or ir.isSubtype(pointee, tu) or ir.isSubtype(tu, pointee)) return;
+        if (isStringyIr(pointee) and isStringyIr(tu)) return;
+    }
+    // `@as(string, [104, 105])` / `@as([2]u8, [104, 105])`: integer-literal arrays
+    // coerce element-wise into bytes when every element fits in u8.
+    if (value) |node| {
+        if (try intLiteralArrayToBytes(state, node, su, tu)) return;
+    }
     const ds = try typecheck_root.ownDisplay(state, src);
     const dt = try typecheck_root.ownDisplay(state, target);
     return compile_errors.compileFailFmt(state, "Cannot cast to '{s}' from '{s}'", .{ dt, ds });
+}
+
+fn isStringyIr(t: ir.Type) bool {
+    return switch (ir.peelDefined(t)) {
+        .array => |a| a.elem.* == .u8 and a.length == null,
+        else => false,
+    };
+}
+
+fn isByteArrayOrString(t: ir.Type) bool {
+    const p = ir.peelDefined(t);
+    if (isStringyIr(p)) return true;
+    return p == .array and p.array.elem.* == .u8;
+}
+
+fn intLiteralArrayToBytes(
+    state: *CompilerState,
+    node: *ast.Node,
+    src: ir.Type,
+    target: ir.Type,
+) !bool {
+    if (!isByteArrayOrString(target)) return false;
+    if (node.* != .array_literal) return false;
+    const elems = node.array_literal.elements;
+    const tu = ir.peelDefined(target);
+    if (tu == .array and tu.array.length != null and tu.array.length.? != elems.len) {
+        return compile_errors.compileFailFmt(
+            state,
+            "Cannot cast to '{s}' from '{s}': length mismatch",
+            .{ try typecheck_root.ownDisplay(state, target), try typecheck_root.ownDisplay(state, src) },
+        );
+    }
+    // Source must be a homogeneous integer array (literals infer as i64 / int_lit).
+    if (src != .array or !ir.isInteger(ir.peelDefined(src.array.elem.*))) {
+        if (src != .tuple) return false;
+    }
+    for (elems) |el| {
+        // Non-literals fall through to the generic cast error (no silent truncating).
+        if (el.* != .literal) return false;
+        if (!typecheck_root.intLiteralFitsU8(el)) {
+            return compile_errors.compileFailFmt(
+                state,
+                "Literal {s} overflows target type 'u8'",
+                .{el.literal.value},
+            );
+        }
+    }
+    return true;
 }

@@ -18,10 +18,18 @@ pub fn compileCall(state: *CompilerState, c: *const ast.Call, node: *ast.Node) !
     try emit.emitLineIfNeeded(state, c.loc.line, c.loc.column);
 
     if (c.callee.* == .primary and std.mem.eql(u8, c.callee.primary.name, "print")) {
+        const locals_before = state.locals.items.len;
         try emit.emitNameGet(state, .OP_GET_GLOBAL, "print");
-        for (c.args) |arg| try expr.compileExpression(state, arg);
+        try scope.claimStackTemps(state);
+        for (c.args) |arg| {
+            try expr.compileExpression(state, arg);
+            try scope.claimStackTemps(state);
+        }
         try emit.emitOp(state, .OP_CALL);
         try emit.emitByte(state, @intCast(c.args.len));
+        scope.notePopN(state, @intCast(c.args.len + 1));
+        scope.notePush(state);
+        scope.dropLocalEntries(state, state.locals.items.len - locals_before);
         return;
     }
     if (c.callee.* == .primary and std.mem.startsWith(u8, c.callee.primary.name, "@")) {
@@ -108,10 +116,18 @@ pub fn compileCall(state: *CompilerState, c: *const ast.Call, node: *ast.Node) !
         if (try emitNamedCall(state, name, c.args, false, null)) return;
     }
 
+    const locals_before = state.locals.items.len;
     try expr.compileExpression(state, c.callee);
-    for (c.args) |arg| try expr.compileExpression(state, arg);
+    try scope.claimStackTemps(state);
+    for (c.args) |arg| {
+        try expr.compileExpression(state, arg);
+        try scope.claimStackTemps(state);
+    }
     try emit.emitOp(state, .OP_CALL);
     try emit.emitByte(state, @intCast(c.args.len));
+    scope.notePopN(state, @intCast(c.args.len + 1));
+    scope.notePush(state);
+    scope.dropLocalEntries(state, state.locals.items.len - locals_before);
 }
 
 /// For an array/slice display type (`[N]T`, `[]T`), return the element display
@@ -142,8 +158,10 @@ fn emitMethodCall(state: *CompilerState, name: []const u8, self_obj: *ast.Node, 
 
     // OP_CALL expects [callee, self, ...args]. GET_FUNCTION must precede args.
     // CALL_STATIC only needs [self, ...args] (no callee value).
+    const locals_before = state.locals.items.len;
     if (needsDynamicCall(addr)) {
         try emit.emitNameGet(state, .OP_GET_FUNCTION, name);
+        try scope.claimStackTemps(state);
     }
     // `self: T` (by value) must receive a shallow copy so field stores do not alias the caller.
     // Unannotated / `self: *T` keep the shared handle.
@@ -152,11 +170,17 @@ fn emitMethodCall(state: *CompilerState, name: []const u8, self_obj: *ast.Node, 
         try expr.compileExpression(state, self_obj);
         try emit.emitOp(state, .OP_CALL);
         try emit.emitByte(state, 1);
+        scope.notePopN(state, 2);
+        scope.notePush(state);
     } else {
         try expr.compileExpression(state, self_obj);
     }
-    for (args) |arg| try expr.compileExpression(state, arg);
-    try finishCall(state, addr, argc);
+    try scope.claimStackTemps(state);
+    for (args) |arg| {
+        try expr.compileExpression(state, arg);
+        try scope.claimStackTemps(state);
+    }
+    try finishCall(state, addr, argc, state.locals.items.len - locals_before);
 }
 
 fn methodSelfIsByValue(state: *CompilerState, name: []const u8) !bool {
@@ -205,11 +229,16 @@ fn emitNamedCall(state: *CompilerState, name: []const u8, args: []*ast.Node, _: 
     const argc: u8 = @intCast(args.len);
     // OP_CALL stack: [callee, arg0, ...]. Emit GET_FUNCTION before args when
     // the target is a forward ref or beyond CALL_STATIC's u16 address limit.
+    const locals_before = state.locals.items.len;
     if (needsDynamicCall(addr)) {
         try emit.emitNameGet(state, .OP_GET_FUNCTION, name);
+        try scope.claimStackTemps(state);
     }
-    for (args) |arg| try expr.compileExpression(state, arg);
-    try finishCall(state, addr, argc);
+    for (args) |arg| {
+        try expr.compileExpression(state, arg);
+        try scope.claimStackTemps(state);
+    }
+    try finishCall(state, addr, argc, state.locals.items.len - locals_before);
     return true;
 }
 
@@ -219,45 +248,40 @@ fn needsDynamicCall(addr: ?u32) bool {
 }
 
 /// After args (and optional callee) are on the stack: CALL_STATIC or CALL.
-fn finishCall(state: *CompilerState, addr: ?u32, argc: u8) !void {
+/// `claims` is how many anonymous locals this call added for callee/args;
+/// they are dropped after the call consumes those stack slots.
+fn finishCall(state: *CompilerState, addr: ?u32, argc: u8, claims: usize) !void {
     if (addr) |a| {
         if (a <= 0xffff) {
             try emit.emitCallStatic(state, @intCast(a), argc);
+            // CALL_STATIC: pop argc args, push 1 result.
+            scope.notePopN(state, argc);
+            scope.notePush(state);
+            scope.dropLocalEntries(state, claims);
             return;
         }
     }
     try emit.emitOp(state, .OP_CALL);
     try emit.emitByte(state, argc);
+    // CALL: pop callee+argc, push 1.
+    scope.notePopN(state, argc + 1);
+    scope.notePush(state);
+    scope.dropLocalEntries(state, claims);
 }
 
+/// `lhs |> f(a)` compiles as the call `f(lhs, a)`: the left operand is the
+/// callee's first argument. Delegating to `compileCall` keeps pipes on the
+/// same path as ordinary calls (methods, module exports, generics, cast sugar).
 pub fn compilePipe(state: *CompilerState, bin: *const ast.Binary) !void {
-    if (bin.right.* == .call) {
-        const c = &bin.right.call;
-        // Build a synthetic call: callee(left, ...args)
-        if (try resolveCalleeName(state, c.callee)) |name| {
-            if (state.functions.getPtr(name)) |def| {
-                const argc: u8 = @intCast(c.args.len + 1);
-                if (needsDynamicCall(def.address)) {
-                    try emit.emitNameGet(state, .OP_GET_FUNCTION, name);
-                }
-                try expr.compileExpression(state, bin.left);
-                for (c.args) |arg| try expr.compileExpression(state, arg);
-                try finishCall(state, def.address, argc);
-                return;
-            }
-        }
-        try expr.compileExpression(state, c.callee);
-        try expr.compileExpression(state, bin.left);
-        for (c.args) |arg| try expr.compileExpression(state, arg);
-        try emit.emitOp(state, .OP_CALL);
-        try emit.emitByte(state, @intCast(c.args.len + 1));
-        return;
-    }
-
-    try expr.compileExpression(state, bin.right);
-    try expr.compileExpression(state, bin.left);
-    try emit.emitOp(state, .OP_CALL);
-    try emit.emitByte(state, 1);
+    const right = bin.right;
+    const callee: *ast.Node = if (right.* == .call) right.call.callee else right;
+    const explicit: []const *ast.Node = if (right.* == .call) right.call.args else &.{};
+    const args = try state.allocator.alloc(*ast.Node, explicit.len + 1);
+    defer state.allocator.free(args);
+    args[0] = bin.left;
+    @memcpy(args[1..], explicit);
+    const c = ast.Call{ .callee = callee, .args = args, .loc = right.loc() };
+    try compileCall(state, &c, right);
 }
 
 fn resolveCalleeName(state: *CompilerState, callee: *ast.Node) !?[]const u8 {

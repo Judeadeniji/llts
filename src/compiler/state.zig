@@ -147,6 +147,10 @@ pub const CompilerState = struct {
     strict: bool = false,
     locals: std.ArrayList(Local) = .empty,
     scope_depth: i32 = 0,
+    /// Stack slots occupied above the current frame base (locals + temporaries).
+    /// Local index `i` must address `base + i`, so temps below a new local have
+    /// to be claimed as anonymous locals first (see `scope.claimStackTemps`).
+    stack_depth: u32 = 0,
     functions: std.StringHashMap(FunctionDef),
     structs: std.StringHashMap(StructDef),
     enums: std.StringHashMap(EnumDef),

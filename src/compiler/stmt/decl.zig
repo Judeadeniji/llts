@@ -13,6 +13,7 @@ const compile_errors = @import("../../errors/compile.zig");
 const layout = @import("../layout.zig");
 const widths = @import("../widths.zig");
 const escape = @import("../escape.zig");
+const value_clone = @import("../value_clone.zig");
 
 const CompilerState = state_mod.CompilerState;
 
@@ -60,13 +61,12 @@ pub fn compileDeclaration(state: *CompilerState, decl: *const ast.Declaration) !
 
     if (comptime_value) |cval| {
         try const_eval.emitConstValue(state, cval);
-    } else if (shouldCloneStructValue(state, decl.value)) {
-        // Struct binding reference — clone so the declaration copies;
+    } else if (value_clone.cloneBuiltin(state, decl.value)) |clone_name| {
+        // Aggregate binding — clone so the declaration copies;
         // sharing requires explicit `*T` / `&x`.
-        try emit.emitNameGet(state, .OP_GET_GLOBAL, "__cloneBytes");
+        try emit.emitNameGet(state, .OP_GET_GLOBAL, clone_name);
         try expr.compileExpression(state, decl.value);
-        try emit.emitOp(state, .OP_CALL);
-        try emit.emitByte(state, 1);
+        try emit.emitCall(state, 1);
     } else {
         try expr.compileExpression(state, decl.value);
     }
@@ -122,12 +122,18 @@ pub fn compileDeclaration(state: *CompilerState, decl: *const ast.Declaration) !
 
     if (state.scope_depth > 0 and !is_module_export) {
         try checkLocalDup(state, decl.name);
+        // When the clone branch above fired (`__cloneBytes` / `__cloneArray`),
+        // the copy was allocated in the *current frame* (`allocFrameBytes`).
+        // The local is therefore frame-bound even when the RHS is a parameter,
+        // global, or other pass-through handle — inheriting the RHS region
+        // would let `return local` hand out a handle the frame rewind frees.
+        const cloned = comptime_value == null and value_clone.cloneBuiltin(state, decl.value) != null;
         try state.locals.append(state.allocator, .{
             .name = decl.name,
             .depth = state.scope_depth,
             .type_name = type_name,
             .is_const = decl.is_const,
-            .alloc_region = escape.regionOfRhs(state, decl.value),
+            .alloc_region = if (cloned) .frame else escape.regionOfRhs(state, decl.value),
         });
         if (decl.is_const) {
             const slot: u8 = @intCast(state.locals.items.len - 1);
@@ -137,8 +143,7 @@ pub fn compileDeclaration(state: *CompilerState, decl: *const ast.Declaration) !
             try emit.emitNameGet(state, .OP_GET_GLOBAL, "__freeze");
             try emit.emitOp(state, .OP_GET_LOCAL);
             try emit.emitByte(state, slot);
-            try emit.emitOp(state, .OP_CALL);
-            try emit.emitByte(state, 1);
+            try emit.emitCall(state, 1);
             try emit.emitOp(state, .OP_POP);
         }
     } else {
@@ -150,8 +155,7 @@ pub fn compileDeclaration(state: *CompilerState, decl: *const ast.Declaration) !
             // aliases (`$r = A`, `f(A)`) cannot write through to the constant.
             try emit.emitNameGet(state, .OP_GET_GLOBAL, "__freeze");
             try emit.emitNameGet(state, .OP_GET_GLOBAL, decl.name);
-            try emit.emitOp(state, .OP_CALL);
-            try emit.emitByte(state, 1);
+            try emit.emitCall(state, 1);
             try emit.emitOp(state, .OP_POP);
             try state.ready_global_consts.put(decl.name, {});
         }
@@ -201,10 +205,16 @@ fn typesAssignable(state: *CompilerState, got: []const u8, expected: []const u8)
     const ep = ir.peelDefined(e);
     if (literalTypeAcceptsDisplay(ep, got, g)) return true;
     // Untyped integer literal display still spells "int" (not "i64"); may coerce into any integer width,
-    // including nested `[N]int` / `[2][3]int` into matching integer arrays.
+    // including nested `[N]int` / `[2][3]int` and optional integer targets (`?usize`).
     if (isUntypedIntDisplay(got) and untypedIntCoerces(g, e)) return true;
-    // Untyped / f64 float literal may narrow to f32.
-    if ((std.mem.eql(u8, got, "float") or std.mem.eql(u8, got, "f64")) and ir.peelDefined(e) == .f32) return true;
+    // Untyped / f64 float literal may narrow to f32 (and `?f32`).
+    if (std.mem.eql(u8, got, "float") or std.mem.eql(u8, got, "f64")) {
+        const pe = ir.peelDefined(e);
+        if (pe == .f32) return true;
+        if (ir.optionalPayload(pe)) |payload| {
+            if (ir.peelDefined(payload) == .f32) return true;
+        }
+    }
     return false;
 }
 
@@ -230,12 +240,16 @@ fn isUntypedIntDisplay(s: []const u8) bool {
 }
 
 fn untypedIntCoerces(g: ir.Type, e: ir.Type) bool {
-    if (ir.isInteger(e) and g == .i64) return true;
-    if (g == .array and e == .array) {
-        if (!untypedIntCoerces(g.array.elem.*, e.array.elem.*)) return false;
-        if (e.array.length == null) return true;
+    const pe = ir.peelDefined(e);
+    if (ir.isInteger(pe) and (g == .i64 or ir.peelDefined(g) == .int_lit)) return true;
+    if (ir.optionalPayload(pe)) |payload| {
+        if (untypedIntCoerces(g, payload)) return true;
+    }
+    if (g == .array and pe == .array) {
+        if (!untypedIntCoerces(g.array.elem.*, pe.array.elem.*)) return false;
+        if (pe.array.length == null) return true;
         if (g.array.length == null) return false;
-        return g.array.length.? == e.array.length.?;
+        return g.array.length.? == pe.array.length.?;
     }
     return false;
 }
@@ -490,19 +504,3 @@ fn widthCastKind(node: *ast.Node) ?u8 {
     return null;
 }
 
-/// True when the node is a binding reference (primary / member access) whose
-/// resolved type is a bare struct value. Pointers (`*T`) and optionals of
-/// pointers (`?*T`) share handles by design — only struct values clone.
-fn shouldCloneStructValue(state: *CompilerState, node: *ast.Node) bool {
-    switch (node.*) {
-        .primary, .member => {},
-        else => return false,
-    }
-    const tn = types.resolveType(state, node) orelse return false;
-    // Skip pointer and optional types — those share handles.
-    const trimmed = std.mem.trim(u8, tn, " \t");
-    if (trimmed.len > 0 and (trimmed[0] == '*' or trimmed[0] == '?')) return false;
-    if (std.mem.indexOfScalar(u8, trimmed, '*') != null) return false;
-    if (std.mem.indexOf(u8, trimmed, " | null") != null) return false;
-    return types.lookupStruct(state, tn) != null;
-}

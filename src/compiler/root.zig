@@ -169,8 +169,7 @@ pub fn emitBytecode(state: *state_mod.CompilerState, doc: *ast.Document) !chunk_
         try emit.emitCallStatic(state, @intCast(main_fn.address), 0);
     } else {
         try emit.emitNameGet(state, .OP_GET_FUNCTION, "main");
-        try emit.emitOp(state, .OP_CALL);
-        try emit.emitByte(state, 0);
+        try emit.emitCall(state, 0);
     }
     // Return main's result directly from the root chunk.
     try emit.emitOp(state, .OP_RETURN);

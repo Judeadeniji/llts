@@ -41,14 +41,13 @@ pub fn compileReturn(state: *CompilerState, ret: *const ast.Return) !void {
                 // Flat scalar struct — shallow-copy into immortal.
                 try emit.emitNameGet(state, .OP_GET_GLOBAL, "__cloneBytesImmortal");
                 try expr.compileExpression(state, v);
-                try emit.emitOp(state, .OP_CALL);
-                try emit.emitByte(state, 1);
+                try emit.emitCall(state, 1);
             }
         } else {
             try expr.compileExpression(state, v);
         }
     } else {
-        try emit.emitOp(state, .OP_NULL);
+        try emit.emitOp(state, .OP_VOID);
     }
     try scope.emitFunctionExitDefers(state, .dynamic);
     if (state.inline_return_jumps.items.len > 0) {
@@ -92,8 +91,7 @@ fn emitDeepCloneFromLocal(state: *CompilerState, src_idx: u8, tn: []const u8) !v
     try emit.emitNameGet(state, .OP_GET_GLOBAL, "__cloneBytesImmortal");
     try emit.emitOp(state, .OP_GET_LOCAL);
     try emit.emitByte(state, src_idx);
-    try emit.emitOp(state, .OP_CALL);
-    try emit.emitByte(state, 1);
+    try emit.emitCall(state, 1);
     const shell_idx: u8 = @intCast(state.locals.items.len);
     try state.locals.append(state.allocator, .{ .name = ".dc_shell", .depth = state.scope_depth });
 
@@ -139,10 +137,12 @@ pub fn compileFunction(state: *CompilerState, node: *ast.FunctionDecl, ast_node:
     _ = ast_node;
     const outer_locals = state.locals;
     const outer_depth = state.scope_depth;
+    const outer_stack = state.stack_depth;
     const outer_defers = state.defer_stacks;
 
     state.locals = .empty;
     state.scope_depth = 0;
+    state.stack_depth = 0;
     state.defer_stacks = std.AutoHashMap(i32, std.ArrayListUnmanaged(state_mod.DeferEntry)).init(state.allocator);
 
     try scope.beginScope(state);
@@ -166,6 +166,8 @@ pub fn compileFunction(state: *CompilerState, node: *ast.FunctionDecl, ast_node:
     for (params.params) |p| {
         try pushParam(state, p, method_struct);
     }
+    // Params are already on the VM stack at the frame base.
+    state.stack_depth = @intCast(state.locals.items.len);
 
     const body = switch (node.body.*) {
         .block => |*b| b,
@@ -174,7 +176,7 @@ pub fn compileFunction(state: *CompilerState, node: *ast.FunctionDecl, ast_node:
     for (body.statements) |s| try stmt.compileStatement(state, s);
 
     try scope.emitFunctionExitDefers(state, .normal);
-    try emit.emitOp(state, .OP_NULL);
+    try emit.emitOp(state, .OP_VOID);
     try emit.emitOp(state, .OP_RETURN);
 
     // discard function-local state
@@ -185,6 +187,7 @@ pub fn compileFunction(state: *CompilerState, node: *ast.FunctionDecl, ast_node:
 
     state.locals = outer_locals;
     state.scope_depth = outer_depth;
+    state.stack_depth = outer_stack;
     state.defer_stacks = outer_defers;
 }
 

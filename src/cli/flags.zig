@@ -83,6 +83,13 @@ pub const emit_asm = zli.Flag{
     .default_value = .{ .Bool = false },
 };
 
+pub const emit = zli.Flag{
+    .name = "emit",
+    .description = "Native artifact kind to emit: bin, asm, llvm-ir, llvm-bc, h, docs, implib (implies --native)",
+    .type = .String,
+    .default_value = .{ .String = "" },
+};
+
 pub const zig_args = zli.Flag{
     .name = "zig-args",
     .description = "Options forwarded to the zig cli (e.g. --zig-args=\"-fstrip -flto\", env LLTS_ZIG_ARGS)",
@@ -138,6 +145,7 @@ pub fn addCompileFlags(cmd: *zli.Command) !void {
     try cmd.addFlag(emit_bin);
     try cmd.addFlag(emit_bytecode);
     try cmd.addFlag(emit_asm);
+    try cmd.addFlag(emit);
     try cmd.addFlag(zig_args);
     try cmd.addFlag(zig_bin);
     try cmd.addFlag(runtime_path);

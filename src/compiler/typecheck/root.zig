@@ -288,35 +288,40 @@ fn requireAssignAt(state: *state_mod.CompilerState, got: ir.Type, expected: ir.T
     if (from) |node| {
         if (matchesValueLiteralToType(node, expected)) return;
     }
-    // Zig-style: integer literals may coerce into any integer width that fits.
-    if (ir.isInteger(ir.peelDefined(expected)) and (got == .i64 or ir.peelDefined(got) == .int_lit)) {
-        if (from) |node| {
-            if (intLiteralFits(node, ir.widthOf(expected).?)) {
-                try recordExprType(state, node, expected);
-                return;
-            } else if (isIntegerLiteral(node)) {
-                const exp_name = try ownDisplay(state, expected);
-                const file_path = if (loc.path.len > 0) loc.path else state.chunk.file;
-                const line = if (loc.line > 0) loc.line else 1;
-                const col = if (loc.column > 0) loc.column else 1;
-                return compiler_errors.compileFailAt(
-                    state,
-                    file_path,
-                    sourceFor(state, file_path),
-                    line,
-                    col,
-                    "Literal {s} overflows target type '{s}'",
-                    .{ node.literal.value, exp_name },
-                );
+    // Zig-style: integer literals may coerce into any integer width that fits,
+    // including optional integer targets (`?usize`, `?i32`, …).
+    if (integerAssignTarget(expected)) |target| {
+        if (got == .i64 or ir.peelDefined(got) == .int_lit) {
+            if (from) |node| {
+                if (intLiteralFits(node, ir.widthOf(target).?)) {
+                    try recordExprType(state, node, target);
+                    return;
+                } else if (isIntegerLiteral(node)) {
+                    const exp_name = try ownDisplay(state, expected);
+                    const file_path = if (loc.path.len > 0) loc.path else state.chunk.file;
+                    const line = if (loc.line > 0) loc.line else 1;
+                    const col = if (loc.column > 0) loc.column else 1;
+                    return compiler_errors.compileFailAt(
+                        state,
+                        file_path,
+                        sourceFor(state, file_path),
+                        line,
+                        col,
+                        "Literal {s} overflows target type '{s}'",
+                        .{ node.literal.value, exp_name },
+                    );
+                }
             }
         }
     }
-    // Float literals are f64; may coerce into f32.
-    if (ir.peelDefined(expected) == .f32 and got == .f64) {
-        if (from) |node| {
-            if (isFloatLiteral(node)) {
-                try recordExprType(state, node, expected);
-                return;
+    // Float literals are f64; may coerce into f32 (and `?f32`).
+    if (floatAssignTarget(expected)) |target| {
+        if (target == .f32 and got == .f64) {
+            if (from) |node| {
+                if (isFloatLiteral(node)) {
+                    try recordExprType(state, node, target);
+                    return;
+                }
             }
         }
     }
@@ -484,6 +489,39 @@ fn intLiteralFits(node: *ast.Node, width: widths.Width) bool {
         else => return false,
     };
     return widths.i64Fits(width, n);
+}
+
+/// True when `node` is an integer literal that fits in `u8` (for `@as(string, […])`).
+pub fn intLiteralFitsU8(node: *ast.Node) bool {
+    return intLiteralFits(node, .u8);
+}
+
+/// Integer width to coerce an untyped literal into for `expected`, including `?T`.
+fn integerAssignTarget(expected: ir.Type) ?ir.Type {
+    const pe = ir.peelDefined(expected);
+    if (ir.isInteger(pe)) return pe;
+    if (ir.optionalPayload(pe)) |payload| {
+        const pp = ir.peelDefined(payload);
+        if (ir.isInteger(pp)) return pp;
+    }
+    return null;
+}
+
+/// Float width for literal coercion into `expected`, including `?f32`.
+fn floatAssignTarget(expected: ir.Type) ?ir.Type {
+    const pe = ir.peelDefined(expected);
+    if (pe == .f32 or pe == .f64) return pe;
+    if (ir.optionalPayload(pe)) |payload| {
+        const pp = ir.peelDefined(payload);
+        if (pp == .f32 or pp == .f64) return pp;
+    }
+    return null;
+}
+
+fn isStringBufferPtr(t: ir.Type) bool {
+    const pe = ir.peelDefined(t);
+    if (pe != .ptr) return false;
+    return ir.isByteSlice(pe.ptr.*);
 }
 
 fn isFloatLiteral(node: *ast.Node) bool {
@@ -992,6 +1030,41 @@ fn resolveCalleeName(state: *state_mod.CompilerState, call: *const ast.Call) ?[]
     return null;
 }
 
+/// `lhs |> f(a)` typechecks as the call `f(lhs, a)`: the left operand is the
+/// callee's first argument, so arity, argument types, and the result type all
+/// come from the callee's signature.
+fn inferPipe(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, b: *const ast.Binary) TypecheckError!ir.Type {
+    const right = b.right;
+    const callee: *ast.Node = if (right.* == .call) right.call.callee else right;
+    const explicit: []const *ast.Node = if (right.* == .call) right.call.args else &.{};
+    const args = try ta.allocator.alloc(*ast.Node, explicit.len + 1);
+    args[0] = b.left;
+    @memcpy(args[1..], explicit);
+    const synth = ast.Call{ .callee = callee, .args = args, .loc = right.loc() };
+    try checkPipeTarget(state, env, ta, &synth);
+    return try inferCall(state, env, ta, right, &synth);
+}
+
+/// A pipe target must be callable: literals, fields, and plain values are
+/// rejected here instead of crashing the VM with "Cannot call <value>".
+/// Methods and module exports resolve through the call machinery itself, so
+/// only plain values are type-checked as values.
+fn checkPipeTarget(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, c: *const ast.Call) TypecheckError!void {
+    if (c.callee.* == .member) {
+        const is_static = (path.tryResolveStaticPath(state, c.callee) catch null) != null;
+        if (is_static) {
+            // A module export: a function is callable, anything else isn't.
+            if (resolveCalleeName(state, c)) |name| {
+                if (state.functions.contains(name)) return;
+            }
+        } else if (try resolveMethodCallee(state, env, ta, c)) |_| return;
+    }
+    const target = ir.peelDefined(try inferExpr(state, env, ta, c.callee));
+    if (target == .unknown or target == .func) return;
+    const d = try ownDisplay(state, target);
+    return compiler_errors.compileFailFmt(state, "Pipe target must be a function, got '{s}'", .{d});
+}
+
 fn noteDiag(state: *state_mod.CompilerState, node: *ast.Node) void {
     const loc = node.loc();
     if (loc.line > 0) state.diag_line = loc.line;
@@ -1154,17 +1227,18 @@ fn inferExprInner(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, 
                     return compiler_errors.compileFailFmt(state, "Cannot take the address of a pointer (no **T yet)", .{});
                 }
                 if (ir.optionalPayload(t) != null) {
-                    return compiler_errors.compileFailFmt(state, "Cannot take the address of an optional; use a non-optional struct value", .{});
+                    return compiler_errors.compileFailFmt(state, "Cannot take the address of an optional; use a non-optional aggregate", .{});
                 }
-                if (t != .struct_) {
+                if (!ir.isAddressableAggregate(t)) {
                     const d = try ownDisplay(state, t);
-                    return compiler_errors.compileFailFmt(state, "Address-of requires a struct value, got '{s}'", .{d});
+                    return compiler_errors.compileFailFmt(state, "Address-of requires an aggregate value (struct, array, or []T), got '{s}'", .{d});
                 }
                 break :blk try ta.ptrType(t);
             }
             break :blk t;
         },
         .binary => |b| blk: {
+            if (std.mem.eql(u8, b.operator, "|>")) break :blk try inferPipe(state, env, ta, &b);
             if (std.mem.eql(u8, b.operator, "==") or std.mem.eql(u8, b.operator, "!=")) {
                 if (intrinsics.isTypeValueNode(state, env, b.left) or intrinsics.isTypeValueNode(state, env, b.right)) {
                     try checkTypeComparison(state, env, ta, b);
@@ -1188,7 +1262,15 @@ fn inferExprInner(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, 
                 break :blk ir.TBool;
             }
             if (std.mem.eql(u8, op, "+")) {
-                if (ir.isByteSlice(l) or ir.isByteSlice(r)) break :blk ir.TString;
+                if (ir.isByteSlice(l) or ir.isByteSlice(r) or l == .str_lit or r == .str_lit or isStringBufferPtr(l) or isStringBufferPtr(r)) {
+                    // String `+` no longer allocates. Use `@concat(allocator, a, b)`
+                    // (frame-backed) or `@concat(buffer, a, b)` (writes into a `@new` buffer).
+                    return compiler_errors.compileFailFmt(
+                        state,
+                        "string concatenation requires @concat(allocator, a, b) or @concat(buffer, a, b); '+' no longer concatenates strings",
+                        .{},
+                    );
+                }
                 if (!ir.involvesUnknown(l) and !ir.involvesUnknown(r)) {
                     break :blk try coerceNumericPair(state, l, r, b.left, b.right, "numeric +");
                 }
@@ -1265,6 +1347,21 @@ fn inferExprInner(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, 
                     }
                 }
                 const field_obj = ir.peelDefined(obj);
+                if (field_obj == .error_ or field_obj == .error_set or field_obj == .error_lit) {
+                    const prop = m.property.primary.name;
+                    if (std.mem.eql(u8, prop, "message")) {
+                        break :blk ir.TString;
+                    }
+                    return compiler_errors.compileFailFmt(state, "Unknown error field '{s}'", .{prop});
+                }
+                // Error unions (`T | error`) expose the message too; the
+                // emitter unwraps the error arm at runtime.
+                if (ir.isErrorUnion(field_obj)) {
+                    const prop = m.property.primary.name;
+                    if (std.mem.eql(u8, prop, "message")) {
+                        break :blk ir.TString;
+                    }
+                }
                 // Tuple / array numeric field access: `.0`, `.1`, …
                 if (field_obj == .tuple) {
                     if (std.fmt.parseInt(i64, m.property.primary.name, 10)) |ci| {
@@ -1329,7 +1426,9 @@ fn inferExprInner(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, 
             break :blk ir.TUnknown;
         },
         .index => |idx| blk: {
-            const obj = try inferExpr(state, env, ta, idx.object);
+            const obj_raw = try inferExpr(state, env, ta, idx.object);
+            // Auto-deref `*T` / `?*T` so `p[i]` works like field access on `*Struct`.
+            const obj = ir.peelForIndex(obj_raw);
             if (idx.is_slice) {
                 if (idx.index) |start_node| {
                     const i = try inferExpr(state, env, ta, start_node);
@@ -1343,7 +1442,7 @@ fn inferExprInner(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, 
                     break :blk try ta.arrayType(obj.array.elem.*, null);
                 }
                 if (!ir.involvesUnknown(obj) and obj != .unknown) {
-                    const d = try ownDisplay(state, obj);
+                    const d = try ownDisplay(state, obj_raw);
                     return compiler_errors.compileFailFmt(state, "Cannot slice type '{s}'", .{d});
                 }
                 break :blk ir.TUnknown;
@@ -1365,7 +1464,7 @@ fn inferExprInner(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, 
                 break :blk ir.TUnknown;
             }
             if (!ir.involvesUnknown(obj) and obj != .unknown) {
-                const d = try ownDisplay(state, obj);
+                const d = try ownDisplay(state, obj_raw);
                 return compiler_errors.compileFailFmt(state, "Cannot index type '{s}'", .{d});
             }
             break :blk ir.TUnknown;
@@ -1373,14 +1472,11 @@ fn inferExprInner(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, 
         .array_literal => |a| try inferArrayLiteral(state, env, ta, a),
         .struct_init => |init| try inferStructInit(state, env, ta, init),
         .error_expr => |e| blk: {
-            if (e.args.len == 0 or e.args.len > 2) {
-                return compiler_errors.compileFailFmt(state, "error() takes at most 2 arguments (message, payload)", .{});
+            if (e.args.len != 1) {
+                return compiler_errors.compileFailFmt(state, "error() takes exactly 1 argument (a code string)", .{});
             }
             const msg = try inferExpr(state, env, ta, e.args[0]);
             try requireAssign(state, msg, ir.TString, "error(...)");
-            if (e.args.len == 2) {
-                _ = try inferExpr(state, env, ta, e.args[1]);
-            }
             break :blk ir.TError;
         },
         .try_expr => |t| blk: {
@@ -1508,7 +1604,7 @@ fn inferExprInner(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, 
                 if (env.constPlaceRoot(a.left.index.object)) |obj_name| {
                     return compiler_errors.compileFailFmt(state, "Cannot mutate elements of constant '{s}'", .{obj_name});
                 }
-                const obj_t = try inferExpr(state, env, ta, a.left.index.object);
+                const obj_t = ir.peelForIndex(try inferExpr(state, env, ta, a.left.index.object));
                 const start_node = a.left.index.index orelse {
                     return compiler_errors.compileFailFmt(state, "Expected index expression", .{});
                 };
@@ -1845,11 +1941,24 @@ fn inferCall(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, call_
         return ir.TInt;
     }
 
+    // Native side-effect / noreturn builtins with fixed result types.
+    if (c.callee.* == .primary and !state.functions.contains(c.callee.primary.name)) {
+        const n = c.callee.primary.name;
+        if (std.mem.eql(u8, n, "print") or std.mem.eql(u8, n, "__printLn")) {
+            for (c.args) |a| _ = try inferExpr(state, env, ta, a);
+            return ir.TVoid;
+        }
+        if (std.mem.eql(u8, n, "__exit")) {
+            for (c.args) |a| _ = try inferExpr(state, env, ta, a);
+            return ir.TNever;
+        }
+    }
+
     // `arrayLike.get(i)` → `?T` (null when out of bounds) — Phase 4.4.
     if (c.callee.* == .member and c.callee.member.property.* == .primary and
         std.mem.eql(u8, c.callee.member.property.primary.name, "get") and c.args.len == 1)
     {
-        const obj_ty = try inferExpr(state, env, ta, c.callee.member.object);
+        const obj_ty = ir.peelForIndex(try inferExpr(state, env, ta, c.callee.member.object));
         _ = try inferExpr(state, env, ta, c.args[0]);
         const disp = try ownDisplay(state, obj_ty);
         if (arrayElemDisplay(disp)) |elem_disp| {
@@ -2368,9 +2477,17 @@ fn checkStmt(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node:
             return null;
         },
         .return_expr => |r| {
-            const t = if (r.return_value) |v| try inferExpr(state, env, ta, v) else ir.TNull;
+            const t = if (r.return_value) |v| try inferExpr(state, env, ta, v) else ir.TVoid;
             try rejectTypeValue(state, t, "a return value");
             if (env.expected_return) |er| {
+                if (er == .never) {
+                    if (r.return_value == null) {
+                        return compiler_errors.compileFailFmt(state, "Cannot 'return;' from a ': never' function; ': never' must not return (call another ': never' function or loop forever)", .{});
+                    }
+                    if (t != .never) {
+                        return compiler_errors.compileFailFmt(state, "Cannot return a value from a ': never' function; ': never' must not return", .{});
+                    }
+                }
                 if (r.return_value) |v| {
                     try requireAssignFrom(state, t, er, "return value", v);
                 } else {
@@ -2433,6 +2550,11 @@ fn checkFunction(
     env.top_consts = top_consts;
 
     const annotated: ?ir.Type = if (f.return_type) |rt| try from_ast.typeFromAst(rt, state, ta) else null;
+    if (annotated) |a| {
+        if (a == .null) {
+            return compiler_errors.compileFailFmt(state, "Function return type cannot be 'null'; use 'void' for no result, or '?T' / 'T | null' for optional absence", .{});
+        }
+    }
     // Two different contracts:
     // • `expected_return` (body return checks) uses the refined display from
     //   refineErrorReturns when it widened the annotation — so an annotated `: Box`
@@ -2535,7 +2657,6 @@ fn checkFunction(
             const disp = try ownDisplayQualified(state, a);
             // `unknown | error` from refineErrorReturns — upgrade success arm from body.
             const weak_success = std.mem.eql(u8, disp, "unknown") or
-                std.mem.eql(u8, disp, "error") or
                 std.mem.startsWith(u8, disp, "unknown |");
             if (weak_success) {
                 if (inferReturnDisplayFromBody(state, f.body)) |better| {
@@ -2575,13 +2696,29 @@ fn checkFunction(
                 }
                 def.return_type = final;
             }
+        } else if (!bodyHasValuedReturn(f.body)) {
+            // No valued `return expr`: empty body / only bare `return;` → void.
+            // If the body *does* `return <expr>` but inference could not refine
+            // (e.g. thin wrappers around natives), leave unknown — never stamp void.
+            if (def.return_type == null or
+                std.mem.eql(u8, def.return_type.?, "unknown") or
+                std.mem.eql(u8, def.return_type.?, "null"))
+            {
+                def.return_type = "void";
+            }
+        }
+    }
+
+    if (annotated) |a| {
+        if (a == .never and !nodeAlwaysNeverReturns(state, f.body)) {
+            return compiler_errors.compileFailFmt(state, "Function '{s}' is ': never' but can complete normally; every path must call a ': never' function or loop forever", .{f.name});
         }
     }
 
     if (state.strict and !std.mem.eql(u8, f.name, "main")) {
         const ret_disp = if (expected) |a| try ownDisplay(state, a) else if (state.functions.get(f.name)) |def| def.return_type else null;
         if (ret_disp) |rd| {
-            if (!std.mem.eql(u8, rd, "void") and !nodeAlwaysReturns(f.body)) {
+            if (!std.mem.eql(u8, rd, "void") and !std.mem.eql(u8, rd, "never") and !nodeAlwaysReturns(f.body)) {
                 // Point at the fall-through path: the last statement of the body
                 // (or the declaration when the body is empty).
                 var end_line: u32 = f.loc.line;
@@ -2606,6 +2743,78 @@ fn blockAlwaysReturns(block: ast.Block) bool {
         if (nodeAlwaysReturns(s)) return true;
     }
     return false;
+}
+
+fn functionReturnsNever(state: *state_mod.CompilerState, func_name: []const u8) bool {
+    if (std.mem.eql(u8, func_name, "__exit")) return true;
+    const def = state.functions.get(func_name) orelse return false;
+    if (def.return_type) |rt| return std.mem.eql(u8, rt, "never");
+    if (def.node.* == .function_decl) {
+        if (def.node.function_decl.return_type) |rt_node| {
+            if (rt_node.* == .primary and std.mem.eql(u8, rt_node.primary.name, "never")) return true;
+        }
+    }
+    return false;
+}
+
+/// True when any `return <expr>` appears. Bare `return;` does not count as valued.
+fn bodyHasValuedReturn(node: *ast.Node) bool {
+    return switch (node.*) {
+        .return_expr => |r| r.return_value != null,
+        .block => |b| blk: {
+            for (b.statements) |s| {
+                if (bodyHasValuedReturn(s)) break :blk true;
+            }
+            break :blk false;
+        },
+        .if_expr => |ife| blk: {
+            if (bodyHasValuedReturn(ife.body)) break :blk true;
+            if (ife.else_body) |eb| break :blk bodyHasValuedReturn(eb);
+            break :blk false;
+        },
+        .switch_expr => |sw| blk: {
+            for (sw.prongs) |p| {
+                if (bodyHasValuedReturn(p.body)) break :blk true;
+            }
+            break :blk false;
+        },
+        .for_expr => |f| bodyHasValuedReturn(f.body),
+        else => false,
+    };
+}
+
+fn callReturnsNever(state: *state_mod.CompilerState, node: *ast.Node) bool {
+    if (node.* != .call) return false;
+    if (resolveCalleeName(state, &node.call)) |name| {
+        if (functionReturnsNever(state, name)) return true;
+    }
+    if (state.type_of_results.get(node)) |t| return std.mem.eql(u8, t, "never");
+    return false;
+}
+
+fn nodeAlwaysNeverReturns(state: *state_mod.CompilerState, node: *ast.Node) bool {
+    // A `: never` body is OK if every path ends in a never-call or `return neverExpr`.
+    return switch (node.*) {
+        .return_expr => |r| blk: {
+            if (r.return_value) |v| {
+                if (callReturnsNever(state, v)) break :blk true;
+                if (state.type_of_results.get(v)) |t| break :blk std.mem.eql(u8, t, "never");
+            }
+            break :blk false;
+        },
+        .block => |b| blk: {
+            if (b.statements.len == 0) break :blk false;
+            break :blk nodeAlwaysNeverReturns(state, b.statements[b.statements.len - 1]);
+        },
+        .if_expr => |ife| blk: {
+            if (ife.else_body) |eb| {
+                break :blk nodeAlwaysNeverReturns(state, ife.body) and nodeAlwaysNeverReturns(state, eb);
+            }
+            break :blk false;
+        },
+        .call => callReturnsNever(state, node),
+        else => callReturnsNever(state, node),
+    };
 }
 
 fn nodeAlwaysReturns(node: *ast.Node) bool {

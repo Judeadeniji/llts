@@ -9,7 +9,7 @@ Zig implementation. The TypeScript prototype/reference is [`llts-js`](../llts-js
 - [x] Basic Tokens: Identifiers, Numbers (int, float, hex, binary, octal), Strings, Booleans.
 - [x] Registers: `$a`, `$t0`, etc. (declaration-only sigil; uses omit `$`).
 - [x] Keywords: `return`, `true`, `false`, `break`, `continue`, `pub`, `defer`.
-- [x] Compiler Directives: `@func`, `@import`, `@const`, `@if`, `@for`, `@struct`, `@typeOf`, `@sizeOf`, `@isError`, `@extern`.
+- [x] Compiler Directives: `@func`, `@import`, `@const`, `@if`, `@for`, `@struct`, `@typeOf`, `@sizeOf`, `@addrOf`, `@isError`, `@extern`.
 - [x] Operators: Arithmetic, Assignment (including compound `+=` etc.), Comparison, Logical, Pipe (`|>`), Power (`**` / `^`).
 - [x] Comments: Line comments starting with `#`.
 
@@ -72,9 +72,9 @@ Perf gate: `bun benchmarks/run.ts` (1M loop median).
 
 ### P0 — Memory model (layout)
 
-Packed byte heap + honest numeric widths. See [`docs/memory-model.md`](docs/memory-model.md).
+Packed byte heap + honest numeric widths.
 
-- [x] **Write RFC** — [`docs/memory-model.md`](docs/memory-model.md).
+- [x] **Write RFC** — memory model design finalized.
 - [x] **Packed heap region** — one byte bump (frame watermark + immortal/pass region policy).
 - [x] **Unify slices** — strings, `[]byte`, structs, and **value arrays** share `vm.bytes` (`.slice` / `.bytes` / `.array`).
 - [x] **Widths as real types** — full matrix `u1`/`i8`/`i16`/`i32`/`i64`, `u8`/`u16`/`u32`/`u64`, `f32`/`f64` honest end-to-end; aliases `int`/`number`→`i64`, `byte`→`u8`, `float`→`f64`, `bool`/`boolean`→`u1`; convert only via `@as` / `T(x)` sugar (integer literals may coerce into any integer width that fits; float literals are `f64` and may coerce into `f32`).
@@ -89,9 +89,10 @@ Packed byte heap + honest numeric widths. See [`docs/memory-model.md`](docs/memo
   - [x] `ORIGIN.x = 99` — rejected (`Cannot mutate field of constant`)
   - [x] **Mutating method call on const** — `ORIGIN.shift(5)` now errors `"Method might mutate constant 'ORIGIN'"` at both typecheck (`inferCall` after `resolveMethodCallee`) and emit (`emitMethodCall`). Allowed: `self: T` (caller clones via `__cloneBytes`), no `self` param (skippable — no receiver handle). Pointer-like `self` (unannotated or `*T`) on a const receiver is rejected. Tests: `tests/07_const.test.ts` (4 cases).
   - [x] **Const rebind shadows instead of erroring** — not a bug; shadowing a const binding with a new declaration is by design (warning only, asserted by `tests/07_const.test.ts`). Warning says `'{s}' shadows constant '{s}' declared at line {d}` at the hiding decl (no misleading `unused constant`); see `tests/40_unused.test.ts`. Assignment form (`ORIGIN = …`) errors correctly.
-  - [x] **Aliasing hole** — fixed: struct value assignment/declaration now emits `__cloneBytes` when the RHS is a bare-struct binding (`shouldCloneStructValue` in `expr/assign.zig` + `stmt/decl.zig`), giving value semantics. Pointers (`*T` / `&x` / `?*T`) skip the clone and keep sharing. Covers declaration (`$a = ORIGIN`), plain assignment (`a = b`), field store (`box.val = other`), and static global assign. Compound ops (`+=`) unchanged. Method receivers unchanged (`self: T` clones, `self: *T` shares).
+  - [x] **Aliasing hole** — fixed: aggregate value assignment/declaration emits `__cloneBytes` / `__cloneArray` when the RHS is a binding (`value_clone.cloneBuiltin` in `expr/assign.zig` + `stmt/decl.zig`), giving value semantics for structs, arrays, `[]byte`, and strings. Pointers (`*T` / `&x` / `?*T`) skip the clone and keep sharing. Covers declaration (`$a = ORIGIN`), plain assignment (`a = b`), field store (`box.val = other`), and static global assign. Compound ops (`+=`) unchanged. Method receivers unchanged (`self: T` clones, `self: *T` shares). Function args are still shared handles (pass `*T` explicitly to mutate caller's storage).
   - [x] **Const-ness through pointers / nested places** — `&ORIGIN` is rejected (`Cannot take the address of constant`); nested writes (`O.i.v = …`) and method calls on nested const places use `placeRoot` / `constPlaceRoot`.
-  - [x] **Array / string aliasing** — `@const` globals and locals emit `__freeze` so packed storage traps on write (`Cannot mutate a constant`), including through aliases and parameters (`$r = A; r[0] = 9`, `poke(A)`).
+  - [x] **Array / string `@const` writes** — `@const` globals and locals emit `__freeze` so packed storage traps on write (`Cannot mutate a constant`), including through parameters (`poke(A)`). Assigning `$r = A` now **copies**, so mutating `r` does not touch `A` (and does not need the freeze trap).
+- [x] **Returning a param-derived local panicked the VM** — fixed in `9c283ae`: `$out: S = s; return out;` compiled but the caller's field read panicked heap-OOB (`readI64` past `vm.bytes`) because decl/assign recorded the local's `alloc_region` from the RHS while the emitted `__cloneBytes` / `__cloneArray` copy lives in the callee frame, so auto-clone-on-return never fired and the frame rewind freed the returned handle. The receiving local is now `.frame` whenever a clone was emitted: flat/nested value-struct copies auto-clone into immortal storage on return; slice/pointer-bearing copies get the honest escape compile error. Tests: `tests/16_escape_region.test.ts` (5 cases). Found 2026-10-26 while probing type-fn data structures.
 
 ### P1 — Missing Language Features
 
@@ -122,20 +123,30 @@ Packed byte heap + honest numeric widths. See [`docs/memory-model.md`](docs/memo
 - [x] **Debug type asserts**; strip with `--release`.
 - [x] **`@typeOf(expr)`** — returns a compile-time `type` value; operand never evaluated.
 - [x] **`@sizeOf(T_or_expr)`** — static sizes for types / typed values; runtime `OP_SIZEOF` fallback (`tests/26_sizeof.test.ts`).
-- [x] **Types as compile-time values** — meta type `type`; `@typeOf(...)` usable anywhere a type is (annotations, params, returns, struct fields, `@alias`, composites, `@as`, `@new`, `@sizeOf`); type `==`/`!=` folded at compile time; type values rejected in runtime slots (`tests/50_type_values.test.ts`, `docs/usage/shapes_and_types.md`).
-- [x] **User-defined type functions and generics** — `@func Opt(T: type): type { return ?T; }` evaluated at compile time; `@func max(T: type, a: T, b: T): T` monomorphized per type argument (`src/compiler/generics.zig`, `tests/52_type_functions.test.ts`). Not yet: type params on struct methods, value params on type functions, anonymous struct types.
+- [x] **Types as compile-time values** — meta type `type`; `@typeOf(...)` usable anywhere a type is (annotations, params, returns, struct fields, `@alias`, composites, `@as`, `@new`, `@sizeOf`); type `==`/`!=` folded at compile time; type values rejected in runtime slots (`tests/50_type_values.test.ts`).
+- [x] **User-defined type functions and generics** — `@func Opt(T: type): type { return ?T; }` evaluated at compile time; `@func max(T: type, a: T, b: T): T` monomorphized per type argument (`src/compiler/generics.zig`, `tests/52_type_functions.test.ts`). Gaps tracked below.
+- [ ] **Type functions / generics follow-ups** — gaps verified 2026-10-26:
+  - [ ] **Type params on struct methods** — `@func get(self: S, T: type)` is rejected (`src/compiler/generics.zig:71`); blocks generic containers with methods (Zig `Box(T).get` style).
+  - [ ] **Value params on type functions** — `Pick(T: type, n: i64): type` errors ("may only take 'type' parameters"); type-fn call position parses type arguments only (`src/parser/types.zig:216`). Unlocks value-directed type selection.
+  - [ ] **Anonymous structs** — nameless shape types as first-class struct types: a type fn can *return* `{ a: T }` (`print(Make(i64))` → `{a: i64}`) and annotations parse (`$x: { a: i64; }`), but init of such values fails ("Invalid struct initialization type") even for the plain form `$x: { a: i64; } = { a: 1 }`. Workaround: `@type Named = Make(i64)` / `@type Named = { a: i64; }` then `Named { … }` / `$x: Named = { … }` (verified working). Decide nominal vs structural typing and init/literal syntax.
+  - [ ] **Local `@alias` from a type function** — `@alias L = Opt(i64)` inside a function body resolves to `unknown`; direct `$x: Opt(i64)` annotation, local `@type L = Opt(i64)`, and top-level `@alias` all work.
+  - [ ] **Type-fn `@if` beyond a single type compare** — only one `T == U` / `T != U` (or a bool literal) folds; `T == u8 || T == u16` and value conditions (`@if (N == 1)`) error "an @if condition must compare types".
+  - [ ] **Type-argument inference** — `max(3, 9)` rejected with an arg-count error; type args are always explicit (`max(i64, 3, 9)`).
+  - [ ] **Generic struct / enum declarations** — `@struct Box(T: type)` is a parse error; only free functions take type params today.
 - [x] **Local `@type` / `@alias` inside blocks** — lexically block-scoped (nested blocks, `@comptime`, block expressions, top-level blocks; shadowing allowed); hoisted under a `<fn>[::<n>]::Name` key (`src/compiler/local_types.zig`, `tests/51_local_types.test.ts`).
 - [x] **`@nameOf(enum_or_error)`** — variant/member spelling as declared (`tests/15_enums.test.ts`, `tests/37_error_sets.test.ts`).
 - [x] **`pub` for user files** — private decls stay in-module; relative `./` / `../` imports.
 
 ### P5 — Memory
 
-- [x] **Arenas + allocators** — growable `Arena` (Zig-style chunks) + `defer`.
+- [x] **VM arenas + allocators (legacy)** — growable `Arena` (Zig-style chunks) + `defer`.
 - [x] **`defer` / `errdefer`** — LIFO scope-exit cleanup; `errdefer` on error path only (`?` / error returns).
 - [x] **No tracing GC** — ownership is explicit (allocator + defer).
 - [x] **Frame regions** — VM rewinds heap bump on return; bare `Foo{}` / `[…]` are frame-local.
-- [x] **Escape = compile error** — cannot return frame-local heap (except flat scalar structs, which auto-clone into immortal storage on return); use `@new(allocator, …)` for arena-managed values.
-- [x] **`@new`** — compiler intrinsic (Go `make`-style); type-directed only: `@new(allocator, T)` zero-fills and yields `*T`; literal value forms are rejected (return the literal directly — flat scalar structs clone automatically).
+- [x] **Escape = compile error** — cannot return frame-local heap (except flat scalar structs, which auto-clone into immortal storage on return).
+- [x] **Remove native `@new`** — native compilation rejects the intrinsic instead of ignoring its allocator and placing every result in immortal storage. The bytecode compiler retains it temporarily for VM compatibility.
+- [ ] **Move allocation to the standard library** — after generic struct methods (or an equivalent type-parameterized library mechanism) and raw typed-memory construction exist, provide allocator implementations as ordinary library code. The compiler must not require an `alloc`/`resize`/`free` method set, a fixed arena representation, or a total capacity known in advance. Libraries choose their own API, chunking/growth strategy, lifecycle, and failure type.
+- [ ] **Remove legacy VM `@new`** — migrate bytecode users to the standard-library allocation API, then delete the intrinsic and `__arena_alloc*` compiler/runtime coupling.
 
 ### P6 — Language (make the low-level story honest)
 
@@ -143,8 +154,10 @@ Forcing function: keep writing the self-hosted compiler. Whatever that parser ca
 
 #### Pointers vs values
 
-- [x] **`*T` / `?*T` as types** — pointer IR + parse; `@new` of a struct yields `*T`; field access auto-resolves through `*` / `?*`; `?Node` still works as optional struct (compat).
-- [x] **Address-of (`&x`)** — `&struct_value` → `*T` (same packed handle; type-level). Rejects scalars, optionals, and already-`*T` (no `**T` / interiors yet).
+- [x] **`*T` / `?*T` as types** — pointer IR + parse; field/index access auto-resolves through `*` / `?*`; `?Node` still works as optional struct (compat). The legacy VM `@new` yields `*T` for structs and arrays.
+- [x] **Address-of (`&x`)** — `&aggregate` → `*T` for structs, arrays (`[N]T` / `[]T` / `[]byte`), tuples, shapes (same packed handle; type-level). Indexing auto-derefs `*T` / `?*T`. Rejects scalars, optionals, and already-`*T` (no `**T` / interiors / stack scalars yet).
+- [x] **`@addrOf(x)`** — packed-heap identity as `i64` (offset); equal for aliases, diverges after value copy. Exhaustive suite: structs/arrays/`[]byte`/tuples/shapes/`@new`/`@const`/`*T` params; rejects scalars/enums/optionals (`tests/53_addr_of.test.ts`, 37).
+- [x] **`void` / `null` / `never`** — distinct roles: `void` = unit (no result), `null` = optional absence only, `never` = noreturn/bottom. `Value.void` + `OP_VOID`; reject `: null` returns and `void`/`never` in unions. Exhaustive: `tests/54.1_void`, `54.2_null`, `54.3_never`.
 - [x] **Packed `@sizeOf` layout** — struct/primitive sizes use real field layout (`src/compiler/layout.zig`); `@sizeOf(*T)` is handle-sized (8).
 - [x] **Methods vs pointers** — unannotated method `self` defaults to `*T`; `self: T` / `self: *T` allowed; call sites auto-`&` / auto-deref receivers.
 
@@ -156,6 +169,7 @@ Forcing function: keep writing the self-hosted compiler. Whatever that parser ca
 - [ ] **Compile-time bounds for constants** — when length and index/slice bounds are both known literals (string / `[N]T`), reject OOB at compile time. Runtime checks stay; no general const-eval.
 - [ ] **Runtime-enforced `[N]T`** — fixed buffers with capacity traps; `[N]T` is compile-time only today.
 - [ ] **UTF-8 vs byte length** — clarify `len` / `[N]byte` as bytes (not code points) once strings are `[]byte`.
+- [x] **String comparison boundary** — `==` / `!=` compare byte content in the core language; ordered comparisons (`<`, `<=`, `>`, `>=`) are rejected. Ordering policy belongs in the standard library.
 
 #### Types that match the VM
 
@@ -257,7 +271,7 @@ Preferred tagged-data spelling with `@type`:
 
 ## ⏸ Deferred
 
-- [x] **`errdefer`** — error-path defer; richer `error(code, payload)` with `.code` / `.message` / `.payload`.
+- [x] **`errdefer`** — error-path defer with code-only `error(code)` values (`.code` / `.message`); use a wrapper value for extra data.
 
 ---
 
