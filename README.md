@@ -214,6 +214,10 @@ zig-out/bin/llts dump examples/methods.lls
 
 Native builds accept `--target`, `--optimize`, and `--emit bin|asm|llvm-ir|llvm-bc|h|docs|implib`. `--strict` enables the sound type system; it is implied by `--native` and `emit-zig`. Run `llts <command> --help` for the full flag set.
 
+Native code may embed target-specific, side-effecting assembly with
+`@asm("template")`. The template must be a string literal; the bytecode backend
+rejects this native-only intrinsic.
+
 ## Project layout
 
 | Path | Contents |

@@ -20,6 +20,7 @@ const widths = @import("widths.zig");
 
 pub const Intrinsic = enum {
     import,
+    @"asm",
     typeOf,
     isError,
     sizeOf,
@@ -32,6 +33,7 @@ pub const Intrinsic = enum {
 
 const intrinsics = std.StaticStringMap(Intrinsic).initComptime(.{
     .{ "@import", .import },
+    .{ "@asm", .@"asm" },
     .{ "@typeOf", .typeOf },
     .{ "@isError", .isError },
     .{ "@sizeOf", .sizeOf },
@@ -56,6 +58,7 @@ pub const Arity = union(enum) {
 pub fn arity(intr: Intrinsic) Arity {
     return switch (intr) {
         .import => .{ .exact = 1 },
+        .@"asm" => .{ .exact = 1 },
         .typeOf => .{ .exact = 1 },
         .isError => .{ .exact = 1 },
         .sizeOf => .{ .exact = 1 },
@@ -98,6 +101,13 @@ pub fn typecheck(state: *CompilerState, env: *typecheck_root.Env, ta: ir.TypeAll
             const mod_val = try std.fmt.allocPrint(state.allocator, "module:{s}", .{key});
             try state.owned.append(state.allocator, mod_val);
             return .{ .struct_ = mod_val };
+        },
+        .@"asm" => {
+            const template = c.args[0];
+            if (template.* != .literal or template.literal.literal_type != .string) {
+                return compile_errors.compileFailFmt(state, "@asm expects a string literal template", .{});
+            }
+            return ir.TVoid;
         },
         .isError => {
             _ = try typecheck_root.inferExpr(state, env, ta, c.args[0]);
@@ -257,6 +267,9 @@ pub fn compile(state: *CompilerState, intr: Intrinsic, node: *ast.Node, c: *cons
             // Do nothing if it's just a call, or we could compile the arg.
             try expr.compileExpression(state, c.args[0]);
             try emit.emitOp(state, .OP_POP);
+        },
+        .@"asm" => {
+            return compile_errors.compileFailFmt(state, "@asm is only supported by the native backend", .{});
         },
         .isError => {
             try expr.compileExpression(state, c.args[0]);
