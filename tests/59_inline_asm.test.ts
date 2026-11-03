@@ -18,11 +18,14 @@ function withSource(
   }
 }
 
-test("native lowers @asm string literals to volatile inline assembly", () => {
+test("native lowers multiline @asm templates to volatile inline assembly", () => {
   withSource(
     `
 pub @func main() {
-    @asm("nop");
+    @asm(\`\`\`
+    nop
+    nop
+    \`\`\`);
     print(42);
 }
 `,
@@ -32,7 +35,7 @@ pub @func main() {
       expect(emit.exitCode).toBe(0);
       expect(emit.stderr + emit.stdout).toBe("");
       expect(fs.readFileSync(zigPath, "utf8")).toContain(
-        'asm volatile ("nop");',
+        'asm volatile ("    nop\\n    nop");',
       );
 
       const native = runCli(["run", "--native", sourcePath]);

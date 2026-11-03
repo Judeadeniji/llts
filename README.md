@@ -216,7 +216,15 @@ Native builds accept `--target`, `--optimize`, and `--emit bin|asm|llvm-ir|llvm-
 
 Native code may embed target-specific, side-effecting assembly with
 `@asm("template")`. The template must be a string literal; the bytecode backend
-rejects this native-only intrinsic.
+rejects this native-only intrinsic. Use a fenced multiline string for
+multi-instruction templates:
+
+````lls
+@asm(```
+    nop
+    nop
+```);
+````
 
 ## Project layout
 
