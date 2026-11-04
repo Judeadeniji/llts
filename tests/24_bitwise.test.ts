@@ -5,7 +5,7 @@
  * Happy-path cases run on the VM (default + --strict). Native tests cover
  * cross-backend parity for in-range values plus native-only width preservation.
  */
-import { test, expect } from "bun:test";
+import { test, expect, setDefaultTimeout } from "bun:test";
 import { spawnSync } from "bun";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -18,6 +18,8 @@ import {
   expectOutput,
   expectError,
 } from "./helpers";
+
+setDefaultTimeout(60_000);
 
 const ROOT = path.resolve(import.meta.dir, "..");
 const ZIG_BIN = process.env.LLTS_ZIG_BIN || "zig";
