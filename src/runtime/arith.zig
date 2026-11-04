@@ -126,6 +126,15 @@ pub fn formatShiftOutOfRange(buf: []u8, b: i64) ![]const u8 {
     return std.fmt.bufPrint(buf, "Shift amount out of range 0..63 (got {d})", .{b});
 }
 
+/// Check that `value` fits `width`, staging a typed result (VM `@as` parity).
+/// The emitter casts the returned i64 down after this passes.
+pub fn narrow(width: Width, value: i64) ArithError!i64 {
+    if (!widths.i64Fits(width, value)) {
+        return io.failMsg("@as: value out of range for target width");
+    }
+    return value;
+}
+
 pub fn shl(a: i64, b: i64) ArithError!i64 {
     if (b < 0 or b >= 64) {
         var buf: [64]u8 = undefined;

@@ -77,6 +77,14 @@ pub @func main() {
 - `|>` pipes a value as the first argument of a call.
 - Fenced template literals with `${expr}` interpolation.
 
+### Operators
+
+- Arithmetic: `+`, `-`, `*`, `/`, `%`, wrapping `+%` / `-%` / `*%`, and power via `^` or `**`.
+- Bitwise (integers only): `&`, `|`, `~` (binary XOR / unary NOT), `<<`, `>>`, plus compounds `&=`, `|=`, `~=`, `<<=`, `>>=`.
+- Shift counts must be in `0..63` (inclusive of 0, exclusive of 64). Negative or oversized counts are a runtime error (`Shift amount out of range`); `>>` is an arithmetic (sign-extending) shift.
+- Bitwise and shift results keep the left operand's width. Native builds range-check shift results, so widen first (`@as(i64, x) << n`) when the shift may move bits out of the operand's width.
+- Comparison and logic: `==`, `!=`, `<`, `<=`, `>`, `>=`, `&&`, `||`.
+
 ### Types
 
 | Kind | Syntax |

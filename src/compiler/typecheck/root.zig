@@ -1301,6 +1301,18 @@ fn inferExprInner(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, 
                 }
                 break :blk ir.TInt;
             }
+            if (isBitwise(op)) {
+                if (!ir.involvesUnknown(l) and !ir.involvesUnknown(r)) {
+                    break :blk try coerceBitwisePair(state, l, r, b.left, b.right);
+                }
+                break :blk ir.TInt;
+            }
+            if (isShift(op)) {
+                if (!ir.involvesUnknown(l) and !ir.involvesUnknown(r)) {
+                    break :blk try coerceShiftPair(state, l, r, b.left, b.right);
+                }
+                break :blk ir.TInt;
+            }
             break :blk ir.TUnknown;
         },
         .call => |*c| try inferCall(state, env, ta, node, c),
@@ -1927,6 +1939,67 @@ fn isArith(op: []const u8) bool {
         std.mem.eql(u8, op, "^") or std.mem.eql(u8, op, "**") or
         // Wrapping arithmetic mirrors the checked operators' types exactly.
         std.mem.eql(u8, op, "+%") or std.mem.eql(u8, op, "-%") or std.mem.eql(u8, op, "*%");
+}
+
+/// Binary `&` / `|` / `~` (XOR). Unary `~` is handled in the unary arm.
+fn isBitwise(op: []const u8) bool {
+    return std.mem.eql(u8, op, "&") or std.mem.eql(u8, op, "|") or std.mem.eql(u8, op, "~");
+}
+
+fn isShift(op: []const u8) bool {
+    return std.mem.eql(u8, op, "<<") or std.mem.eql(u8, op, ">>");
+}
+
+/// Bitwise `&` / `|` / `~`: both sides integers; result is the left operand's
+/// type (literals default to `i64`). A bare/untyped right adapts to the left;
+/// two different concrete widths need `@as`.
+fn coerceBitwisePair(
+    state: *state_mod.CompilerState,
+    l: ir.Type,
+    r: ir.Type,
+    left_node: *ast.Node,
+    right_node: *ast.Node,
+) TypecheckError!ir.Type {
+    const lw = numericOpType(l);
+    const rw = numericOpType(r);
+    if (!ir.isInteger(lw) or !ir.isInteger(rw)) {
+        const dl = try ownDisplay(state, l);
+        const dr = try ownDisplay(state, r);
+        return compiler_errors.compileFailFmt(state, "bitwise: operands must be integers, got '{s}' and '{s}'", .{ dl, dr });
+    }
+    const left_untyped = ir.peelDefined(l) == .int_lit or (lw == .i64 and isBareIntLiteral(left_node));
+    const right_untyped = ir.peelDefined(r) == .int_lit or (rw == .i64 and isBareIntLiteral(right_node));
+    if (left_untyped) return ir.TInt;
+    if (right_untyped) {
+        try recordExprType(state, right_node, lw);
+        return lw;
+    }
+    if (ir.typeEquals(lw, rw)) return lw;
+    const dl = try ownDisplay(state, l);
+    const dr = try ownDisplay(state, r);
+    return compiler_errors.compileFailFmt(state, "bitwise: mixed '{s}' and '{s}' (use @as)", .{ dl, dr });
+}
+
+/// Shifts keep the left operand's type; the count may be any integer width.
+fn coerceShiftPair(
+    state: *state_mod.CompilerState,
+    l: ir.Type,
+    r: ir.Type,
+    left_node: *ast.Node,
+    right_node: *ast.Node,
+) TypecheckError!ir.Type {
+    _ = right_node;
+    const lw = numericOpType(l);
+    const rw = numericOpType(r);
+    if (!ir.isInteger(lw) or !ir.isInteger(rw)) {
+        const dl = try ownDisplay(state, l);
+        const dr = try ownDisplay(state, r);
+        return compiler_errors.compileFailFmt(state, "shift: operands must be integers, got '{s}' and '{s}'", .{ dl, dr });
+    }
+    if (ir.peelDefined(l) == .int_lit or (lw == .i64 and isBareIntLiteral(left_node))) {
+        return ir.TInt;
+    }
+    return lw;
 }
 
 fn inferCall(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, call_node: *ast.Node, c: *const ast.Call) TypecheckError!ir.Type {

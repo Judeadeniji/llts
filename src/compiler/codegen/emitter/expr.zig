@@ -37,6 +37,21 @@ pub fn emitBinary(self: *Emitter, node: *ast_mod.Node, b: *const ast_mod.Binary)
     if (lt.may_error or rt.may_error) {
         return self.failAt(node, "error-union operand must be handled with '?' first", .{});
     }
+    if (isBitwiseOp(op) or isShiftOp(op)) {
+        // Preserve the expression's own width (the left operand's type, or an
+        // untyped literal's i64). Operands are widened only for the runtime
+        // helper; the result is narrowed back before any destination coercion.
+        if (!(lt.kind == .int or lt.kind == .bool) or !(rt.kind == .int or rt.kind == .bool)) {
+            return self.failAt(node, "native backend: '{s}' requires integer operands, got '{s}' and '{s}'", .{
+                op, lt.display, rt.display,
+            });
+        }
+        const vt = try self.valueType(node);
+        if (vt.kind != .int and vt.kind != .bool) {
+            return self.failAt(node, "native backend: '{s}' requires an integer result, got '{s}'", .{ op, vt.display });
+        }
+        return emitIntBinary(self, node, b, vt);
+    }
     if (lt.kind == .int and rt.kind == .int) return emitIntBinary(self, node, b, lt);
     if (lt.kind == .float or rt.kind == .float) return emitFloatBinary(self, node, b, lt, rt);
     return self.failAt(node, "native backend (Phase 2) does not support '{s}' on '{s}' and '{s}'", .{
@@ -632,10 +647,69 @@ pub fn emitI64Operand(self: *Emitter, node: *ast_mod.Node) ![]const u8 {
     const a = self.arena.allocator();
     const t = try self.valueType(node);
     if (t.may_error) return self.failAt(node, "error-union value must be handled with '?' first", .{});
+    if (t.kind == .bool) {
+        return std.fmt.allocPrint(a, "@as(i64, @intFromBool({s}))", .{try emitExpr(self, node)});
+    }
     if (t.kind != .int) return self.failAt(node, "expected an integer operand, got '{s}'", .{t.display});
     const code = try emitExpr(self, node);
     if (t.isU64()) return std.fmt.allocPrint(a, "@as(i64, @bitCast({s}))", .{code});
     return code;
+}
+
+pub fn isBitwiseOp(op: []const u8) bool {
+    return std.mem.eql(u8, op, "&") or std.mem.eql(u8, op, "|") or std.mem.eql(u8, op, "~");
+}
+
+pub fn isShiftOp(op: []const u8) bool {
+    return std.mem.eql(u8, op, "<<") or std.mem.eql(u8, op, ">>");
+}
+
+/// Map a bitwise compound assignment operator to its binary form (`&=` → `&`).
+pub fn compoundBitwiseOp(op: []const u8) ?[]const u8 {
+    if (std.mem.eql(u8, op, "&=")) return "&";
+    if (std.mem.eql(u8, op, "|=")) return "|";
+    if (std.mem.eql(u8, op, "~=")) return "~";
+    if (std.mem.eql(u8, op, "<<=")) return "<<";
+    if (std.mem.eql(u8, op, ">>=")) return ">>";
+    return null;
+}
+
+/// Lower `lhs op= rhs` for bitwise/shift compounds into a value expression
+/// typed as `vt` (the destination's storage type).
+pub fn emitCompoundBitwiseValue(
+    self: *Emitter,
+    left: *ast_mod.Node,
+    right: *ast_mod.Node,
+    bin_op: []const u8,
+    vt: ValType,
+) ![]const u8 {
+    const a = self.arena.allocator();
+    if (vt.kind != .int) {
+        return self.failAt(left, "bitwise '{s}=' requires an integer destination, got '{s}'", .{ bin_op, vt.display });
+    }
+    const l = try emitI64Operand(self, left);
+    const r = try emitI64Operand(self, right);
+    const call = if (std.mem.eql(u8, bin_op, "&"))
+        try std.fmt.allocPrint(a, "(rt.arith.band({s}, {s}))", .{ l, r })
+    else if (std.mem.eql(u8, bin_op, "|"))
+        try std.fmt.allocPrint(a, "(rt.arith.bor({s}, {s}))", .{ l, r })
+    else if (std.mem.eql(u8, bin_op, "~"))
+        try std.fmt.allocPrint(a, "(rt.arith.bxor({s}, {s}))", .{ l, r })
+    else if (std.mem.eql(u8, bin_op, "<<"))
+        try std.fmt.allocPrint(a, "(try rt.arith.shl({s}, {s}))", .{ l, r })
+    else if (std.mem.eql(u8, bin_op, ">>"))
+        try std.fmt.allocPrint(a, "(try rt.arith.shr({s}, {s}))", .{ l, r })
+    else
+        return self.failAt(left, "native backend does not support compound '{s}='", .{bin_op});
+    if (isShiftOp(bin_op)) {
+        const w = vt.width orelse return self.failAt(left, "missing integer width for '{s}='", .{bin_op});
+        const cw = w.concrete();
+        if (cw == .i64 or cw == .u64) return wrapWidth(self, vt, call);
+        return std.fmt.allocPrint(a, "@as({s}, @intCast(try rt.arith.narrow(.{s}, {s})))", .{
+            vt.zig, @tagName(cw), call,
+        });
+    }
+    return wrapWidth(self, vt, call);
 }
 
 pub fn emitIntBinary(self: *Emitter, node: *ast_mod.Node, b: *const ast_mod.Binary, lt: ValType) ![]const u8 {
@@ -695,9 +769,17 @@ pub fn emitIntBinary(self: *Emitter, node: *ast_mod.Node, b: *const ast_mod.Bina
         });
     } else if (std.mem.eql(u8, op, "<<") or std.mem.eql(u8, op, ">>")) {
         const base = if (std.mem.eql(u8, op, "<<")) "shl" else "shr";
-        plain_call = try std.fmt.allocPrint(a, "(try rt.arith.{s}({s}, {s}))", .{
+        const call = try std.fmt.allocPrint(a, "(try rt.arith.{s}({s}, {s}))", .{
             base, try emitI64Operand(self, b.left), try emitI64Operand(self, b.right),
         });
+        // The runtime computes in i64; keep the expression at its declared
+        // width and range-check narrow results like checked arithmetic. u64
+        // keeps the full bit pattern via the bitcast in `wrapWidth`.
+        const cw = w.concrete();
+        plain_call = if (cw == .i64 or cw == .u64)
+            call
+        else
+            try std.fmt.allocPrint(a, "(try rt.arith.narrow(.{s}, {s}))", .{ @tagName(cw), call });
     } else {
         return self.failAt(node, "native backend (Phase 2) does not support operator '{s}'", .{op});
     }
@@ -903,6 +985,9 @@ pub fn emitValueCoercedMode(self: *Emitter, node: *ast_mod.Node, target: ValType
     }
     if (target.kind == .void and src.kind == .void) return code;
     if (target.kind == .bool and src.kind == .bool) return code;
+    if (target.kind == .bool and src.kind == .int) {
+        return std.fmt.allocPrint(a, "({s} != 0)", .{code});
+    }
     if (target.kind == .string and src.kind == .string) return code;
     if (target.kind == .struct_ and src.kind == .struct_) return code;
     // `return self` from a pointer-receiver method: the VM reports the struct
