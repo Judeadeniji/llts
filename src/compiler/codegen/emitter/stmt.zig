@@ -788,6 +788,16 @@ pub fn emitLineMarker(self: *Emitter, node: *ast_mod.Node) !void {
     try self.writer.print("ctx.setSite({d});\n", .{site_id});
 }
 
+/// Emit a machine-readable source marker so a failed Zig compile can be mapped
+/// back to the LLTS statement that produced the generated code.
+fn emitSourceSiteMarker(self: *Emitter, node: *ast_mod.Node) !void {
+    const loc = node.loc();
+    if (loc.line == 0) return;
+    const file = if (loc.path.len > 0) loc.path else self.current_trace_file;
+    try self.writeIndent();
+    try self.writer.print("// llts-site {d} {d} {s}\n", .{ loc.line, loc.column, file });
+}
+
 pub fn emitLocalDeclaration(self: *Emitter, node: *ast_mod.Node, d: *const ast_mod.Declaration) !void {
     const info = self.infos.get(node) orelse {
         return self.failAt(node, "internal: missing binding for local '{s}'", .{d.name});
@@ -921,6 +931,7 @@ pub fn emitStatements(self: *Emitter, statements: []*ast_mod.Node) !void {
 
 pub fn emitStmt(self: *Emitter, node: *ast_mod.Node) anyerror!void {
     try emitLineMarker(self, node);
+    try emitSourceSiteMarker(self, node);
     switch (node.*) {
         .declaration => |*d| {
             if (root_mod.isImportDecl(d)) return;

@@ -384,6 +384,7 @@ fn typecheckExtendedAsm(
             .{},
         );
     }
+    try validateAsmOperandSize(state, result_type, "<result>");
 
     var return_outputs: usize = 0;
     for (spec.outputs) |output| {
@@ -409,10 +410,12 @@ fn typecheckExtendedAsm(
         if (env.anyConstPlaceRoot(target)) |name| {
             return compile_errors.compileFailFmt(state, "@asm cannot write to constant '{s}'", .{name});
         }
-        _ = try typecheck_root.inferExpr(state, env, ta, target);
+        const target_type = try typecheck_root.inferExpr(state, env, ta, target);
+        try validateAsmOperandSize(state, target_type, output.name);
     }
     for (spec.inputs) |input| {
-        _ = try typecheck_root.inferExpr(state, env, ta, c.args[input.arg_index]);
+        const input_type = try typecheck_root.inferExpr(state, env, ta, c.args[input.arg_index]);
+        try validateAsmOperandSize(state, input_type, input.name);
     }
 
     if (result_type == .void) {
@@ -435,6 +438,57 @@ fn isAsmOutputPlace(node: *ast.Node) bool {
         .primary => |p| p.kind == .identifier or p.kind == .register,
         .member, .index => true,
         else => false,
+    };
+}
+
+/// Validate that an `@asm` operand or result fits within machine register constraints.
+/// On 64-bit architectures, general-purpose register operands are at most 8 bytes.
+/// Aggregates (e.g. slices `[]byte` which are 16-byte ptr+len structs, or multi-field structs)
+/// cannot be passed by value in a register constraint and must be referenced via a pointer `*T` using `&`.
+fn validateAsmOperandSize(state: *CompilerState, t: ir.Type, name: []const u8) !void {
+    const size = (try asmOperandSize(state, t)) orelse return;
+    if (size <= 8) return;
+    const d = try typecheck_root.ownDisplay(state, t);
+    return compile_errors.compileFailFmt(
+        state,
+        "operand '{s}' has type '{s}' ({d} bytes); register operands must be at most 8 bytes; pass a pointer with '&'",
+        .{ name, d, size },
+    );
+}
+
+/// Static byte size for an `@asm` operand. Slices/strings are pointer + length
+/// (16 bytes); the layout helper reports these as scalar handles, so handle
+/// aggregate widths here before falling back to it.
+fn asmOperandSize(state: *CompilerState, t: ir.Type) !?i64 {
+    return switch (ir.peelDefined(t)) {
+        .u1, .bool_lit => 1,
+        .i8, .u8 => 1,
+        .i16, .u16 => 2,
+        .i32, .u32, .f32 => 4,
+        .i64, .u64, .f64, .isize, .usize, .fsize, .int_lit, .enum_, .enum_lit, .error_, .error_set, .error_lit, .ptr, .func, .str_lit => 8,
+        .null, .void => 0,
+        .array => |a| blk: {
+            const len = a.length orelse break :blk 16;
+            const elem_size = (try asmOperandSize(state, a.elem.*)) orelse break :blk null;
+            break :blk @as(i64, @intCast(len)) * elem_size;
+        },
+        .tuple => |elems| blk: {
+            var total: i64 = 0;
+            for (elems) |e| {
+                const elem_size = (try asmOperandSize(state, e)) orelse break :blk null;
+                total += elem_size;
+            }
+            break :blk total;
+        },
+        .struct_ => |name| blk: {
+            if (state.enums.contains(name)) break :blk 8;
+            if (from_ast.lookupStruct(state, name)) |sd| break :blk @as(i64, @intCast(sd.size));
+            break :blk 8;
+        },
+        else => blk: {
+            const size = try layout.sizeOfType(state, t);
+            break :blk if (size) |s| @as(i64, s) else null;
+        },
     };
 }
 

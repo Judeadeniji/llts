@@ -392,7 +392,7 @@ fn parseAsmOutputs(
             if (return_type.len == 0) return self.failTok(token, "@asm return output requires a type", .{});
             output.return_type = try self.dupe(return_type);
         } else {
-            output.arg_index = try parseAsmHoleIndex(self, token, &cur, arg_count);
+            output.arg_index = try parseAsmHoleIndex(self, token, &cur, arg_count, name);
         }
         if (!cur.consume(')')) return self.failTok(token, "Expected ')' after @asm output", .{});
         try outputs.append(self.arena, output);
@@ -413,7 +413,7 @@ fn parseAsmInputs(
         const name = try parseAsmName(self, token, &cur);
         const constraint = try parseAsmQuoted(self, token, &cur, "input constraint");
         if (!cur.consume('(')) return self.failTok(token, "Expected '(' after @asm input constraint", .{});
-        const arg_index = try parseAsmHoleIndex(self, token, &cur, arg_count);
+        const arg_index = try parseAsmHoleIndex(self, token, &cur, arg_count, name);
         if (!cur.consume(')')) return self.failTok(token, "Expected ')' after @asm input", .{});
         try inputs.append(self.arena, .{ .name = name, .constraint = constraint, .arg_index = arg_index });
         if (cur.done()) break;
@@ -481,17 +481,25 @@ fn parseAsmQuoted(
     return value;
 }
 
+/// Parse an internal `${expr}` hole placeholder inside an extended `@asm` operand list.
+/// If a raw constant or literal expression was written instead of a `${...}` hole, provide
+/// targeted diagnostic feedback explaining how to bind the constant to a local variable.
 fn parseAsmHoleIndex(
     self: *Parser,
     token: ctx.Token,
     cur: *AsmTextCursor,
     arg_count: usize,
+    operand_name: []const u8,
 ) ParseError!usize {
     const prefix = "__LLTS_ASM_HOLE_";
     const suffix = "__";
     cur.skipSpace();
     if (!std.mem.startsWith(u8, cur.text[cur.pos..], prefix)) {
-        return self.failTok(token, "@asm operand value must be a '${{expression}}' hole", .{});
+        return self.failTok(
+            token,
+            "@asm operand '{s}' must be written as '${{expr}}'; bind constants to a variable first, e.g. '$nr: i64 = 1;' then '(${{nr}})'",
+            .{operand_name},
+        );
     }
     cur.pos += prefix.len;
     const start = cur.pos;

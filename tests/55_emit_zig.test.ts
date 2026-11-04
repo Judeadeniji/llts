@@ -544,8 +544,13 @@ pub @func main() {
 
     $none: ?int = null;
     print(none);
+    print(none == null);
+    print(none != null);
+    print(null == none);
     $some: ?int = 5;
     print(some);
+    print(some == null);
+    print(some != null);
 
     @if (maybe(true)) |point| {
         print(point.x);

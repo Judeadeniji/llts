@@ -248,3 +248,168 @@ ${assembly.sum}
     },
   );
 });
+
+function writeSyscallAssembly(): {
+  template: string;
+  nr: number;
+} {
+  switch (process.arch) {
+    case "x64":
+      return {
+        nr: 1, // sys_write on x86_64 Linux
+        template: `syscall
+    : [ret] "={rax}" (-> i64)
+    : [nr] "{rax}" (\${nr}),
+      [fd] "{rdi}" (\${fd}),
+      [buf] "{rsi}" (\${buf_ptr}),
+      [cnt] "{rdx}" (\${cnt})
+    : "rcx", "r11", "memory"`,
+      };
+    case "arm64":
+      return {
+        nr: 64, // sys_write on aarch64 Linux
+        template: `svc #0
+    : [ret] "={x0}" (-> i64)
+    : [nr] "{x8}" (\${nr}),
+      [fd] "{x0}" (\${fd}),
+      [buf] "{x1}" (\${buf_ptr}),
+      [cnt] "{x2}" (\${cnt})
+    : "memory"`,
+      };
+    default:
+      throw new Error(
+        `Unsupported inline-assembly test architecture: ${process.arch}`,
+      );
+  }
+}
+
+test("native executes write syscall using & on fixed-size byte buffer", () => {
+  const asm = writeSyscallAssembly();
+  withSource(
+    `
+pub @func main() {
+    $buf: [3]u8 = [72, 105, 10];
+    $buf_ptr = &buf;
+    $nr: i64 = ${asm.nr};
+    $fd: i64 = 1;
+    $cnt: i64 = 3;
+    $r = @asm(i64, \`\`\`
+${asm.template}
+    \`\`\`);
+    print("bytes written:", r);
+}
+`,
+    (sourcePath) => {
+      const native = runCli(["run", "--native", sourcePath]);
+      expect(native.exitCode).toBe(0);
+      expect(native.stdout).toBe("Hi\nbytes written: 3\n");
+      expect(native.stderr).toBe("");
+    },
+  );
+}, 60_000);
+
+test("@asm rejects operands larger than 8 bytes with LLTS diagnostic", () => {
+  withSource(
+    `
+pub @func main() {
+    $msg = "Hello from asm\\n";
+    $nr: i64 = 1;
+    $fd: i64 = 1;
+    $cnt: i64 = len(msg);
+    @asm(i64, \`\`\`
+        syscall
+        : [ret] "={rax}" (-> i64)
+        : [nr] "{rax}" (\${nr}),
+          [fd] "{rdi}" (\${fd}),
+          [buf] "{rsi}" (\${msg}),
+          [cnt] "{rdx}" (\${cnt})
+        : "rcx", "r11", "memory"
+    \`\`\`);
+}
+`,
+    (sourcePath) => {
+      const result = runCli(["run", "--native", sourcePath]);
+      expect(result.exitCode).not.toBe(0);
+      expect(result.stderr).toContain("operand 'buf' has type '[]byte' (16 bytes)");
+      expect(result.stderr).toContain("register operands must be at most 8 bytes; pass a pointer with '&'");
+      expect(result.stderr).not.toContain(".llts_native_");
+    },
+  );
+});
+
+test("@asm provides clear guidance when operand value is not a hole", () => {
+  withSource(
+    `
+pub @func main() {
+    @asm(void, \`\`\`
+        nop
+        :
+        : [nr] "{rax}" (1)
+        :
+    \`\`\`);
+}
+`,
+    (sourcePath) => {
+      const result = runCli(["run", "--native", sourcePath]);
+      expect(result.exitCode).not.toBe(0);
+      expect(result.stderr).toContain(
+        "@asm operand 'nr' must be written as '${expr}'; bind constants to a variable first, e.g. '$nr: i64 = 1;' then '(${nr})'",
+      );
+    },
+  );
+});
+
+test("maps native Zig asm build failure to LLTS source location", () => {
+  withSource(
+    `
+pub @func main() {
+    @asm(void, \`\`\`
+        nop
+        :
+        :
+        : "invalid_clobber_for_test"
+    \`\`\`);
+}
+`,
+    (sourcePath) => {
+      const result = runCli(["run", "--native", sourcePath]);
+      expect(result.exitCode).not.toBe(0);
+      expect(result.stderr).toContain("inline assembly failed to compile:");
+      expect(result.stderr).toContain("main.lls:3:");
+      expect(result.stderr).not.toContain(".llts_native_");
+    },
+  );
+}, 60_000);
+
+test("contextually types array literals in typed declarations", () => {
+  withSource(
+    `
+pub @func main() {
+    $buf: [3]u8 = [72, 105, 10];
+    print(buf[0]);
+    print(buf[1]);
+    print(buf[2]);
+}
+`,
+    (sourcePath) => {
+      const result = runCli(["run", "--native", sourcePath]);
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toBe("72\n105\n10\n");
+    },
+  );
+}, 60_000);
+
+test("rejects overflowing elements in contextually typed array literals", () => {
+  withSource(
+    `
+pub @func main() {
+    $buf: [2]u8 = [72, 300];
+}
+`,
+    (sourcePath) => {
+      const result = runCli(["run", "--native", sourcePath]);
+      expect(result.exitCode).not.toBe(0);
+      expect(result.stderr).toContain("Literal 300 overflows target type 'u8'");
+    },
+  );
+});

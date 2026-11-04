@@ -419,6 +419,24 @@ pub fn emitComparison(self: *Emitter, node: *ast_mod.Node, b: *const ast_mod.Bin
 
     if (eq) {
         const negate = std.mem.eql(u8, op, "!=");
+        const lt_optional = lt.kind == .optional;
+        const rt_optional = rt.kind == .optional;
+        const lt_null = lt.kind == .null_value;
+        const rt_null = rt.kind == .null_value;
+        if ((lt_optional and rt_null) or (lt_null and rt_optional)) {
+            const optional = if (lt_optional) b.left else b.right;
+            return std.fmt.allocPrint(a, "({s} {s} null)", .{
+                try emitExpr(self, optional),
+                if (negate) "!=" else "==",
+            });
+        }
+        if (lt_optional and rt_optional and std.mem.eql(u8, lt.zig, rt.zig)) {
+            const base = try std.fmt.allocPrint(a, "({s} == {s})", .{
+                try emitExpr(self, b.left), try emitExpr(self, b.right),
+            });
+            return if (negate) std.fmt.allocPrint(a, "(!{s})", .{base}) else base;
+        }
+        if (lt_null and rt_null) return if (negate) "false" else "true";
         if (lt.kind == .string and rt.kind == .string) {
             const base = try std.fmt.allocPrint(a, "rt.arith.eqStr({s}, {s})", .{
                 try emitExpr(self, b.left), try emitExpr(self, b.right),

@@ -2513,7 +2513,29 @@ fn checkStmt(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node:
                 try rejectTypeValue(state, annot, "a variable's type");
                 var ctx_buf: [160]u8 = undefined;
                 const ctx = std.fmt.bufPrint(&ctx_buf, "declaration of '{s}'", .{d.name}) catch "declaration";
-                try requireAssignAt(state, value_type, annot, ctx, d.loc, d.value);
+                var contextually_typed = false;
+                if (d.value.* == .array_literal) {
+                    const exp = ir.peelDefined(annot);
+                    if (exp == .array) {
+                        const al = d.value.array_literal;
+                        const length_matches = exp.array.length == null or exp.array.length.? == al.elements.len;
+                        if (length_matches) {
+                            // Contextual typing for array literals:
+                            // When an array literal is declared with an explicit array type
+                            // (e.g. `$buf: [3]u8 = [72, 105, 10];`), rather than inferring the literal's
+                            // element types as default `i64` and subsequently failing assignment,
+                            // propagate the expected element type downward so each element is range-checked
+                            // against `annot.elem` (e.g. rejecting literals > 255 for `u8` while accepting
+                            // in-range integer literals).
+                            for (al.elements) |el| {
+                                const elem_type = try inferExpr(state, env, ta, el);
+                                try requireAssignAt(state, elem_type, exp.array.elem.*, ctx, d.loc, el);
+                            }
+                            contextually_typed = true;
+                        }
+                    }
+                }
+                if (!contextually_typed) try requireAssignAt(state, value_type, annot, ctx, d.loc, d.value);
                 // Contextual typing: initializer / uses see the annotation width for codegen.
                 try recordExprType(state, d.value, annot);
                 try env.define(d.name, annot);
