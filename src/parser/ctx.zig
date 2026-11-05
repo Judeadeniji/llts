@@ -57,6 +57,11 @@ pub const Parser = struct {
         return false;
     }
 
+    pub fn checkKeyword(self: *const Parser, value: []const u8) bool {
+        const next = self.peek(0) orelse return false;
+        return (next.type == .keyword or next.type == .compiler_keyword) and std.mem.eql(u8, next.value, value);
+    }
+
     pub fn advance(self: *Parser) ?Token {
         if (!self.isAtEnd()) self.current += 1;
         return self.previous();

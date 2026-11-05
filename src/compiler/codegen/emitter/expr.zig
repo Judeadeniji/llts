@@ -4,6 +4,7 @@ const state_mod = @import("../../state.zig");
 const path_mod = @import("../../expr/path.zig");
 const from_ast = @import("../../typecheck/from_ast.zig");
 const widths = @import("../../widths.zig");
+const intrinsics_mod = @import("../../intrinsics.zig");
 const root_mod = @import("root.zig");
 const unit_mod = @import("unit.zig");
 const stmt_mod = @import("stmt.zig");
@@ -126,6 +127,21 @@ pub fn emitCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) any
             const ptr = try addrOfPointerCode(self, node, c.args[0]);
             return std.fmt.allocPrint(a, "@as(i64, @intCast(@intFromPtr({s})))", .{ptr});
         }
+        if (std.mem.eql(u8, intrinsic, "@typeOf")) {
+            if (c.args.len != 1) return self.failAt(node, "@typeOf expects 1 argument", .{});
+            const disp = self.state.type_of_results.get(node) orelse "unknown";
+            return self.zigString(disp);
+        }
+        if (std.mem.eql(u8, intrinsic, "@sizeOf")) {
+            if (c.args.len != 1) return self.failAt(node, "@sizeOf expects 1 argument", .{});
+            if (self.state.size_of_results.get(node)) |size| {
+                return std.fmt.allocPrint(a, "@as(i64, {d})", .{size});
+            }
+            if (try intrinsics_mod.staticTypeArgSize(self.state, c.args[0])) |size| {
+                return std.fmt.allocPrint(a, "@as(i64, {d})", .{size});
+            }
+            return self.failAt(node, "native backend cannot determine @sizeOf statically", .{});
+        }
         if (std.mem.eql(u8, intrinsic, "@nameOf")) {
             if (c.args.len != 1) return self.failAt(node, "@nameOf expects 1 argument", .{});
             const plan = self.state.name_of_plans.get(node) orelse {
@@ -151,8 +167,8 @@ pub fn emitCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) any
             const dest_t = try self.valueType(c.args[0]);
             const a_code = try emitExpr(self, c.args[1]);
             const b_code = try emitExpr(self, c.args[2]);
-            // Buffer form: first arg is a caller-owned `*[]byte`.
-            if (dest_t.kind == .pointer and dest_t.payload != null and dest_t.payload.?.kind == .string) {
+            // Buffer form: first arg is a caller-owned `*[]u8` / `*[]byte`.
+            if (dest_t.kind == .pointer and dest_t.payload != null and (dest_t.payload.?.kind == .string or dest_t.payload.?.kind == .slice)) {
                 return std.fmt.allocPrint(a, "(try rt.mem.concatInto(@constCast(({s}).*), {s}, {s}))", .{
                     try emitExpr(self, c.args[0]), a_code, b_code,
                 });
@@ -165,6 +181,12 @@ pub fn emitCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) any
             return std.fmt.allocPrint(a, "{s}: {{ _ = {s}; break :{s} (try rt.print.concatDisplay(ctx, {s}, {s})); }}", .{
                 label, try emitExpr(self, c.args[0]), label, a_code, b_code,
             });
+        }
+        if (std.mem.eql(u8, intrinsic, "@typeOf")) {
+            if (self.state.type_call_results.get(node)) |disp| {
+                return self.zigString(disp);
+            }
+            return self.failAt(node, "native backend cannot determine @typeOf result", .{});
         }
         if (std.mem.eql(u8, intrinsic, "len")) {
             if (c.args.len != 1) return self.failAt(node, "len expects 1 argument", .{});
@@ -404,6 +426,9 @@ fn emitMethodCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) !
 pub fn emitComparison(self: *Emitter, node: *ast_mod.Node, b: *const ast_mod.Binary) ![]const u8 {
     const a = self.arena.allocator();
     const op = b.operator;
+    if (self.state.type_eq_folds.get(b.left)) |same| {
+        return if (same) "true" else "false";
+    }
     const lt = try self.valueType(b.left);
     const rt = try self.valueType(b.right);
     const eq = std.mem.eql(u8, op, "==") or std.mem.eql(u8, op, "!=");
@@ -437,7 +462,7 @@ pub fn emitComparison(self: *Emitter, node: *ast_mod.Node, b: *const ast_mod.Bin
             return if (negate) std.fmt.allocPrint(a, "(!{s})", .{base}) else base;
         }
         if (lt_null and rt_null) return if (negate) "false" else "true";
-        if (lt.kind == .string and rt.kind == .string) {
+        if (isByteSliceType(lt) and isByteSliceType(rt)) {
             const base = try std.fmt.allocPrint(a, "rt.arith.eqStr({s}, {s})", .{
                 try emitExpr(self, b.left), try emitExpr(self, b.right),
             });
@@ -955,7 +980,15 @@ pub fn emitValueCoercedMode(self: *Emitter, node: *ast_mod.Node, target: ValType
 
     // Literals are already polymorphic; the surrounding declaration,
     // assignment, return, print, or @as supplies the concrete type.
-    if (node.* == .literal and !isNullLiteral(node)) return code;
+    if (node.* == .literal and !isNullLiteral(node)) {
+        if (target.kind == .array and node.literal.literal_type == .string) {
+            return std.fmt.allocPrint(a, "{s}.*", .{code});
+        }
+        if (target.kind == .slice and target.elem != null and std.mem.eql(u8, target.elem.?.zig, "u8") and node.literal.literal_type == .string) {
+            return std.fmt.allocPrint(a, "@constCast({s})", .{code});
+        }
+        return code;
+    }
 
     if (src.kind == .slice and target.kind == .slice and
         (node.* == .primary or node.* == .member))
@@ -1007,6 +1040,13 @@ pub fn emitValueCoercedMode(self: *Emitter, node: *ast_mod.Node, target: ValType
         return std.fmt.allocPrint(a, "({s} != 0)", .{code});
     }
     if (target.kind == .string and src.kind == .string) return code;
+    if (target.kind == .string and isByteSliceType(src)) return code;
+    if (isByteSliceType(target) and isByteSliceType(src)) {
+        if (target.kind == .slice and src.kind == .string) {
+            return std.fmt.allocPrint(a, "@constCast({s})", .{code});
+        }
+        return code;
+    }
     if (target.kind == .struct_ and src.kind == .struct_) return code;
     // `return self` from a pointer-receiver method: the VM reports the struct
     // display, so native copies the pointee to match the declared type.
@@ -1382,6 +1422,12 @@ pub fn f64Code(self: *Emitter, code: []const u8, t: ValType) ![]const u8 {
 pub fn i64Code(self: *Emitter, code: []const u8, t: ValType) ![]const u8 {
     if (t.isU64()) return std.fmt.allocPrint(self.arena.allocator(), "@as(i64, @bitCast({s}))", .{code});
     return code;
+}
+
+fn isByteSliceType(t: ValType) bool {
+    if (t.kind == .string) return true;
+    if (t.kind == .slice and t.elem != null and std.mem.eql(u8, t.elem.?.zig, "u8")) return true;
+    return false;
 }
 
 pub fn isStringy(self: *Emitter, node: *ast_mod.Node) !bool {

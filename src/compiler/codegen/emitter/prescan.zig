@@ -67,6 +67,10 @@ pub fn preScanExpr(self: *Emitter, node: *ast_mod.Node) anyerror!void {
         },
         .literal => {},
         .binary => |b| {
+            if (self.state.type_eq_folds.get(b.left) != null) {
+                // Compile-time folded type comparison; neither side is evaluated at runtime.
+                return;
+            }
             if (std.mem.eql(u8, b.operator, "|>")) {
                 // `x |> obj.method` is a method call at emission; mark the
                 // receiver mutable just like `obj.method(x)`.
@@ -99,6 +103,19 @@ pub fn preScanExpr(self: *Emitter, node: *ast_mod.Node) anyerror!void {
                 }
                 for (spec.inputs) |input| try preScanExpr(self, c.args[input.arg_index]);
                 return;
+            }
+            // Compile-time intrinsics (@typeOf, @sizeOf, @nameOf) do not evaluate
+            // their operands at runtime, so variables referenced inside them must not
+            // be marked as read. @as(T, expr) only evaluates expr at runtime.
+            if (c.callee.* == .primary) {
+                const name = c.callee.primary.name;
+                if (std.mem.eql(u8, name, "@typeOf") or std.mem.eql(u8, name, "@sizeOf") or std.mem.eql(u8, name, "@nameOf")) {
+                    return;
+                }
+                if (std.mem.eql(u8, name, "@as") and c.args.len == 2) {
+                    try preScanExpr(self, c.args[1]);
+                    return;
+                }
             }
             for (c.args) |arg| try preScanExpr(self, arg);
             if (c.callee.* == .member) {

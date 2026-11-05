@@ -79,7 +79,7 @@ $t: string = s;
 print(@typeOf(s));
 print(t);
 `),
-    ["[]byte", "hi"],
+    ["const []u8", "hi"],
   );
 });
 

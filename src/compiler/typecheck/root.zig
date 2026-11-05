@@ -657,10 +657,11 @@ fn isPureLiteralExpr(node: *ast.Node) bool {
 }
 
 fn inferLiteral(ta: ir.TypeAlloc, lit: ast.Literal, prefer_literals: bool) !ir.Type {
+    _ = ta;
     return switch (lit.literal_type) {
         .string => blk: {
             if (prefer_literals) break :blk .{ .str_lit = lit.value };
-            break :blk try ta.arrayType(ir.TByte, null);
+            break :blk ir.TString;
         },
         .boolean => blk: {
             if (prefer_literals) break :blk .{ .bool_lit = std.mem.eql(u8, lit.value, "true") };
@@ -1034,7 +1035,7 @@ fn fnParamTypes(state: *state_mod.CompilerState, ta: ir.TypeAlloc, func_name: []
                 out_rest.* = t;
             } else {
                 const elem = if (t == .unknown) ir.TUnknown else t;
-                out_rest.* = try ta.arrayType(elem, null);
+                out_rest.* = try ta.arrayType(elem, null, false);
             }
             continue;
         }
@@ -1470,7 +1471,7 @@ fn inferExprInner(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, 
                     if (!ir.involvesUnknown(e)) try requireAssign(state, e, ir.TInt, "slice end");
                 }
                 if (obj == .array) {
-                    break :blk try ta.arrayType(obj.array.elem.*, null);
+                    break :blk try ta.arrayType(obj.array.elem.*, null, obj.array.is_const);
                 }
                 if (!ir.involvesUnknown(obj) and obj != .unknown) {
                     const d = try ownDisplay(state, obj_raw);
@@ -2356,7 +2357,7 @@ fn constIntIndex(node: *ast.Node) !?i64 {
 }
 
 fn inferArrayLiteral(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, a: ast.ArrayLiteral) TypecheckError!ir.Type {
-    if (a.elements.len == 0) return try ta.arrayType(ir.TUnknown, 0);
+    if (a.elements.len == 0) return try ta.arrayType(ir.TUnknown, 0, false);
     var types: std.ArrayList(ir.Type) = .empty;
     defer types.deinit(ta.allocator);
     for (a.elements) |el| {
@@ -2387,7 +2388,7 @@ fn inferArrayLiteral(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAllo
             }
             const len = if (elem.array.length != null) elem.array.length else ti.array.length;
             const inner = if (ir.isSubtype(ti.array.elem.*, elem.array.elem.*)) elem.array.elem.* else ti.array.elem.*;
-            elem = try ta.arrayType(inner, len);
+            elem = try ta.arrayType(inner, len, elem.array.is_const and ti.array.is_const);
             continue;
         }
         if (!ir.isSubtype(ti, elem) and !ir.isSubtype(elem, ti)) {
@@ -2396,7 +2397,7 @@ fn inferArrayLiteral(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAllo
         }
         if (!ir.isSubtype(ti, elem)) elem = ti;
     }
-    if (homogeneous) return try ta.arrayType(elem, a.elements.len);
+    if (homogeneous) return try ta.arrayType(elem, a.elements.len, false);
     return try ta.tupleType(types.items);
 }
 
@@ -2732,7 +2733,7 @@ fn checkFunction(
 
         if (is_variadic and i == plist.len - 1 and t != .array) {
             const elem = if (t == .unknown) ir.TUnknown else t;
-            t = try ta.arrayType(elem, null);
+            t = try ta.arrayType(elem, null, false);
         }
         try env.define(pnode.name, t);
     }

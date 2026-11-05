@@ -369,7 +369,7 @@ fn computeHover(ra: std.mem.Allocator, analysis: anytype, target_line: u32, targ
                 prefix = "(literal) ";
             },
             .string, .template => {
-                type_str = "[]byte";
+                type_str = "const []u8";
                 prefix = if (t.type == .template) "(template) " else "(literal) ";
             },
             .v_register, .identifier => {

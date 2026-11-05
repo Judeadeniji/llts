@@ -330,7 +330,7 @@ pub @func main() {
     (sourcePath) => {
       const result = runCli(["run", "--native", sourcePath]);
       expect(result.exitCode).not.toBe(0);
-      expect(result.stderr).toContain("operand 'buf' has type '[]byte' (16 bytes)");
+      expect(result.stderr).toContain("operand 'buf' has type 'const []u8' (16 bytes)");
       expect(result.stderr).toContain("register operands must be at most 8 bytes; pass a pointer with '&'");
       expect(result.stderr).not.toContain(".llts_native_");
     },

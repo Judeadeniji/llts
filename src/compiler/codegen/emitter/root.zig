@@ -257,7 +257,7 @@ pub const Emitter = struct {
             t.zig = "@TypeOf(null)";
             return t;
         }
-        if (isByteSequenceDisplay(clean)) {
+        if (isConstByteSequenceDisplay(clean)) {
             t.kind = .string;
             t.zig = "[]const u8";
             t.elem = try self.childType(node, "u8");
@@ -278,9 +278,15 @@ pub const Emitter = struct {
             return t;
         }
         if (try parseArrayShape(clean)) |shape| {
-            const elem = try self.childType(node, shape.elem);
+            const elem_name = if (std.mem.eql(u8, shape.elem, "byte")) "u8" else shape.elem;
+            const elem = try self.childType(node, elem_name);
             t.elem = elem;
             t.array_len = shape.length;
+            if (shape.is_const and shape.length == null and std.mem.eql(u8, elem.zig, "u8")) {
+                t.kind = .string;
+                t.zig = "[]const u8";
+                return t;
+            }
             if (shape.length) |len| {
                 t.kind = .array;
                 t.zig = try std.fmt.allocPrint(a, "[{d}]{s}", .{ len, elem.zig });
@@ -524,7 +530,21 @@ pub const Emitter = struct {
         return self.failAt(d.value, "native backend cannot infer the type of '{s}'; add an annotation", .{d.name});
     }
 
+    /// True when a node is a call to the compile-time `@typeOf` intrinsic.
+    pub fn isTypeOfCall(node: *ast_mod.Node) bool {
+        return node.* == .call and node.call.callee.* == .primary and
+            std.mem.eql(u8, node.call.callee.primary.name, "@typeOf");
+    }
+
+    /// True when a node is a call to the compile-time `@sizeOf` intrinsic.
+    pub fn isSizeOfCall(node: *ast_mod.Node) bool {
+        return node.* == .call and node.call.callee.* == .primary and
+            std.mem.eql(u8, node.call.callee.primary.name, "@sizeOf");
+    }
+
     pub fn displayForExpr(self: *Emitter, node: *ast_mod.Node) ![]const u8 {
+        if (isTypeOfCall(node)) return "string";
+        if (isSizeOfCall(node)) return "i64";
         if (self.state.type_of_results.get(node)) |disp| return disp;
         switch (node.*) {
             .primary => |p| {
@@ -963,6 +983,8 @@ pub const Emitter = struct {
     }
 
     pub fn valueType(self: *Emitter, node: *ast_mod.Node) anyerror!ValType {
+        if (isTypeOfCall(node)) return try self.classify(node, "string");
+        if (isSizeOfCall(node)) return try self.classify(node, "i64");
         switch (node.*) {
             .unwrap_expr => |u| {
                 const inner = try self.valueType(u.expression);
@@ -1049,9 +1071,12 @@ pub fn isImportDecl(decl: *const ast_mod.Declaration) bool {
     return c.callee.* == .primary and std.mem.eql(u8, c.callee.primary.name, "@import");
 }
 
-fn isByteSequenceDisplay(clean: []const u8) bool {
-    return std.mem.eql(u8, clean, "string") or std.mem.eql(u8, clean, "[]byte") or
-        std.mem.eql(u8, clean, "[]u8") or std.mem.eql(u8, clean, "[]const u8");
+fn isConstByteSequenceDisplay(clean: []const u8) bool {
+    return std.mem.eql(u8, clean, "string") or
+        std.mem.eql(u8, clean, "const []u8") or
+        std.mem.eql(u8, clean, "[]const u8") or
+        std.mem.eql(u8, clean, "const []byte") or
+        std.mem.eql(u8, clean, "[]const byte");
 }
 
 fn optionalPayloadDisplay(clean: []const u8) ?[]const u8 {
@@ -1073,20 +1098,35 @@ fn optionalPayloadDisplay(clean: []const u8) ?[]const u8 {
 const ArrayShape = struct {
     length: ?usize,
     elem: []const u8,
+    is_const: bool = false,
 };
 
 fn parseArrayShape(clean: []const u8) !?ArrayShape {
-    if (clean.len < 2 or clean[0] != '[') return null;
-    if (clean[1] == ']') {
-        const elem = std.mem.trim(u8, clean[2..], " \t");
+    var s = clean;
+    var is_const = false;
+    if (std.mem.startsWith(u8, s, "const ")) {
+        is_const = true;
+        s = std.mem.trim(u8, s[6..], " \t");
+    }
+    if (s.len < 2 or s[0] != '[') return null;
+    if (s[1] == ']') {
+        var elem = std.mem.trim(u8, s[2..], " \t");
+        if (std.mem.startsWith(u8, elem, "const ")) {
+            is_const = true;
+            elem = std.mem.trim(u8, elem[6..], " \t");
+        }
         if (elem.len == 0) return null;
-        return .{ .length = null, .elem = elem };
+        return .{ .length = null, .elem = elem, .is_const = is_const };
     }
     var i: usize = 1;
-    while (i < clean.len and clean[i] >= '0' and clean[i] <= '9') : (i += 1) {}
-    if (i == 1 or i >= clean.len or clean[i] != ']') return null;
-    const length = std.fmt.parseInt(usize, clean[1..i], 10) catch return null;
-    const elem = std.mem.trim(u8, clean[i + 1 ..], " \t");
+    while (i < s.len and s[i] >= '0' and s[i] <= '9') : (i += 1) {}
+    if (i == 1 or i >= s.len or s[i] != ']') return null;
+    const length = std.fmt.parseInt(usize, s[1..i], 10) catch return null;
+    var elem = std.mem.trim(u8, s[i + 1 ..], " \t");
+    if (std.mem.startsWith(u8, elem, "const ")) {
+        is_const = true;
+        elem = std.mem.trim(u8, elem[6..], " \t");
+    }
     if (elem.len == 0) return null;
-    return .{ .length = length, .elem = elem };
+    return .{ .length = length, .elem = elem, .is_const = is_const };
 }

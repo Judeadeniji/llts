@@ -258,7 +258,7 @@ print(@addrOf(t) == @addrOf(p));
 $u = t;
 print(@addrOf(t) == @addrOf(u));
 `),
-    ["*[i64, []byte]", "true", "false"],
+    ["*[i64, []u8]", "true", "false"],
   );
 });
 

@@ -167,20 +167,24 @@ print(g[0][0]);
   );
 });
 
-test("string is []byte; literals are [N]byte", () => {
+test("string is const []u8; byte is alias for u8", () => {
   expectOutput(
     runSource(`
 @const $msg = "hi";
 $open: string = "hello";
+$cslice: const []u8 = "hello";
+$zslice: []const u8 = "hello";
 $raw: []byte = "hello";
 $exact: [5]byte = "hello";
 print(@typeOf(msg));
 print(@typeOf(open));
+print(@typeOf(cslice));
+print(@typeOf(zslice));
 print(@typeOf(raw));
 print(@typeOf(exact));
 print(open);
 `),
-    ['"hi"', "[]byte", "[]byte", "[5]byte", "hello"],
+    ['"hi"', "const []u8", "const []u8", "const []u8", "[]u8", "[5]u8", "hello"],
   );
 });
 
@@ -232,11 +236,11 @@ print(@typeOf(y));
 print(@typeOf(z));
 print(@typeOf(true));
 `),
-    ["i64", "[]byte", "[]i64", "u1"],
+    ["i64", "const []u8", "[]i64", "u1"],
   );
 });
 
-test("empty string $x = '' infers as []byte unless const or specified", () => {
+test("empty string $x = '' infers as const []u8 unless const or specified", () => {
   expectOutput(
     runSource(`
 $x = "";
@@ -248,7 +252,7 @@ print(@typeOf(c));
 $exact: [0]byte = "";
 print(@typeOf(exact));
 `),
-    ["[]byte", "hello", '""', "[0]byte"],
+    ["const []u8", "hello", '""', "[0]u8"],
   );
 });
 
@@ -262,7 +266,7 @@ print(@typeOf(f()));
 $s = f()?;
 print(@typeOf(s));
 `),
-    ["[]byte | error", "[]byte"],
+    ["const []u8 | error", "const []u8"],
   );
 });
 

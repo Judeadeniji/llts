@@ -56,7 +56,7 @@ test "formatType string literal const" {
     var doc = try parseDoc(arena.allocator(), "@const $greeting = \"hi\";\n");
     const decl = findTopLevel(&doc, "greeting") orelse return error.NoDecl;
     const s = infer.formatType(arena.allocator(), decl, true, &doc) orelse return error.NoFormat;
-    try testing.expectEqualStrings("\"hi\" ([]byte)", s);
+    try testing.expectEqualStrings("\"hi\" (const []u8)", s);
 }
 
 test "formatType const-folds arithmetic" {

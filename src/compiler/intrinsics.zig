@@ -493,7 +493,7 @@ fn asmOperandSize(state: *CompilerState, t: ir.Type) !?i64 {
 }
 
 /// Emit-time `@sizeOf` for a bare type argument the typechecker did not visit.
-fn staticTypeArgSize(state: *CompilerState, node: *ast.Node) !?i32 {
+pub fn staticTypeArgSize(state: *CompilerState, node: *ast.Node) !?i32 {
     const is_type = switch (node.*) {
         .pointer_type, .array_type, .union_type, .intersection_type, .func_type, .tuple_type, .shape_type => true,
         .primary => |p| p.kind == .identifier and scope.resolveLocal(state, p.name) == -1 and

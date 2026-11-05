@@ -54,7 +54,7 @@ pub const Type = union(enum) {
     str_lit: []const u8,
     int_lit: i64,
     bool_lit: bool,
-    array: struct { elem: *Type, length: ?usize },
+    array: struct { elem: *Type, length: ?usize, is_const: bool = false },
     /// `[T, U, …]` fixed heterogeneous product (runtime: value array).
     tuple: []Type,
     ptr: *Type,
@@ -107,7 +107,7 @@ pub const TNever: Type = .{ .never = {} };
 pub const TType: Type = .{ .type_ = {} };
 
 var byte_elem: Type = .{ .u8 = {} };
-pub const TString: Type = .{ .array = .{ .elem = &byte_elem, .length = null } };
+pub const TString: Type = .{ .array = .{ .elem = &byte_elem, .length = null, .is_const = true } };
 
 /// Allocator used while building type trees during a typecheck pass.
 pub const TypeAlloc = struct {
@@ -119,9 +119,9 @@ pub const TypeAlloc = struct {
         return p;
     }
 
-    pub fn arrayType(self: TypeAlloc, elem: Type, length: ?usize) !Type {
+    pub fn arrayType(self: TypeAlloc, elem: Type, length: ?usize, is_const: bool) !Type {
         const ep = try self.allocType(elem);
-        return .{ .array = .{ .elem = ep, .length = length } };
+        return .{ .array = .{ .elem = ep, .length = length, .is_const = is_const } };
     }
 
     pub fn tupleType(self: TypeAlloc, elems: []const Type) !Type {
@@ -342,12 +342,16 @@ fn displayTypeAllocFlags(allocator: std.mem.Allocator, t: Type, qualified: bool)
         .array => |a| blk: {
             const elem = try displayTypeAllocFlags(allocator, a.elem.*, qualified);
             defer allocator.free(elem);
-            // Prefer `[]byte` spelling for u8 slices (string ≡ []byte).
-            const elem_disp = if (a.elem.* == .u8) "byte" else elem;
-            if (a.length) |len| {
-                break :blk try std.fmt.allocPrint(allocator, "[{d}]{s}", .{ len, elem_disp });
+            if (a.is_const) {
+                if (a.length) |len| {
+                    break :blk try std.fmt.allocPrint(allocator, "const [{d}]{s}", .{ len, elem });
+                }
+                break :blk try std.fmt.allocPrint(allocator, "const []{s}", .{elem});
             }
-            break :blk try std.fmt.allocPrint(allocator, "[]{s}", .{elem_disp});
+            if (a.length) |len| {
+                break :blk try std.fmt.allocPrint(allocator, "[{d}]{s}", .{ len, elem });
+            }
+            break :blk try std.fmt.allocPrint(allocator, "[]{s}", .{elem});
         },
         .tuple => |elems| blk: {
             var parts: std.ArrayList([]const u8) = .empty;
@@ -494,7 +498,7 @@ pub fn displayTypeSimple(t: Type) ?[]const u8 {
         .enum_ => |n| cleanTypeName(n),
         .enum_lit => null,
         .str_lit, .int_lit, .bool_lit => null,
-        .array => |a| if (a.elem.* == .u8 and a.length == null) "[]byte" else null,
+        .array => |a| if (a.elem.* == .u8 and a.length == null) (if (a.is_const) "const []u8" else "[]u8") else null,
         .ptr, .union_, .func, .tuple, .shape => null,
         .error_set => |n| cleanTypeName(n),
         .error_lit => null,
@@ -521,7 +525,7 @@ pub fn typeEquals(a: Type, b: Type) bool {
         .str_lit => |s| b == .str_lit and std.mem.eql(u8, s, b.str_lit),
         .int_lit => |n| b == .int_lit and n == b.int_lit,
         .bool_lit => |v| b == .bool_lit and v == b.bool_lit,
-        .array => |aa| b == .array and aa.length == b.array.length and typeEquals(aa.elem.*, b.array.elem.*),
+        .array => |aa| b == .array and aa.length == b.array.length and aa.is_const == b.array.is_const and typeEquals(aa.elem.*, b.array.elem.*),
         .tuple => |ae| blk: {
             if (b != .tuple) break :blk false;
             const be = b.tuple;
@@ -742,6 +746,7 @@ fn arraySubtype(a: Type, b: Type) bool {
     const aa = a.array;
     const ba = b.array;
     if (!isSubtype(aa.elem.*, ba.elem.*)) return false;
+    if (aa.is_const and !ba.is_const) return false;
     if (ba.length == null) return true;
     if (aa.length == null) return false;
     return aa.length.? == ba.length.?;
@@ -874,7 +879,7 @@ pub fn isByteSlice(t: Type) bool {
 pub fn isString(t: Type) bool {
     const p = peelDefined(t);
     if (p == .str_lit) return true;
-    if (p == .struct_) return std.mem.eql(u8, p.struct_, "string");
+    if (p == .array and p.array.elem.* == .u8 and p.array.is_const and p.array.length == null) return true;
     return false;
 }
 
@@ -958,9 +963,24 @@ pub fn parseDisplayType(ta: TypeAlloc, s_in: []const u8) !Type {
     if (s.len > 0 and s[0] == '*') {
         return try ta.ptrType(try parseDisplayType(ta, s[1..]));
     }
+    if (std.mem.startsWith(u8, s, "const ")) {
+        const inner_str = std.mem.trim(u8, s[6..], " \t");
+        const inner = try parseDisplayType(ta, inner_str);
+        if (inner == .array) {
+            var arr = inner.array;
+            arr.is_const = true;
+            return .{ .array = arr };
+        }
+    }
     if (s.len > 0 and s[0] == '[') {
         if (s.len >= 2 and s[1] == ']') {
-            return try ta.arrayType(try parseDisplayType(ta, s[2..]), null);
+            var is_const = false;
+            var rest = std.mem.trim(u8, s[2..], " \t");
+            if (std.mem.startsWith(u8, rest, "const ")) {
+                is_const = true;
+                rest = std.mem.trim(u8, rest[6..], " \t");
+            }
+            return try ta.arrayType(try parseDisplayType(ta, rest), null, is_const);
         }
         var depth: i32 = 0;
         var close: ?usize = null;
@@ -978,11 +998,16 @@ pub fn parseDisplayType(ta: TypeAlloc, s_in: []const u8) !Type {
         }
         const end = close orelse return error.CompileError;
         const interior = s[1..end];
-        const rest = std.mem.trim(u8, s[end + 1 ..], " \t");
+        var rest = std.mem.trim(u8, s[end + 1 ..], " \t");
         if (rest.len > 0) {
             // `[N]T`
             const len = try std.fmt.parseInt(usize, interior, 10);
-            return try ta.arrayType(try parseDisplayType(ta, rest), len);
+            var is_const = false;
+            if (std.mem.startsWith(u8, rest, "const ")) {
+                is_const = true;
+                rest = std.mem.trim(u8, rest[6..], " \t");
+            }
+            return try ta.arrayType(try parseDisplayType(ta, rest), len, is_const);
         }
         // `[T, U, …]` tuple (including 1-tuples)
         const parts = try splitTopLevel(ta.allocator, interior, ", ");

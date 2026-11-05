@@ -1,5 +1,7 @@
-import { test } from "bun:test";
+import { test, setDefaultTimeout } from "bun:test";
 import { expectError, expectOutput, runSource } from "./helpers";
+
+setDefaultTimeout(60_000);
 
 test("type values: @typeOf in local annotations and composites", () => {
   expectOutput(

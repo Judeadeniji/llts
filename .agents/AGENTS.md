@@ -28,3 +28,14 @@ This is where language design gets tricky. Some features look like standard libr
 ## 4. Coding Guidelines
 
 * **Zig Imports:** NEVER inline Zig imports (e.g., do not write `@import("some/module.zig").func()`). Always declare imports as top-level constants at the beginning of the file (e.g., `const module = @import("some/module.zig");`) and use the constant.
+
+## 5. Compiler Authority (Non-Negotiable)
+
+The compiler front end (scanner → parser → typecheck → analysis) is the single source of truth. Backends lower compiler facts; they never recreate them.
+
+* The native emitter MUST consume facts produced by the compiler: resolved expression/param/return types, resolved call and method targets, constant values, control-flow termination, reachability, mutability/read facts, struct layout, enum/error/typedef information, and intrinsic plans.
+* The native emitter MUST NOT re-parse type displays, re-infer expression types, re-resolve names or methods, re-fold constants, re-run reachability, re-derive return types, or re-analyze control flow or mutation.
+* If the emitter needs a fact the compiler has not stored, add it to `CompilerState` and record it during typecheck/analysis. Do not add a parallel implementation in the emitter.
+* The emitter may only translate recorded facts into Zig and reject shapes it cannot lower. A lowering rejection must never replace, relax, or disagree with a compiler decision.
+* If compiler output is wrong or incomplete, fix the compiler. Never compensate in the emitter.
+* Any duplicated analysis in the emitter is a bug and must be removed.

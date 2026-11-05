@@ -189,8 +189,9 @@ fn typesAssignable(state: *CompilerState, got: []const u8, expected: []const u8)
             if (std.mem.startsWith(u8, got, "[") and got.len > 1 and got[1] != ']') {
                 return std.mem.eql(u8, got, expected);
             }
-            // []byte / string </: [N]byte
-            if (std.mem.eql(u8, got, "[]byte") or std.mem.eql(u8, got, "string")) return false;
+            // []byte / []u8 / string / const []u8 </: [N]byte / [N]u8
+            if (std.mem.eql(u8, got, "[]byte") or std.mem.eql(u8, got, "[]u8") or std.mem.eql(u8, got, "string") or
+                std.mem.eql(u8, got, "const []u8") or std.mem.eql(u8, got, "[]const u8")) return false;
             return std.mem.eql(u8, got, expected);
         }
         return true;
@@ -278,7 +279,7 @@ fn inferDeclType(state: *CompilerState, value: *ast.Node) ?[]const u8 {
             break :blk s;
         },
         .literal => |lit| switch (lit.literal_type) {
-            .string => "[]byte",
+            .string => "const []u8",
             .boolean => "u1",
             .null => "null",
             .number, .hex, .octal, .binary => if (std.mem.indexOfScalar(u8, lit.value, '.') != null) "float" else "int",

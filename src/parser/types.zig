@@ -67,17 +67,32 @@ fn parseTypeOperand(self: *Parser) ParseError!*Node {
         } });
     }
 
+    if (self.checkKeyword("const")) {
+        _ = self.advance();
+        const inner = try parseTypeOperand(self);
+        if (inner.* == .array_type) {
+            inner.array_type.is_const = true;
+        }
+        return inner;
+    }
+
     if (self.checkDelim("[")) {
         const start = self.peek(0).?;
         _ = self.advance();
 
-        // `[]T`
+        // `[]T` or `[]const T`
         if (self.checkDelim("]")) {
             _ = self.advance();
+            var is_const = false;
+            if (self.checkKeyword("const")) {
+                _ = self.advance();
+                is_const = true;
+            }
             const elem = try parseType(self);
             return self.create(.{ .array_type = .{
                 .elem = elem,
                 .length_text = null,
+                .is_const = is_const,
                 .loc = self.locOf(start),
             } });
         }
@@ -88,10 +103,16 @@ fn parseTypeOperand(self: *Parser) ParseError!*Node {
                 if (n1.type == .delimiter and std.mem.eql(u8, n1.value, "]")) {
                     const num_tok = self.advance().?;
                     _ = self.advance(); // `]`
+                    var is_const = false;
+                    if (self.checkKeyword("const")) {
+                        _ = self.advance();
+                        is_const = true;
+                    }
                     const elem = try parseType(self);
                     return self.create(.{ .array_type = .{
                         .elem = elem,
                         .length_text = try self.dupe(num_tok.value),
+                        .is_const = is_const,
                         .loc = self.locOf(start),
                     } });
                 }

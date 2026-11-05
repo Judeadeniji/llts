@@ -38,7 +38,7 @@ pub fn typeFromAst(node: ?*ast.Node, state: ?*state_mod.CompilerState, ta: ir.Ty
                 };
                 length = parsed_len;
             }
-            break :blk try ta.arrayType(elem, length);
+            break :blk try ta.arrayType(elem, length, a.is_const);
         },
         .tuple_type => |t| blk: {
             var elems: std.ArrayList(ir.Type) = .empty;
@@ -435,9 +435,24 @@ pub fn parseDisplayType(
     if (s.len > 0 and s[0] == '*') {
         return try ta.ptrType(try parseDisplayType(state, ta, s[1..], cycle));
     }
+    if (std.mem.startsWith(u8, s, "const ")) {
+        const inner_str = std.mem.trim(u8, s[6..], " \t");
+        const inner = try parseDisplayType(state, ta, inner_str, cycle);
+        if (inner == .array) {
+            var arr = inner.array;
+            arr.is_const = true;
+            return .{ .array = arr };
+        }
+    }
     if (s.len > 0 and s[0] == '[') {
         if (s.len >= 2 and s[1] == ']') {
-            return try ta.arrayType(try parseDisplayType(state, ta, s[2..], cycle), null);
+            var is_const = false;
+            var rest = std.mem.trim(u8, s[2..], " \t");
+            if (std.mem.startsWith(u8, rest, "const ")) {
+                is_const = true;
+                rest = std.mem.trim(u8, rest[6..], " \t");
+            }
+            return try ta.arrayType(try parseDisplayType(state, ta, rest, cycle), null, is_const);
         }
         var depth: i32 = 0;
         var close: ?usize = null;
@@ -455,10 +470,15 @@ pub fn parseDisplayType(
         }
         const end = close orelse return error.CompileError;
         const interior = s[1..end];
-        const rest = std.mem.trim(u8, s[end + 1 ..], " \t");
+        var rest = std.mem.trim(u8, s[end + 1 ..], " \t");
         if (rest.len > 0) {
             const len = std.fmt.parseInt(usize, interior, 10) catch return error.CompileError;
-            return try ta.arrayType(try parseDisplayType(state, ta, rest, cycle), len);
+            var is_const = false;
+            if (std.mem.startsWith(u8, rest, "const ")) {
+                is_const = true;
+                rest = std.mem.trim(u8, rest[6..], " \t");
+            }
+            return try ta.arrayType(try parseDisplayType(state, ta, rest, cycle), len, is_const);
         }
         const parts = try ir.splitTopLevel(ta.allocator, interior, ", ");
         defer ta.allocator.free(parts);
@@ -958,7 +978,7 @@ pub fn resolveType(state: *state_mod.CompilerState, node: *ast.Node) ?[]const u8
     return switch (node.*) {
         .literal => |lit| switch (lit.literal_type) {
             .string => blk: {
-                const s = std.fmt.allocPrint(state.allocator, "[{d}]byte", .{lit.value.len}) catch break :blk "[]byte";
+                const s = std.fmt.allocPrint(state.allocator, "const [{d}]u8", .{lit.value.len}) catch break :blk "const []u8";
                 state.owned.append(state.allocator, s) catch {};
                 break :blk s;
             },
@@ -1057,6 +1077,7 @@ pub fn resolveType(state: *state_mod.CompilerState, node: *ast.Node) ?[]const u8
         },
         .call => |c| blk: {
             if (isTypeCall(state, node)) break :blk "type";
+            if (c.callee.* == .primary and std.mem.eql(u8, c.callee.primary.name, "@sizeOf")) break :blk "i64";
             if (state.generic_calls.get(node)) |gc| {
                 if (state.functions.get(gc.instance)) |def| break :blk def.return_type;
             }
@@ -1125,8 +1146,11 @@ pub fn resolveType(state: *state_mod.CompilerState, node: *ast.Node) ?[]const u8
             const obj_raw = resolveType(state, idx.object) orelse break :blk null;
             const obj = unwrapOptionalDisplay(obj_raw);
             if (idx.is_slice) {
-                // Slice views are unsized `[]T` / `[]byte`.
-                if (std.mem.eql(u8, obj, "string") or std.mem.eql(u8, obj, "[]byte")) break :blk "[]byte";
+                // Slice views of strings/bytes.
+                if (std.mem.eql(u8, obj, "string") or std.mem.eql(u8, obj, "const []u8") or std.mem.eql(u8, obj, "[]const u8") or
+                    (std.mem.startsWith(u8, obj, "const [") and std.mem.endsWith(u8, obj, "]u8"))) break :blk "const []u8";
+                if (std.mem.eql(u8, obj, "[]byte") or std.mem.eql(u8, obj, "[]u8") or
+                    (std.mem.startsWith(u8, obj, "[") and (std.mem.endsWith(u8, obj, "]u8") or std.mem.endsWith(u8, obj, "]byte")))) break :blk "[]u8";
                 if (arrayElemDisplay(state.allocator, obj) catch null) |e| {
                     const s = std.fmt.allocPrint(state.allocator, "[]{s}", .{e}) catch break :blk null;
                     state.allocator.free(e);
@@ -1261,8 +1285,11 @@ fn resolveTypeLiteral(state: *state_mod.CompilerState, node: *ast.Node) ?[]const
 
 pub fn isStringyType(t: ?[]const u8) bool {
     const s = t orelse return false;
-    if (std.mem.eql(u8, s, "string") or std.mem.eql(u8, s, "[]byte")) return true;
-    return std.mem.startsWith(u8, s, "[") and std.mem.endsWith(u8, s, "]byte");
+    if (std.mem.eql(u8, s, "string") or std.mem.eql(u8, s, "const []u8") or std.mem.eql(u8, s, "[]const u8") or
+        std.mem.eql(u8, s, "const []byte") or std.mem.eql(u8, s, "[]const byte")) return true;
+    if (std.mem.eql(u8, s, "[]byte") or std.mem.eql(u8, s, "[]u8")) return true;
+    if (std.mem.startsWith(u8, s, "const [") and (std.mem.endsWith(u8, s, "]u8") or std.mem.endsWith(u8, s, "]byte"))) return true;
+    return std.mem.startsWith(u8, s, "[") and (std.mem.endsWith(u8, s, "]byte") or std.mem.endsWith(u8, s, "]u8"));
 }
 
 /// If `node` names an enum type (`Tok` or `lib.Tok`), return the (possibly module-qualified) enum name.

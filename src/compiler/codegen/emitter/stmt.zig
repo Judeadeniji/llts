@@ -99,17 +99,16 @@ pub fn emitIndexAssignment(
         obj_t = payload.*;
         obj_code = try std.fmt.allocPrint(a, "({s}).*", .{obj_code});
     }
+    if (obj_t.kind == .string) {
+        return self.failAt(node, "cannot assign to elements of a const slice or string", .{});
+    }
     const word: []const u8 = switch (obj_t.kind) {
         .array => "Array",
         .slice => "Slice",
-        .string => "String",
         else => return self.failAt(node, "native backend cannot assign into '{s}' yet", .{obj_t.display}),
     };
-    // Allow stores into `[]byte` / byte-slice views (including `v[i..j]`).
-    // String-literal objects are rejected above.
     const use: []const u8 = switch (obj_t.kind) {
         .slice => "slice",
-        .string => "str",
         else => "arr",
     };
     const index_node = ix.index orelse return self.failAt(node, "expected index expression", .{});
@@ -136,12 +135,8 @@ pub fn emitIndexAssignment(
     try self.writer.print("if ({s} < 0 or {s} >= @as(i64, @intCast(({s}).len))) return rt.io.fail({s}, .{{ {s}, @as(i64, @intCast(({s}).len)) }});\n", .{
         idx_name, idx_name, obj_code, try self.zigString(fmt), idx_name, obj_code,
     });
-    const target_code = if (obj_t.kind == .string)
-        try std.fmt.allocPrint(a, "@constCast({s})", .{obj_code})
-    else
-        obj_code;
     try self.writeIndent();
-    try self.writer.print("{s}[@intCast({s})] = {s};\n", .{ target_code, idx_name, rhs_name });
+    try self.writer.print("{s}[@intCast({s})] = {s};\n", .{ obj_code, idx_name, rhs_name });
 }
 
 pub fn emitPlaceLvalue(self: *Emitter, node: *ast_mod.Node) ![]const u8 {
