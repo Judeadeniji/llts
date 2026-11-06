@@ -4,6 +4,7 @@ const ast = @import("../ast/root.zig");
 pub const const_eval = @import("const_eval.zig");
 pub const ConstValue = const_eval.ConstValue;
 const layout = @import("layout.zig");
+const ir = @import("typecheck/ir.zig");
 
 pub const Local = struct {
     name: []const u8,
@@ -188,6 +189,9 @@ pub const CompilerState = struct {
     instance_counter: u32 = 0,
     /// Owns the AST copies made for instances.
     generic_arena: std.heap.ArenaAllocator,
+    /// Owns type IR for the lifetime of the compile so typecheck/codegen can
+    /// share resolved types after analysis.
+    type_arena: std.heap.ArenaAllocator,
     loops: std.ArrayList(LoopTracker) = .empty,
     exprs: std.ArrayList(ExprTracker) = .empty,
     defer_stacks: std.AutoHashMap(i32, std.ArrayListUnmanaged(DeferEntry)),
@@ -240,6 +244,11 @@ pub const CompilerState = struct {
     import_from: std.StringHashMap(ImportFrame),
     /// Max loop iterations allowed during constant evaluation.
     comptime_max_loop_iterations: usize = const_eval.DEFAULT_COMPTIME_MAX_LOOP_ITERATIONS,
+
+    /// Type IR allocator with compile-lifetime ownership.
+    pub fn typeAlloc(self: *CompilerState) ir.TypeAlloc {
+        return .{ .allocator = self.type_arena.allocator() };
+    }
 };
 
 pub fn create(allocator: std.mem.Allocator) !CompilerState {
@@ -267,6 +276,7 @@ pub fn create(allocator: std.mem.Allocator) !CompilerState {
         .generic_calls = std.AutoHashMap(*ast.Node, GenericCall).init(allocator),
         .method_index = std.StringHashMap(std.ArrayList([]const u8)).init(allocator),
         .generic_arena = std.heap.ArenaAllocator.init(allocator),
+        .type_arena = std.heap.ArenaAllocator.init(allocator),
         .defer_stacks = std.AutoHashMap(i32, std.ArrayListUnmanaged(DeferEntry)).init(allocator),
         .global_vars = std.StringHashMap(void).init(allocator),
         .global_types = std.StringHashMap([]const u8).init(allocator),
@@ -393,6 +403,7 @@ pub fn deinit(self: *CompilerState) void {
     self.generic_calls.deinit();
     self.pending_instances.deinit(self.allocator);
     self.generic_arena.deinit();
+    self.type_arena.deinit();
     var dit = self.defer_stacks.iterator();
     while (dit.next()) |e| e.value_ptr.deinit(self.allocator);
     self.defer_stacks.deinit();
