@@ -873,6 +873,7 @@ fn moduleOfFuncName(func_name: []const u8) ?[]const u8 {
 
 fn fnReturnType(state: *state_mod.CompilerState, ta: ir.TypeAlloc, func_name: []const u8) !ir.Type {
     if (state.functions.get(func_name)) |def| {
+        if (def.return_ir) |t| return t;
         // Bare type names inside this function's stored displays (e.g. the
         // `Logger` in `log.default(): Logger`) belong to the callee's own
         // module — hint the resolver so same-named types from other modules
@@ -2792,11 +2793,14 @@ fn checkFunction(
                         final = w;
                     }
                     def.return_type = final;
+                    def.return_ir = from_ast.parseDisplayType(state, ta, final, null) catch null;
                 } else {
                     def.return_type = disp;
+                    def.return_ir = a;
                 }
             } else {
                 def.return_type = disp;
+                def.return_ir = a;
             }
         }
     } else if (state.functions.getPtr(f.name)) |def| {
@@ -2820,6 +2824,7 @@ fn checkFunction(
                     }
                 }
                 def.return_type = final;
+                def.return_ir = from_ast.parseDisplayType(state, ta, final, null) catch null;
             }
         } else if (!bodyHasValuedReturn(f.body)) {
             // No valued `return expr`: empty body / only bare `return;` → void.
@@ -2830,6 +2835,14 @@ fn checkFunction(
                 std.mem.eql(u8, def.return_type.?, "null"))
             {
                 def.return_type = "void";
+                def.return_ir = ir.TVoid;
+            }
+        }
+    }
+    if (state.functions.getPtr(f.name)) |def| {
+        if (def.return_ir == null) {
+            if (def.return_type) |rt| {
+                def.return_ir = from_ast.parseDisplayType(state, ta, rt, null) catch null;
             }
         }
     }
@@ -3202,7 +3215,10 @@ fn resolveSignatureTypes(state: *state_mod.CompilerState, env: *Env, ta: ir.Type
         if (from_ast.typeNodeHasCall(rt)) {
             const t = try resolveDeclTypeNode(state, env, ta, rt);
             try rejectTypeValue(state, t, "a return type");
-            if (state.functions.getPtr(f.name)) |def| def.return_type = try ownDisplayQualified(state, t);
+            if (state.functions.getPtr(f.name)) |def| {
+                def.return_type = try ownDisplayQualified(state, t);
+                def.return_ir = t;
+            }
         }
     }
 }

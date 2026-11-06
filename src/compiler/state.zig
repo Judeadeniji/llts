@@ -40,6 +40,8 @@ pub const FunctionDef = struct {
     has_return: bool = false,
     calls: std.StringHashMap(void),
     return_type: ?[]const u8 = null,
+    /// Canonical return type, dual-written while displays are migrated.
+    return_ir: ?ir.Type = null,
     is_recursive: bool = false,
     forward_jumps: std.ArrayList(usize) = .empty,
     source_index: u16 = 0,

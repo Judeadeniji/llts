@@ -497,6 +497,7 @@ fn inferRhsType(
             }
             // Named function → its declared return type.
             if (state.functions.get(callee_name)) |def| {
+                if (def.return_ir) |t| return t;
                 if (def.return_type) |rt| {
                     return from_ast.parseDisplayType(null, ta, rt, null) catch ir.TUnknown;
                 }
