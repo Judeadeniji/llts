@@ -1108,6 +1108,9 @@ pub fn recordExprType(state: *state_mod.CompilerState, node: *ast.Node, t: ir.Ty
     if (!state.type_of_results.contains(node)) {
         try state.type_of_results.put(node, disp);
     }
+    if (!state.type_ir_of_results.contains(node)) {
+        try state.type_ir_of_results.put(node, codegen_t);
+    }
 }
 
 fn isBareIntLiteral(node: *ast.Node) bool {

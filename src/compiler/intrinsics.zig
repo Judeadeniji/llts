@@ -127,6 +127,7 @@ pub fn typecheck(state: *CompilerState, env: *typecheck_root.Env, ta: ir.TypeAll
                 break :blk t;
             };
             try state.type_of_results.put(call_node, try typecheck_root.ownDisplay(state, denoted));
+            try state.type_ir_of_results.put(call_node, denoted);
             try recordTypeValue(state, call_node, denoted);
             return ir.TType;
         },

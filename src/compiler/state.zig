@@ -212,6 +212,9 @@ pub const CompilerState = struct {
     /// Imported module ASTs (own their arenas). Freed in `deinit`.
     module_docs: std.ArrayList(*ast.Document) = .empty,
     type_of_results: std.AutoHashMap(*ast.Node, []const u8),
+    /// Canonical IR type for expression results, dual-written while display
+    /// strings are migrated out of the typechecker.
+    type_ir_of_results: std.AutoHashMap(*ast.Node, ir.Type),
     /// Type-valued node (`@typeOf(x)`, or a type name used as a value) → qualified
     /// display of the type it denotes. Filled by typecheck; read by `typeFromAst`
     /// so type-returning expressions work in every type position.
@@ -286,6 +289,7 @@ pub fn create(allocator: std.mem.Allocator) !CompilerState {
         .native_globals = std.StringHashMap(void).init(allocator),
         .global_slots = std.StringHashMap(u16).init(allocator),
         .type_of_results = std.AutoHashMap(*ast.Node, []const u8).init(allocator),
+        .type_ir_of_results = std.AutoHashMap(*ast.Node, ir.Type).init(allocator),
         .type_call_results = std.AutoHashMap(*ast.Node, []const u8).init(allocator),
         .type_eq_folds = std.AutoHashMap(*ast.Node, bool).init(allocator),
         .size_of_results = std.AutoHashMap(*ast.Node, i32).init(allocator),
@@ -419,6 +423,7 @@ pub fn deinit(self: *CompilerState) void {
     self.native_globals.deinit();
     self.global_slots.deinit();
     self.type_of_results.deinit();
+    self.type_ir_of_results.deinit();
     self.type_call_results.deinit();
     self.type_eq_folds.deinit();
     self.size_of_results.deinit();
