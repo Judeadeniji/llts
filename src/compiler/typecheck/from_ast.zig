@@ -99,6 +99,7 @@ pub fn typeFromAst(node: ?*ast.Node, state: ?*state_mod.CompilerState, ta: ir.Ty
         // Type-returning expression (`@typeOf(x)`): typecheck resolved it in context.
         .call => blk: {
             const st = state orelse break :blk ir.TUnknown;
+            if (st.type_call_ir_results.get(n)) |t| break :blk t;
             const disp = st.type_call_results.get(n) orelse break :blk ir.TUnknown;
             break :blk try parseDisplayType(st, ta, disp, null);
         },

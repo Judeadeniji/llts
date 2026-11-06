@@ -219,6 +219,9 @@ pub const CompilerState = struct {
     /// display of the type it denotes. Filled by typecheck; read by `typeFromAst`
     /// so type-returning expressions work in every type position.
     type_call_results: std.AutoHashMap(*ast.Node, []const u8),
+    /// Canonical IR type for type-valued nodes, dual-written while display
+    /// strings are migrated out of the typechecker.
+    type_call_ir_results: std.AutoHashMap(*ast.Node, ir.Type),
     /// `T == U` / `T != U` between types, folded at typecheck. Keyed by the
     /// binary's left operand node.
     type_eq_folds: std.AutoHashMap(*ast.Node, bool),
@@ -291,6 +294,7 @@ pub fn create(allocator: std.mem.Allocator) !CompilerState {
         .type_of_results = std.AutoHashMap(*ast.Node, []const u8).init(allocator),
         .type_ir_of_results = std.AutoHashMap(*ast.Node, ir.Type).init(allocator),
         .type_call_results = std.AutoHashMap(*ast.Node, []const u8).init(allocator),
+        .type_call_ir_results = std.AutoHashMap(*ast.Node, ir.Type).init(allocator),
         .type_eq_folds = std.AutoHashMap(*ast.Node, bool).init(allocator),
         .size_of_results = std.AutoHashMap(*ast.Node, i32).init(allocator),
         .name_of_plans = std.AutoHashMap(*ast.Node, NameOfPlan).init(allocator),
@@ -425,6 +429,7 @@ pub fn deinit(self: *CompilerState) void {
     self.type_of_results.deinit();
     self.type_ir_of_results.deinit();
     self.type_call_results.deinit();
+    self.type_call_ir_results.deinit();
     self.type_eq_folds.deinit();
     self.size_of_results.deinit();
     self.name_of_plans.deinit();

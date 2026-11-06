@@ -531,6 +531,7 @@ pub fn isTypeValueNode(state: *CompilerState, env: *typecheck_root.Env, node: *a
 /// Record the type a type-valued node denotes (read back by `typeFromAst`).
 pub fn recordTypeValue(state: *CompilerState, node: *ast.Node, t: ir.Type) !void {
     try state.type_call_results.put(node, try typecheck_root.ownDisplayQualified(state, t));
+    try state.type_call_ir_results.put(node, t);
 }
 
 /// The type denoted by a type-valued node (see `isTypeValueNode`).

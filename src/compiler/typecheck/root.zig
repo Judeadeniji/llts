@@ -2193,7 +2193,12 @@ fn inferTypeFunctionCall(
     try collectTypeArgs(state, env, ta, c, name, template, &qualified, &clean);
 
     const memo = try generics.memoKey(state, name, qualified.items);
-    const disp = state.instances.get(memo) orelse blk: {
+    var disp: []const u8 = undefined;
+    var result_ir: ir.Type = undefined;
+    if (state.instances.get(memo)) |d| {
+        disp = d;
+        result_ir = try from_ast.parseDisplayType(state, ta, d, null);
+    } else {
         if (state.instance_depth >= generics.max_depth) {
             return compiler_errors.compileFailFmt(state, "Type function instantiation too deep (instantiating '{s}')", .{memo});
         }
@@ -2207,11 +2212,12 @@ fn inferTypeFunctionCall(
             noteDiag(state, template);
             return compiler_errors.compileFailFmt(state, "Type function '{s}' did not return a type", .{ir.cleanTypeName(name)});
         };
-        const d = try ownDisplayQualified(state, result);
-        try state.instances.put(memo, d);
-        break :blk d;
-    };
+        disp = try ownDisplayQualified(state, result);
+        result_ir = result;
+        try state.instances.put(memo, disp);
+    }
     try state.type_call_results.put(call_node, disp);
+    try state.type_call_ir_results.put(call_node, result_ir);
     return ir.TType;
 }
 
