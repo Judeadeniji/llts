@@ -698,6 +698,7 @@ fn inferLiteral(ta: ir.TypeAlloc, lit: ast.Literal, prefer_literals: bool) !ir.T
 
 fn fieldTypeFromStruct(state: *state_mod.CompilerState, ta: ir.TypeAlloc, struct_name: []const u8, field: []const u8) !ir.Type {
     const def = from_ast.lookupStruct(state, struct_name) orelse return ir.TUnknown;
+    if (def.field_irs.get(field)) |t| return t;
     const raw = def.types.get(field) orelse return ir.TUnknown;
     return try from_ast.parseDisplayType(state, ta, raw, null);
 }
@@ -3093,6 +3094,7 @@ fn checkStructFieldTypes(state: *state_mod.CompilerState, env: *Env, ta: ir.Type
             try rejectTypeValue(state, t, "a struct field's type");
             const disp = try ownDisplay(state, t);
             try def.types.put(field.name, disp);
+            try def.field_irs.put(state.allocator, field.name, t);
             relayout = relayout or has_call;
         } else if (state.strict) {
             return compiler_errors.compileFailFmt(state, "Field '{s}' of struct '{s}' must have an explicit type annotation in strict mode; did you mean '{s}: int'?", .{ field.name, s.name, field.name });

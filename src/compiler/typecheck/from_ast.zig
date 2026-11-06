@@ -713,13 +713,12 @@ pub fn ensureShapeLayoutFromDisplayAs(
     if (state.structs.contains(key)) return;
     if (display.len < 2 or display[0] != '{' or display[display.len - 1] != '}') return;
 
-    var arena = std.heap.ArenaAllocator.init(state.allocator);
-    defer arena.deinit();
-    const ta = ir.TypeAlloc{ .allocator = arena.allocator() };
+    const ta = state.typeAlloc();
     const t = try parseDisplayType(state, ta, display, null);
     if (t != .shape) return;
 
     var type_map = std.StringHashMap([]const u8).init(state.allocator);
+    var field_irs: std.StringHashMapUnmanaged(ir.Type) = .{};
     var field_list: std.ArrayList(layout.FieldSpec) = .empty;
     defer field_list.deinit(state.allocator);
 
@@ -729,6 +728,7 @@ pub fn ensureShapeLayoutFromDisplayAs(
         const name_owned = try state.allocator.dupe(u8, f.name);
         try state.owned.append(state.allocator, name_owned);
         try type_map.put(name_owned, field_disp);
+        try field_irs.put(state.allocator, name_owned, f.ty);
         try field_list.append(state.allocator, .{ .name = name_owned, .type_name = field_disp });
     }
     const laid = try layout.layoutFields(state.allocator, field_list.items);
@@ -739,6 +739,7 @@ pub fn ensureShapeLayoutFromDisplayAs(
         .size = laid.size,
         .offsets = laid.offsets,
         .types = type_map,
+        .field_irs = field_irs,
     });
 }
 

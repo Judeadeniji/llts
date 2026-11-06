@@ -321,6 +321,7 @@ pub fn compileExtern(state: *CompilerState, ext: *const ast.Extern) !void {
 
 pub fn compileStruct(state: *CompilerState, s: *const ast.StructDecl) !void {
     var type_map = std.StringHashMap([]const u8).init(state.allocator);
+    var field_irs: std.StringHashMapUnmanaged(ir.Type) = .{};
     var field_list: std.ArrayList(layout.FieldSpec) = .empty;
     defer field_list.deinit(state.allocator);
 
@@ -330,6 +331,11 @@ pub fn compileStruct(state: *CompilerState, s: *const ast.StructDecl) !void {
             disp = (try from_ast.typeAstToDisplayQualified(ta, state)) orelse "unknown";
         }
         try type_map.put(field.name, disp);
+        const field_ir = if (field.type_annotation) |ann|
+            from_ast.typeFromAst(ann, state, state.typeAlloc()) catch ir.namedType(disp)
+        else
+            ir.namedType(disp);
+        try field_irs.put(state.allocator, field.name, field_ir);
         try field_list.append(state.allocator, .{ .name = field.name, .type_name = disp });
     }
     const laid = try layout.layoutFields(state.allocator, field_list.items);
@@ -337,12 +343,14 @@ pub fn compileStruct(state: *CompilerState, s: *const ast.StructDecl) !void {
         var old = kv.value;
         old.offsets.deinit();
         old.types.deinit();
+        old.field_irs.deinit(state.allocator);
     }
     try state.structs.put(s.name, .{
         .name = s.name,
         .size = laid.size,
         .offsets = laid.offsets,
         .types = type_map,
+        .field_irs = field_irs,
     });
 
     // Qualify method names to Struct::method for dispatch
@@ -477,6 +485,7 @@ pub fn compileTypeDecl(state: *CompilerState, td: *const ast.TypeDecl) !void {
 fn registerShapeLayout(state: *CompilerState, key: []const u8, shape: *const ast.ShapeType) !void {
     if (state.structs.contains(key)) return;
     var type_map = std.StringHashMap([]const u8).init(state.allocator);
+    var field_irs: std.StringHashMapUnmanaged(ir.Type) = .{};
     var field_list: std.ArrayList(layout.FieldSpec) = .empty;
     defer field_list.deinit(state.allocator);
 
@@ -486,6 +495,11 @@ fn registerShapeLayout(state: *CompilerState, key: []const u8, shape: *const ast
             field_disp = (try from_ast.typeAstToDisplayQualified(ta, state)) orelse "unknown";
         }
         try type_map.put(field.name, field_disp);
+        const field_ir = if (field.type_annotation) |ann|
+            from_ast.typeFromAst(ann, state, state.typeAlloc()) catch ir.namedType(field_disp)
+        else
+            ir.namedType(field_disp);
+        try field_irs.put(state.allocator, field.name, field_ir);
         try field_list.append(state.allocator, .{ .name = field.name, .type_name = field_disp });
     }
     const laid = try layout.layoutFields(state.allocator, field_list.items);
@@ -494,6 +508,7 @@ fn registerShapeLayout(state: *CompilerState, key: []const u8, shape: *const ast
         .size = laid.size,
         .offsets = laid.offsets,
         .types = type_map,
+        .field_irs = field_irs,
     });
 }
 

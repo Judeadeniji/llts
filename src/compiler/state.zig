@@ -64,6 +64,8 @@ pub const StructDef = struct {
     size: i32,
     offsets: std.StringHashMap(i32),
     types: std.StringHashMap([]const u8),
+    /// Canonical field types, dual-written while display types are migrated.
+    field_irs: std.StringHashMapUnmanaged(ir.Type) = .{},
 };
 
 pub const EnumDef = struct {
@@ -328,14 +330,16 @@ pub fn create(allocator: std.mem.Allocator) !CompilerState {
 
 fn putStruct(state: *CompilerState, name: []const u8, fields: []const struct { []const u8, []const u8 }) !void {
     var types = std.StringHashMap([]const u8).init(state.allocator);
+    var field_irs: std.StringHashMapUnmanaged(ir.Type) = .{};
     var specs: std.ArrayList(layout.FieldSpec) = .empty;
     defer specs.deinit(state.allocator);
     for (fields) |f| {
         try types.put(f[0], f[1]);
+        try field_irs.put(state.allocator, f[0], ir.namedType(f[1]));
         try specs.append(state.allocator, .{ .name = f[0], .type_name = f[1] });
     }
     const laid = try layout.layoutFields(state.allocator, specs.items);
-    try state.structs.put(name, .{ .name = name, .size = laid.size, .offsets = laid.offsets, .types = types });
+    try state.structs.put(name, .{ .name = name, .size = laid.size, .offsets = laid.offsets, .types = types, .field_irs = field_irs });
 }
 
 /// Record a compile failure for later inspection (LSP/editors). The message
@@ -392,6 +396,7 @@ pub fn deinit(self: *CompilerState) void {
     while (sit.next()) |e| {
         e.value_ptr.offsets.deinit();
         e.value_ptr.types.deinit();
+        e.value_ptr.field_irs.deinit(self.allocator);
     }
     self.structs.deinit();
     var eit = self.enums.iterator();
