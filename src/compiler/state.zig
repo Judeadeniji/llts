@@ -106,6 +106,8 @@ pub const TypeDef = struct {
     name: []const u8,
     /// Display string of the RHS (may name another typedef). Empty while `stub`.
     underlying: []const u8,
+    /// Canonical IR for the RHS, dual-written while displays are migrated.
+    ir: ?ir.Type = null,
     distinct: bool,
     /// Name reserved before RHS compile so field types may forward-ref it.
     stub: bool = false,

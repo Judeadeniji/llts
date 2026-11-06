@@ -152,7 +152,12 @@ fn bindCopyInner(state: *CompilerState, template: *ast.Node, name: []const u8, q
         try state.owned.append(state.allocator, key);
         const underlying = qualified_args[ai];
         ai += 1;
-        try state.typedefs.put(key, .{ .name = key, .underlying = underlying, .distinct = false });
+        try state.typedefs.put(key, .{
+            .name = key,
+            .underlying = underlying,
+            .ir = try from_ast.parseDisplayType(state, state.typeAlloc(), underlying, null),
+            .distinct = false,
+        });
         if (underlying.len > 0 and underlying[0] == '{') try from_ast.ensureShapeLayoutFromDisplay(state, underlying);
         try renames.put(p.name, key);
     }

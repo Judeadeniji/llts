@@ -3164,7 +3164,10 @@ fn resolveTypeDeclCalls(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeA
         const t = try resolveDeclTypeNode(state, env, ta, td.type_expr);
         try rejectTypeValue(state, t, "a type definition");
         const disp = try ownDisplayQualified(state, t);
-        if (state.typedefs.getPtr(td.name)) |def| def.underlying = disp;
+        if (state.typedefs.getPtr(td.name)) |def| {
+            def.underlying = disp;
+            def.ir = t;
+        }
         if (disp.len > 0 and disp[0] == '{') {
             try from_ast.ensureShapeLayoutFromDisplay(state, disp);
             try from_ast.ensureShapeLayoutFromDisplayAs(state, disp, td.name);

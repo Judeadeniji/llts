@@ -339,7 +339,7 @@ fn resolveTypedef(
         return ir.TUnknown;
     }
 
-    const under = try parseDisplayType(state, ta, td.underlying, seen);
+    const under = td.ir orelse try parseDisplayType(state, ta, td.underlying, seen);
     if (!td.distinct) return under;
     return try ta.definedType(td.name, under);
 }

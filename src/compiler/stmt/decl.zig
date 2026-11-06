@@ -454,6 +454,7 @@ pub fn compileTypeDecl(state: *CompilerState, td: *const ast.TypeDecl) !void {
     try state.typedefs.put(td.name, .{
         .name = td.name,
         .underlying = disp,
+        .ir = try from_ast.typeFromAst(td.type_expr, state, state.typeAlloc()),
         .distinct = td.distinct,
         .stub = false,
     });
