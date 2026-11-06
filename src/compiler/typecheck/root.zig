@@ -3206,9 +3206,7 @@ pub fn typecheck(state: *state_mod.CompilerState, doc: *ast.Document) TypecheckE
             return error.CompileError;
         };
     }
-    var arena = std.heap.ArenaAllocator.init(state.allocator);
-    defer arena.deinit();
-    const ta = ir.TypeAlloc{ .allocator = arena.allocator() };
+    const ta = state.typeAlloc();
 
     var decl_env = Env.init(ta.allocator);
     defer decl_env.deinit();
