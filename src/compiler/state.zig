@@ -195,6 +195,8 @@ pub const CompilerState = struct {
     /// `template(qualified type args)` → type display (type functions) or
     /// instance function name (generic functions).
     instances: std.StringHashMap([]const u8),
+    /// Canonical IR for type-function results (keyed like `instances`).
+    instance_type_irs: std.StringHashMap(ir.Type),
     /// Generic function instances registered in `functions`.
     instance_fns: std.StringHashMap(void),
     /// Call to a generic function → its instance.
@@ -313,6 +315,7 @@ pub fn create(allocator: std.mem.Allocator) !CompilerState {
         .local_type_decls = std.AutoHashMap(*const ast.TypeDecl, void).init(allocator),
         .templates = std.StringHashMap(*ast.Node).init(allocator),
         .instances = std.StringHashMap([]const u8).init(allocator),
+        .instance_type_irs = std.StringHashMap(ir.Type).init(allocator),
         .instance_fns = std.StringHashMap(void).init(allocator),
         .generic_calls = std.AutoHashMap(*ast.Node, GenericCall).init(allocator),
         .method_index = std.StringHashMap(std.ArrayList([]const u8)).init(allocator),
@@ -366,8 +369,11 @@ fn putStruct(state: *CompilerState, name: []const u8, fields: []const struct { [
     var specs: std.ArrayList(layout.FieldSpec) = .empty;
     defer specs.deinit(state.allocator);
     for (fields) |f| {
-        try types.put(f[0], f[1]);
-        try field_irs.put(state.allocator, f[0], ir.namedType(f[1]));
+        const t = ir.namedType(f[1]);
+        const disp = try ir.displayTypeQualifiedAlloc(state.allocator, t);
+        try state.owned.append(state.allocator, disp);
+        try types.put(f[0], disp);
+        try field_irs.put(state.allocator, f[0], t);
         try specs.append(state.allocator, .{ .name = f[0], .type_name = f[1] });
     }
     const laid = try layout.layoutFields(state.allocator, specs.items);
@@ -448,6 +454,7 @@ pub fn deinit(self: *CompilerState) void {
     self.local_type_decls.deinit();
     self.templates.deinit();
     self.instances.deinit();
+    self.instance_type_irs.deinit();
     self.instance_fns.deinit();
     self.generic_calls.deinit();
     self.pending_instances.deinit(self.allocator);

@@ -538,8 +538,7 @@ pub fn recordTypeValue(state: *CompilerState, node: *ast.Node, t: ir.Type) !void
 pub fn denotedType(state: *CompilerState, env: *typecheck_root.Env, ta: ir.TypeAlloc, node: *ast.Node) !ir.Type {
     if (from_ast.isTypeCall(state, node)) {
         _ = try typecheck_root.inferExpr(state, env, ta, node);
-        const disp = state.type_call_results.get(node) orelse return ir.TUnknown;
-        return try from_ast.parseDisplayType(state, ta, disp, null);
+        return state.type_call_ir_results.get(node) orelse ir.TUnknown;
     }
     try resolveTypeExprs(state, env, ta, node);
     const t = try from_ast.typeFromAst(node, state, ta);

@@ -2214,7 +2214,7 @@ fn inferTypeFunctionCall(
     var result_ir: ir.Type = undefined;
     if (state.instances.get(memo)) |d| {
         disp = d;
-        result_ir = try from_ast.parseDisplayType(state, ta, d, null);
+        result_ir = state.instance_type_irs.get(memo) orelse ir.TUnknown;
     } else {
         if (state.instance_depth >= generics.max_depth) {
             return compiler_errors.compileFailFmt(state, "Type function instantiation too deep (instantiating '{s}')", .{memo});
@@ -2232,6 +2232,7 @@ fn inferTypeFunctionCall(
         disp = try ownDisplayQualified(state, result);
         result_ir = result;
         try state.instances.put(memo, disp);
+        try state.instance_type_irs.put(memo, result);
     }
     try state.type_call_results.put(call_node, disp);
     try state.type_call_ir_results.put(call_node, result_ir);
@@ -2737,7 +2738,13 @@ fn checkFunction(
     if (state.functions.get(f.name)) |def| {
         if (def.return_type) |rt| {
             if (from_ast.typeAllowsError(rt) and (annotated == null or !ir.allowsError(annotated.?))) {
-                expected = try from_ast.parseDisplayType(state, ta, rt, null);
+                if (def.return_ir) |t| {
+                    expected = if (ir.allowsError(t)) t else try ta.unionType(&.{ t, ir.TError });
+                } else if (annotated) |a| {
+                    expected = try ta.unionType(&.{ a, ir.TError });
+                } else {
+                    expected = try ta.unionType(&.{ ir.TUnknown, ir.TError });
+                }
             }
         }
     }
@@ -2831,15 +2838,13 @@ fn checkFunction(
             // success arm from the body.
             const weak_success = ir.hasUnknownSuccessArm(a);
             if (weak_success) {
-                if (inferReturnDisplayFromBody(state, f.body)) |better| {
+                if (try inferReturnTypeFromBody(state, f.body)) |better| {
                     var final = better;
-                    if (from_ast.typeAllowsError(disp) and !from_ast.typeAllowsError(final)) {
-                        const w = try std.fmt.allocPrint(state.allocator, "{s} | error", .{final});
-                        try state.owned.append(state.allocator, w);
-                        final = w;
+                    if (ir.allowsError(a) and !ir.allowsError(final)) {
+                        final = try ta.unionType(&.{ final, ir.TError });
                     }
-                    def.return_type = final;
-                    def.return_ir = from_ast.parseDisplayType(state, ta, final, null) catch null;
+                    def.return_type = try ownDisplayQualified(state, final);
+                    def.return_ir = final;
                 } else {
                     def.return_type = disp;
                     def.return_ir = a;
@@ -2852,28 +2857,24 @@ fn checkFunction(
     } else if (state.functions.getPtr(f.name)) |def| {
         // Unannotated: refine from return-value types recorded while checking the body
         // (`return sc` after `$sc = @new(...)` is invisible to analyzeBody).
-        if (inferReturnDisplayFromBody(state, f.body)) |inferred| {
-            const cur = def.return_type;
-            const cur_ir: ?ir.Type = if (def.return_ir) |t|
-                t
-            else if (cur) |c|
-                from_ast.parseDisplayType(state, ta, c, null) catch null
-            else
-                null;
+        if (try inferReturnTypeFromBody(state, f.body)) |inferred| {
+            const cur_ir = def.return_ir;
             const weak = cur_ir == null or ir.hasUnknownSuccessArm(cur_ir.?) or ir.isBareError(cur_ir.?);
             if (weak) {
                 // Preserve `| error` when analyzeBody/refineErrorReturns already saw
                 // an error path but body walk only found the success arm.
                 var final = inferred;
-                if (cur) |c| {
-                    if (from_ast.typeAllowsError(c) and !from_ast.typeAllowsError(final)) {
-                        const w = std.fmt.allocPrint(state.allocator, "{s} | error", .{final}) catch final;
-                        state.owned.append(state.allocator, w) catch {};
-                        final = w;
-                    }
+                const cur_allows_error = if (cur_ir) |c|
+                    ir.allowsError(c)
+                else if (def.return_type) |c|
+                    from_ast.typeAllowsError(c)
+                else
+                    false;
+                if (cur_allows_error and !ir.allowsError(final)) {
+                    final = try ta.unionType(&.{ final, ir.TError });
                 }
-                def.return_type = final;
-                def.return_ir = from_ast.parseDisplayType(state, ta, final, null) catch null;
+                def.return_type = try ownDisplayQualified(state, final);
+                def.return_ir = final;
             }
         } else if (!bodyHasValuedReturn(f.body)) {
             // No valued `return expr`: empty body / only bare `return;` → void.
@@ -2884,15 +2885,8 @@ fn checkFunction(
             else
                 def.return_type == null;
             if (weak_ret) {
-                def.return_type = "void";
+                def.return_type = try ownDisplayQualified(state, ir.TVoid);
                 def.return_ir = ir.TVoid;
-            }
-        }
-    }
-    if (state.functions.getPtr(f.name)) |def| {
-        if (def.return_ir == null) {
-            if (def.return_type) |rt| {
-                def.return_ir = from_ast.parseDisplayType(state, ta, rt, null) catch null;
             }
         }
     }
@@ -3029,52 +3023,43 @@ fn nodeAlwaysReturns(node: *ast.Node) bool {
     };
 }
 
-/// Merge return-value displays from `type_of_results` into a function return display.
-fn inferReturnDisplayFromBody(state: *state_mod.CompilerState, body: *ast.Node) ?[]const u8 {
-    var success: ?[]const u8 = null;
+/// Infer a function's return type from the IR recorded for its return
+/// expressions. Null means no valued return and no error path.
+fn inferReturnTypeFromBody(state: *state_mod.CompilerState, body: *ast.Node) TypecheckError!?ir.Type {
+    var success: ?ir.Type = null;
     var has_error = false;
-    walkReturnDisplays(state, body, &success, &has_error);
+    try walkReturnTypes(state, body, &success, &has_error);
     if (success) |s| {
-        if (has_error and !from_ast.typeAllowsError(s)) {
-            const w = std.fmt.allocPrint(state.allocator, "{s} | error", .{s}) catch return s;
-            state.owned.append(state.allocator, w) catch {};
-            return w;
+        if (has_error and !ir.allowsError(s)) {
+            return try state.typeAlloc().unionType(&.{ s, ir.TError });
         }
         return s;
     }
     // Keep a success arm open — pure `error` breaks `T = f()?` when f's success
     // type is not yet refined (call-order / mutual recursion).
-    if (has_error) return "unknown | error";
+    if (has_error) return try state.typeAlloc().unionType(&.{ ir.TUnknown, ir.TError });
     return null;
 }
 
-fn walkReturnDisplays(
+fn walkReturnTypes(
     state: *state_mod.CompilerState,
     node: *ast.Node,
-    success: *?[]const u8,
+    success: *?ir.Type,
     has_error: *bool,
-) void {
+) TypecheckError!void {
     switch (node.*) {
         .return_expr => |r| {
             if (r.return_value) |v| {
                 if (v.* == .error_expr) {
                     has_error.* = true;
-                } else if (state.type_of_results.get(v)) |t| {
-                    if (std.mem.eql(u8, t, "error") or std.mem.eql(u8, t, "unknown | error")) {
+                } else if (state.type_ir_of_results.get(v)) |t| {
+                    if (ir.allowsError(t)) {
                         has_error.* = true;
-                    } else if (from_ast.typeAllowsError(t)) {
-                        has_error.* = true;
-                        var arena = std.heap.ArenaAllocator.init(state.allocator);
-                        defer arena.deinit();
-                        const peeled = from_ast.unwrapErrorDisplay(arena.allocator(), t) catch t;
-                        if (!std.mem.eql(u8, peeled, "unknown") and !std.mem.eql(u8, peeled, "null")) {
-                            if (success.* == null) {
-                                const owned = state.allocator.dupe(u8, peeled) catch peeled;
-                                state.owned.append(state.allocator, owned) catch {};
-                                success.* = owned;
-                            }
+                        const payload = try ir.unwrapError(state.typeAlloc(), t);
+                        if (!ir.isUnknown(payload) and !ir.isNull(payload) and !ir.isNever(payload)) {
+                            if (success.* == null) success.* = payload;
                         }
-                    } else if (!std.mem.eql(u8, t, "unknown") and !std.mem.eql(u8, t, "null")) {
+                    } else if (!ir.isUnknown(t) and !ir.isNull(t)) {
                         if (success.* == null) success.* = t;
                     }
                 } else if (v.* == .call) {
@@ -3088,7 +3073,9 @@ fn walkReturnDisplays(
                                 if (std.mem.endsWith(u8, e.key_ptr.*, prop)) {
                                     const prefix_len = e.key_ptr.*.len - prop.len;
                                     if (prefix_len >= 2 and std.mem.eql(u8, e.key_ptr.*[prefix_len - 2 .. prefix_len], "::")) {
-                                        if (e.value_ptr.return_type) |rt| {
+                                        if (e.value_ptr.return_ir) |rt| {
+                                            if (ir.allowsError(rt)) has_error.* = true;
+                                        } else if (e.value_ptr.return_type) |rt| {
                                             if (from_ast.typeAllowsError(rt)) has_error.* = true;
                                         }
                                     }
@@ -3097,55 +3084,57 @@ fn walkReturnDisplays(
                         }
                     } else if (v.call.callee.* == .primary) {
                         if (state.functions.get(v.call.callee.primary.name)) |def| {
-                            if (def.return_type) |rt| {
+                            if (def.return_ir) |rt| {
+                                if (ir.allowsError(rt)) has_error.* = true;
+                            } else if (def.return_type) |rt| {
                                 if (from_ast.typeAllowsError(rt)) has_error.* = true;
                             }
                         }
                     }
                 }
-                walkReturnDisplays(state, v, success, has_error);
+                try walkReturnTypes(state, v, success, has_error);
             }
         },
         // `expr?` propagates error out of the enclosing function.
         .try_expr => |t| {
             has_error.* = true;
-            walkReturnDisplays(state, t.expression, success, has_error);
+            try walkReturnTypes(state, t.expression, success, has_error);
         },
-        .declaration => |d| walkReturnDisplays(state, d.value, success, has_error),
+        .declaration => |d| try walkReturnTypes(state, d.value, success, has_error),
         .assignment => |a| {
-            walkReturnDisplays(state, a.left, success, has_error);
-            walkReturnDisplays(state, a.right, success, has_error);
+            try walkReturnTypes(state, a.left, success, has_error);
+            try walkReturnTypes(state, a.right, success, has_error);
         },
         .call => |c| {
-            walkReturnDisplays(state, c.callee, success, has_error);
-            for (c.args) |a| walkReturnDisplays(state, a, success, has_error);
+            try walkReturnTypes(state, c.callee, success, has_error);
+            for (c.args) |a| try walkReturnTypes(state, a, success, has_error);
         },
         .binary => |b| {
-            walkReturnDisplays(state, b.left, success, has_error);
-            walkReturnDisplays(state, b.right, success, has_error);
+            try walkReturnTypes(state, b.left, success, has_error);
+            try walkReturnTypes(state, b.right, success, has_error);
         },
-        .unary => |u| walkReturnDisplays(state, u.arg, success, has_error),
-        .member => |m| walkReturnDisplays(state, m.object, success, has_error),
+        .unary => |u| try walkReturnTypes(state, u.arg, success, has_error),
+        .member => |m| try walkReturnTypes(state, m.object, success, has_error),
         .index => |ix| {
-            walkReturnDisplays(state, ix.object, success, has_error);
-            if (ix.index) |i| walkReturnDisplays(state, i, success, has_error);
-            if (ix.end) |e| walkReturnDisplays(state, e, success, has_error);
+            try walkReturnTypes(state, ix.object, success, has_error);
+            if (ix.index) |i| try walkReturnTypes(state, i, success, has_error);
+            if (ix.end) |e| try walkReturnTypes(state, e, success, has_error);
         },
-        .block => |b| for (b.statements) |s| walkReturnDisplays(state, s, success, has_error),
+        .block => |b| for (b.statements) |s| try walkReturnTypes(state, s, success, has_error),
         .if_expr => |i| {
-            walkReturnDisplays(state, i.condition, success, has_error);
-            walkReturnDisplays(state, i.body, success, has_error);
-            if (i.else_body) |e| walkReturnDisplays(state, e, success, has_error);
+            try walkReturnTypes(state, i.condition, success, has_error);
+            try walkReturnTypes(state, i.body, success, has_error);
+            if (i.else_body) |e| try walkReturnTypes(state, e, success, has_error);
         },
         .switch_expr => |sw| {
-            walkReturnDisplays(state, sw.condition, success, has_error);
-            for (sw.prongs) |prong| walkReturnDisplays(state, prong.body, success, has_error);
+            try walkReturnTypes(state, sw.condition, success, has_error);
+            for (sw.prongs) |prong| try walkReturnTypes(state, prong.body, success, has_error);
         },
         .for_expr => |f| {
-            walkReturnDisplays(state, f.expr, success, has_error);
-            walkReturnDisplays(state, f.body, success, has_error);
+            try walkReturnTypes(state, f.expr, success, has_error);
+            try walkReturnTypes(state, f.body, success, has_error);
         },
-        .defer_stmt => |d| walkReturnDisplays(state, d.body, success, has_error),
+        .defer_stmt => |d| try walkReturnTypes(state, d.body, success, has_error),
         else => {},
     }
 }
@@ -3158,7 +3147,7 @@ fn checkStructFieldTypes(state: *state_mod.CompilerState, env: *Env, ta: ir.Type
             const has_call = from_ast.typeNodeHasCall(ann);
             const t = if (has_call) try resolveDeclTypeNode(state, env, ta, ann) else try from_ast.typeFromAst(ann, state, ta);
             try rejectTypeValue(state, t, "a struct field's type");
-            const disp = try ownDisplay(state, t);
+            const disp = try ownDisplayQualified(state, t);
             try def.types.put(field.name, disp);
             try def.field_irs.put(state.allocator, field.name, t);
             relayout = relayout or has_call;
@@ -3378,6 +3367,82 @@ pub fn typecheck(state: *state_mod.CompilerState, doc: *ast.Document) TypecheckE
         defer state.instance_depth = saved_depth;
         resolveSignatureTypes(state, &decl_env, ta, f) catch |e| return instantiationFailed(p, e);
         checkFunction(state, ta, f, &top_consts, &decl_env.globals) catch |e| return instantiationFailed(p, e);
+    }
+
+    try verifyTypeCaches(state);
+}
+
+/// Debug invariant: every cached display string is a projection of its IR type.
+/// Runs on every typecheck in safety-enabled builds so drift fails loudly.
+fn verifyTypeCaches(state: *state_mod.CompilerState) !void {
+    if (!std.debug.runtime_safety) return;
+
+    var eit = state.type_ir_of_results.iterator();
+    while (eit.next()) |e| {
+        const disp = state.type_of_results.get(e.key_ptr.*) orelse
+            std.debug.panic("typecheck: expression has IR but no display cache", .{});
+        const qualified = try ownDisplayQualified(state, e.value_ptr.*);
+        const clean = try ownDisplay(state, e.value_ptr.*);
+        if (!std.mem.eql(u8, disp, qualified) and !std.mem.eql(u8, disp, clean)) {
+            std.debug.panic("typecheck: expression display '{s}' diverged from IR '{s}'", .{ disp, qualified });
+        }
+    }
+
+    var cit = state.type_call_ir_results.iterator();
+    while (cit.next()) |e| {
+        const disp = state.type_call_results.get(e.key_ptr.*) orelse
+            std.debug.panic("typecheck: type value has IR but no display cache", .{});
+        const expected = try ownDisplayQualified(state, e.value_ptr.*);
+        if (!std.mem.eql(u8, disp, expected)) {
+            std.debug.panic("typecheck: type-value display '{s}' diverged from IR '{s}'", .{ disp, expected });
+        }
+    }
+
+    var git = state.global_type_irs.iterator();
+    while (git.next()) |e| {
+        const disp = state.global_types.get(e.key_ptr.*) orelse continue;
+        const expected = try ownDisplayQualified(state, e.value_ptr.*);
+        if (!std.mem.eql(u8, disp, expected)) {
+            std.debug.panic("typecheck: global '{s}' display '{s}' diverged from IR '{s}'", .{ e.key_ptr.*, disp, expected });
+        }
+    }
+
+    var fit = state.functions.iterator();
+    while (fit.next()) |e| {
+        const def = e.value_ptr;
+        if (def.return_ir) |t| {
+            const disp = def.return_type orelse
+                std.debug.panic("typecheck: function '{s}' has return IR but no display", .{e.key_ptr.*});
+            const expected = try ownDisplayQualified(state, t);
+            if (!std.mem.eql(u8, disp, expected)) {
+                std.debug.panic("typecheck: function '{s}' return display '{s}' diverged from IR '{s}'", .{ e.key_ptr.*, disp, expected });
+            }
+        }
+    }
+
+    var tit = state.typedefs.iterator();
+    while (tit.next()) |e| {
+        const td = e.value_ptr;
+        if (td.ir) |t| {
+            if (td.stub or td.underlying.len == 0) continue;
+            const expected = try ownDisplayQualified(state, t);
+            if (!std.mem.eql(u8, td.underlying, expected)) {
+                std.debug.panic("typecheck: typedef '{s}' display '{s}' diverged from IR '{s}'", .{ e.key_ptr.*, td.underlying, expected });
+            }
+        }
+    }
+
+    var sit = state.structs.iterator();
+    while (sit.next()) |e| {
+        const def = e.value_ptr;
+        var field_it = def.field_irs.iterator();
+        while (field_it.next()) |f| {
+            const disp = def.types.get(f.key_ptr.*) orelse continue;
+            const expected = try ownDisplayQualified(state, f.value_ptr.*);
+            if (!std.mem.eql(u8, disp, expected)) {
+                std.debug.panic("typecheck: struct '{s}' field '{s}' display '{s}' diverged from IR '{s}'", .{ e.key_ptr.*, f.key_ptr.*, disp, expected });
+            }
+        }
     }
 }
 
