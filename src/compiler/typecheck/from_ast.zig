@@ -100,8 +100,7 @@ pub fn typeFromAst(node: ?*ast.Node, state: ?*state_mod.CompilerState, ta: ir.Ty
         .call => blk: {
             const st = state orelse break :blk ir.TUnknown;
             if (st.type_call_ir_results.get(n)) |t| break :blk t;
-            const disp = st.type_call_results.get(n) orelse break :blk ir.TUnknown;
-            break :blk try parseDisplayType(st, ta, disp, null);
+            break :blk ir.TUnknown;
         },
         else => ir.TUnknown,
     };
@@ -339,9 +338,16 @@ fn resolveTypedef(
         return ir.TUnknown;
     }
 
-    const under = td.ir orelse try parseDisplayType(state, ta, td.underlying, seen);
+    const under = td.ir orelse {
+        return compile_error.compileFailFmt(state, "Type '{s}' has no canonical type; its definition was not resolved", .{name});
+    };
     if (!td.distinct) return under;
     return try ta.definedType(td.name, under);
+}
+
+/// Resolve a named `@type` / `@alias` / generic parameter to canonical IR.
+pub fn resolveTypedefType(state: *state_mod.CompilerState, ta: ir.TypeAlloc, name: []const u8) FromAstError!ir.Type {
+    return resolveTypedef(state, ta, name, null);
 }
 
 /// Resolve a bare name to a `module::Name` table key by suffix match.

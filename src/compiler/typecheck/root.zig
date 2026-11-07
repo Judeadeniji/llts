@@ -744,10 +744,9 @@ fn inferLiteral(ta: ir.TypeAlloc, lit: ast.Literal, prefer_literals: bool) !ir.T
 }
 
 fn fieldTypeFromStruct(state: *state_mod.CompilerState, ta: ir.TypeAlloc, struct_name: []const u8, field: []const u8) !ir.Type {
+    _ = ta;
     const def = from_ast.lookupStruct(state, struct_name) orelse return ir.TUnknown;
-    if (def.field_irs.get(field)) |t| return t;
-    const raw = def.types.get(field) orelse return ir.TUnknown;
-    return try from_ast.parseDisplayType(state, ta, raw, null);
+    return def.field_irs.get(field) orelse ir.TUnknown;
 }
 
 fn preferredGlobalIr(state: *state_mod.CompilerState, key: []const u8) ?ir.Type {
@@ -760,42 +759,28 @@ fn lookupModuleDeclExact(state: *state_mod.CompilerState, ta: ir.TypeAlloc, mod_
     var sbuf: [512]u8 = undefined;
     const sub_key = std.fmt.bufPrint(&sbuf, "${s}::{s}", .{ mod_path, member }) catch return null;
     if (preferredGlobalIr(state, sub_key)) |t| return t;
-    if (state.global_types.get(sub_key)) |gt| {
-        if (std.mem.startsWith(u8, gt, "module:")) return ir.Type{ .struct_ = gt };
-    }
     var bbuf: [512]u8 = undefined;
     const bare_sub_key = std.fmt.bufPrint(&bbuf, "${s}", .{member}) catch "";
     if (bare_sub_key.len > 0) {
         if (preferredGlobalIr(state, bare_sub_key)) |t| return t;
-        if (state.global_types.get(bare_sub_key)) |gt| {
-            if (std.mem.startsWith(u8, gt, "module:")) return ir.Type{ .struct_ = gt };
-        }
     }
 
     var qbuf: [512]u8 = undefined;
     const q = std.fmt.bufPrint(&qbuf, "{s}::{s}", .{ mod_path, member }) catch return null;
     if (preferredGlobalIr(state, q)) |t| return t;
     if (state.chunk.exports.contains(q) or state.global_vars.contains(q) or state.global_consts.contains(q)) {
-        if (state.global_types.get(q)) |gt| {
-            if (std.mem.startsWith(u8, gt, "module:")) return ir.Type{ .struct_ = gt };
-            return try from_ast.parseDisplayType(state, ta, gt, null);
-        }
         if (try funcTypeOfName(state, ta, q)) |ft| return ft;
         if (state.structs.contains(q)) return ir.Type{ .struct_ = q };
         if (state.enums.contains(q)) return ir.Type{ .enum_ = q };
         if (state.error_sets.contains(q)) return ir.Type{ .error_set = q };
-        if (state.typedefs.get(q)) |td| return try from_ast.parseDisplayType(state, ta, td.underlying, null);
+        if (state.typedefs.contains(q)) return try from_ast.resolveTypedefType(state, ta, q);
         return ir.TUnknown;
-    }
-    if (state.global_types.get(q)) |gt| {
-        if (std.mem.startsWith(u8, gt, "module:")) return ir.Type{ .struct_ = gt };
-        return try from_ast.parseDisplayType(state, ta, gt, null);
     }
     if (try funcTypeOfName(state, ta, q)) |ft| return ft;
     if (state.structs.contains(q)) return ir.Type{ .struct_ = q };
     if (state.enums.contains(q)) return ir.Type{ .enum_ = q };
     if (state.error_sets.contains(q)) return ir.Type{ .error_set = q };
-    if (state.typedefs.get(q)) |td| return try from_ast.parseDisplayType(state, ta, td.underlying, null);
+    if (state.typedefs.contains(q)) return try from_ast.resolveTypedefType(state, ta, q);
     if (state.native_globals.contains(member)) return ir.TUnknown;
     return null;
 }
@@ -930,14 +915,6 @@ fn moduleOfFuncName(func_name: []const u8) ?[]const u8 {
 fn fnReturnType(state: *state_mod.CompilerState, ta: ir.TypeAlloc, func_name: []const u8) !ir.Type {
     if (state.functions.get(func_name)) |def| {
         if (def.return_ir) |t| return t;
-        // Bare type names inside this function's stored displays (e.g. the
-        // `Logger` in `log.default(): Logger`) belong to the callee's own
-        // module — hint the resolver so same-named types from other modules
-        // don't get picked at random.
-        const prev_hint = state.module_hint;
-        state.module_hint = moduleOfFuncName(func_name);
-        defer state.module_hint = prev_hint;
-        if (def.return_type) |rt| return try from_ast.parseDisplayType(state, ta, rt, null);
         if (def.node.* == .function_decl) {
             if (def.node.function_decl.return_type) |rt_node| {
                 return try from_ast.typeFromAst(rt_node, state, ta);
@@ -1277,11 +1254,8 @@ fn inferExprInner(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, 
         .primary => |p| blk: {
             if (p.kind == .identifier or p.kind == .register) {
                 if (env.lookup(p.name)) |t| break :blk t;
-                if (state.global_types.get(p.name)) |gt| {
-                    if (std.mem.startsWith(u8, gt, "module:")) {
-                        break :blk .{ .struct_ = gt };
-                    }
-                    break :blk try from_ast.parseDisplayType(state, ta, gt, null);
+                if (state.global_type_irs.get(p.name)) |gt| {
+                    if (gt != .unknown) break :blk gt;
                 }
                 if (try funcTypeOfName(state, ta, p.name)) |ft| break :blk ft;
                 if (state.templates.contains(p.name)) {
@@ -2100,10 +2074,9 @@ fn inferCall(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, call_
     {
         const obj_ty = ir.peelForIndex(try inferExpr(state, env, ta, c.callee.member.object));
         _ = try inferExpr(state, env, ta, c.args[0]);
-        const disp = try ownDisplay(state, obj_ty);
-        if (arrayElemDisplay(disp)) |elem_disp| {
-            const elem = ir.parseDisplayType(ta, elem_disp) catch ir.TUnknown;
-            var arms = [_]ir.Type{ elem, ir.TNull };
+        const peeled = ir.peelDefined(obj_ty);
+        if (peeled == .array and !peeled.array.is_const) {
+            var arms = [_]ir.Type{ peeled.array.elem.*, ir.TNull };
             return try ta.unionType(&arms);
         }
     }
@@ -3223,16 +3196,12 @@ fn resolveDeclTypeNode(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAl
 /// already-typed module globals, plus top-level declarations whose type is
 /// statically known (annotated, or initialized with a literal).
 fn seedDeclEnv(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, doc: *ast.Document) TypecheckError!void {
-    var git = state.global_types.iterator();
+    var git = state.global_type_irs.iterator();
     while (git.next()) |e| {
         const k = e.key_ptr.*;
-        const v = e.value_ptr.*;
         if (std.mem.startsWith(u8, k, "$")) continue;
-        if (std.mem.startsWith(u8, v, "module:")) {
-            try env.globals.put(k, .{ .struct_ = v });
-        } else {
-            try env.globals.put(k, try from_ast.parseDisplayType(state, ta, v, null));
-        }
+        if (e.value_ptr.* == .unknown) continue;
+        try env.globals.put(k, e.value_ptr.*);
     }
     for (doc.statements) |s| {
         if (s.* != .declaration) continue;
@@ -3370,35 +3339,27 @@ pub fn typecheck(state: *state_mod.CompilerState, doc: *ast.Document) TypecheckE
     var cit = top_consts.keyIterator();
 
     while (cit.next()) |n| {
-        if (state.global_types.get(n.*)) |v| {
-            if (std.mem.startsWith(u8, v, "module:")) try env.globals.put(n.*, .{ .struct_ = v });
+        if (state.global_type_irs.get(n.*)) |t| {
+            if (t == .struct_ and std.mem.startsWith(u8, t.struct_, "module:")) try env.globals.put(n.*, t);
         }
 
         var key_buf: [256]u8 = undefined;
         const key = std.fmt.bufPrint(&key_buf, "${s}", .{n.*}) catch continue;
 
-        if (state.global_types.get(key)) |v| {
-            if (std.mem.startsWith(u8, v, "module:")) try env.globals.put(n.*, .{ .struct_ = v });
+        if (state.global_type_irs.get(key)) |t| {
+            if (t == .struct_ and std.mem.startsWith(u8, t.struct_, "module:")) try env.globals.put(n.*, t);
         }
 
         try env.putConstName(n.*);
     }
 
-    var git = state.global_types.iterator();
+    var git = state.global_type_irs.iterator();
 
     while (git.next()) |e| {
         const k = e.key_ptr.*;
-        const v = e.value_ptr.*;
         if (std.mem.startsWith(u8, k, "$")) continue;
-        if (std.mem.startsWith(u8, v, "module:")) {
-            try env.globals.put(k, .{ .struct_ = v });
-        } else if (state.enums.contains(v)) {
-            try env.globals.put(k, .{ .enum_ = v });
-        } else if (state.structs.contains(v)) {
-            try env.globals.put(k, .{ .struct_ = v });
-        } else {
-            try env.globals.put(k, try from_ast.parseDisplayType(state, ta, v, null));
-        }
+        if (e.value_ptr.* == .unknown) continue;
+        try env.globals.put(k, e.value_ptr.*);
     }
 
     for (doc.statements) |s| {
