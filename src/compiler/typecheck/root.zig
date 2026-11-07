@@ -1379,19 +1379,6 @@ fn inferExprInner(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, 
                     }
                     break :blk try fieldTypeFromStruct(state, ta, sname, m.property.primary.name);
                 }
-                if (path.tryResolveStaticPath(state, m.object) catch null) |sp| {
-                    var is_mod = false;
-                    if (from_ast.resolveType(state, m.object)) |t| {
-                        if (std.mem.startsWith(u8, t, "module:")) is_mod = true;
-                    }
-                    if (is_mod) {
-                        if (try resolveModuleMemberType(state, ta, sp, m.property.primary.name)) |mt| {
-                            break :blk mt;
-                        }
-                        const mod_display = if (m.object.* == .primary) m.object.primary.name else sp;
-                        return compiler_errors.compileFailFmt(state, "'{s}' has no export '{s}'", .{ mod_display, m.property.primary.name });
-                    }
-                }
                 const field_obj = ir.peelDefined(obj);
                 if (field_obj == .error_ or field_obj == .error_set or field_obj == .error_lit) {
                     const prop = m.property.primary.name;
@@ -1617,26 +1604,6 @@ fn inferExprInner(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, 
                         try recordExprType(state, a.left, ft);
                         try requireAssignFrom(state, val, ft, "assignment to field", a.right);
                     } else {
-                        const mod_name = if (from_ast.resolveType(state, mem.object)) |rt|
-                            (if (std.mem.startsWith(u8, rt, "module:")) rt["module:".len..] else null)
-                        else if (path.tryResolveStaticPath(state, mem.object) catch null) |sp|
-                            (if (from_ast.resolveType(state, mem.object)) |t| (if (std.mem.startsWith(u8, t, "module:")) sp else null) else null)
-                        else
-                            null;
-                        if (mod_name) |mn| {
-                            if (path.moduleMemberIsMutableGlobal(state, mn, mem.property.primary.name)) {
-                                if (try resolveModuleMemberType(state, ta, mn, mem.property.primary.name)) |mt| {
-                                    try recordExprType(state, a.left, mt);
-                                    try requireAssignFrom(state, val, mt, "assignment to field", a.right);
-                                }
-                                break :blk val;
-                            }
-                            return compiler_errors.compileFailFmt(
-                                state,
-                                "Cannot assign to member '{s}' of imported module '{s}'",
-                                .{ mem.property.primary.name, mn },
-                            );
-                        }
                         if (field_obj != .unknown) {
                             const d = try ownDisplay(state, obj);
                             return compiler_errors.compileFailFmt(state, "Cannot assign field '{s}' on type '{s}'", .{ mem.property.primary.name, d });
