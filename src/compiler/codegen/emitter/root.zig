@@ -160,6 +160,19 @@ pub const LoopTarget = struct {
     scope_depth: usize = 0,
 };
 
+/// A labeled `@switch` lowered to a generated wrapper loop so that
+/// `continue :label value` can re-run dispatch with a new scrutinee.
+pub const SwitchContinueTarget = struct {
+    /// LLTS label of the labeled `@switch`.
+    label: []const u8,
+    /// Generated Zig label on the wrapper loop.
+    zig_label: []const u8,
+    /// Generated Zig variable holding the current scrutinee.
+    scrut_name: []const u8,
+    scrut_type: ValType,
+    scope_depth: usize = 0,
+};
+
 pub const TraceSite = struct {
     func_name: []const u8,
     file: []const u8,
@@ -187,6 +200,7 @@ pub const Emitter = struct {
     params: std.ArrayList(ParamInfo) = .empty,
     break_targets: std.ArrayList(BreakTarget) = .empty,
     loop_targets: std.ArrayList(LoopTarget) = .empty,
+    switch_targets: std.ArrayList(SwitchContinueTarget) = .empty,
     trace_sites: std.ArrayList(TraceSite) = .empty,
     current_trace_func: ?[]const u8 = null,
     current_trace_file: []const u8 = "",

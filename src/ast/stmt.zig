@@ -57,6 +57,9 @@ pub const Break = struct {
 
 pub const Continue = struct {
     label: ?[]const u8 = null,
+    /// Operand of a labeled `@switch` continue: `continue :sw new_value;`.
+    /// Loops continue without a value (Zig semantics).
+    value: ?*Node = null,
     loc: Location,
 };
 
@@ -95,7 +98,6 @@ pub const Switch = struct {
     label: ?[]const u8 = null,
     loc: Location,
 };
-
 
 pub const Extern = struct {
     name: []const u8,

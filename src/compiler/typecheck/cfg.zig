@@ -77,6 +77,16 @@ const LoopFrame = struct {
     header: BlockId,
     exit: BlockId,
     label: ?[]const u8,
+    /// Nesting ordinal; used to pick the innermost target when a label is
+    /// shared between a loop and a `@switch`.
+    nest: usize = 0,
+};
+
+/// Labeled `@switch`: `continue :label value` is a back edge to its dispatch.
+const SwitchFrame = struct {
+    header: BlockId,
+    label: ?[]const u8,
+    nest: usize = 0,
 };
 
 /// CFG for a single function/initializer body.
@@ -131,10 +141,12 @@ pub fn build(allocator: std.mem.Allocator, body: *ast.Node) !?*CFG {
     };
     var loops: std.ArrayList(LoopFrame) = .empty;
     defer loops.deinit(allocator);
+    var switches: std.ArrayList(SwitchFrame) = .empty;
+    defer switches.deinit(allocator);
     var break_targets: std.ArrayList(BlockId) = .empty;
     defer break_targets.deinit(allocator);
 
-    try b.stmts(body.block.statements, &loops, &break_targets);
+    try b.stmts(body.block.statements, &loops, &switches, &break_targets);
     if (b.reachable) {
         b.cfg.blocks.items[b.cur].term = .{ .goto = exit };
     }
@@ -147,16 +159,19 @@ const Builder = struct {
     allocator: std.mem.Allocator,
     cur: BlockId,
     reachable: bool = true,
+    /// Ordinal for the next nested loop/switch target.
+    nest: usize = 0,
 
     fn stmts(
         self: *Builder,
         list: []const *ast.Node,
         loops: *std.ArrayList(LoopFrame),
+        switches: *std.ArrayList(SwitchFrame),
         break_targets: *std.ArrayList(BlockId),
     ) std.mem.Allocator.Error!void {
         for (list) |s| {
             if (!self.reachable) break;
-            try self.stmt(s, loops, break_targets);
+            try self.stmt(s, loops, switches, break_targets);
         }
     }
 
@@ -164,13 +179,14 @@ const Builder = struct {
         self: *Builder,
         node: *ast.Node,
         loops: *std.ArrayList(LoopFrame),
+        switches: *std.ArrayList(SwitchFrame),
         break_targets: *std.ArrayList(BlockId),
     ) std.mem.Allocator.Error!void {
         switch (node.*) {
-            .if_expr => try self.ifNode(node, loops, break_targets),
-            .switch_expr => try self.switchNode(node, loops, break_targets),
-            .for_expr => try self.forNode(node, loops, break_targets),
-            .block => try self.stmts(node.block.statements, loops, break_targets),
+            .if_expr => try self.ifNode(node, loops, switches, break_targets),
+            .switch_expr => try self.switchNode(node, loops, switches, break_targets),
+            .for_expr => try self.forNode(node, loops, switches, break_targets),
+            .block => try self.stmts(node.block.statements, loops, switches, break_targets),
             .return_expr => {
                 try self.cfg.blocks.items[self.cur].stmts.append(self.allocator, node);
                 self.cfg.blocks.items[self.cur].term = .{ .ret = {} };
@@ -185,7 +201,7 @@ const Builder = struct {
             },
             .continue_expr => |c| {
                 try self.cfg.blocks.items[self.cur].stmts.append(self.allocator, node);
-                if (resolveContinueTarget(c.label, loops)) |t| {
+                if (resolveContinueTarget(c.label, loops, switches)) |t| {
                     self.cfg.blocks.items[self.cur].term = .{ .loop = t };
                     self.reachable = false;
                 }
@@ -200,6 +216,7 @@ const Builder = struct {
         self: *Builder,
         node: *ast.Node,
         loops: *std.ArrayList(LoopFrame),
+        switches: *std.ArrayList(SwitchFrame),
         break_targets: *std.ArrayList(BlockId),
     ) std.mem.Allocator.Error!void {
         const ife = &node.if_expr;
@@ -223,7 +240,7 @@ const Builder = struct {
         // Then arm.
         self.cur = then_bb;
         self.reachable = true;
-        try self.bodyStmts(ife.body, loops, break_targets);
+        try self.bodyStmts(ife.body, loops, switches, break_targets);
         if (self.reachable) {
             self.cfg.blocks.items[self.cur].term = .{ .goto = join_bb };
         }
@@ -232,7 +249,7 @@ const Builder = struct {
         self.cur = else_bb;
         self.reachable = true;
         if (ife.else_body) |eb| {
-            try self.bodyStmts(eb, loops, break_targets);
+            try self.bodyStmts(eb, loops, switches, break_targets);
         }
         if (self.reachable) {
             self.cfg.blocks.items[self.cur].term = .{ .goto = join_bb };
@@ -247,12 +264,15 @@ const Builder = struct {
         self: *Builder,
         node: *ast.Node,
         loops: *std.ArrayList(LoopFrame),
+        switches: *std.ArrayList(SwitchFrame),
         break_targets: *std.ArrayList(BlockId),
     ) std.mem.Allocator.Error!void {
         const sw = &node.switch_expr;
         // See `ifNode`: the switch statement itself is a "statement" whose
         // snapshot must precede the branch terminator.
         try self.cfg.blocks.items[self.cur].stmts.append(self.allocator, node);
+        self.nest += 1;
+        const nest = self.nest;
         const n = sw.prongs.len;
         const arm_bbs = try self.allocator.alloc(BlockId, n);
         defer self.allocator.free(arm_bbs);
@@ -280,32 +300,39 @@ const Builder = struct {
         self.reachable = false;
 
         const saved_cur = self.cur;
+        // `continue :label value` re-enters this dispatch block.
+        if (sw.label != null) {
+            switches.append(self.allocator, .{ .header = saved_cur, .label = sw.label, .nest = nest }) catch {};
+        }
         break_targets.append(self.allocator, join_bb) catch {};
 
         for (sw.prongs, 0..) |prong, i| {
             self.cur = arm_bbs[i];
             self.reachable = true;
-            try self.bodyStmts(prong.body, loops, break_targets);
+            try self.bodyStmts(prong.body, loops, switches, break_targets);
             if (self.reachable) {
                 self.cfg.blocks.items[self.cur].term = .{ .goto = join_bb };
             }
         }
         _ = break_targets.pop();
+        if (sw.label != null) _ = switches.pop();
+        self.nest -= 1;
 
         self.cur = join_bb;
         self.reachable = true;
-        _ = saved_cur;
     }
 
     fn forNode(
         self: *Builder,
         node: *ast.Node,
         loops: *std.ArrayList(LoopFrame),
+        switches: *std.ArrayList(SwitchFrame),
         break_targets: *std.ArrayList(BlockId),
     ) std.mem.Allocator.Error!void {
         const fe = &node.for_expr;
         // See `ifNode`: snapshot the loop statement before entering the header.
         try self.cfg.blocks.items[self.cur].stmts.append(self.allocator, node);
+        self.nest += 1;
         const header = try self.cfg.newBlock();
         const body_bb = try self.cfg.newBlock();
         const exit_bb = try self.cfg.newBlock();
@@ -325,18 +352,20 @@ const Builder = struct {
             .header = header,
             .exit = exit_bb,
             .label = fe.label,
+            .nest = self.nest,
         }) catch {};
         break_targets.append(self.allocator, exit_bb) catch {};
 
         self.cur = body_bb;
         self.reachable = true;
-        try self.bodyStmts(fe.body, loops, break_targets);
+        try self.bodyStmts(fe.body, loops, switches, break_targets);
         if (self.reachable) {
             self.cfg.blocks.items[self.cur].term = .{ .loop = header };
         }
 
         _ = break_targets.pop();
         _ = loops.pop();
+        self.nest -= 1;
 
         self.cur = exit_bb;
         self.reachable = true;
@@ -346,11 +375,12 @@ const Builder = struct {
         self: *Builder,
         body: *ast.Node,
         loops: *std.ArrayList(LoopFrame),
+        switches: *std.ArrayList(SwitchFrame),
         break_targets: *std.ArrayList(BlockId),
     ) std.mem.Allocator.Error!void {
         switch (body.*) {
-            .block => try self.stmts(body.block.statements, loops, break_targets),
-            else => try self.stmt(body, loops, break_targets),
+            .block => try self.stmts(body.block.statements, loops, switches, break_targets),
+            else => try self.stmt(body, loops, switches, break_targets),
         }
     }
 };
@@ -374,17 +404,45 @@ fn resolveBreakTarget(
     return null;
 }
 
-fn resolveContinueTarget(label: ?[]const u8, loops: *const std.ArrayList(LoopFrame)) ?BlockId {
-    if (label) |lbl| {
-        var i = loops.items.len;
-        while (i > 0) {
-            i -= 1;
-            if (loops.items[i].label) |l| {
-                if (std.mem.eql(u8, l, lbl)) return loops.items[i].header;
+fn resolveContinueTarget(
+    label: ?[]const u8,
+    loops: *const std.ArrayList(LoopFrame),
+    switches: *const std.ArrayList(SwitchFrame),
+) ?BlockId {
+    const lbl = label orelse {
+        // A bare `continue` always targets the innermost loop (Zig semantics),
+        // never an enclosing labeled `@switch`.
+        if (loops.items.len > 0) return loops.items[loops.items.len - 1].header;
+        return null;
+    };
+    var best_loop: ?LoopFrame = null;
+    var i = loops.items.len;
+    while (i > 0) {
+        i -= 1;
+        if (loops.items[i].label) |l| {
+            if (std.mem.eql(u8, l, lbl)) {
+                best_loop = loops.items[i];
+                break;
             }
         }
-        return null;
     }
-    if (loops.items.len > 0) return loops.items[loops.items.len - 1].header;
+    var best_switch: ?SwitchFrame = null;
+    var j = switches.items.len;
+    while (j > 0) {
+        j -= 1;
+        if (switches.items[j].label) |l| {
+            if (std.mem.eql(u8, l, lbl)) {
+                best_switch = switches.items[j];
+                break;
+            }
+        }
+    }
+    if (best_loop) |loop| {
+        if (best_switch) |sw| {
+            if (sw.nest > loop.nest) return sw.header;
+        }
+        return loop.header;
+    }
+    if (best_switch) |sw| return sw.header;
     return null;
 }

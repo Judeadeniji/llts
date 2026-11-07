@@ -125,6 +125,28 @@ pub const LoopTracker = struct {
     continue_jumps: std.ArrayList(usize) = .empty,
 };
 
+/// Labeled `@switch` compiled as a loop head: `continue :label value` stores
+/// `value` into the scrutinee slot and jumps back to dispatch.
+pub const SwitchTracker = struct {
+    /// Bytecode offset of the first prong comparison.
+    head: usize,
+    /// Scope depth of the switch's scrutinee local.
+    scope_depth: i32,
+    /// Local slot holding the scrutinee.
+    scrut_slot: u8,
+    label: []const u8,
+};
+
+/// One active labeled control-flow target. Loops and switches share a stack so
+/// a label used by both resolves innermost-first.
+pub const LabelTarget = struct {
+    name: []const u8,
+    target: union(enum) {
+        loop: usize,
+        switch_: usize,
+    },
+};
+
 /// Value-producing `@if` / `@switch` / labeled block — `break <value>` targets these.
 pub const ExprTracker = struct {
     scope_depth: i32,
@@ -200,6 +222,10 @@ pub const CompilerState = struct {
     type_arena: std.heap.ArenaAllocator,
     loops: std.ArrayList(LoopTracker) = .empty,
     exprs: std.ArrayList(ExprTracker) = .empty,
+    /// Labeled `@switch` loop heads, innermost last.
+    switches: std.ArrayList(SwitchTracker) = .empty,
+    /// Labels of active loops and switches, innermost last.
+    label_targets: std.ArrayList(LabelTarget) = .empty,
     defer_stacks: std.AutoHashMap(i32, std.ArrayListUnmanaged(DeferEntry)),
     global_vars: std.StringHashMap(void),
     global_types: std.StringHashMap([]const u8),
@@ -387,6 +413,8 @@ pub fn deinit(self: *CompilerState) void {
         ex.break_jumps.deinit(self.allocator);
     }
     self.exprs.deinit(self.allocator);
+    self.switches.deinit(self.allocator);
+    self.label_targets.deinit(self.allocator);
     var mit = self.method_index.iterator();
     while (mit.next()) |e| {
         e.value_ptr.deinit(self.allocator);

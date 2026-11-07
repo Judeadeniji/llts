@@ -68,8 +68,8 @@ fn bodyHasLocalType(node: ?*ast.Node) bool {
     const n = node orelse return false;
     switch (n.*) {
         .type_decl => return true,
-        .function_decl, .struct_decl, .enum_decl, .error_decl, .extern_decl, .literal, .params, .continue_expr => return false,
-        .primary, .declaration, .binary, .unary, .assignment, .call, .member, .index, .array_literal, .block, .return_expr, .if_expr, .switch_expr, .for_expr, .break_expr, .defer_stmt, .struct_init, .try_expr, .unwrap_expr, .error_expr, .comptime_expr, .array_type, .pointer_type, .tuple_type, .union_type, .intersection_type, .func_type, .shape_type => {},
+        .function_decl, .struct_decl, .enum_decl, .error_decl, .extern_decl, .literal, .params => return false,
+        .primary, .declaration, .binary, .unary, .assignment, .call, .member, .index, .array_literal, .block, .return_expr, .if_expr, .switch_expr, .for_expr, .break_expr, .continue_expr, .defer_stmt, .struct_init, .try_expr, .unwrap_expr, .error_expr, .comptime_expr, .array_type, .pointer_type, .tuple_type, .union_type, .intersection_type, .func_type, .shape_type => {},
     }
     return nodeChildrenHaveLocalType(n);
 }
@@ -146,7 +146,8 @@ fn nodeChildrenHaveLocalType(n: *ast.Node) bool {
             for (st.fields) |f| if (bodyHasLocalType(f.type_annotation)) return true;
             return false;
         },
-        .type_decl, .function_decl, .struct_decl, .enum_decl, .error_decl, .extern_decl, .literal, .params, .continue_expr => return false,
+        .continue_expr => |c| return bodyHasLocalType(c.value),
+        .type_decl, .function_decl, .struct_decl, .enum_decl, .error_decl, .extern_decl, .literal, .params => return false,
     }
 }
 
@@ -401,6 +402,7 @@ fn walk(node: *ast.Node, ctx: anytype) Error!void {
             try walkOpt(f.return_type, ctx);
         },
         .shape_type => |s| for (s.fields) |f| try walkOpt(f.type_annotation, ctx),
-        .literal, .params, .continue_expr, .function_decl, .struct_decl, .enum_decl, .error_decl, .extern_decl => {},
+        .continue_expr => |c| try walkOpt(c.value, ctx),
+        .literal, .params, .function_decl, .struct_decl, .enum_decl, .error_decl, .extern_decl => {},
     }
 }

@@ -364,7 +364,9 @@ fn walkNode(ctx: *Context, node: *ast.Node, worklist: ?*std.ArrayList(usize)) vo
         .break_expr => |br| {
             if (br.value) |bv| walkNode(ctx, bv, worklist);
         },
-        .continue_expr => {},
+        .continue_expr => |c| {
+            if (c.value) |cv| walkNode(ctx, cv, worklist);
+        },
         .defer_stmt => |d| walkNode(ctx, d.body, worklist),
         .if_expr => |i| {
             walkNode(ctx, i.condition, worklist);

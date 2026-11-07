@@ -192,7 +192,9 @@ pub fn preScanStmt(self: *Emitter, node: *ast_mod.Node) anyerror!void {
         .break_expr => |b| {
             if (b.value) |v| try preScanExpr(self, v);
         },
-        .continue_expr => {},
+        .continue_expr => |c| {
+            if (c.value) |v| try preScanExpr(self, v);
+        },
         .if_expr => |i| {
             try preScanExpr(self, i.condition);
             if (i.pipe_value) |v| try preScanExpr(self, v);

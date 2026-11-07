@@ -9,6 +9,7 @@ const ValType = root_mod.ValType;
 const Binding = root_mod.Binding;
 const BreakTarget = root_mod.BreakTarget;
 const LoopTarget = root_mod.LoopTarget;
+const SwitchContinueTarget = root_mod.SwitchContinueTarget;
 
 pub fn emitAssignment(self: *Emitter, node: *ast_mod.Node, asn: *const ast_mod.Assignment) !void {
     const bit_op = expr_mod.compoundBitwiseOp(asn.operator);
@@ -257,13 +258,7 @@ pub fn emitCondFor(self: *Emitter, node: *ast_mod.Node, f: *const ast_mod.For) !
     const a = self.arena.allocator();
     const condition = try emitBoolCondition(self, f.expr, "@for");
     self.counter += 1;
-    const zig_label: ?[]const u8 = if (f.label) |label|
-        if (loopLabelUsed(self, f.body, label))
-            try std.fmt.allocPrint(a, "lls_loop_{d}", .{self.counter})
-        else
-            null
-    else
-        null;
+    const zig_label = try loopZigLabel(self, f, self.counter);
     try self.loop_targets.append(a, .{ .label = f.label, .zig_label = zig_label, .scope_depth = self.scopes.items.len });
     defer _ = self.loop_targets.pop();
 
@@ -298,13 +293,7 @@ pub fn emitCaptureCondFor(self: *Emitter, node: *ast_mod.Node, f: *const ast_mod
     const id = self.counter;
     const tmp_name = try std.fmt.allocPrint(a, "lls_foropt_{d}", .{id});
     const cap_name = try self.localName(f.captures[0].name);
-    const zig_label: ?[]const u8 = if (f.label) |label|
-        if (loopLabelUsed(self, f.body, label))
-            try std.fmt.allocPrint(a, "lls_loop_{d}", .{id})
-        else
-            null
-    else
-        null;
+    const zig_label = try loopZigLabel(self, f, id);
 
     self.pushScope();
     const probe = try a.create(Binding);
@@ -359,6 +348,26 @@ pub fn emitCondition(self: *Emitter, node: *ast_mod.Node) ![]const u8 {
 }
 
 pub fn emitContinue(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Continue) !void {
+    if (c.value) |value| {
+        const label = c.label orelse {
+            return self.failAt(node, "'continue' with a value requires a label naming an enclosing @switch", .{});
+        };
+        const target = findSwitchContinueTarget(self, label) orelse {
+            return self.failAt(node, "native backend cannot find @switch with label '{s}'", .{label});
+        };
+        const a = self.arena.allocator();
+        const code = try expr_mod.emitStrongCoercion(self, value, target.scrut_type);
+        self.counter += 1;
+        const tmp = try std.fmt.allocPrint(a, "lls_cont_{d}", .{self.counter});
+        try self.writeIndent();
+        try self.writer.print("const {s}: {s} = {s};\n", .{ tmp, target.scrut_type.zig, code });
+        try self.emitDeferredFromDepth(target.scope_depth);
+        try self.writeIndent();
+        try self.writer.print("{s} = {s};\n", .{ target.scrut_name, tmp });
+        try self.writeIndent();
+        try self.writer.print("continue :{s};\n", .{target.zig_label});
+        return;
+    }
     const target = findLoopTarget(self, c.label) orelse {
         if (c.label) |label| {
             return self.failAt(node, "native backend cannot find loop with label '{s}'", .{label});
@@ -372,6 +381,16 @@ pub fn emitContinue(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Conti
     } else {
         try self.writer.writeAll("continue;\n");
     }
+}
+
+fn findSwitchContinueTarget(self: *Emitter, label: []const u8) ?*const SwitchContinueTarget {
+    var i = self.switch_targets.items.len;
+    while (i > 0) {
+        i -= 1;
+        const target = &self.switch_targets.items[i];
+        if (std.mem.eql(u8, target.label, label)) return target;
+    }
+    return null;
 }
 
 pub fn emitEqualityCode(self: *Emitter, left: []const u8, lt: ValType, right_node: *ast_mod.Node) ![]const u8 {
@@ -524,13 +543,7 @@ pub fn emitIterableFor(self: *Emitter, node: *ast_mod.Node, f: *const ast_mod.Fo
     self.counter += 1;
     const id = self.counter;
     const iter_name = try std.fmt.allocPrint(a, "lls_iter_{d}", .{id});
-    const zig_label: ?[]const u8 = if (f.label) |label|
-        if (loopLabelUsed(self, f.body, label))
-            try std.fmt.allocPrint(a, "lls_loop_{d}", .{id})
-        else
-            null
-    else
-        null;
+    const zig_label = try loopZigLabel(self, f, id);
 
     const cap0_name = try self.localName(f.captures[0].name);
     const cap1_name = if (f.captures.len > 1) try self.localName(f.captures[1].name) else "";
@@ -856,13 +869,7 @@ pub fn emitRangeFor(self: *Emitter, node: *ast_mod.Node, f: *const ast_mod.For) 
     const id = self.counter;
     const start_name = try std.fmt.allocPrint(a, "lls_loop_start_{d}", .{id});
     const end_name = try std.fmt.allocPrint(a, "lls_loop_end_{d}", .{id});
-    const zig_label: ?[]const u8 = if (f.label) |label|
-        if (loopLabelUsed(self, f.body, label))
-            try std.fmt.allocPrint(a, "lls_loop_{d}", .{id})
-        else
-            null
-    else
-        null;
+    const zig_label = try loopZigLabel(self, f, id);
 
     const cap_name: []const u8 = if (f.captures.len > 0)
         try self.localName(f.captures[0].name)
@@ -1036,13 +1043,36 @@ pub fn emitSwitchStmt(self: *Emitter, node: *ast_mod.Node, sw: *const ast_mod.Sw
     const vt = try switchScrutineeType(self, node, sw);
     const a = self.arena.allocator();
     self.counter += 1;
-    const scrut_name = try std.fmt.allocPrint(a, "lls_scrut_{d}", .{self.counter});
+    const id = self.counter;
+    const scrut_name = try std.fmt.allocPrint(a, "lls_scrut_{d}", .{id});
     const scrut_code = if (vt.kind == .error_value) try expr_mod.errorOperandCode(self, sw.condition) else try expr_mod.emitExpr(self, sw.condition);
+    const wraps = switchContinueUsed(self, sw);
     try self.writeIndent();
-    try self.writer.print("const {s}: {s} = {s};\n", .{
-        scrut_name, vt.zig, scrut_code,
+    try self.writer.print("{s} {s}: {s} = {s};\n", .{
+        if (wraps) "var" else "const", scrut_name, vt.zig, scrut_code,
     });
+    if (!wraps) {
+        try emitSwitchChain(self, sw, scrut_name, vt, true);
+        return;
+    }
+    const loop_label = try std.fmt.allocPrint(a, "lls_sw_loop_{d}", .{id});
+    try self.switch_targets.append(a, .{
+        .label = sw.label.?,
+        .zig_label = loop_label,
+        .scrut_name = scrut_name,
+        .scrut_type = vt,
+        .scope_depth = self.scopes.items.len,
+    });
+    defer _ = self.switch_targets.pop();
+    try self.writeIndent();
+    try self.writer.print("{s}: while (true) {{\n", .{loop_label});
+    self.indent += 1;
     try emitSwitchChain(self, sw, scrut_name, vt, true);
+    try self.writeIndent();
+    try self.writer.writeAll("break;\n");
+    self.indent -= 1;
+    try self.writeIndent();
+    try self.writer.writeAll("}\n");
 }
 
 pub fn emitBlockValue(self: *Emitter, node: *ast_mod.Node, b: *const ast_mod.Block) ![]const u8 {
@@ -1109,13 +1139,35 @@ pub fn emitSwitchValue(self: *Emitter, node: *ast_mod.Node, sw: *const ast_mod.S
     self.writer = buf.writer(a).any();
     defer self.writer = old_writer;
 
+    const wraps = switchContinueUsed(self, sw);
     self.indent += 1;
     const scrut_code = if (vt.kind == .error_value) try expr_mod.errorOperandCode(self, sw.condition) else try expr_mod.emitExpr(self, sw.condition);
     try self.writeIndent();
-    try self.writer.print("const {s}: {s} = {s};\n", .{
-        scrut_name, vt.zig, scrut_code,
+    try self.writer.print("{s} {s}: {s} = {s};\n", .{
+        if (wraps) "var" else "const", scrut_name, vt.zig, scrut_code,
     });
-    try emitSwitchChain(self, sw, scrut_name, vt, true);
+    if (wraps) {
+        const loop_label = try std.fmt.allocPrint(a, "lls_sw_loop_{d}", .{id});
+        try self.switch_targets.append(a, .{
+            .label = sw.label.?,
+            .zig_label = loop_label,
+            .scrut_name = scrut_name,
+            .scrut_type = vt,
+            .scope_depth = self.scopes.items.len,
+        });
+        defer _ = self.switch_targets.pop();
+        try self.writeIndent();
+        try self.writer.print("{s}: while (true) {{\n", .{loop_label});
+        self.indent += 1;
+        try emitSwitchChain(self, sw, scrut_name, vt, true);
+        try self.writeIndent();
+        try self.writer.writeAll("break;\n");
+        self.indent -= 1;
+        try self.writeIndent();
+        try self.writer.writeAll("}\n");
+    } else {
+        try emitSwitchChain(self, sw, scrut_name, vt, true);
+    }
     self.indent -= 1;
     try self.writeIndent();
     try self.writer.writeAll("}");
@@ -1158,6 +1210,151 @@ pub fn forBody(self: *Emitter, node: *ast_mod.Node, f: *const ast_mod.For) !*con
         .block => |*b| b,
         else => self.failAt(node, "@for body must be a block", .{}),
     };
+}
+
+const JumpScanMode = enum { continue_label, plain_crossing };
+
+const JumpScan = struct {
+    label: []const u8 = "",
+    mode: JumpScanMode,
+    /// Number of generated switch-continue wrapper loops crossed so far.
+    wrappers: usize = 0,
+};
+
+/// Does the labeled `@switch` use `continue :label`? Only such switches are
+/// lowered to a wrapper loop (and only their wrapper labels are emitted).
+fn switchContinueUsed(self: *Emitter, sw: *const ast_mod.Switch) bool {
+    const label = sw.label orelse return false;
+    for (sw.prongs) |prong| {
+        var scan = JumpScan{ .label = label, .mode = .continue_label };
+        if (scanJumps(self, prong.body, &scan)) return true;
+    }
+    return false;
+}
+
+/// Is there a plain `break`/`continue` in the loop body that would be captured
+/// by a generated switch-continue wrapper and so needs an explicit Zig label?
+fn loopNeedsSwitchLabel(self: *Emitter, body: *ast_mod.Node) bool {
+    var scan = JumpScan{ .mode = .plain_crossing };
+    return scanJumps(self, body, &scan);
+}
+
+/// Generate a Zig loop label when the loop is targeted by a labeled jump or
+/// when a generated switch wrapper sits between it and a plain jump.
+fn loopZigLabel(self: *Emitter, f: *const ast_mod.For, id: usize) !?[]const u8 {
+    const used = if (f.label) |label| loopLabelUsed(self, f.body, label) else false;
+    if (!used and !loopNeedsSwitchLabel(self, f.body)) return null;
+    return try std.fmt.allocPrint(self.arena.allocator(), "lls_loop_{d}", .{id});
+}
+
+fn scanJumps(self: *Emitter, node: *ast_mod.Node, s: *JumpScan) bool {
+    switch (node.*) {
+        .continue_expr => |c| switch (s.mode) {
+            .continue_label => return if (c.label) |l| std.mem.eql(u8, l, s.label) else false,
+            .plain_crossing => return s.wrappers > 0 and c.label == null,
+        },
+        .break_expr => |b| {
+            if (s.mode == .plain_crossing and s.wrappers > 0 and b.label == null and b.value == null) return true;
+            if (b.value) |v| return scanJumps(self, v, s);
+            return false;
+        },
+        .block => |b| {
+            for (b.statements) |st| {
+                if (scanJumps(self, st, s)) return true;
+            }
+            return false;
+        },
+        .switch_expr => |sw| {
+            // An inner label with the same name shadows the one being scanned.
+            if (s.mode == .continue_label and sw.label != null and std.mem.eql(u8, sw.label.?, s.label)) return false;
+            if (scanJumps(self, sw.condition, s)) return true;
+            var inner = s.*;
+            if (s.mode == .plain_crossing and switchContinueUsed(self, &sw)) inner.wrappers += 1;
+            for (sw.prongs) |prong| {
+                for (prong.patterns) |pat| {
+                    if (scanJumps(self, pat, s)) return true;
+                }
+                if (scanJumps(self, prong.body, &inner)) return true;
+            }
+            return false;
+        },
+        .for_expr => |f| {
+            // A nested loop is a new target for plain `break`/`continue`.
+            if (s.mode == .plain_crossing) return false;
+            if (f.label != null and std.mem.eql(u8, f.label.?, s.label)) return false;
+            if (scanJumps(self, f.expr, s)) return true;
+            return scanJumps(self, f.body, s);
+        },
+        .return_expr => |r| {
+            if (r.return_value) |v| return scanJumps(self, v, s);
+            return false;
+        },
+        .defer_stmt => |d| return scanJumps(self, d.body, s),
+        .declaration => |d| return scanJumps(self, d.value, s),
+        .assignment => |asn| {
+            if (scanJumps(self, asn.left, s)) return true;
+            return scanJumps(self, asn.right, s);
+        },
+        .if_expr => |i| {
+            if (scanJumps(self, i.condition, s)) return true;
+            if (i.pipe_value) |v| {
+                if (scanJumps(self, v, s)) return true;
+            }
+            if (scanJumps(self, i.body, s)) return true;
+            if (i.else_body) |e| return scanJumps(self, e, s);
+            return false;
+        },
+        .binary => |b| {
+            if (scanJumps(self, b.left, s)) return true;
+            return scanJumps(self, b.right, s);
+        },
+        .unary => |u| return scanJumps(self, u.arg, s),
+        .call => |c| {
+            if (scanJumps(self, c.callee, s)) return true;
+            for (c.args) |arg| {
+                if (scanJumps(self, arg, s)) return true;
+            }
+            return false;
+        },
+        .member => |m| {
+            if (scanJumps(self, m.object, s)) return true;
+            return scanJumps(self, m.property, s);
+        },
+        .index => |ix| {
+            if (scanJumps(self, ix.object, s)) return true;
+            if (ix.index) |v| {
+                if (scanJumps(self, v, s)) return true;
+            }
+            if (ix.end) |v| {
+                if (scanJumps(self, v, s)) return true;
+            }
+            if (ix.type_annotation) |v| return scanJumps(self, v, s);
+            return false;
+        },
+        .array_literal => |al| {
+            for (al.elements) |e| {
+                if (scanJumps(self, e, s)) return true;
+            }
+            return false;
+        },
+        .try_expr => |t| return scanJumps(self, t.expression, s),
+        .unwrap_expr => |u| return scanJumps(self, u.expression, s),
+        .error_expr => |e| {
+            for (e.args) |arg| {
+                if (scanJumps(self, arg, s)) return true;
+            }
+            return false;
+        },
+        .struct_init => |si| {
+            if (scanJumps(self, si.type_expr, s)) return true;
+            for (si.fields) |field| {
+                if (scanJumps(self, field.value, s)) return true;
+            }
+            return false;
+        },
+        .comptime_expr => |ce| return scanJumps(self, ce.expr, s),
+        else => return false,
+    }
 }
 
 pub fn loopLabelUsed(self: *Emitter, node: *ast_mod.Node, label: []const u8) bool {
