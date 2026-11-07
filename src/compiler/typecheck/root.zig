@@ -2854,9 +2854,9 @@ fn checkFunction(
     if (expected) |a| {
         if (state.functions.getPtr(f.name)) |def| {
             const disp = try ownDisplayQualified(state, a);
-            // `unknown | error` from refineErrorReturns — upgrade success arm from body.
-            const weak_success = std.mem.eql(u8, disp, "unknown") or
-                std.mem.startsWith(u8, disp, "unknown |");
+            // `unknown` / `unknown | error` from refineErrorReturns — upgrade the
+            // success arm from the body.
+            const weak_success = ir.hasUnknownSuccessArm(a);
             if (weak_success) {
                 if (inferReturnDisplayFromBody(state, f.body)) |better| {
                     var final = better;
@@ -2881,10 +2881,13 @@ fn checkFunction(
         // (`return sc` after `$sc = @new(...)` is invisible to analyzeBody).
         if (inferReturnDisplayFromBody(state, f.body)) |inferred| {
             const cur = def.return_type;
-            const weak = cur == null or
-                std.mem.eql(u8, cur.?, "unknown") or
-                std.mem.eql(u8, cur.?, "error") or
-                std.mem.startsWith(u8, cur.?, "unknown |");
+            const cur_ir: ?ir.Type = if (def.return_ir) |t|
+                t
+            else if (cur) |c|
+                from_ast.parseDisplayType(state, ta, c, null) catch null
+            else
+                null;
+            const weak = cur_ir == null or ir.hasUnknownSuccessArm(cur_ir.?) or ir.isBareError(cur_ir.?);
             if (weak) {
                 // Preserve `| error` when analyzeBody/refineErrorReturns already saw
                 // an error path but body walk only found the success arm.
@@ -2903,10 +2906,11 @@ fn checkFunction(
             // No valued `return expr`: empty body / only bare `return;` → void.
             // If the body *does* `return <expr>` but inference could not refine
             // (e.g. thin wrappers around natives), leave unknown — never stamp void.
-            if (def.return_type == null or
-                std.mem.eql(u8, def.return_type.?, "unknown") or
-                std.mem.eql(u8, def.return_type.?, "null"))
-            {
+            const weak_ret = if (def.return_ir) |t|
+                ir.isUnknown(t) or ir.isNull(t)
+            else
+                def.return_type == null;
+            if (weak_ret) {
                 def.return_type = "void";
                 def.return_ir = ir.TVoid;
             }
@@ -2927,9 +2931,12 @@ fn checkFunction(
     }
 
     if (state.strict and !std.mem.eql(u8, f.name, "main")) {
-        const ret_disp = if (expected) |a| try ownDisplay(state, a) else if (state.functions.get(f.name)) |def| def.return_type else null;
-        if (ret_disp) |rd| {
-            if (!std.mem.eql(u8, rd, "void") and !std.mem.eql(u8, rd, "never") and !nodeAlwaysReturns(f.body)) {
+        var ret_ir: ?ir.Type = expected;
+        if (ret_ir == null) {
+            if (state.functions.get(f.name)) |def| ret_ir = def.return_ir;
+        }
+        if (ret_ir) |rt| {
+            if (!ir.isVoid(rt) and !ir.isNever(rt) and !nodeAlwaysReturns(f.body)) {
                 // Point at the fall-through path: the last statement of the body
                 // (or the declaration when the body is empty).
                 var end_line: u32 = f.loc.line;
@@ -2959,7 +2966,7 @@ fn blockAlwaysReturns(block: ast.Block) bool {
 fn functionReturnsNever(state: *state_mod.CompilerState, func_name: []const u8) bool {
     if (std.mem.eql(u8, func_name, "__exit")) return true;
     const def = state.functions.get(func_name) orelse return false;
-    if (def.return_type) |rt| return std.mem.eql(u8, rt, "never");
+    if (def.return_ir) |t| return ir.isNever(t);
     if (def.node.* == .function_decl) {
         if (def.node.function_decl.return_type) |rt_node| {
             if (rt_node.* == .primary and std.mem.eql(u8, rt_node.primary.name, "never")) return true;
@@ -2999,7 +3006,7 @@ fn callReturnsNever(state: *state_mod.CompilerState, node: *ast.Node) bool {
     if (resolveCalleeName(state, &node.call)) |name| {
         if (functionReturnsNever(state, name)) return true;
     }
-    if (state.type_of_results.get(node)) |t| return std.mem.eql(u8, t, "never");
+    if (state.type_ir_of_results.get(node)) |t| return ir.isNever(t);
     return false;
 }
 
@@ -3009,7 +3016,7 @@ fn nodeAlwaysNeverReturns(state: *state_mod.CompilerState, node: *ast.Node) bool
         .return_expr => |r| blk: {
             if (r.return_value) |v| {
                 if (callReturnsNever(state, v)) break :blk true;
-                if (state.type_of_results.get(v)) |t| break :blk std.mem.eql(u8, t, "never");
+                if (state.type_ir_of_results.get(v)) |t| break :blk ir.isNever(t);
             }
             break :blk false;
         },

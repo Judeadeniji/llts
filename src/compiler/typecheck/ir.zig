@@ -814,6 +814,48 @@ pub fn involvesUnknown(t: Type) bool {
     };
 }
 
+/// True when the type peels to exactly `unknown`.
+pub fn isUnknown(t: Type) bool {
+    return peelDefined(t) == .unknown;
+}
+
+/// True when the type peels to exactly `null`.
+pub fn isNull(t: Type) bool {
+    return peelDefined(t) == .null;
+}
+
+/// True when the type peels to exactly `void` (unit).
+pub fn isVoid(t: Type) bool {
+    return peelDefined(t) == .void;
+}
+
+/// True when the type peels to exactly `never` (bottom).
+pub fn isNever(t: Type) bool {
+    return peelDefined(t) == .never;
+}
+
+/// True when the type peels to the bare `error` face (an error value with no
+/// success arm).
+pub fn isBareError(t: Type) bool {
+    return peelDefined(t) == .error_;
+}
+
+/// True when the success arm is still `unknown`: plain `unknown`, or a union
+/// carrying `unknown` (typically `unknown | error` from error-return
+/// refinement). Used to decide whether a body can still refine the type.
+pub fn hasUnknownSuccessArm(t: Type) bool {
+    return switch (peelDefined(t)) {
+        .unknown => true,
+        .union_ => |arms| blk: {
+            for (arms) |arm| {
+                if (peelDefined(arm) == .unknown) break :blk true;
+            }
+            break :blk false;
+        },
+        else => false,
+    };
+}
+
 pub fn isErrorArm(t: Type) bool {
     return switch (peelDefined(t)) {
         .error_, .error_set, .error_lit => true,
