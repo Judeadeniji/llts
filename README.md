@@ -44,137 +44,12 @@ pub @func main() {
 
 Bindings are introduced with `$`; the sigil is only used at the declaration site. `@const` makes a binding immutable. Comments start with `#`.
 
-## Language overview
+## Documentation
 
-### Declarations and control flow
+Comprehensive guides are available in the [`docs/`](./docs) directory:
 
-```lls
-@const $limit = 3;
-
-@func classify(n: i64): string {
-    @if (n < 0) { return "negative"; }
-    @if (n == 0) { return "zero"; }
-    return "positive";
-}
-
-pub @func main() {
-    $total = 0;
-    @for (0..limit) |i| {
-        total += i;
-    }
-
-    $label = @switch (classify(total)) {
-        "zero" => { break "none"; },
-        "positive" => { break "some"; },
-        @else => { break "unknown"; },
-    };
-    print(label);
-}
-```
-
-- `@if` / `@else`, `@for` (range, condition, and iterable forms), and `@switch` expressions.
-- `break`/`continue`, including labeled loops.
-- `|>` pipes a value as the first argument of a call.
-- Fenced template literals with `${expr}` interpolation.
-
-### Operators
-
-- Arithmetic: `+`, `-`, `*`, `/`, `%`, wrapping `+%` / `-%` / `*%`, and power via `^` or `**`.
-- Bitwise (integers only): `&`, `|`, `~` (binary XOR / unary NOT), `<<`, `>>`, plus compounds `&=`, `|=`, `~=`, `<<=`, `>>=`.
-- Shift counts must be in `0..63` (inclusive of 0, exclusive of 64). Negative or oversized counts are a runtime error (`Shift amount out of range`); `>>` is an arithmetic (sign-extending) shift.
-- Bitwise and shift results keep the left operand's width. Native builds range-check shift results, so widen first (`@as(i64, x) << n`) when the shift may move bits out of the operand's width.
-- Comparison and logic: `==`, `!=`, `<`, `<=`, `>`, `>=`, `&&`, `||`.
-
-### Types
-
-| Kind | Syntax |
-| --- | --- |
-| Integers | `i8` … `i64`, `u8` … `u64`, `u1` / `bool` |
-| Floats | `f32`, `f64` |
-| Strings | `string` (a `[]byte` value) |
-| Arrays / slices | `[N]T`, `[]T` |
-| Tuples | `[A, B]` |
-| Pointers | `*T`, `?*T` |
-| Optionals / unions | `?T`, `A \| B` |
-| Shapes | `{ x: i64; y: i64; }` |
-| Nominal / transparent aliases | `@type UserId = i64;`, `@alias Id = i64;` |
-| Structs / enums / errors | `@struct`, `@enum`, `@error` |
-| Unit / bottom | `void`, `never` |
-
-`@type` creates a distinct nominal type; `@alias` is transparent. Structs, enums, and typed error sets compose with unions and `@switch` narrowing.
-
-### Memory
-
-Aggregates are frame-local. Returning them is rejected unless the value is a
-flat scalar struct that can be cloned safely:
-
-```lls
-@struct Node {
-    value: i64;
-    next: ?*Node;
-}
-
-@func head(node: *Node): i64 {
-    return node.value;
-}
-
-pub @func main() {
-    $a = Node { value: 1, next: null };
-    $b = Node { value: 2, next: &a };
-    print(head(&b));
-}
-```
-
-Native allocation is not currently a core-language operation. A future
-standard-library API will own allocation policy, growth, resizing, freeing,
-and failure behavior; it will not require a compiler-known allocator method
-name or a total capacity known in advance. The bytecode compiler temporarily
-retains the legacy `@new(allocator, T)` intrinsic for VM compatibility.
-`defer` and `errdefer` run cleanup on scope exit and on the error path
-respectively.
-
-### Errors
-
-```lls
-@error ParseError { Empty, Invalid }
-
-@func parse(ok: bool): i64 | ParseError {
-    @if (!ok) {
-        return ParseError.Invalid;
-    }
-    return 42;
-}
-
-pub @func main() {
-    $value = parse(false);
-    @if (@isError(value)) {
-        print("invalid input");
-    }
-}
-```
-
-Errors can also be created dynamically with `error("message")`. Unwrap typed errors with `?`, test any error value with `@isError`, and branch on typed error sets with `@switch`. Dynamic errors are message-only (`.message`); they do not carry a code or payload.
-
-### Modules
-
-```lls
-# math.lls
-pub @func square(x: i64): i64 {
-    return x * x;
-}
-
-pub @const $answer = 42;
-```
-
-```lls
-# main.lls
-@const $math = @import("./math.lls");
-
-print(math.square(math.answer));
-pub @func main() {}
-```
-
-Relative imports are explicit. Only `pub` declarations are visible outside their module.
+- [**Language Reference**](./docs/language-reference.md) — Detailed guide to declarations, control flow, operators, type system, memory semantics, error handling, and modules.
+- [**Inline Assembly Guide**](./docs/inline-assembly.md) — Reference for the `@asm` intrinsic in native compilation, including operand constraints, clobbers, register mapping, and verified Linux x86-64 examples.
 
 ## Build
 
@@ -222,102 +97,13 @@ zig-out/bin/llts dump examples/methods.lls
 
 Native builds accept `--target`, `--optimize`, and `--emit bin|asm|llvm-ir|llvm-bc|h|docs|implib`. `--strict` enables the sound type system; it is implied by `--native` and `emit-zig`. Run `llts <command> --help` for the full flag set.
 
-Native code may embed target-specific, side-effecting assembly with
-`@asm("template")`. The template must be a string literal; the bytecode backend
-rejects this native-only intrinsic. Use a fenced multiline string for
-multi-instruction templates:
-
-````lls
-@asm(```
-    nop
-    nop
-```);
-````
-
-Extended assembly uses GNU/Zig-style template, output, input, and clobber sections:
-`@asm(ReturnType, ```<template> : <outputs> : <inputs> : <clobbers>```)`.
-`${expression}` holes bind LLTS values without string formatting or runtime assembly building:
-
-````lls
-$sum = @asm(i64, ```
-    movq %[left], %[result]
-    addq %[right], %[result]
-    : [result] "=&r" (-> i64)
-    : [left] "r" (${left}),
-      [right] "r" (${right})
-    : "cc", "memory"
-```);
-````
-
-### Operands, Constraints, and Clobbers
-
-* **Literal Registers vs Operands:** Write literal CPU registers with doubled percent signs (e.g. `%%rax`, `%%rdi`), and reference named inputs/outputs as `%[name]`.
-* **Constraints:**
-  * `"r"`: General-purpose register input.
-  * `"=r"` / `"=&r"`: Output register (`&` denotes early-clobber to prevent sharing with inputs).
-  * `"+r"`: Read-modify-write in-place operand on a mutable place (e.g. `[x] "+r" (${x})`).
-  * `"{reg}"`: Specific hardware register constraint (e.g. `"{rax}"`, `"{rdi}"`, `"{rsi}"`).
-* **Clobbers:** List clobbered registers and effects in the 4th section (e.g. `"cc"` for condition flags, `"memory"` for memory barriers, or clobbered registers like `"rcx"`, `"r11"`).
-* **Rules & Limits:**
-  * Operands must fit within CPU register sizes (at most 8 bytes on 64-bit targets). Aggregates and slices (`[]byte`, which are 16-byte structs) cannot be passed directly into registers.
-  * To pass a memory buffer, declare a fixed-size byte array and pass its pointer using `&` (e.g. `$buf: [3]u8 = [72, 105, 10]; $p = &buf;`).
-  * Operand values must be written as `${expr}` holes. To pass an immediate constant into a register, bind it to a local variable first (e.g. `$nr: i64 = 1;` then `(${nr})`).
-  * `asm goto` is not supported.
-
-### Verified Linux x86-64 Examples
-
-**1. Exit with status 42 (`sys_exit` = 60):**
-````lls
-pub @func main() {
-    @asm(```
-        movq $60, %%rax
-        movq $42, %%rdi
-        syscall
-    ```);
-}
-````
-
-**2. In-place update (`+r` operand):**
-````lls
-pub @func main() {
-    $x: i64 = 21;
-    @asm(void, ```
-        addq %[x], %[x]
-        : [x] "+r" (${x})
-        :
-        : "cc"
-    ```);
-    print(x); // 42
-}
-````
-
-**3. Linux x86-64 `write` syscall with buffer pointer (`sys_write` = 1):**
-Syscall calling convention on Linux x86-64 uses `rax` for the syscall number, `rdi`, `rsi`, `rdx` for arguments 1-3, and clobbers `rcx` and `r11`:
-
-````lls
-pub @func main() {
-    $buf: [3]u8 = [72, 105, 10]; // 'H', 'i', '\n'
-    $p = &buf;
-    $nr: i64 = 1;
-    $fd: i64 = 1;
-    $n: i64 = 3;
-    $r = @asm(i64, ```
-        syscall
-        : [ret] "={rax}" (-> i64)
-        : [nr] "{rax}" (${nr}),
-          [fd] "{rdi}" (${fd}),
-          [buf] "{rsi}" (${p}),
-          [cnt] "{rdx}" (${n})
-        : "rcx", "r11", "memory"
-    ```);
-    print("bytes written:", r);
-}
-````
+Native compilation also supports embedding target-specific assembly via `@asm` — see the [**Inline Assembly Guide**](./docs/inline-assembly.md) for constraints, operands, clobbers, and verified examples.
 
 ## Project layout
 
 | Path | Contents |
 | --- | --- |
+| `docs/` | Language reference and guides |
 | `src/scanner/` | Hand-written lexer |
 | `src/parser/` | Recursive-descent parser and type syntax |
 | `src/ast/` | Syntax tree |
