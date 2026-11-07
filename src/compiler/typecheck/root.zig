@@ -151,6 +151,20 @@ pub const Env = struct {
         return null;
     }
 
+    /// True when `name` resolves to a `@const` binding. Inner bindings shadow
+    /// outer ones, so a mutable local may reuse a module-level const's name.
+    fn isConstBinding(self: *const Env, name: []const u8) bool {
+        var i = self.locals.items.len;
+        while (i > 0) {
+            i -= 1;
+            if (self.const_scopes.items[i].contains(name)) return true;
+            if (self.locals.items[i].contains(name)) return false;
+        }
+        if (self.const_names.contains(name)) return true;
+        if (self.top_consts) |tc| return tc.contains(name);
+        return false;
+    }
+
     /// Module-level `@const` at the root of a place expression (`C`, `C.a.b`, `C[i].x`).
     fn constPlaceRoot(self: *const Env, node: *const ast.Node) ?[]const u8 {
         const name = scope.placeRoot(node) orelse return null;
@@ -1567,6 +1581,9 @@ fn inferExprInner(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, 
             const val = try inferExpr(state, env, ta, a.right);
             try rejectTypeValue(state, val, "an assigned value");
             if (a.left.* == .primary) {
+                if (env.isConstBinding(a.left.primary.name)) {
+                    return compiler_errors.compileFailFmt(state, "Cannot reassign to constant variable '{s}'", .{a.left.primary.name});
+                }
                 // Against the *declared* type: a narrowed branch may re-widen
                 // the variable (`x = null` inside `if (x != null)`).
                 if (env.lookupDeclared(a.left.primary.name)) |existing| {

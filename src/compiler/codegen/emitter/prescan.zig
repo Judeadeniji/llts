@@ -43,8 +43,18 @@ pub fn preScanAssignmentTarget(self: *Emitter, node: *ast_mod.Node) anyerror!voi
         .primary => |p| {
             if (p.kind == .identifier or p.kind == .register) markReassigned(self, p.name);
         },
-        .member => |m| try markPlaceRootAssigned(self, m.object),
-        .index => |ix| try markPlaceRootAssigned(self, ix.object),
+        .member => |m| {
+            try markPlaceRootAssigned(self, m.object);
+            // Writing through the base also reads it as a place; otherwise an
+            // unread pointer/slice parameter gets a pointless `_ = arg;`.
+            try preScanExpr(self, m.object);
+        },
+        .index => |ix| {
+            try markPlaceRootAssigned(self, ix.object);
+            try preScanExpr(self, ix.object);
+            if (ix.index) |v| try preScanExpr(self, v);
+            if (ix.end) |v| try preScanExpr(self, v);
+        },
         else => try preScanExpr(self, node),
     }
 }

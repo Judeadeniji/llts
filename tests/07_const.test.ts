@@ -212,6 +212,46 @@ print(arr);
   );
 });
 
+test("cannot reassign a @const local with a slice type", () => {
+  expectError(
+    runSource(`
+pub @func main() {
+    @const $x: []u8 = "hi";
+    x = "yo";
+    print(x);
+}
+`),
+    "Cannot reassign to constant variable 'x'",
+  );
+});
+
+test("cannot reassign a @const local scalar", () => {
+  expectError(
+    runSource(`
+pub @func main() {
+    @const $x = 1;
+    x = 2;
+    print(x);
+}
+`),
+    "Cannot reassign to constant variable 'x'",
+  );
+});
+
+test("mutable slice parameter can be written through directly", () => {
+  expectOutput(
+    runSource(`
+@func poke(s: []u8) { s[0] = 65; }
+pub @func main() {
+    $s: []u8 = "hi";
+    poke(s);
+    print(s);
+}
+`),
+    ["Ai"],
+  );
+});
+
 test("@const object fields are readonly", () => {
   expectError(
     runSource(`
