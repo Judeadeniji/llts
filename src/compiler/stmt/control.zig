@@ -14,7 +14,7 @@ const compile_errors = @import("../../errors/compile.zig");
 pub fn compileIf(state: *CompilerState, if_expr: *const ast.If) !void {
     try expr.compileExpression(state, if_expr.condition);
     const then_jump = try emit.emitJump(state, .OP_JUMP_IF_FALSE);
-    
+
     try scope.beginScope(state);
     if (if_expr.pipe_value) |pv| {
         if (pv.* != .primary) return fail(state, "@if capture must be an identifier");
@@ -32,7 +32,7 @@ pub fn compileIf(state: *CompilerState, if_expr: *const ast.If) !void {
     } else {
         try emit.emitOp(state, .OP_POP);
     }
-    
+
     const body = switch (if_expr.body.*) {
         .block => |*b| b,
         else => return fail(state, "@if body must be a block"),
@@ -336,7 +336,6 @@ fn resolveErrorMemberPattern(state: *CompilerState, pat: *ast.Node) ?[]const u8 
 }
 
 fn compileSwitchInner(state: *CompilerState, sw: *const ast.Switch, value_mode: bool) !void {
-
     try scope.beginScope(state);
     try expr.compileExpression(state, sw.condition);
     const scrut_slot = try scope.addLocal(state, "", false);
@@ -377,6 +376,30 @@ fn compileSwitchInner(state: *CompilerState, sw: *const ast.Switch, value_mode: 
 
     var end_jumps: std.ArrayList(usize) = .empty;
     defer end_jumps.deinit(state.allocator);
+
+    // A labeled `@switch` is compiled as a loop head so `continue :label value`
+    // can store a new scrutinee and re-run dispatch (Zig semantics).
+    const dispatch_head = state.chunk.code.items.len;
+    var switch_index: ?usize = null;
+    if (sw.label) |lab| {
+        try state.switches.append(state.allocator, .{
+            .head = dispatch_head,
+            .scope_depth = state.scope_depth,
+            .scrut_slot = scrut_slot,
+            .label = lab,
+        });
+        switch_index = state.switches.items.len - 1;
+        try state.label_targets.append(state.allocator, .{
+            .name = lab,
+            .target = .{ .switch_ = switch_index.? },
+        });
+    }
+    defer {
+        if (switch_index != null) {
+            _ = state.label_targets.pop();
+            _ = state.switches.pop();
+        }
+    }
 
     for (sw.prongs) |prong| {
         if (prong.is_else) {
@@ -438,7 +461,7 @@ fn compileSwitchInner(state: *CompilerState, sw: *const ast.Switch, value_mode: 
             try end_jumps.append(state.allocator, j);
             continue;
         }
-        if (prong.patterns.len == 0)            return fail(state, "Switch prong requires at least one pattern");
+        if (prong.patterns.len == 0) return fail(state, "Switch prong requires at least one pattern");
 
         var matched_jumps: std.ArrayList(usize) = .empty;
         defer matched_jumps.deinit(state.allocator);
@@ -552,7 +575,6 @@ fn compileValueArm(state: *CompilerState, body: *ast.Node, arm_name: []const u8)
     return compileValueArmCapture(state, body, arm_name, null, false);
 }
 
-
 pub fn compileFor(state: *CompilerState, for_expr: *const ast.For) !void {
     try for_loop.compileFor(state, for_expr);
 }
@@ -587,12 +609,57 @@ pub fn compileBreak(state: *CompilerState, brk: *const ast.Break) !void {
 }
 
 pub fn compileContinue(state: *CompilerState, cont: *const ast.Continue) !void {
+    if (cont.label) |lab| {
+        if (findLabelTarget(state, lab)) |target| {
+            switch (target.*.target) {
+                .switch_ => |si| {
+                    const sw = state.switches.items[si];
+                    const head = sw.head;
+                    const depth = sw.scope_depth;
+                    const slot = sw.scrut_slot;
+                    const val = cont.value orelse return compile_errors.compileFailFmt(state, "'continue :{s}' targets a @switch; it requires a value ('continue :{s} <value>')", .{ lab, lab });
+                    try expr.compileExpression(state, val);
+                    try emit.emitOp(state, .OP_SET_LOCAL);
+                    try emit.emitByte(state, slot);
+                    try emit.emitOp(state, .OP_POP);
+                    try scope.emitDefersUntil(state, depth, .normal);
+                    try scope.emitPopsUntil(state, depth);
+                    try emit.emitLoop(state, head);
+                    return;
+                },
+                .loop => |li| {
+                    if (cont.value != null) {
+                        return compile_errors.compileFailFmt(state, "'continue :{s}' targets a loop; loops continue without a value", .{lab});
+                    }
+                    return compileContinueToLoop(state, &state.loops.items[li]);
+                },
+            }
+        }
+        return compile_errors.compileFailFmt(state, "Cannot find loop or @switch with label '{s}'", .{lab});
+    }
+
+    if (cont.value != null) {
+        return fail(state, "'continue' with a value requires a label naming an enclosing @switch");
+    }
     if (state.loops.items.len == 0) return fail(state, "Cannot continue outside of a loop");
-    const target = try findLoop(state, cont.label);
+    return compileContinueToLoop(state, &state.loops.items[state.loops.items.len - 1]);
+}
+
+fn compileContinueToLoop(state: *CompilerState, target: *state_mod.LoopTracker) !void {
     try scope.emitDefersUntil(state, target.scope_depth, .normal);
     try scope.emitPopsUntil(state, target.scope_depth);
     const jump = try emit.emitJump(state, .OP_JUMP);
     try target.continue_jumps.append(state.allocator, jump);
+}
+
+fn findLabelTarget(state: *CompilerState, label: []const u8) ?*state_mod.LabelTarget {
+    var i = state.label_targets.items.len;
+    while (i > 0) {
+        i -= 1;
+        const t = &state.label_targets.items[i];
+        if (std.mem.eql(u8, t.name, label)) return t;
+    }
+    return null;
 }
 
 fn beginExprFrame(state: *CompilerState, label: ?[]const u8) !void {

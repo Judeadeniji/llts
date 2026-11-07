@@ -20,6 +20,17 @@ pub const typeAstToDisplayQualified = from_ast.typeAstToDisplayQualified;
 
 pub const TypecheckError = error{ OutOfMemory, CompileError, Overflow, InvalidCharacter };
 
+/// A labeled control-flow target visible to `continue`.
+pub const LabelKind = enum { loop, switch_, block, if_ };
+
+pub const LabelFrame = struct {
+    name: []const u8,
+    kind: LabelKind,
+    /// `@switch` scrutinee type: an operand of `continue :label value` must be
+    /// assignable to it (null for non-switch labels).
+    cond_type: ?ir.Type = null,
+};
+
 pub const Env = struct {
     locals: std.ArrayList(std.StringHashMap(ir.Type)),
     globals: std.StringHashMap(ir.Type),
@@ -48,6 +59,9 @@ pub const Env = struct {
     /// the flow overlay for these names (sound; loses precision after
     /// shadowing).  Monotonic: never unmarked.
     flow_dead: std.StringHashMap(void),
+    /// Innermost-last labeled control-flow targets (`@for`, `@switch`, labeled
+    /// block, `@if`) consulted by `continue :label [value]`.
+    labels: std.ArrayList(LabelFrame) = .empty,
     /// Module globals with statically known types (see `seedDeclEnv`), consulted
     /// after `globals`. Shared across function envs, never copied.
     decl_globals: ?*const std.StringHashMap(ir.Type) = null,
@@ -64,6 +78,7 @@ pub const Env = struct {
             .const_names = std.StringHashMap(void).init(allocator),
             .const_scopes = .empty,
             .flow_dead = std.StringHashMap(void).init(allocator),
+            .labels = .empty,
             .allocator = allocator,
         };
     }
@@ -76,6 +91,7 @@ pub const Env = struct {
         for (self.const_scopes.items) |*m| m.deinit();
         self.const_scopes.deinit(self.allocator);
         self.flow_dead.deinit();
+        self.labels.deinit(self.allocator);
     }
 
     fn pushScope(self: *Env) !void {
@@ -116,6 +132,23 @@ pub const Env = struct {
         if (self.const_names.contains(name)) return true;
         if (self.top_consts) |tc| return tc.contains(name);
         return false;
+    }
+
+    fn pushLabel(self: *Env, frame: LabelFrame) !void {
+        try self.labels.append(self.allocator, frame);
+    }
+
+    fn popLabel(self: *Env) void {
+        _ = self.labels.pop();
+    }
+
+    fn findLabel(self: *const Env, name: []const u8) ?LabelFrame {
+        var i = self.labels.items.len;
+        while (i > 0) {
+            i -= 1;
+            if (std.mem.eql(u8, self.labels.items[i].name, name)) return self.labels.items[i];
+        }
+        return null;
     }
 
     /// Module-level `@const` at the root of a place expression (`C`, `C.a.b`, `C[i].x`).
@@ -1639,6 +1672,10 @@ fn inferExprInner(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, 
         .block => |b| blk: {
             try env.pushScope();
             defer env.popScope();
+            if (b.label) |lab| try env.pushLabel(.{ .name = lab, .kind = .block });
+            defer {
+                if (b.label != null) env.popLabel();
+            }
             var last: ir.Type = ir.TUnknown;
             for (b.statements) |s| {
                 last = (try checkStmt(state, env, ta, s)) orelse ir.TUnknown;
@@ -1652,6 +1689,10 @@ fn inferExprInner(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, 
             const cond_t = try inferExpr(state, env, ta, i.condition);
             try env.pushScope();
             defer env.popScope();
+            if (i.label) |lab| try env.pushLabel(.{ .name = lab, .kind = .if_ });
+            defer {
+                if (i.label != null) env.popLabel();
+            }
             // `@if (@isError(x))` — narrow `x` to `error` in the then-body so
             // `return x` typechecks against any error-union return.
             if (isErrorNarrowName(i.condition)) |ename| {
@@ -1687,7 +1728,11 @@ fn inferExprInner(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, 
             break :blk ir.TUnknown;
         },
         .switch_expr => |sw| blk: {
-            _ = try inferExpr(state, env, ta, sw.condition);
+            const cond_t = try inferExpr(state, env, ta, sw.condition);
+            if (sw.label) |lab| try env.pushLabel(.{ .name = lab, .kind = .switch_, .cond_type = cond_t });
+            defer {
+                if (sw.label != null) env.popLabel();
+            }
             // Narrow subject when switching on `e.kind` for a discrim struct union.
             var narrow = try kindSwitchNarrowing(state, ta, env, sw.condition);
             defer if (narrow) |*n| n.map.deinit();
@@ -1733,6 +1778,10 @@ fn inferExprInner(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, 
             const expr_type = try inferExpr(state, env, ta, f.expr);
             try env.pushScope();
             defer env.popScope();
+            if (f.label) |lab| try env.pushLabel(.{ .name = lab, .kind = .loop });
+            defer {
+                if (f.label != null) env.popLabel();
+            }
             if (f.captures.len > 0) {
                 if (f.expr.* == .binary and std.mem.eql(u8, f.expr.binary.operator, "..")) {
                     if (f.captures.len > 1) return compiler_errors.compileFailFmt(state, "Range loop only supports 1 capture", .{});
@@ -2607,7 +2656,34 @@ fn checkStmt(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node:
             if (br.value) |v| _ = try inferExpr(state, env, ta, v);
             return null;
         },
-        .continue_expr => return null,
+        .continue_expr => |c| {
+            const label = c.label orelse {
+                if (c.value != null) {
+                    return compiler_errors.compileFailFmt(state, "'continue' with a value requires a label naming an enclosing @switch", .{});
+                }
+                return null;
+            };
+            const frame = env.findLabel(label) orelse {
+                return compiler_errors.compileFailFmt(state, "Cannot find loop or @switch with label '{s}'", .{label});
+            };
+            switch (frame.kind) {
+                .switch_ => {
+                    const val = c.value orelse {
+                        return compiler_errors.compileFailFmt(state, "'continue :{s}' targets a @switch; it requires a value ('continue :{s} <value>')", .{ label, label });
+                    };
+                    const val_t = try inferExpr(state, env, ta, val);
+                    const want = frame.cond_type orelse ir.TUnknown;
+                    try requireAssignFrom(state, val_t, want, "continue value", val);
+                },
+                .loop => {
+                    if (c.value != null) {
+                        return compiler_errors.compileFailFmt(state, "'continue :{s}' targets a loop; loops continue without a value", .{label});
+                    }
+                },
+                .block, .if_ => return compiler_errors.compileFailFmt(state, "'continue :{s}' is only valid for a loop or @switch label", .{label}),
+            }
+            return null;
+        },
         .defer_stmt => |d| {
             _ = try checkStmt(state, env, ta, d.body);
             return null;

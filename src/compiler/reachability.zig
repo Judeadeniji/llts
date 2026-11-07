@@ -211,6 +211,9 @@ fn collectRefs(
         .break_expr => |br| {
             if (br.value) |v| try collectRefs(state, func_name, v, result, work);
         },
+        .continue_expr => |c| {
+            if (c.value) |v| try collectRefs(state, func_name, v, result, work);
+        },
         .defer_stmt => |d| try collectRefs(state, func_name, d.body, result, work),
         .if_expr => |i| {
             try collectRefs(state, func_name, i.condition, result, work);
