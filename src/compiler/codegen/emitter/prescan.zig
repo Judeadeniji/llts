@@ -126,6 +126,9 @@ pub fn preScanExpr(self: *Emitter, node: *ast_mod.Node) anyerror!void {
                     if (self.methodTarget(m.object, m.property.primary.name) catch null) |t| {
                         if (t.mode == .pointer) {
                             try markPlaceRootAssigned(self, m.object);
+                            // The receiver is also read by the call; without this an
+                            // otherwise-unread parameter would get a pointless discard.
+                            try preScanExpr(self, m.object);
                             return;
                         }
                     }
