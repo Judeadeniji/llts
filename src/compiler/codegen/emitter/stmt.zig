@@ -99,7 +99,7 @@ pub fn emitIndexAssignment(
         obj_t = payload.*;
         obj_code = try std.fmt.allocPrint(a, "({s}).*", .{obj_code});
     }
-    if (obj_t.kind == .string) {
+    if (obj_t.is_const or obj_t.kind == .string) {
         return self.failAt(node, "cannot assign to elements of a const slice or string", .{});
     }
     const word: []const u8 = switch (obj_t.kind) {

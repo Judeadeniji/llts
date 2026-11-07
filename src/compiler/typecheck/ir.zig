@@ -974,13 +974,22 @@ pub fn parseDisplayType(ta: TypeAlloc, s_in: []const u8) !Type {
     }
     if (s.len > 0 and s[0] == '[') {
         if (s.len >= 2 and s[1] == ']') {
-            var is_const = false;
+            var has_const = false;
             var rest = std.mem.trim(u8, s[2..], " \t");
             if (std.mem.startsWith(u8, rest, "const ")) {
-                is_const = true;
+                has_const = true;
                 rest = std.mem.trim(u8, rest[6..], " \t");
             }
-            return try ta.arrayType(try parseDisplayType(ta, rest), null, is_const);
+            var elem = try parseDisplayType(ta, rest);
+            var is_const = false;
+            if (has_const) {
+                if (elem == .array) {
+                    elem.array.is_const = true;
+                } else {
+                    is_const = true;
+                }
+            }
+            return try ta.arrayType(elem, null, is_const);
         }
         var depth: i32 = 0;
         var close: ?usize = null;
@@ -1002,12 +1011,21 @@ pub fn parseDisplayType(ta: TypeAlloc, s_in: []const u8) !Type {
         if (rest.len > 0) {
             // `[N]T`
             const len = try std.fmt.parseInt(usize, interior, 10);
-            var is_const = false;
+            var has_const = false;
             if (std.mem.startsWith(u8, rest, "const ")) {
-                is_const = true;
+                has_const = true;
                 rest = std.mem.trim(u8, rest[6..], " \t");
             }
-            return try ta.arrayType(try parseDisplayType(ta, rest), len, is_const);
+            var elem = try parseDisplayType(ta, rest);
+            var is_const = false;
+            if (has_const) {
+                if (elem == .array) {
+                    elem.array.is_const = true;
+                } else {
+                    is_const = true;
+                }
+            }
+            return try ta.arrayType(elem, len, is_const);
         }
         // `[T, U, …]` tuple (including 1-tuples)
         const parts = try splitTopLevel(ta.allocator, interior, ", ");

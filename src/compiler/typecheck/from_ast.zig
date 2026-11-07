@@ -447,13 +447,22 @@ pub fn parseDisplayType(
     }
     if (s.len > 0 and s[0] == '[') {
         if (s.len >= 2 and s[1] == ']') {
-            var is_const = false;
+            var has_const = false;
             var rest = std.mem.trim(u8, s[2..], " \t");
             if (std.mem.startsWith(u8, rest, "const ")) {
-                is_const = true;
+                has_const = true;
                 rest = std.mem.trim(u8, rest[6..], " \t");
             }
-            return try ta.arrayType(try parseDisplayType(state, ta, rest, cycle), null, is_const);
+            var elem = try parseDisplayType(state, ta, rest, cycle);
+            var is_const = false;
+            if (has_const) {
+                if (elem == .array) {
+                    elem.array.is_const = true;
+                } else {
+                    is_const = true;
+                }
+            }
+            return try ta.arrayType(elem, null, is_const);
         }
         var depth: i32 = 0;
         var close: ?usize = null;
@@ -474,12 +483,21 @@ pub fn parseDisplayType(
         var rest = std.mem.trim(u8, s[end + 1 ..], " \t");
         if (rest.len > 0) {
             const len = std.fmt.parseInt(usize, interior, 10) catch return error.CompileError;
-            var is_const = false;
+            var has_const = false;
             if (std.mem.startsWith(u8, rest, "const ")) {
-                is_const = true;
+                has_const = true;
                 rest = std.mem.trim(u8, rest[6..], " \t");
             }
-            return try ta.arrayType(try parseDisplayType(state, ta, rest, cycle), len, is_const);
+            var elem = try parseDisplayType(state, ta, rest, cycle);
+            var is_const = false;
+            if (has_const) {
+                if (elem == .array) {
+                    elem.array.is_const = true;
+                } else {
+                    is_const = true;
+                }
+            }
+            return try ta.arrayType(elem, len, is_const);
         }
         const parts = try ir.splitTopLevel(ta.allocator, interior, ", ");
         defer ta.allocator.free(parts);

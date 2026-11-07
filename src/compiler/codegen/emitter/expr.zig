@@ -984,8 +984,8 @@ pub fn emitValueCoercedMode(self: *Emitter, node: *ast_mod.Node, target: ValType
         if (target.kind == .array and node.literal.literal_type == .string) {
             return std.fmt.allocPrint(a, "{s}.*", .{code});
         }
-        if (target.kind == .slice and target.elem != null and std.mem.eql(u8, target.elem.?.zig, "u8") and node.literal.literal_type == .string) {
-            return std.fmt.allocPrint(a, "@constCast({s})", .{code});
+        if (target.kind == .slice and !target.is_const and target.elem != null and std.mem.eql(u8, target.elem.?.zig, "u8") and node.literal.literal_type == .string) {
+            return std.fmt.allocPrint(a, "(try rt.mem.cloneBytes(ctx, {s}))", .{code});
         }
         return code;
     }
@@ -1034,6 +1034,9 @@ pub fn emitValueCoercedMode(self: *Emitter, node: *ast_mod.Node, target: ValType
     if (target.kind == .float and src.kind == .int) {
         return std.fmt.allocPrint(a, "@as({s}, @floatFromInt({s}))", .{ target.zig, code });
     }
+    if (target.kind == .int and src.kind == .float) {
+        return std.fmt.allocPrint(a, "@as({s}, @intFromFloat({s}))", .{ target.zig, code });
+    }
     if (target.kind == .void and src.kind == .void) return code;
     if (target.kind == .bool and src.kind == .bool) return code;
     if (target.kind == .bool and src.kind == .int) {
@@ -1042,8 +1045,8 @@ pub fn emitValueCoercedMode(self: *Emitter, node: *ast_mod.Node, target: ValType
     if (target.kind == .string and src.kind == .string) return code;
     if (target.kind == .string and isByteSliceType(src)) return code;
     if (isByteSliceType(target) and isByteSliceType(src)) {
-        if (target.kind == .slice and src.kind == .string) {
-            return std.fmt.allocPrint(a, "@constCast({s})", .{code});
+        if (target.kind == .slice and !target.is_const and src.kind == .string) {
+            return std.fmt.allocPrint(a, "(try rt.mem.cloneBytes(ctx, {s}))", .{code});
         }
         return code;
     }
@@ -1248,21 +1251,26 @@ pub fn emitSlice(self: *Emitter, node: *ast_mod.Node, ix: *const ast_mod.Index) 
     else
         try std.fmt.allocPrint(a, "@as(i64, @intCast({s}.len))", .{obj_name});
 
+    // Slicing a local array value keeps the source mutability: `const arr`
+    // yields `*const [N]T` (a read-only view), while a mutable array must stay
+    // mutable so the resulting `[]T` is writable.
+    const obj_decl: []const u8 = if (obj_t.kind == .array and !obj_t.is_const) "var" else "const";
+
     return std.fmt.allocPrint(a,
         \\blk: {{
-        \\    const {s}: {s} = {s};
+        \\    {s} {s}: {s} = {s};
         \\    const {s}: i64 = {s};
         \\    const {s}: i64 = {s};
         \\    if ({s} < 0 or {s} < {s} or {s} > @as(i64, @intCast({s}.len))) return rt.io.fail("Slice out of bounds: [{{d}}..{{d}}] (len {{d}})", .{{ {s}, {s}, @as(i64, @intCast({s}.len)) }});
         \\    break :blk {s}[@intCast({s})..@intCast({s})];
         \\}}
     , .{
-        obj_name, obj_t.zig, object_expr,
-        lo_name,  lo_code,   hi_name,
-        hi_code,  lo_name,   hi_name,
-        lo_name,  hi_name,   obj_name,
-        lo_name,  hi_name,   obj_name,
-        obj_name, lo_name,   hi_name,
+        obj_decl, obj_name, obj_t.zig, object_expr,
+        lo_name,  lo_code,  hi_name,
+        hi_code,  lo_name,  hi_name,
+        lo_name,  hi_name,  obj_name,
+        lo_name,  hi_name,  obj_name,
+        obj_name, lo_name,  hi_name,
     });
 }
 

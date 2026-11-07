@@ -68,11 +68,12 @@ fn parseTypeOperand(self: *Parser) ParseError!*Node {
     }
 
     if (self.checkKeyword("const")) {
-        _ = self.advance();
+        const tok = self.advance().?;
         const inner = try parseTypeOperand(self);
-        if (inner.* == .array_type) {
-            inner.array_type.is_const = true;
+        if (inner.* != .array_type) {
+            return self.failTok(tok, "'const' can only qualify slice or array types", .{});
         }
+        inner.array_type.is_const = true;
         return inner;
     }
 
@@ -83,12 +84,22 @@ fn parseTypeOperand(self: *Parser) ParseError!*Node {
         // `[]T` or `[]const T`
         if (self.checkDelim("]")) {
             _ = self.advance();
-            var is_const = false;
+            var has_const = false;
             if (self.checkKeyword("const")) {
                 _ = self.advance();
-                is_const = true;
+                has_const = true;
             }
             const elem = try parseType(self);
+            var is_const = false;
+            if (has_const) {
+                // `[]const []T` qualifies the element; `[]const u8` is spelled
+                // canonically as `const []u8`.
+                if (elem.* == .array_type) {
+                    elem.array_type.is_const = true;
+                } else {
+                    is_const = true;
+                }
+            }
             return self.create(.{ .array_type = .{
                 .elem = elem,
                 .length_text = null,
@@ -103,12 +114,20 @@ fn parseTypeOperand(self: *Parser) ParseError!*Node {
                 if (n1.type == .delimiter and std.mem.eql(u8, n1.value, "]")) {
                     const num_tok = self.advance().?;
                     _ = self.advance(); // `]`
-                    var is_const = false;
+                    var has_const = false;
                     if (self.checkKeyword("const")) {
                         _ = self.advance();
-                        is_const = true;
+                        has_const = true;
                     }
                     const elem = try parseType(self);
+                    var is_const = false;
+                    if (has_const) {
+                        if (elem.* == .array_type) {
+                            elem.array_type.is_const = true;
+                        } else {
+                            is_const = true;
+                        }
+                    }
                     return self.create(.{ .array_type = .{
                         .elem = elem,
                         .length_text = try self.dupe(num_tok.value),

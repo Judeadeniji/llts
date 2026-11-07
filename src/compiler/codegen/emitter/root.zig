@@ -61,6 +61,8 @@ pub const ValType = struct {
     array_len: ?usize = null,
     payload: ?*ValType = null,
     success: ?*ValType = null,
+    /// Read-only view (`const []T` / `const [N]T`): writes through it are rejected.
+    is_const: bool = false,
 
     pub fn isI64(self: ValType) bool {
         return self.kind == .int and self.width != null and
@@ -260,6 +262,7 @@ pub const Emitter = struct {
         if (isConstByteSequenceDisplay(clean)) {
             t.kind = .string;
             t.zig = "[]const u8";
+            t.is_const = true;
             t.elem = try self.childType(node, "u8");
             return t;
         }
@@ -277,11 +280,12 @@ pub const Emitter = struct {
             t.zig = try std.fmt.allocPrint(a, "*{s}", .{payload.zig});
             return t;
         }
-        if (try parseArrayShape(clean)) |shape| {
+        if (try parseArrayShape(a, clean)) |shape| {
             const elem_name = if (std.mem.eql(u8, shape.elem, "byte")) "u8" else shape.elem;
             const elem = try self.childType(node, elem_name);
             t.elem = elem;
             t.array_len = shape.length;
+            t.is_const = shape.is_const;
             if (shape.is_const and shape.length == null and std.mem.eql(u8, elem.zig, "u8")) {
                 t.kind = .string;
                 t.zig = "[]const u8";
@@ -292,7 +296,10 @@ pub const Emitter = struct {
                 t.zig = try std.fmt.allocPrint(a, "[{d}]{s}", .{ len, elem.zig });
             } else {
                 t.kind = .slice;
-                t.zig = try std.fmt.allocPrint(a, "[]{s}", .{elem.zig});
+                t.zig = if (shape.is_const)
+                    try std.fmt.allocPrint(a, "[]const {s}", .{elem.zig})
+                else
+                    try std.fmt.allocPrint(a, "[]{s}", .{elem.zig});
             }
             return t;
         }
@@ -1101,7 +1108,7 @@ const ArrayShape = struct {
     is_const: bool = false,
 };
 
-fn parseArrayShape(clean: []const u8) !?ArrayShape {
+fn parseArrayShape(a: std.mem.Allocator, clean: []const u8) !?ArrayShape {
     var s = clean;
     var is_const = false;
     if (std.mem.startsWith(u8, s, "const ")) {
@@ -1109,24 +1116,35 @@ fn parseArrayShape(clean: []const u8) !?ArrayShape {
         s = std.mem.trim(u8, s[6..], " \t");
     }
     if (s.len < 2 or s[0] != '[') return null;
+
+    var length: ?usize = null;
+    var rest: []const u8 = undefined;
     if (s[1] == ']') {
-        var elem = std.mem.trim(u8, s[2..], " \t");
-        if (std.mem.startsWith(u8, elem, "const ")) {
+        rest = std.mem.trim(u8, s[2..], " \t");
+    } else {
+        var i: usize = 1;
+        while (i < s.len and s[i] >= '0' and s[i] <= '9') : (i += 1) {}
+        if (i == 1 or i >= s.len or s[i] != ']') return null;
+        length = std.fmt.parseInt(usize, s[1..i], 10) catch return null;
+        rest = std.mem.trim(u8, s[i + 1 ..], " \t");
+    }
+
+    var has_const = false;
+    if (std.mem.startsWith(u8, rest, "const ")) {
+        has_const = true;
+        rest = std.mem.trim(u8, rest[6..], " \t");
+    }
+    if (rest.len == 0) return null;
+
+    var elem = rest;
+    if (has_const) {
+        // `[]const []T` qualifies the element; `[]const u8` is the canonical
+        // `const []u8` read-only slice.
+        if (std.mem.startsWith(u8, rest, "[")) {
+            elem = try std.fmt.allocPrint(a, "const {s}", .{rest});
+        } else {
             is_const = true;
-            elem = std.mem.trim(u8, elem[6..], " \t");
         }
-        if (elem.len == 0) return null;
-        return .{ .length = null, .elem = elem, .is_const = is_const };
     }
-    var i: usize = 1;
-    while (i < s.len and s[i] >= '0' and s[i] <= '9') : (i += 1) {}
-    if (i == 1 or i >= s.len or s[i] != ']') return null;
-    const length = std.fmt.parseInt(usize, s[1..i], 10) catch return null;
-    var elem = std.mem.trim(u8, s[i + 1 ..], " \t");
-    if (std.mem.startsWith(u8, elem, "const ")) {
-        is_const = true;
-        elem = std.mem.trim(u8, elem[6..], " \t");
-    }
-    if (elem.len == 0) return null;
     return .{ .length = length, .elem = elem, .is_const = is_const };
 }
