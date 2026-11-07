@@ -147,7 +147,16 @@ pub fn compileDeclaration(state: *CompilerState, decl: *const ast.Declaration) !
             try emit.emitOp(state, .OP_POP);
         }
     } else {
-        if (type_name) |tn| try state.global_types.put(decl.name, tn);
+        if (type_name) |tn| {
+            try state.global_types.put(decl.name, tn);
+            if (!state.global_type_irs.contains(decl.name)) {
+                const t_ir: ?ir.Type = if (std.mem.startsWith(u8, tn, "module:"))
+                    ir.Type{ .struct_ = tn }
+                else
+                    from_ast.parseDisplayType(state, state.typeAlloc(), tn, null) catch null;
+                if (t_ir) |t| try state.global_type_irs.put(decl.name, t);
+            }
+        }
         try emit.emitNameGet(state, .OP_SET_GLOBAL, decl.name);
         try emit.emitOp(state, .OP_POP);
         if (decl.is_const) {

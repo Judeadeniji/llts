@@ -703,15 +703,23 @@ fn fieldTypeFromStruct(state: *state_mod.CompilerState, ta: ir.TypeAlloc, struct
     return try from_ast.parseDisplayType(state, ta, raw, null);
 }
 
+fn preferredGlobalIr(state: *state_mod.CompilerState, key: []const u8) ?ir.Type {
+    const t = state.global_type_irs.get(key) orelse return null;
+    if (t == .unknown) return null;
+    return t;
+}
+
 fn lookupModuleDeclExact(state: *state_mod.CompilerState, ta: ir.TypeAlloc, mod_path: []const u8, member: []const u8) !?ir.Type {
     var sbuf: [512]u8 = undefined;
     const sub_key = std.fmt.bufPrint(&sbuf, "${s}::{s}", .{ mod_path, member }) catch return null;
+    if (preferredGlobalIr(state, sub_key)) |t| return t;
     if (state.global_types.get(sub_key)) |gt| {
         if (std.mem.startsWith(u8, gt, "module:")) return ir.Type{ .struct_ = gt };
     }
     var bbuf: [512]u8 = undefined;
     const bare_sub_key = std.fmt.bufPrint(&bbuf, "${s}", .{member}) catch "";
     if (bare_sub_key.len > 0) {
+        if (preferredGlobalIr(state, bare_sub_key)) |t| return t;
         if (state.global_types.get(bare_sub_key)) |gt| {
             if (std.mem.startsWith(u8, gt, "module:")) return ir.Type{ .struct_ = gt };
         }
@@ -719,6 +727,7 @@ fn lookupModuleDeclExact(state: *state_mod.CompilerState, ta: ir.TypeAlloc, mod_
 
     var qbuf: [512]u8 = undefined;
     const q = std.fmt.bufPrint(&qbuf, "{s}::{s}", .{ mod_path, member }) catch return null;
+    if (preferredGlobalIr(state, q)) |t| return t;
     if (state.chunk.exports.contains(q) or state.global_vars.contains(q) or state.global_consts.contains(q)) {
         if (state.global_types.get(q)) |gt| {
             if (std.mem.startsWith(u8, gt, "module:")) return ir.Type{ .struct_ = gt };
@@ -2554,6 +2563,7 @@ fn checkStmt(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node:
                 if (persist_global) {
                     const disp = try ownDisplayQualified(state, annot);
                     try state.global_types.put(d.name, disp);
+                    try state.global_type_irs.put(d.name, annot);
                 }
             } else {
                 if (state.strict) {
@@ -2569,6 +2579,7 @@ fn checkStmt(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node:
                     if (persist_global) {
                         const disp = try ownDisplayQualified(state, value_type);
                         try state.global_types.put(d.name, disp);
+                        try state.global_type_irs.put(d.name, value_type);
                     }
                 } else if (value_type == .enum_ or value_type == .enum_lit or
                     value_type == .error_set or value_type == .error_lit or
@@ -2586,6 +2597,7 @@ fn checkStmt(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node:
                         else
                             try ownDisplayQualified(state, value_type);
                         try state.global_types.put(d.name, disp);
+                        try state.global_type_irs.put(d.name, if (value_type == .int_lit and !d.is_const) ir.TInt else value_type);
                     }
                 } else {
                     try env.define(d.name, value_type);
@@ -2596,6 +2608,7 @@ fn checkStmt(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node:
                     {
                         const disp = try ownDisplayQualified(state, value_type);
                         try state.global_types.put(d.name, disp);
+                        try state.global_type_irs.put(d.name, value_type);
                     }
                 }
             }

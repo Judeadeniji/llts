@@ -1,5 +1,6 @@
 const std = @import("std");
 const state_mod = @import("state.zig");
+const ir = @import("typecheck/ir.zig");
 const ast = @import("../ast/root.zig");
 const scanner = @import("../scanner/root.zig");
 const parser = @import("../parser/root.zig");
@@ -360,11 +361,13 @@ fn loadModule(
         const owned_key = try std.fmt.allocPrint(state.allocator, "${s}", .{name});
         try state.owned.append(state.allocator, owned_key);
         try state.global_types.put(owned_key, mod_val);
+        try state.global_type_irs.put(owned_key, .{ .struct_ = mod_val });
 
         if (current_module) |parent| {
             const owned_pkey = try std.fmt.allocPrint(state.allocator, "${s}::{s}", .{ parent, name });
             try state.owned.append(state.allocator, owned_pkey);
             try state.global_types.put(owned_pkey, mod_val);
+            try state.global_type_irs.put(owned_pkey, .{ .struct_ = mod_val });
         }
     }
 

@@ -203,6 +203,9 @@ pub const CompilerState = struct {
     defer_stacks: std.AutoHashMap(i32, std.ArrayListUnmanaged(DeferEntry)),
     global_vars: std.StringHashMap(void),
     global_types: std.StringHashMap([]const u8),
+    /// Canonical types for module-level bindings, dual-written while display
+    /// strings are migrated out of typecheck/codegen.
+    global_type_irs: std.StringHashMap(ir.Type),
     global_consts: std.StringHashMap(void),
     ready_global_consts: std.StringHashMap(void),
     const_values: std.StringHashMap(const_eval.ConstValue),
@@ -292,6 +295,7 @@ pub fn create(allocator: std.mem.Allocator) !CompilerState {
         .defer_stacks = std.AutoHashMap(i32, std.ArrayListUnmanaged(DeferEntry)).init(allocator),
         .global_vars = std.StringHashMap(void).init(allocator),
         .global_types = std.StringHashMap([]const u8).init(allocator),
+        .global_type_irs = std.StringHashMap(ir.Type).init(allocator),
         .global_consts = std.StringHashMap(void).init(allocator),
         .ready_global_consts = std.StringHashMap(void).init(allocator),
         .const_values = std.StringHashMap(const_eval.ConstValue).init(allocator),
@@ -428,6 +432,7 @@ pub fn deinit(self: *CompilerState) void {
     self.inline_return_jumps.deinit(self.allocator);
     self.global_vars.deinit();
     self.global_types.deinit();
+    self.global_type_irs.deinit();
     self.global_consts.deinit();
     self.ready_global_consts.deinit();
     var cv_it = self.const_values.valueIterator();
