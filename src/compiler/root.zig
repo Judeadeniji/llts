@@ -233,7 +233,6 @@ fn requireEntryMain(state: *state_mod.CompilerState, doc: *ast.Document) !void {
         return compile_errors.compileFailAt(
             state,
             if (loc.path.len > 0) loc.path else doc.path,
-            sourceTextForPath(state, if (loc.path.len > 0) loc.path else doc.path),
             if (loc.line > 0) loc.line else 1,
             if (loc.column > 0) loc.column else 1,
             "Entry point 'main' must be pub",
@@ -245,7 +244,6 @@ fn requireEntryMain(state: *state_mod.CompilerState, doc: *ast.Document) !void {
         return compile_errors.compileFailAt(
             state,
             if (loc.path.len > 0) loc.path else doc.path,
-            sourceTextForPath(state, if (loc.path.len > 0) loc.path else doc.path),
             if (loc.line > 0) loc.line else 1,
             if (loc.column > 0) loc.column else 1,
             "'main' must take 0 arguments",

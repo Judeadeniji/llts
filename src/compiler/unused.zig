@@ -597,7 +597,7 @@ pub fn detectAndWarn(state: *state_mod.CompilerState, doc: *const ast.Document) 
         const file_path = if (shadow.loc.path.len > 0) shadow.loc.path else doc.path;
         const line = if (shadow.loc.line > 0) shadow.loc.line else 1;
         const col = if (shadow.loc.column > 0) shadow.loc.column else 1;
-        compile_errors.compileWarnAt(state, file_path, doc.source, line, col, "{s}", .{msg});
+        compile_errors.compileWarnAt(state, file_path, line, col, "{s}", .{msg});
     }
 
     for (result.unused) |unused| {
@@ -606,6 +606,6 @@ pub fn detectAndWarn(state: *state_mod.CompilerState, doc: *const ast.Document) 
         const file_path = if (unused.loc.path.len > 0) unused.loc.path else doc.path;
         const line = if (unused.loc.line > 0) unused.loc.line else 1;
         const col = if (unused.loc.column > 0) unused.loc.column else 1;
-        compile_errors.compileWarnAt(state, file_path, doc.source, line, col, "{s}", .{msg});
+        compile_errors.compileWarnAt(state, file_path, line, col, "{s}", .{msg});
     }
 }

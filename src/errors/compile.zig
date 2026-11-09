@@ -69,7 +69,6 @@ fn compileFailFromState(state: *CompilerState, message: []const u8) error{Compil
 pub fn compileFailAt(
     state: *CompilerState,
     path: []const u8,
-    source: []const u8,
     line: u32,
     column: u32,
     comptime fmt: []const u8,
@@ -78,6 +77,7 @@ pub fn compileFailAt(
     var buf: [1024]u8 = undefined;
     const msg = std.fmt.bufPrint(&buf, fmt, args) catch fmt;
     state_mod.setLastError(state, msg, path, line, column);
+    const source = sourceFor(state, path);
     report.reportSourceErrorWithFrame(path, source, line, column, msg, "<compile>");
     reportImportChain(state, path);
     return error.CompileError;
@@ -85,9 +85,8 @@ pub fn compileFailAt(
 
 /// Non-fatal compile warning at an explicit AST location.
 pub fn compileWarnAt(
-    _: *CompilerState,
+    state: *CompilerState,
     path: []const u8,
-    source: []const u8,
     line: u32,
     column: u32,
     comptime fmt: []const u8,
@@ -95,7 +94,8 @@ pub fn compileWarnAt(
 ) void {
     var buf: [1024]u8 = undefined;
     const msg = std.fmt.bufPrint(&buf, fmt, args) catch fmt;
-    report.reportSourceWarning(path, source, line, column, msg);
+
+    report.reportSourceWarning(path, sourceFor(state, path), line, column, msg);
 }
 
 /// Non-fatal warning using the last noted AST location on `state`.

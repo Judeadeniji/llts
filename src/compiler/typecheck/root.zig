@@ -433,7 +433,6 @@ fn requireAssignAt(state: *state_mod.CompilerState, got: ir.Type, expected: ir.T
                 compiler_errors.compileWarnAt(
                     state,
                     file_path,
-                    sourceFor(state, file_path),
                     line,
                     col,
                     "{s}: implicit widening from '{s}' to '{s}' (use @as to silence)",
@@ -457,7 +456,6 @@ fn requireAssignAt(state: *state_mod.CompilerState, got: ir.Type, expected: ir.T
                 compiler_errors.compileWarnAt(
                     state,
                     file_path,
-                    sourceFor(state, file_path),
                     line,
                     col,
                     "{s}: implicit narrowing from '{s}' to '{s}' — possible data loss (use @as to silence)",
@@ -2693,7 +2691,6 @@ fn checkStmt(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node:
                 compiler_errors.compileWarnAt(
                     state,
                     file_path,
-                    sourceFor(state, file_path),
                     line,
                     col,
                     "Error-carrying value discarded; handle with '?', '@isError', '@switch', or bind to a variable",
