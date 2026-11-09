@@ -86,14 +86,21 @@ pub fn compileDeclaration(state: *CompilerState, decl: *const ast.Declaration) !
         } else {
             type_name = try from_ast.typeAstToDisplayQualified(ta, state);
         }
-        // Assignability is enforced in typecheck; keep a defensive check for emit-only paths.
-        if (types.resolveType(state, decl.value)) |got| {
-            if (type_name) |expected| {
-                if (!typesAssignable(state, got, expected)) {
+        // Assignability is enforced in typecheck; keep a defensive check for emit-only
+        // paths. Prefer the recorded IR so the check reads canonical identity.
+        if (type_name) |expected| {
+            var arena = std.heap.ArenaAllocator.init(state.allocator);
+            defer arena.deinit();
+            const got: ?[]const u8 = if (state.type_ir_of_results.get(decl.value)) |got_ir|
+                try ir.displayTypeQualifiedAlloc(arena.allocator(), got_ir)
+            else
+                types.resolveType(state, decl.value);
+            if (got) |g| {
+                if (!typesAssignable(state, g, expected)) {
                     return compile_errors.compileFailFmt(
                         state,
                         "declaration of '{s}': type '{s}' is not assignable to '{s}'",
-                        .{ decl.name, got, expected },
+                        .{ decl.name, g, expected },
                     );
                 }
             }
@@ -275,7 +282,7 @@ fn arrayElemSuffix(display: []const u8) ?[]const u8 {
 
 fn inferDeclType(state: *CompilerState, value: *ast.Node) ?[]const u8 {
     return switch (value.*) {
-        .struct_init => |s| types.resolveStructName(state, s.type_expr),
+        .struct_init => |s| if (s.type_expr) |te| types.resolveStructName(state, te) else null,
         .array_literal => |a| blk: {
             if (a.elements.len == 0) {
                 const s = std.fmt.allocPrint(state.allocator, "[0]unknown", .{}) catch break :blk null;
@@ -529,4 +536,3 @@ fn widthCastKind(node: *ast.Node) ?u8 {
     }
     return null;
 }
-
