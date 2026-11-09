@@ -46,12 +46,22 @@ Bindings are introduced with `$`; the sigil is only used at the declaration site
 
 ## Documentation
 
-Comprehensive guides are available in the [`docs/`](./docs) directory:
+Comprehensive guides and specifications are available in the [`docs/`](./docs) directory:
 
 - [**Getting Started**](./docs/getting-started.md) — Prerequisites, building from source, writing your first `.lls` program, and running on the VM vs native compiler.
 - [**Language Tour**](./docs/tour.md) — Fast-paced walkthrough of LLTS: bindings, honest widths, arrays/slices, control flow expressions, methods, memory model, errors, and metaprogramming.
-- [**Language Reference**](./docs/language-reference.md) — Detailed guide to declarations, control flow, operators, type system, memory semantics, error handling, and modules.
+- [**Syntax & Grammar Reference**](./docs/syntax-and-grammar.md) — Formal specification of source encoding, tokens, comments, the `$` sigil, keywords, literal formats, operator precedence (14 levels), and EBNF grammar.
+- [**Type System Guide**](./docs/types/README.md) — Primitive widths (`i8`–`i64`, `u1`–`u64`, floats), compound data (`[N]T`, `[]T`, `[A, B]`, `*T`), algebraic types (`?T`, `A | B`, narrowing), and user types (`@struct`, `@enum`, `@error`).
+- [**Control Flow**](./docs/control-flow.md) — Value-producing `@if`, pattern matching `@switch`, labeled continue, `@for` loops, and labeled blocks.
+- [**Functions & Methods**](./docs/functions.md) — Function declarations (`@func`), entry point (`pub @func main`), variadics (`...args`), struct methods (`self` vs `self: *T`), first-class functions, and pipes (`|>`).
+- [**Error Handling**](./docs/error-handling.md) — Closed error sets (`@error`), dynamic errors, error unions (`T ! E`), try propagation (`?`), unwrap (`.?`), and cleanup with `errdefer`.
+- [**Memory Model & Safety**](./docs/memory-and-safety.md) — Frame-local region stack allocation, compile-time escape analysis, auto-cloning scalar structs, and LIFO cleanups (`defer`/`errdefer`).
+- [**Metaprogramming & Compile-Time**](./docs/metaprogramming.md) — Type introspection (`@typeOf`, `@sizeOf`, `@nameOf`), explicit casting (`@as`), generic type functions, monomorphization, and `@comptime`.
+- [**Compiler Intrinsics**](./docs/intrinsics.md) — Full specification for all builtins: `@import`, `@asm`, `@as`, `@typeOf`, `@sizeOf`, `@nameOf`, `@isError`, `@addrOf`, `@concat`, `@extern`, and `@new`.
+- [**Modules & Organization**](./docs/modules.md) — Multi-file projects, relative module resolution via `@import`, the `pub` visibility modifier, imported types/methods, circular dependency detection, and diagnostic import stacks.
+- [**Tooling & CLI Reference**](./docs/tooling-and-cli.md) — Complete manual for the `llts` command-line tool (`run`, `build`, `emit-zig`, `dump`), compiler flags (`--native`, `--strict`, `-O`, `--target`, `--emit`), the `llts-lsp` language server, and the `tree-sitter-llts` grammar.
 - [**Inline Assembly Guide**](./docs/inline-assembly.md) — Reference for the `@asm` intrinsic in native compilation, including operand constraints, clobbers, register mapping, and verified Linux x86-64 examples.
+- [**Language Reference**](./docs/language-reference.md) — Core language guide covering declarations, control flow, operators, type system, memory semantics, error handling, and modules.
 
 ## Build
 

@@ -38,11 +38,14 @@ Welcome to the documentation for LLTS — a small systems language with a compac
 - [**Compiler Intrinsics**](intrinsics.md)  
   Exhaustive reference of all `@`-prefixed builtins: `@import`, `@asm`, `@as`, `@typeOf`, `@sizeOf`, `@nameOf`, `@isError`, `@addrOf`, `@concat`, `@extern`, and legacy `@new`.
 
+- [**Modules & Organization**](modules.md)  
+  Multi-file project architecture, relative module resolution via `@import`, the `pub` visibility modifier, imported types/methods, circular dependency detection, and diagnostic import stacks.
+
+- [**Tooling & CLI Reference**](tooling-and-cli.md)  
+  Complete manual for the `llts` command-line tool (`run`, `build`, `emit-zig`, `dump`), compiler flags (`--native`, `--strict`, `-O`, `--target`, `--emit`), the `llts-lsp` language server, and the `tree-sitter-llts` grammar.
+
 - [**Language Reference**](language-reference.md)  
   Core language guide covering declarations, control flow, operators, types, frame-local memory semantics, typed error handling, and modules.
 
 - [**Inline Assembly Guide**](inline-assembly.md)  
   Reference for the `@asm` intrinsic in the native backend, including constraints, clobbers, register operands, and verified Linux x86-64 examples.
-
-- [**Documentation Roadmap & Feature Checklist**](todo.md)  
-  Tracking plan and exhaustive language feature matrix.
