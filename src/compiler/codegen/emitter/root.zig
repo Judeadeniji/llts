@@ -23,6 +23,7 @@ const ast_mod = @import("../../../ast/root.zig");
 const state_mod = @import("../../state.zig");
 const reachability = @import("../../reachability.zig");
 const from_ast = @import("../../typecheck/from_ast.zig");
+const ir = @import("../../typecheck/ir.zig");
 const path_mod = @import("../../expr/path.zig");
 const widths = @import("../../widths.zig");
 const compile_errors = @import("../../../errors/compile.zig");
@@ -563,6 +564,148 @@ pub const Emitter = struct {
             std.mem.eql(u8, node.call.callee.primary.name, "@sizeOf");
     }
 
+    /// Typecheck's recorded identity for an expression node. `type_of_results`
+    /// is a derived cache of this IR, so codegen lowers the IR rather than a
+    /// re-derived display string.
+    pub fn recordedType(self: *Emitter, node: *ast_mod.Node) ?ir.Type {
+        const t = self.state.type_ir_of_results.get(node) orelse return null;
+        if (t == .unknown) return null;
+        return t;
+    }
+
+    /// Project a recorded compiler type onto the emitter's `ValType`.
+    /// Returns null for shapes the emitter still resolves through a recorded
+    /// display (tuples, anonymous shapes, function values, singletons, plain
+    /// unions); callers then fall back to `classify` unchanged.
+    pub fn valTypeFromIR(self: *Emitter, node: *ast_mod.Node, t_in: ir.Type) anyerror!?ValType {
+        const a = self.arena.allocator();
+        const display = try ir.displayTypeQualifiedAlloc(a, t_in);
+        const t = ir.peelDefined(t_in);
+        var vt: ValType = .{ .display = display, .clean = display, .kind = .other, .zig = "void" };
+
+        if (ir.widthOf(t)) |w| {
+            vt.width = w;
+            if (w.isFloat()) {
+                vt.kind = .float;
+                vt.zig = switch (w.concrete()) {
+                    .f32 => "f32",
+                    else => "f64",
+                };
+            } else {
+                vt.kind = if (w == .u1) .bool else .int;
+                vt.zig = switch (w.concrete()) {
+                    .i8 => "i8",
+                    .i16 => "i16",
+                    .i32 => "i32",
+                    .i64 => "i64",
+                    .u1 => "bool",
+                    .u8 => "u8",
+                    .u16 => "u16",
+                    .u32 => "u32",
+                    .u64 => "u64",
+                    else => "i64",
+                };
+            }
+            return vt;
+        }
+
+        switch (t) {
+            .null => {
+                vt.kind = .null_value;
+                vt.zig = "@TypeOf(null)";
+            },
+            .void => {
+                vt.kind = .void;
+                vt.zig = "void";
+            },
+            .error_, .error_set, .error_lit => {
+                vt.kind = .error_value;
+                vt.clean = "error";
+                vt.zig = "rt.err.Error";
+                vt.may_error = true;
+            },
+            .array => |arr| {
+                const elem = (try self.valTypeFromIR(node, arr.elem.*)) orelse return null;
+                const elem_p = try a.create(ValType);
+                elem_p.* = elem;
+                vt.elem = elem_p;
+                vt.array_len = arr.length;
+                vt.is_const = arr.is_const;
+                if (arr.is_const and arr.length == null and std.mem.eql(u8, elem.zig, "u8")) {
+                    vt.kind = .string;
+                    vt.zig = "[]const u8";
+                    return vt;
+                }
+                if (arr.length) |len| {
+                    vt.kind = .array;
+                    vt.zig = try std.fmt.allocPrint(a, "[{d}]{s}", .{ len, elem.zig });
+                } else {
+                    vt.kind = .slice;
+                    vt.zig = if (arr.is_const)
+                        try std.fmt.allocPrint(a, "[]const {s}", .{elem.zig})
+                    else
+                        try std.fmt.allocPrint(a, "[]{s}", .{elem.zig});
+                }
+            },
+            .ptr => |p| {
+                const payload = (try self.valTypeFromIR(node, p.*)) orelse return null;
+                const payload_p = try a.create(ValType);
+                payload_p.* = payload;
+                vt.kind = .pointer;
+                vt.payload = payload_p;
+                vt.zig = try std.fmt.allocPrint(a, "*{s}", .{payload.zig});
+            },
+            .struct_ => |name| {
+                if (std.mem.startsWith(u8, name, "module:")) return null;
+                const info = try self.ensureStructType(node, name);
+                vt.kind = .struct_;
+                vt.zig = info.zig_name;
+            },
+            .enum_, .enum_lit => {
+                const is_string = (try self.enumKind(display)) orelse return null;
+                if (is_string) {
+                    vt.kind = .string;
+                    vt.zig = "[]const u8";
+                } else {
+                    vt.kind = .int;
+                    vt.width = .i64;
+                    vt.zig = "i64";
+                }
+            },
+            .union_ => |arms| {
+                var has_error = false;
+                var has_null = false;
+                var success: ?ir.Type = null;
+                var extra_success = false;
+                for (arms) |arm| switch (arm) {
+                    .error_, .error_set, .error_lit => has_error = true,
+                    .null => has_null = true,
+                    else => {
+                        if (success == null) success = arm else extra_success = true;
+                    },
+                };
+                if (extra_success or success == null or (has_error and has_null)) return null;
+                const inner = (try self.valTypeFromIR(node, success.?)) orelse return null;
+                const inner_p = try a.create(ValType);
+                inner_p.* = inner;
+                if (has_error) {
+                    vt = inner;
+                    vt.display = display;
+                    vt.clean = try ir.displayTypeQualifiedAlloc(a, success.?);
+                    vt.may_error = true;
+                    vt.success = inner_p;
+                    vt.zig = try std.fmt.allocPrint(a, "rt.err.Result({s})", .{inner.zig});
+                } else {
+                    vt.kind = .optional;
+                    vt.payload = inner_p;
+                    vt.zig = try std.fmt.allocPrint(a, "?{s}", .{inner.zig});
+                }
+            },
+            else => return null,
+        }
+        return vt;
+    }
+
     pub fn displayForExpr(self: *Emitter, node: *ast_mod.Node) ![]const u8 {
         if (isTypeOfCall(node)) return "string";
         if (isSizeOfCall(node)) return "i64";
@@ -1006,6 +1149,9 @@ pub const Emitter = struct {
     pub fn valueType(self: *Emitter, node: *ast_mod.Node) anyerror!ValType {
         if (isTypeOfCall(node)) return try self.classify(node, "string");
         if (isSizeOfCall(node)) return try self.classify(node, "i64");
+        if (self.recordedType(node)) |t| {
+            if (try self.valTypeFromIR(node, t)) |vt| return vt;
+        }
         switch (node.*) {
             .unwrap_expr => |u| {
                 const inner = try self.valueType(u.expression);
