@@ -112,8 +112,12 @@ pub @func method_category(method: string): string {
 }
 ```
 
-- **Open Set Exhaustiveness:** Because `string` represents an infinite set of potential values, string switches require an `@else` fallback prong (especially when returning a value).
+> [!IMPORTANT]
+> **The `@else` Arm is Required for Strings:**
+> Unlike finite `@enum` sets or `@error` sets where the compiler can verify compile-time exhaustiveness, `string` represents an open, infinite set of values. Therefore, string switches—especially value-producing `@switch` expressions—must include an `@else` fallback prong.
+
 - **Backend Lowering:** Bytecode VM evaluates string equality via `OP_EQUAL`. The native Zig emitter translates string `@switch` blocks into branch chains calling `rt.arith.eqStr(...)`, bypassing Zig's integer-only `switch` constraint.
+
 
 
 ### Value-Producing `@switch`

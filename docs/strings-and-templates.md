@@ -201,9 +201,12 @@ pub @func handle_route(path: string): string {
 }
 ```
 
+> [!IMPORTANT]
+> **The `@else` Arm is Required for Strings:**
+> Unlike finite `@enum` sets or `@error` sets where the compiler can verify compile-time exhaustiveness, `string` represents an open, infinite set of values. Therefore, string switches—especially value-producing `@switch` expressions—must include an `@else` fallback prong.
+
 #### String Switch Semantics & Constraints
 - **Multi-pattern prongs:** Comma-separated string literals match any of the alternatives (e.g. `"GET", "HEAD" => { ... }`).
-- **Mandatory `@else` arm:** Unlike finite enums, `string` is an open, unbounded type. All string `@switch` expressions require an `@else` fallback arm to ensure exhaustiveness.
 - **Value expressions:** Yield values from match arms using `break <val>;`.
 - **Labeled continuation (`continue :label <new_string>;`):** You can implement state machines by continuing into a labeled string switch with a new string state:
   ```llts
