@@ -175,3 +175,51 @@ $greeting = "ABC";
     print(b); # prints byte values 65, 66, 67
 }
 ```
+
+---
+
+### 7. Pattern Matching with `@switch`
+
+Strings can be directly inspected and dispatched using `@switch` in both statement and value-producing expression forms:
+
+```llts
+pub @func handle_route(path: string): string {
+    return @switch (path) {
+        "/", "/index.html" => {
+            break "home";
+        },
+        "/about", "/contact" => {
+            break "info";
+        },
+        "/api/v1/health" => {
+            break "healthy";
+        },
+        @else => {
+            break "not_found";
+        },
+    };
+}
+```
+
+#### String Switch Semantics & Constraints
+- **Multi-pattern prongs:** Comma-separated string literals match any of the alternatives (e.g. `"GET", "HEAD" => { ... }`).
+- **Mandatory `@else` arm:** Unlike finite enums, `string` is an open, unbounded type. All string `@switch` expressions require an `@else` fallback arm to ensure exhaustiveness.
+- **Value expressions:** Yield values from match arms using `break <val>;`.
+- **Labeled continuation (`continue :label <new_string>;`):** You can implement state machines by continuing into a labeled string switch with a new string state:
+  ```llts
+  $step: string = "start";
+  flow: @switch (step) {
+      "start" => {
+          print("step 1");
+          continue :flow "done";
+      },
+      "done" => {
+          print("finished");
+      },
+      @else => {},
+  }
+  ```
+- **Backend lowering:** 
+  - **VM:** Uses `OP_GET_LOCAL` and `OP_EQUAL` with byte slice comparison.
+  - **Native backend:** Because Zig's native `switch` statement only permits integers and enums, the LLTS native backend automatically lowers string `@switch` statements into optimized equality branch chains (`rt.arith.eqStr(...)`).
+

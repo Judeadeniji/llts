@@ -99,6 +99,23 @@ $lvl = Level.Info;
 }
 ```
 
+### Matching on Strings
+Strings are first-class `@switch` operands in both statement and value-producing expressions:
+
+```llts
+pub @func method_category(method: string): string {
+    return @switch (method) {
+        "GET", "HEAD" => { break "safe"; },
+        "POST", "PUT", "PATCH", "DELETE" => { break "idempotent_or_unsafe"; },
+        @else => { break "unknown"; },
+    };
+}
+```
+
+- **Open Set Exhaustiveness:** Because `string` represents an infinite set of potential values, string switches require an `@else` fallback prong (especially when returning a value).
+- **Backend Lowering:** Bytecode VM evaluates string equality via `OP_EQUAL`. The native Zig emitter translates string `@switch` blocks into branch chains calling `rt.arith.eqStr(...)`, bypassing Zig's integer-only `switch` constraint.
+
+
 ### Value-Producing `@switch`
 Like `@if`, a `@switch` can evaluate directly to a value using `break <value>;`:
 
