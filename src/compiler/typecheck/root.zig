@@ -1116,6 +1116,19 @@ fn noteDiag(state: *state_mod.CompilerState, node: *ast.Node) void {
 }
 
 pub fn recordExprType(state: *state_mod.CompilerState, node: *ast.Node, t: ir.Type) !void {
+    try recordExprTypeMode(state, node, t, false);
+}
+
+/// Record a contextually-typed expression, replacing any earlier inference.
+/// An annotated declaration (`$buf: [4]byte = [10, 20, 30, 40];`) infers its
+/// initializer before the annotation is available, so the annotation must
+/// overwrite the provisional type (`[4]i64`) instead of being dropped by the
+/// first-write-wins rule in `recordExprType`.
+pub fn recordExprTypeForced(state: *state_mod.CompilerState, node: *ast.Node, t: ir.Type) !void {
+    try recordExprTypeMode(state, node, t, true);
+}
+
+fn recordExprTypeMode(state: *state_mod.CompilerState, node: *ast.Node, t: ir.Type, overwrite: bool) !void {
     const codegen_t: ir.Type = switch (t) {
         .int_lit => ir.TInt,
         .bool_lit => ir.TBool,
@@ -1128,10 +1141,10 @@ pub fn recordExprType(state: *state_mod.CompilerState, node: *ast.Node, t: ir.Ty
     // answer and degrade field access to dynamic GET_PROPERTY.
     if (codegen_t == .unknown) return;
     const disp = try ownDisplayQualified(state, codegen_t);
-    if (!state.type_of_results.contains(node)) {
+    if (overwrite or !state.type_of_results.contains(node)) {
         try state.type_of_results.put(node, disp);
     }
-    if (!state.type_ir_of_results.contains(node)) {
+    if (overwrite or !state.type_ir_of_results.contains(node)) {
         try state.type_ir_of_results.put(node, codegen_t);
     }
 }
@@ -2680,7 +2693,7 @@ fn checkStmt(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node:
                 }
                 if (!contextually_typed) try requireAssignAt(state, value_type, annot, ctx, d.loc, d.value);
                 // Contextual typing: initializer / uses see the annotation width for codegen.
-                try recordExprType(state, d.value, annot);
+                try recordExprTypeForced(state, d.value, annot);
                 try env.define(d.name, annot);
                 if (persist_global) {
                     const disp = try ownDisplayQualified(state, annot);
