@@ -33,6 +33,15 @@ pub const AllocRegion = enum {
     pass,
 };
 
+/// Receiver passing mode for a recorded method call.
+pub const ReceiverModeKind = enum { none, pointer, value };
+
+/// A call target resolved by typecheck (see `CompilerState.call_targets`).
+pub const CallTarget = struct {
+    key: []const u8,
+    receiver_mode: ReceiverModeKind = .none,
+};
+
 pub const FunctionDef = struct {
     node: *ast.Node,
     address: ?u32 = null,
@@ -252,6 +261,11 @@ pub const CompilerState = struct {
     /// Canonical IR type for expression results, dual-written while display
     /// strings are migrated out of the typechecker.
     type_ir_of_results: std.AutoHashMap(*ast.Node, ir.Type),
+    /// Resolved call target recorded by typecheck, keyed by the callee node
+    /// (a `.primary` or `.member` node): function key plus, for methods, the
+    /// receiver passing mode. The native emitter consumes this instead of
+    /// re-resolving names, struct layout, and receiver shapes itself.
+    call_targets: std.AutoHashMap(*ast.Node, CallTarget),
     /// Type-valued node (`@typeOf(x)`, or a type name used as a value) → qualified
     /// display of the type it denotes. Filled by typecheck; read by `typeFromAst`
     /// so type-returning expressions work in every type position.
@@ -332,6 +346,7 @@ pub fn create(allocator: std.mem.Allocator) !CompilerState {
         .global_slots = std.StringHashMap(u16).init(allocator),
         .type_of_results = std.AutoHashMap(*ast.Node, []const u8).init(allocator),
         .type_ir_of_results = std.AutoHashMap(*ast.Node, ir.Type).init(allocator),
+        .call_targets = std.AutoHashMap(*ast.Node, CallTarget).init(allocator),
         .type_call_results = std.AutoHashMap(*ast.Node, []const u8).init(allocator),
         .type_call_ir_results = std.AutoHashMap(*ast.Node, ir.Type).init(allocator),
         .type_eq_folds = std.AutoHashMap(*ast.Node, bool).init(allocator),
@@ -477,6 +492,7 @@ pub fn deinit(self: *CompilerState) void {
     self.global_slots.deinit();
     self.type_of_results.deinit();
     self.type_ir_of_results.deinit();
+    self.call_targets.deinit();
     self.type_call_results.deinit();
     self.type_call_ir_results.deinit();
     self.type_eq_folds.deinit();

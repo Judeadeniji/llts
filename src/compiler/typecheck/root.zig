@@ -2153,6 +2153,18 @@ fn inferCall(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, call_
     const method = try resolveMethodCallee(state, env, ta, c);
     const name: ?[]const u8 = if (method) |m| m.name else resolveCalleeName(state, c);
     const named_fn = if (name) |n| state.functions.contains(n) else false;
+    if (name != null and (method != null or named_fn)) {
+        try state.call_targets.put(c.callee, .{
+            .key = name.?,
+            .receiver_mode = if (method != null)
+                (if (methodSelfIsPointerLike(state, name.?))
+                    state_mod.ReceiverModeKind.pointer
+                else
+                    state_mod.ReceiverModeKind.value)
+            else
+                state_mod.ReceiverModeKind.none,
+        });
+    }
     if (method != null or named_fn) {
         var params: std.ArrayList(ir.Type) = .empty;
         defer params.deinit(ta.allocator);
