@@ -2,6 +2,7 @@ const std = @import("std");
 const ast = @import("../ast/root.zig");
 const state_mod = @import("state.zig");
 const widths = @import("widths.zig");
+const ir = @import("typecheck/ir.zig");
 
 const compile_errors = @import("../errors/compile.zig");
 
@@ -23,11 +24,9 @@ pub fn checkReturnValue(state: *CompilerState, value: *ast.Node) !void {
     switch (regionOf(state, value)) {
         .frame => {
             if (canAutoCloneReturn(state, value)) return;
-            return failEscape(state, value,
-                "value escapes its frame region; deep-cloneable structs clone automatically on return — pointer/slice fields need @new(allocator, T) in an arena that outlives the call");
+            return failEscape(state, value, "value escapes its frame region; deep-cloneable structs clone automatically on return — pointer/slice fields need @new(allocator, T) in an arena that outlives the call");
         },
-        .arena_local => return failEscape(state, value,
-            "value escapes its arena region; the arena is local to this function — pass the arena in as a parameter or use an allocator that outlives the call"),
+        .arena_local => return failEscape(state, value, "value escapes its arena region; the arena is local to this function — pass the arena in as a parameter or use an allocator that outlives the call"),
         .pass, .unknown => {},
     }
 }
@@ -55,6 +54,14 @@ pub fn canAutoCloneReturn(state: *CompilerState, value: *ast.Node) bool {
 pub fn isDeepCloneableStruct(state: *CompilerState, tn: []const u8, depth: u8) bool {
     if (depth > 8) return false;
     const sd = state.structs.get(tn) orelse return false;
+    // Canonical field IR first; displays remain only for defs without it.
+    if (sd.field_irs.count() > 0) {
+        var ir_it = sd.field_irs.iterator();
+        while (ir_it.next()) |e| {
+            if (!isDeepCloneableFieldIr(state, e.value_ptr.*, depth)) return false;
+        }
+        return true;
+    }
     var it = sd.types.iterator();
     while (it.next()) |e| {
         if (!isDeepCloneableFieldType(state, e.value_ptr.*, depth)) return false;
@@ -66,11 +73,31 @@ pub fn isDeepCloneableStruct(state: *CompilerState, tn: []const u8, depth: u8) b
 /// clone rather than a flat shallow copy).
 pub fn hasNestedStructFields(state: *CompilerState, tn: []const u8) bool {
     const sd = state.structs.get(tn) orelse return false;
+    if (sd.field_irs.count() > 0) {
+        var ir_it = sd.field_irs.iterator();
+        while (ir_it.next()) |e| {
+            if (ir.structNameOf(e.value_ptr.*)) |name| {
+                if (state.structs.contains(name)) return true;
+            }
+        }
+        return false;
+    }
     var it = sd.types.iterator();
     while (it.next()) |e| {
         if (state.structs.contains(e.value_ptr.*)) return true;
     }
     return false;
+}
+
+/// Deep-cloneability straight from canonical IR: scalars, enums, literals,
+/// and nested value-structs; pointers/slices/strings/shapes are rejected.
+fn isDeepCloneableFieldIr(state: *CompilerState, t: ir.Type, depth: u8) bool {
+    return switch (ir.peelDefined(t)) {
+        .u1, .i8, .i16, .i32, .i64, .u8, .u16, .u32, .u64, .f32, .f64, .isize, .usize, .fsize => true,
+        .int_lit, .bool_lit, .enum_, .enum_lit => true,
+        .struct_ => |name| state.structs.contains(name) and isDeepCloneableStruct(state, name, depth + 1),
+        else => false,
+    };
 }
 
 fn isDeepCloneableFieldType(state: *CompilerState, disp: []const u8, depth: u8) bool {
@@ -95,16 +122,9 @@ fn isDeepCloneableFieldType(state: *CompilerState, disp: []const u8, depth: u8) 
 fn failEscape(state: *CompilerState, value: *ast.Node, comptime msg: []const u8) error{CompileError} {
     const loc = value.loc();
     const path = if (loc.path.len > 0) loc.path else state.chunk.file;
-    const source = if (std.mem.eql(u8, path, state.chunk.file)) state.chunk.source else blk: {
-        for (state.chunk.sources.items) |s| {
-            if (std.mem.eql(u8, s.path, path)) break :blk s.text;
-        }
-        break :blk state.chunk.source;
-    };
     return compile_errors.compileFailAt(
         state,
         path,
-        source,
         loc.line,
         loc.column,
         msg,

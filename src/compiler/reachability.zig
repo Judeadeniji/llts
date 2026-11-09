@@ -3,6 +3,7 @@ const ast = @import("../ast/root.zig");
 const state_mod = @import("state.zig");
 const path = @import("expr/path.zig");
 const types = @import("typecheck/from_ast.zig");
+const ir = @import("typecheck/ir.zig");
 const scanner = @import("../scanner/root.zig");
 const parser = @import("../parser/root.zig");
 const compiler = @import("root.zig");
@@ -264,7 +265,7 @@ fn collectRefs(
             for (a.elements) |e| try collectRefs(state, func_name, e, result, work);
         },
         .struct_init => |init| {
-            try collectRefs(state, func_name, init.type_expr, result, work);
+            if (init.type_expr) |te| try collectRefs(state, func_name, te, result, work);
             for (init.fields) |field| try collectRefs(state, func_name, field.value, result, work);
         },
         .try_expr => |t| try collectRefs(state, func_name, t.expression, result, work),
@@ -381,9 +382,13 @@ fn noteCall(
                         if (self_type_name) |stn| {
                             if (types.lookupStruct(state, stn)) |sd| {
                                 const field_name = inner_mem.property.primary.name;
-                                if (sd.types.get(field_name)) |field_ty| {
-                                    const inner_type = types.unwrapOptionalDisplay(field_ty);
-                                    const canon = if (types.lookupStruct(state, inner_type)) |isd| isd.name else inner_type;
+                                // Canonical IR first; displays only for defs without field IR.
+                                var inner_type: ?[]const u8 = if (sd.field_irs.get(field_name)) |ft| ir.structNameOf(ft) else null;
+                                if (inner_type == null) {
+                                    if (sd.types.get(field_name)) |field_ty| inner_type = types.unwrapOptionalDisplay(field_ty);
+                                }
+                                if (inner_type) |it| {
+                                    const canon = if (types.lookupStruct(state, it)) |isd| isd.name else it;
                                     const method_name = try std.fmt.allocPrint(state.allocator, "{s}::{s}", .{ canon, prop });
                                     defer state.allocator.free(method_name);
                                     var targets = try expandCallTargets(state, method_name);
@@ -396,16 +401,12 @@ fn noteCall(
                     }
                 }
             }
-            if (types.resolveType(state, mem.object)) |type_name| {
-                if (types.lookupStruct(state, type_name)) |sd| {
-                    if (sd.offsets.get(prop) == null) {
-                        const method_name = try std.fmt.allocPrint(state.allocator, "{s}::{s}", .{ sd.name, prop });
-                        defer state.allocator.free(method_name);
-                        var targets = try expandCallTargets(state, method_name);
-                        defer targets.deinit(state.allocator);
-                        for (targets.items) |target| try enqueueFunction(result, work, target);
-                    }
+            if (state.type_ir_of_results.get(mem.object)) |obj_t| {
+                if (ir.structNameOf(obj_t)) |type_name| {
+                    try enqueueMethodTargets(state, result, work, type_name, prop);
                 }
+            } else if (types.resolveType(state, mem.object)) |type_name| {
+                try enqueueMethodTargets(state, result, work, type_name, prop);
             } else {
                 var targets = try expandCallTargets(state, prop);
                 defer targets.deinit(state.allocator);
@@ -413,6 +414,22 @@ fn noteCall(
             }
         }
     }
+}
+
+fn enqueueMethodTargets(
+    state: *CompilerState,
+    result: *Result,
+    work: *std.ArrayList([]const u8),
+    type_name: []const u8,
+    prop: []const u8,
+) !void {
+    const sd = types.lookupStruct(state, type_name) orelse return;
+    if (sd.offsets.get(prop) != null) return;
+    const method_name = try std.fmt.allocPrint(state.allocator, "{s}::{s}", .{ sd.name, prop });
+    defer state.allocator.free(method_name);
+    var targets = try expandCallTargets(state, method_name);
+    defer targets.deinit(state.allocator);
+    for (targets.items) |target| try enqueueFunction(result, work, target);
 }
 
 fn resolveCallTarget(state: *CompilerState, callee: *ast.Node) !?[]const u8 {
