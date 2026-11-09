@@ -381,7 +381,7 @@ fn emitMethodCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) !
     const a = self.arena.allocator();
     const m = &c.callee.member;
     if (m.property.* != .primary) return null;
-    const target = (self.methodTarget(m.object, m.property.primary.name) catch null) orelse return null;
+    const target = (self.methodTarget(c.callee) catch null) orelse return null;
     if (self.reach) |*r| {
         if (!r.isFunctionReachable(target.key)) {
             return self.failAt(node, "internal: function '{s}' not marked reachable", .{target.key});

@@ -640,7 +640,25 @@ pub const Emitter = struct {
 
     /// Resolve `object.method` to its `Type::method` definition when the object
     /// is a struct (or `*struct`) and `method` is not a field.
-    pub fn methodTarget(self: *Emitter, object: *ast_mod.Node, prop: []const u8) anyerror!?MethodTarget {
+    pub fn methodTarget(self: *Emitter, member: *ast_mod.Node) anyerror!?MethodTarget {
+        if (member.* != .member) return null;
+        const m = member.member;
+        const object = m.object;
+        if (m.property.* != .primary) return null;
+        const prop = m.property.primary.name;
+        // Typecheck's recorded target wins over re-resolution.
+        if (self.state.call_targets.get(member)) |t| {
+            const recv_t = try self.valueType(object);
+            return .{
+                .key = t.key,
+                .mode = switch (t.receiver_mode) {
+                    .none => .none,
+                    .pointer => .pointer,
+                    .value => .value,
+                },
+                .receiver_is_pointer = recv_t.kind == .pointer,
+            };
+        }
         // Module exports are not receivers; resolve them through the static path.
         if ((path_mod.tryResolveStaticPath(self.state, object) catch null) != null) return null;
         const recv_t = try self.valueType(object);
@@ -743,6 +761,8 @@ pub const Emitter = struct {
     /// method), without evaluating the call itself.
     pub fn resolveCallTargetKey(self: *Emitter, c: *const ast_mod.Call, depth: u32) anyerror!?[]const u8 {
         if (depth > 8) return null;
+        // Typecheck's recorded target (direct, module, and method calls).
+        if (self.state.call_targets.get(c.callee)) |t| return t.key;
         switch (c.callee.*) {
             .primary => |p| {
                 if (p.kind != .identifier and p.kind != .register) return null;
@@ -756,7 +776,7 @@ pub const Emitter = struct {
             },
             .member => |m| {
                 if (m.property.* != .primary) return null;
-                if (try self.methodTarget(m.object, m.property.primary.name)) |t| return t.key;
+                if (try self.methodTarget(c.callee)) |t| return t.key;
                 const key = (path_mod.tryResolveStaticPath(self.state, c.callee) catch null) orelse return null;
                 if (self.state.functions.contains(key)) return key;
                 return null;

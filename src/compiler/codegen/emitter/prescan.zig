@@ -87,7 +87,7 @@ pub fn preScanExpr(self: *Emitter, node: *ast_mod.Node) anyerror!void {
                 const callee: *ast_mod.Node = if (b.right.* == .call) b.right.call.callee else b.right;
                 if (callee.* == .member and callee.member.property.* == .primary) {
                     const m = &callee.member;
-                    if (self.methodTarget(m.object, m.property.primary.name) catch null) |t| {
+                    if (self.methodTarget(callee) catch null) |t| {
                         if (t.mode == .pointer) try markPlaceRootAssigned(self, m.object);
                     }
                 }
@@ -133,7 +133,7 @@ pub fn preScanExpr(self: *Emitter, node: *ast_mod.Node) anyerror!void {
                 if (m.property.* == .primary) {
                     // A pointer-receiver method mutates its receiver in place, so
                     // the local must be emitted as `var` (Zig UB otherwise).
-                    if (self.methodTarget(m.object, m.property.primary.name) catch null) |t| {
+                    if (self.methodTarget(c.callee) catch null) |t| {
                         if (t.mode == .pointer) {
                             try markPlaceRootAssigned(self, m.object);
                             // The receiver is also read by the call; without this an
