@@ -47,6 +47,9 @@ Welcome to the documentation for LLTS — a small systems language with a compac
 - [**Memory Model & Safety**](memory-and-safety.md)  
   Frame-local region memory allocation, compile-time escape analysis preventing dangling frame references, auto-cloning scalar structs, deterministic scope cleanups (`defer` and `errdefer`), and pointer rules (`*T`, `&`).
 
+- [**Pointers & Memory Mechanics**](pointers-and-memory.md)  
+  Aggregate-only pointers (`*T`, `?*T`), automatic dereferencing (`ptr.field`, `ptr[i]`), address-of rules (`&`), value copying vs pointer aliasing, method receiver modes (`self` vs `self: *T`), `@addrOf` reflection, and strict frame escape analysis.
+
 - [**Metaprogramming & Compile-Time Evaluation**](metaprogramming.md)  
   Compile-time type reflection (`@typeOf`, `@sizeOf`, `@nameOf`), explicit casting (`@as`), generic type functions (`@func Opt(T: type): type`), generic functions with monomorphization, and constant evaluation via `@comptime`.
 

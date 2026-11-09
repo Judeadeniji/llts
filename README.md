@@ -61,6 +61,7 @@ Comprehensive guides and specifications are available in the [`docs/`](./docs) d
 - [**Functional Programming & The Pipe Operator**](./docs/functional-and-pipes.md) — First-class function types (`@func(...)`), higher-order functions, the pipe operator (`|>`), chaining semantics, precedence, and zero-cost backend lowering.
 - [**Error Handling**](./docs/error-handling.md) — Closed error sets (`@error`), dynamic errors, error unions (`T ! E`), try propagation (`?`), unwrap (`.?`), and cleanup with `errdefer`.
 - [**Memory Model & Safety**](./docs/memory-and-safety.md) — Frame-local region stack allocation, compile-time escape analysis, auto-cloning scalar structs, and LIFO cleanups (`defer`/`errdefer`).
+- [**Pointers & Memory Mechanics**](./docs/pointers-and-memory.md) — Aggregate-only capability pointers (`*T`, `?*T`), automatic dereferencing (`ptr.field`), address-of restrictions, aliasing, and escape analysis.
 - [**Metaprogramming & Compile-Time**](./docs/metaprogramming.md) — Type introspection (`@typeOf`, `@sizeOf`, `@nameOf`), explicit casting (`@as`), generic type functions, monomorphization, and `@comptime`.
 - [**Compiler Intrinsics**](./docs/intrinsics.md) — Full specification for all builtins: `@import`, `@asm`, `@as`, `@typeOf`, `@sizeOf`, `@nameOf`, `@isError`, `@addrOf`, `@concat`, `@extern`, and `@new`.
 - [**Modules & Organization**](./docs/modules.md) — Multi-file projects, relative module resolution via `@import`, the `pub` visibility modifier, imported types/methods, circular dependency detection, and diagnostic import stacks.
