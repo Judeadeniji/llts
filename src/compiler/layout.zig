@@ -203,7 +203,19 @@ pub fn layoutFields(
     return .{ .size = size, .offsets = offsets };
 }
 
+/// Field storage kind straight from canonical IR: no display parsing.
+pub fn fieldKindFromType(t: ir.Type) FieldKind {
+    return switch (ir.peelDefined(t)) {
+        .u1, .i8, .i16, .i32, .i64, .u8, .u16, .u32, .u64, .f32, .f64, .isize, .usize, .fsize => fieldKindFromWidth(ir.widthOf(ir.peelDefined(t)).?),
+        .int_lit => .i64,
+        .bool_lit => .u1,
+        .enum_, .enum_lit => .i64,
+        else => .handle,
+    };
+}
+
 pub fn fieldKindForStruct(state: *state_mod.CompilerState, sd: state_mod.StructDef, field: []const u8) FieldKind {
+    if (sd.field_irs.get(field)) |t| return fieldKindFromType(t);
     const ty = sd.types.get(field) orelse "i64";
     return fieldKind(state, ty);
 }

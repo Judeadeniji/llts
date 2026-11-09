@@ -1191,8 +1191,12 @@ fn emitStructValue(state: *CompilerState, s: *ConstStruct) anyerror!void {
     var it = s.fields.iterator();
     while (it.next()) |entry| {
         const offset = sd.offsets.get(entry.key_ptr.*) orelse continue;
-        const fty = sd.types.get(entry.key_ptr.*) orelse "int";
-        const kind: u8 = @intFromEnum(layout.fieldKind(state, fty));
+        // Field kind from canonical IR; display fallback only for legacy defs.
+        const fkind: layout.FieldKind = if (sd.field_irs.get(entry.key_ptr.*)) |fty|
+            layout.fieldKindFromType(fty)
+        else
+            layout.fieldKind(state, sd.types.get(entry.key_ptr.*) orelse "int");
+        const kind: u8 = @intFromEnum(fkind);
         try emit.emitOp(state, .OP_DUP);
         try emitConstValue(state, entry.value_ptr.*);
         try emit.emitStoreField(state, offset, kind);
