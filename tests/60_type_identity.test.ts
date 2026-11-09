@@ -150,3 +150,22 @@ print(b.value);
     "not assignable",
   );
 });
+
+// Step 18: the debug cache invariant (`verifyTypeCaches`) asserts that every
+// recorded display identity has canonical IR, and that displays derive from
+// it. A display-only record panics the compiler in Debug builds.
+test("debug type-cache invariant holds for typedef, field, and return identities", () => {
+  expectOutput(
+    runSource(`
+@type UserId = i64;
+@struct Item { id: UserId; name: string; }
+@func make(id: UserId): Item {
+    return Item { id: id, name: "x" };
+}
+$it = make(7);
+print(it.id);
+print(@typeOf(it.id) == UserId);
+`),
+    ["7", "true"],
+  );
+});

@@ -3388,6 +3388,14 @@ fn verifyTypeCaches(state: *state_mod.CompilerState) !void {
         }
     }
 
+    // Every recorded expression identity must have canonical IR too.
+    var rit = state.type_of_results.iterator();
+    while (rit.next()) |e| {
+        if (!state.type_ir_of_results.contains(e.key_ptr.*)) {
+            std.debug.panic("typecheck: expression display '{s}' has no IR record", .{e.value_ptr.*});
+        }
+    }
+
     var cit = state.type_call_ir_results.iterator();
     while (cit.next()) |e| {
         const disp = state.type_call_results.get(e.key_ptr.*) orelse
@@ -3395,6 +3403,15 @@ fn verifyTypeCaches(state: *state_mod.CompilerState) !void {
         const expected = try ownDisplayQualified(state, e.value_ptr.*);
         if (!std.mem.eql(u8, disp, expected)) {
             std.debug.panic("typecheck: type-value display '{s}' diverged from IR '{s}'", .{ disp, expected });
+        }
+    }
+
+    // Reverse direction: a display-only identity means a store was written
+    // without its canonical IR.
+    var rct = state.type_call_results.iterator();
+    while (rct.next()) |e| {
+        if (!state.type_call_ir_results.contains(e.key_ptr.*)) {
+            std.debug.panic("typecheck: type-value display '{s}' has no IR record", .{e.value_ptr.*});
         }
     }
 
@@ -3441,6 +3458,12 @@ fn verifyTypeCaches(state: *state_mod.CompilerState) !void {
             const expected = try ownDisplayQualified(state, f.value_ptr.*);
             if (!std.mem.eql(u8, disp, expected)) {
                 std.debug.panic("typecheck: struct '{s}' field '{s}' display '{s}' diverged from IR '{s}'", .{ e.key_ptr.*, f.key_ptr.*, disp, expected });
+            }
+        }
+        var disp_it = def.types.iterator();
+        while (disp_it.next()) |f| {
+            if (!def.field_irs.contains(f.key_ptr.*)) {
+                std.debug.panic("typecheck: struct '{s}' field '{s}' display '{s}' has no IR record", .{ e.key_ptr.*, f.key_ptr.*, f.value_ptr.* });
             }
         }
     }
