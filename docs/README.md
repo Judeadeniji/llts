@@ -22,6 +22,9 @@ Welcome to the documentation for LLTS — a small systems language with a compac
 - [**Strings & Multiline Templates**](strings-and-templates.md)  
   The `string` immutable byte slice type, character escapes, multiline fenced templates (`` ```...``` ``), string interpolation (`${expr}`), `len()`, string slicing, and concatenation via `@concat`.
 
+- [**Strings, Arrays, Slices & Tuples**](sequences.md)  
+  In-depth architectural guide to linear collections: sized arrays (`[N]T`), fat-pointer slices (`[]T`), strings, heterogeneous tuples (`[A, B]`), bounds safety, bidirectional literal propagation, in-place slice mutation, and escape analysis.
+
 - [**Type System Documentation**](types/README.md)  
   In-depth guide to the LLTS type system:
   - [Primitive Widths & Scalar Types](types/primitive-widths.md) (`i8`–`i64`, `u1`–`u64`, floats, `void`, `never`, `@as`)
