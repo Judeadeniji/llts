@@ -187,7 +187,7 @@ fn parsePostfix(self: *Parser) ParseError!*Node {
     return e;
 }
 
-fn finishStructInit(self: *Parser, type_expr: *Node, tok: ctx.Token) ParseError!*Node {
+fn finishStructInit(self: *Parser, type_expr: ?*Node, tok: ctx.Token) ParseError!*Node {
     _ = self.advance(); // '{'
     var fields: std.ArrayList(ast.StructFieldInit) = .empty;
     while (!self.isAtEnd() and !self.checkDelim("}")) {
@@ -631,7 +631,12 @@ pub fn parsePrimary(self: *Parser) ParseError!*Node {
                 return inner;
             }
             if (std.mem.eql(u8, token.value, "[")) return parseBracketPrimary(self, token);
-            if (std.mem.eql(u8, token.value, "{")) return control.parseBlock(self);
+            if (std.mem.eql(u8, token.value, "{")) {
+                // `{ field: value }` in expression position is an inferred
+                // object literal, not a block.
+                if (looksLikeFieldInitObject(self)) return finishStructInit(self, null, token);
+                return control.parseBlock(self);
+            }
             if (std.mem.eql(u8, token.value, "?") and looksLikeTypeContinuation(self.peek(1))) {
                 return types.parseType(self);
             }

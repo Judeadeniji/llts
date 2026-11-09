@@ -584,7 +584,9 @@ fn analyzeBody(
             has_return.* = true;
             if (return_type.* == null) {
                 if (r.return_value) |v| {
-                    if (v.* == .struct_init) return_type.* = types.resolveStructName(state, v.struct_init.type_expr);
+                    if (v.* == .struct_init) {
+                        if (v.struct_init.type_expr) |te| return_type.* = types.resolveStructName(state, te);
+                    }
                     // `@new(a, Foo{…}|Foo|[N]T)` — return type from value or type arg.
                     if (v.* == .call) {
                         const c = v.call;
@@ -592,10 +594,12 @@ fn analyzeBody(
                             const arg = c.args[1];
                             // `@new` of a struct yields `*T` (handle), not `T`.
                             if (arg.* == .struct_init) {
-                                if (types.resolveStructName(state, arg.struct_init.type_expr)) |sname| {
-                                    const ptr_ty = try std.fmt.allocPrint(state.allocator, "*{s}", .{sname});
-                                    try state.owned.append(state.allocator, ptr_ty);
-                                    return_type.* = ptr_ty;
+                                if (arg.struct_init.type_expr) |te| {
+                                    if (types.resolveStructName(state, te)) |sname| {
+                                        const ptr_ty = try std.fmt.allocPrint(state.allocator, "*{s}", .{sname});
+                                        try state.owned.append(state.allocator, ptr_ty);
+                                        return_type.* = ptr_ty;
+                                    }
                                 }
                             } else if (arg.* == .primary and arg.primary.kind == .identifier) {
                                 if (state.structs.contains(arg.primary.name)) {

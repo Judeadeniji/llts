@@ -289,7 +289,7 @@ fn parseFloatWithUnderscores(raw: []const u8) !f64 {
 
 pub fn evalLiteral(lit: *const ast.Literal) !ConstValue {
     switch (lit.literal_type) {
-        .@"null" => return .null,
+        .null => return .null,
         .boolean => return .{ .bool = std.mem.eql(u8, lit.value, "true") },
         .string => return .{ .string = lit.value },
         .number => {
@@ -561,8 +561,8 @@ fn evalExprInner(state: *CompilerState, scope: ?*ComptimeScope, n: *ast.Node) an
         },
         .struct_init => |s| {
             var type_name: []const u8 = "Struct";
-            if (s.type_expr.* == .primary) {
-                type_name = s.type_expr.primary.name;
+            if (s.type_expr) |te| {
+                if (te.* == .primary) type_name = te.primary.name;
             }
             const cstruct = try state.allocator.create(ConstStruct);
             cstruct.* = ConstStruct.init(state.allocator, type_name);

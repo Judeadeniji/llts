@@ -30,7 +30,7 @@ pub fn compileExpression(state: *CompilerState, node: *ast.Node) anyerror!void {
         .member => |*m| try aggregate.compileMember(state, m, node),
         .index => |*i| try aggregate.compileIndex(state, i),
         .array_literal => |*a| try aggregate.compileArray(state, a),
-        .struct_init => |*s| try aggregate.compileStructInit(state, s),
+        .struct_init => |*s| try aggregate.compileStructInit(state, node, s),
         .try_expr => |*t| try aggregate.compileTry(state, t),
         .error_expr => |*e| try aggregate.compileError(state, e),
         .if_expr => |*i| try control.compileIfValue(state, i),

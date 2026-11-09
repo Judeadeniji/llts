@@ -148,8 +148,8 @@ pub fn compileArray(state: *CompilerState, arr: *const ast.ArrayLiteral) !void {
     try fillArray(state, arr);
 }
 
-pub fn compileStructInit(state: *CompilerState, init: *const ast.StructInit) !void {
-    const struct_def = try resolveStructDef(state, init);
+pub fn compileStructInit(state: *CompilerState, node: *ast.Node, init: *const ast.StructInit) !void {
+    const struct_def = try resolveStructDef(state, node, init);
     // Frame bump by default; immortal for module/globals and `return Foo{…}` (escape.zig).
     const alloc = if (state.alloc_immortal) "__allocImmortalBytes" else "__allocBytes";
     try emit.emitNameGet(state, .OP_GET_GLOBAL, alloc);
@@ -352,15 +352,34 @@ fn emitZeroForTypeName(state: *CompilerState, name: []const u8) !void {
     }
 }
 
-fn resolveStructDef(state: *CompilerState, init: *const ast.StructInit) !state_mod.StructDef {
-    const sn = types.resolveStructName(state, init.type_expr) orelse {
+fn resolveStructDef(state: *CompilerState, node: *ast.Node, init: *const ast.StructInit) !state_mod.StructDef {
+    // Shape annotations and inferred object literals use the display spelling
+    // of the structural type as the layout key (layouts registered lazily).
+    if (init.type_expr) |te| {
+        if (te.* == .shape_type) {
+            const display = (try types.typeAstToDisplayQualified(te, state)) orelse {
+                return compiler_errors.compileFailFmt(state, "Invalid struct initialization type", .{});
+            };
+            return types.lookupStruct(state, display) orelse {
+                return compiler_errors.compileFailFmt(state, "Unknown struct '{s}'", .{display});
+            };
+        }
+    } else {
+        const display = state.type_of_results.get(node) orelse {
+            return compiler_errors.compileFailFmt(state, "Cannot infer object literal type", .{});
+        };
+        return types.lookupStruct(state, display) orelse {
+            return compiler_errors.compileFailFmt(state, "Unknown struct '{s}'", .{display});
+        };
+    }
+    const sn = types.resolveStructName(state, init.type_expr.?) orelse {
         return compiler_errors.compileFailFmt(state, "Invalid struct initialization type", .{});
     };
     var struct_name = sn;
     if (std.mem.indexOfScalar(u8, struct_name, '.') != null) {
         struct_name = try path.resolveModuleType(state, struct_name);
     }
-    try types.checkStructInitExport(state, init.type_expr, struct_name);
+    try types.checkStructInitExport(state, init.type_expr.?, struct_name);
     return types.lookupStruct(state, struct_name) orelse {
         return compiler_errors.compileFailFmt(state, "Unknown struct '{s}'", .{sn});
     };

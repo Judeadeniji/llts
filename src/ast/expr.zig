@@ -132,7 +132,9 @@ pub const StructFieldInit = struct {
 };
 
 pub const StructInit = struct {
-    type_expr: *Node,
+    /// `null` for an inferred object literal (`{ x: 1, y: 2 }`); the shape is
+    /// inferred from the field values.
+    type_expr: ?*Node,
     fields: []StructFieldInit,
     loc: Location,
 };

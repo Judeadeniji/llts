@@ -507,8 +507,10 @@ fn inferRhsType(
         .error_expr => return ir.TError,
         .struct_init => |si| {
             // `User { … }` → `User` (resolveStructName never emits diagnostics).
-            if (from_ast.resolveStructName(state, si.type_expr)) |sn| {
-                return .{ .struct_ = sn };
+            if (si.type_expr) |te| {
+                if (from_ast.resolveStructName(state, te)) |sn| {
+                    return .{ .struct_ = sn };
+                }
             }
             return ir.TUnknown;
         },

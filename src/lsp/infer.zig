@@ -404,7 +404,7 @@ pub fn findPrimaryAtLoc(node: *ast.Node, line: u32, col: u32) ?*ast.Node {
         .return_expr => |r| if (r.return_value) |v| return findPrimaryAtLoc(v, line, col) else return null,
         .defer_stmt => |d| return findPrimaryAtLoc(d.body, line, col),
         .struct_init => |si| {
-            if (findPrimaryAtLoc(si.type_expr, line, col)) |found| return found;
+            if (si.type_expr) |te| if (findPrimaryAtLoc(te, line, col)) |found| return found;
             for (si.fields) |f| {
                 if (findPrimaryAtLoc(f.value, line, col)) |found| return found;
             }

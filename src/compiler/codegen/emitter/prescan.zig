@@ -164,7 +164,7 @@ pub fn preScanExpr(self: *Emitter, node: *ast_mod.Node) anyerror!void {
             for (e.args) |arg| try preScanExpr(self, arg);
         },
         .struct_init => |si| {
-            try preScanExpr(self, si.type_expr);
+            if (si.type_expr) |te| try preScanExpr(self, te);
             for (si.fields) |field| try preScanExpr(self, field.value);
         },
         .comptime_expr => |ce| try preScanExpr(self, ce.expr),

@@ -1346,7 +1346,7 @@ fn scanJumps(self: *Emitter, node: *ast_mod.Node, s: *JumpScan) bool {
             return false;
         },
         .struct_init => |si| {
-            if (scanJumps(self, si.type_expr, s)) return true;
+            if (si.type_expr) |te| if (scanJumps(self, te, s)) return true;
             for (si.fields) |field| {
                 if (scanJumps(self, field.value, s)) return true;
             }
@@ -1435,7 +1435,7 @@ pub fn loopLabelUsed(self: *Emitter, node: *ast_mod.Node, label: []const u8) boo
             }
         },
         .struct_init => |si| {
-            if (loopLabelUsed(self, si.type_expr, label)) return true;
+            if (si.type_expr) |te| if (loopLabelUsed(self, te, label)) return true;
             for (si.fields) |field| {
                 if (loopLabelUsed(self, field.value, label)) return true;
             }

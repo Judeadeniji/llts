@@ -340,7 +340,7 @@ fn walkNode(ctx: *Context, node: *ast.Node, worklist: ?*std.ArrayList(usize)) vo
             for (al.elements) |el| walkNode(ctx, el, worklist);
         },
         .struct_init => |si| {
-            walkTypeNode(ctx, si.type_expr, worklist);
+            if (si.type_expr) |te| walkTypeNode(ctx, te, worklist);
             for (si.fields) |f| walkNode(ctx, f.value, worklist);
         },
         .try_expr => |te| walkNode(ctx, te.expression, worklist),

@@ -119,7 +119,7 @@ fn nodeChildrenHaveLocalType(n: *ast.Node) bool {
         .break_expr => |br| return bodyHasLocalType(br.value),
         .defer_stmt => |d| return bodyHasLocalType(d.body),
         .struct_init => |si| {
-            if (bodyHasLocalType(si.type_expr)) return true;
+            if (si.type_expr) |te| if (bodyHasLocalType(te)) return true;
             for (si.fields) |f| if (bodyHasLocalType(f.value)) return true;
             return false;
         },
@@ -379,7 +379,7 @@ fn walk(node: *ast.Node, ctx: anytype) Error!void {
         .break_expr => |br| try walkOpt(br.value, ctx),
         .defer_stmt => |d| try walk(d.body, ctx),
         .struct_init => |s| {
-            try walk(s.type_expr, ctx);
+            if (s.type_expr) |te| try walk(te, ctx);
             for (s.fields) |f| try walk(f.value, ctx);
         },
         .try_expr => |t| try walk(t.expression, ctx),

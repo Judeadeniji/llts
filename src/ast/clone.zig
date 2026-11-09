@@ -145,7 +145,7 @@ pub fn cloneNode(a: std.mem.Allocator, n: *const Node) Error!*Node {
         },
         .struct_init => |s| blk: {
             var c = s;
-            c.type_expr = try cloneNode(a, s.type_expr);
+            c.type_expr = try cloneOpt(a, s.type_expr);
             const fields = try a.alloc(root.StructFieldInit, s.fields.len);
             for (s.fields, fields) |src, *dst| {
                 dst.* = src;

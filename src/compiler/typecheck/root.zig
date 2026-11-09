@@ -285,13 +285,6 @@ pub fn ownDisplayQualified(state: *state_mod.CompilerState, t: ir.Type) ![]const
     return s;
 }
 
-fn sourceFor(state: *state_mod.CompilerState, file_path: []const u8) []const u8 {
-    for (state.chunk.sources.items) |s| {
-        if (std.mem.eql(u8, s.path, file_path)) return s.text;
-    }
-    return state.chunk.source;
-}
-
 pub fn requireAssign(state: *state_mod.CompilerState, got: ir.Type, expected: ir.Type, ctx: []const u8) TypecheckError!void {
     try requireAssignAt(state, got, expected, ctx, .{}, null);
 }
@@ -312,7 +305,6 @@ fn requireAssignAt(state: *state_mod.CompilerState, got: ir.Type, expected: ir.T
         return compiler_errors.compileFailAt(
             state,
             file_path,
-            sourceFor(state, file_path),
             line,
             col,
             "{s}: Cannot assign opaque type '{s}' to '{s}'; explicit cast or narrowing required",
@@ -370,7 +362,6 @@ fn requireAssignAt(state: *state_mod.CompilerState, got: ir.Type, expected: ir.T
                     return compiler_errors.compileFailAt(
                         state,
                         file_path,
-                        sourceFor(state, file_path),
                         line,
                         col,
                         "Literal {s} overflows target type '{s}'",
@@ -446,7 +437,7 @@ fn requireAssignAt(state: *state_mod.CompilerState, got: ir.Type, expected: ir.T
                     return compiler_errors.compileFailAt(
                         state,
                         file_path,
-                        sourceFor(state, file_path),
+
                         line,
                         col,
                         "{s}: implicit narrowing from '{s}' to '{s}' rejected in strict mode (use @as to convert)",
@@ -475,7 +466,6 @@ fn requireAssignAt(state: *state_mod.CompilerState, got: ir.Type, expected: ir.T
         return compiler_errors.compileFailAt(
             state,
             file_path,
-            sourceFor(state, file_path),
             line,
             col,
             "{s}: type '{s}' is not assignable to '{s}'; did you mean '@as({s}, {s})'?",
@@ -1249,586 +1239,632 @@ pub fn inferExpr(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, n
 fn inferExprInner(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node: *ast.Node) TypecheckError!ir.Type {
     return switch (node.*) {
         .literal => |lit| try inferLiteral(ta, lit, env.prefer_literals),
-        .primary => |p| blk: {
-            if (p.kind == .identifier or p.kind == .register) {
-                if (env.lookup(p.name)) |t| break :blk t;
-                if (state.global_type_irs.get(p.name)) |gt| {
-                    if (gt != .unknown) break :blk gt;
-                }
-                if (try funcTypeOfName(state, ta, p.name)) |ft| break :blk ft;
-                if (state.templates.contains(p.name)) {
-                    return compiler_errors.compileFailFmt(state, "Generic function '{s}' cannot be used as a value; call it with type arguments", .{ir.cleanTypeName(p.name)});
-                }
-            }
-            break :blk ir.TUnknown;
-        },
-        .unary => |u| blk: {
-            if (std.mem.eql(u8, u.operator, "const")) {
-                const prev = env.prefer_literals;
-                env.prefer_literals = true;
-                defer env.prefer_literals = prev;
-                break :blk try inferExpr(state, env, ta, u.arg);
-            }
-            const t = try inferExpr(state, env, ta, u.arg);
-            if (std.mem.eql(u8, u.operator, "!")) break :blk ir.TBool;
-            if (std.mem.eql(u8, u.operator, "&")) {
-                if (env.constPlaceRoot(u.arg)) |name| {
-                    return compiler_errors.compileFailFmt(state, "Cannot take the address of constant '{s}'", .{name});
-                }
-                if (ir.involvesUnknown(t)) break :blk ir.TUnknown;
-                if (t == .ptr) {
-                    return compiler_errors.compileFailFmt(state, "Cannot take the address of a pointer (no **T yet)", .{});
-                }
-                if (ir.optionalPayload(t) != null) {
-                    return compiler_errors.compileFailFmt(state, "Cannot take the address of an optional; use a non-optional aggregate", .{});
-                }
-                if (!ir.isAddressableAggregate(t)) {
-                    const d = try ownDisplay(state, t);
-                    return compiler_errors.compileFailFmt(state, "Address-of requires an aggregate value (struct, array, or []T), got '{s}'", .{d});
-                }
-                break :blk try ta.ptrType(t);
-            }
-            break :blk t;
-        },
-        .binary => |b| blk: {
-            if (std.mem.eql(u8, b.operator, "|>")) break :blk try inferPipe(state, env, ta, &b);
-            if (std.mem.eql(u8, b.operator, "==") or std.mem.eql(u8, b.operator, "!=")) {
-                if (intrinsics.isTypeValueNode(state, env, b.left) or intrinsics.isTypeValueNode(state, env, b.right)) {
-                    try checkTypeComparison(state, env, ta, b);
-                    break :blk ir.TBool;
-                }
-            }
-            const l = try inferExpr(state, env, ta, b.left);
-            const r = try inferExpr(state, env, ta, b.right);
-            const op = b.operator;
-            if (l == .type_ or r == .type_) {
-                return compiler_errors.compileFailFmt(state, "Operator '{s}' is not defined on 'type' values", .{op});
-            }
-            if (isCmpOrLogic(op)) {
-                if (std.mem.eql(u8, op, "<") or std.mem.eql(u8, op, "<=") or std.mem.eql(u8, op, ">") or std.mem.eql(u8, op, ">=")) {
-                    if (!ir.involvesUnknown(l) and !ir.involvesUnknown(r)) {
-                        // Ordered comparisons allow mixed numeric widths with a
-                        // warning (runtime widens via f64). Arithmetic stays strict.
-                        _ = try requireNumericPair(state, l, r, "comparison");
-                    }
-                }
-                break :blk ir.TBool;
-            }
-            if (std.mem.eql(u8, op, "+")) {
-                if (ir.isByteSlice(l) or ir.isByteSlice(r) or l == .str_lit or r == .str_lit or isStringBufferPtr(l) or isStringBufferPtr(r)) {
-                    // String `+` no longer allocates. Use `@concat(allocator, a, b)`
-                    // (frame-backed) or `@concat(buffer, a, b)` (writes into a `@new` buffer).
-                    return compiler_errors.compileFailFmt(
-                        state,
-                        "string concatenation requires @concat(allocator, a, b) or @concat(buffer, a, b); '+' no longer concatenates strings",
-                        .{},
-                    );
-                }
-                if (!ir.involvesUnknown(l) and !ir.involvesUnknown(r)) {
-                    break :blk try coerceNumericPair(state, l, r, b.left, b.right, "numeric +");
-                }
-                break :blk ir.TInt;
-            }
-            if (isArith(op)) {
-                if (!ir.involvesUnknown(l) and !ir.involvesUnknown(r)) {
-                    break :blk try coerceNumericPair(state, l, r, b.left, b.right, "operator");
-                }
-                break :blk ir.TInt;
-            }
-            if (isBitwise(op)) {
-                if (!ir.involvesUnknown(l) and !ir.involvesUnknown(r)) {
-                    break :blk try coerceBitwisePair(state, l, r, b.left, b.right);
-                }
-                break :blk ir.TInt;
-            }
-            if (isShift(op)) {
-                if (!ir.involvesUnknown(l) and !ir.involvesUnknown(r)) {
-                    break :blk try coerceShiftPair(state, l, r, b.left, b.right);
-                }
-                break :blk ir.TInt;
-            }
-            break :blk ir.TUnknown;
-        },
+        .primary => |p| try inferPrimaryExpr(state, env, ta, p),
+        .unary => |u| try inferUnaryExpr(state, env, ta, u),
+        .binary => |b| try inferBinaryExpr(state, env, ta, b),
         .call => |*c| try inferCall(state, env, ta, node, c),
-        .member => |m| blk: {
-            if (m.property.* == .primary) {
-                if (from_ast.resolveErrorSetName(state, m.object)) |esname| {
-                    if (state.error_sets.get(esname)) |ed| {
-                        if (!ed.variants.contains(m.property.primary.name)) {
-                            return compiler_errors.compileFailFmt(state, "Unknown error member '{s}' on '{s}'", .{ m.property.primary.name, esname });
-                        }
-                        // Value `Set.Member` has parent set type (like enums).
-                        break :blk .{ .error_set = esname };
-                    }
-                }
-                if (from_ast.resolveEnumName(state, m.object)) |ename| {
-                    if (state.enums.get(ename)) |ed| {
-                        if (!ed.variants.contains(m.property.primary.name)) {
-                            return compiler_errors.compileFailFmt(state, "Unknown enum variant '{s}' on '{s}'", .{ m.property.primary.name, ename });
-                        }
-                        // Value `Enum.Variant` has parent enum type; singleton `Enum.Variant` is a *type* annotation.
-                        break :blk .{ .enum_ = ename };
-                    }
-                }
-            }
-            const obj = try inferExpr(state, env, ta, m.object);
-            if (state.strict and ir.optionalPayload(obj) != null) {
-                const d = try ownDisplay(state, obj);
-                return compiler_errors.compileFailFmt(
-                    state,
-                    "Cannot access field '{s}' on optional type '{s}'; unwrap with '@if' or '.?'",
-                    .{ m.property.primary.name, d },
-                );
-            }
-            if (m.property.* == .primary) {
-                // Layout key first — `@type Name = {…}` registers under Name.
-                if (ir.structNameOf(obj)) |sname| {
-                    if (std.mem.startsWith(u8, sname, "module:")) {
-                        const mod_path = sname["module:".len..];
-                        if (try resolveModuleMemberType(state, ta, mod_path, m.property.primary.name)) |mt| {
-                            break :blk mt;
-                        }
-                        const mod_display = if (m.object.* == .primary) m.object.primary.name else mod_path;
-                        return compiler_errors.compileFailFmt(state, "'{s}' has no export '{s}'", .{ mod_display, m.property.primary.name });
-                    }
-                    if (from_ast.lookupStruct(state, sname)) |def| {
-                        if (def.types.get(m.property.primary.name) == null) {
-                            return compiler_errors.compileFailFmt(state, "Field '{s}' does not exist on '{s}'", .{ m.property.primary.name, ir.cleanTypeName(sname) });
-                        }
-                    }
-                    break :blk try fieldTypeFromStruct(state, ta, sname, m.property.primary.name);
-                }
-                const field_obj = ir.peelDefined(obj);
-                if (field_obj == .error_ or field_obj == .error_set or field_obj == .error_lit) {
-                    const prop = m.property.primary.name;
-                    if (std.mem.eql(u8, prop, "message")) {
-                        break :blk ir.TString;
-                    }
-                    return compiler_errors.compileFailFmt(state, "Unknown error field '{s}'", .{prop});
-                }
-                // Error unions (`T | error`) expose the message too; the
-                // emitter unwraps the error arm at runtime.
-                if (ir.isErrorUnion(field_obj)) {
-                    const prop = m.property.primary.name;
-                    if (std.mem.eql(u8, prop, "message")) {
-                        break :blk ir.TString;
-                    }
-                }
-                // Tuple / array numeric field access: `.0`, `.1`, …
-                if (field_obj == .tuple) {
-                    if (std.fmt.parseInt(i64, m.property.primary.name, 10)) |ci| {
-                        if (ci < 0 or ci >= field_obj.tuple.len) {
-                            return compiler_errors.compileFailFmt(state, "Tuple field .{s} out of range (len {d})", .{ m.property.primary.name, field_obj.tuple.len });
-                        }
-                        break :blk field_obj.tuple[@intCast(ci)];
-                    } else |_| {
-                        return compiler_errors.compileFailFmt(state, "Tuple fields are numeric (.0, .1, …), got '.{s}'", .{m.property.primary.name});
-                    }
-                }
-                if (field_obj == .array) {
-                    if (std.fmt.parseInt(i64, m.property.primary.name, 10) catch null) |ci| {
-                        if (field_obj.array.length) |alen| {
-                            if (ci < 0 or ci >= @as(i64, @intCast(alen))) {
-                                return compiler_errors.compileFailFmt(state, "Tuple field .{s} out of range (len {d})", .{ m.property.primary.name, alen });
-                            }
-                        }
-                        break :blk field_obj.array.elem.*;
-                    }
-                }
-                if (field_obj == .shape) {
-                    for (field_obj.shape) |sf| {
-                        if (std.mem.eql(u8, sf.name, m.property.primary.name)) break :blk sf.ty;
-                    }
-                    const d = try ownDisplay(state, field_obj);
-                    return compiler_errors.compileFailFmt(state, "Field '{s}' does not exist on '{s}'", .{ m.property.primary.name, d });
-                }
-                if (field_obj == .union_) {
-                    const info = try fieldTypeFromUnion(state, ta, field_obj, m.property.primary.name);
-                    const ft = info.ty;
-                    // Hard reject only for discrim struct unions (`Literal | Add`).
-                    // Error unions (`T | error`) still allow gradual field access.
-                    if (ft == .unknown) {
-                        const d = try ownDisplay(state, field_obj);
-                        if (try from_ast.discrimVariantMap(state, state.allocator, d)) |info_owned| {
-                            var info2 = info_owned;
-                            info2.map.deinit();
-                            return compiler_errors.compileFailFmt(state, "Field '{s}' is not available on all arms of '{s}' (narrow with @switch on .kind)", .{ m.property.primary.name, d });
-                        }
-                        if (state.strict) {
-                            return compiler_errors.compileFailFmt(state, "Field '{s}' is not available on union type '{s}'", .{ m.property.primary.name, d });
-                        }
-                    }
-                    // Common Property Rule (Phase 3.2): every arm defines the field,
-                    // but the types disagree — reject rather than silently union them.
-                    if (info.conflict and state.strict) {
-                        const d = try ownDisplay(state, field_obj);
-                        return compiler_errors.compileFailFmt(state, "Field '{s}' has incompatible types across arms of union '{s}'; narrow with @switch on .kind or use @as", .{ m.property.primary.name, d });
-                    }
-                    break :blk ft;
-                }
-                if (state.strict and field_obj != .unknown and ir.structNameOf(obj) == null and field_obj != .tuple and field_obj != .shape) {
-                    const d = try ownDisplay(state, obj);
-                    return compiler_errors.compileFailFmt(state, "Cannot access field '{s}' on type '{s}'", .{ m.property.primary.name, d });
-                }
-            }
-            if (state.strict and obj != .unknown) {
-                const d = try ownDisplay(state, obj);
-                return compiler_errors.compileFailFmt(state, "Cannot access property on type '{s}'", .{d});
-            }
-            break :blk ir.TUnknown;
-        },
-        .index => |idx| blk: {
-            const obj_raw = try inferExpr(state, env, ta, idx.object);
-            // Auto-deref `*T` / `?*T` so `p[i]` works like field access on `*Struct`.
-            const obj = ir.peelForIndex(obj_raw);
-            if (idx.is_slice) {
-                if (idx.index) |start_node| {
-                    const i = try inferExpr(state, env, ta, start_node);
-                    if (!ir.involvesUnknown(i)) try requireAssign(state, i, ir.TInt, "slice start");
-                }
-                if (idx.end) |end_node| {
-                    const e = try inferExpr(state, env, ta, end_node);
-                    if (!ir.involvesUnknown(e)) try requireAssign(state, e, ir.TInt, "slice end");
-                }
-                if (obj == .array) {
-                    break :blk try ta.arrayType(obj.array.elem.*, null, obj.array.is_const);
-                }
-                if (!ir.involvesUnknown(obj) and obj != .unknown) {
-                    const d = try ownDisplay(state, obj_raw);
-                    return compiler_errors.compileFailFmt(state, "Cannot slice type '{s}'", .{d});
-                }
-                break :blk ir.TUnknown;
-            }
-            const start_node = idx.index orelse {
-                return compiler_errors.compileFailFmt(state, "Expected index expression", .{});
-            };
-            const i = try inferExpr(state, env, ta, start_node);
-            if (!ir.involvesUnknown(i)) try requireAssign(state, i, ir.TInt, "index");
-            if (obj == .array) break :blk obj.array.elem.*;
-            if (obj == .tuple) {
-                if (try constIntIndex(idx.index.?)) |ci| {
-                    if (ci < 0 or ci >= obj.tuple.len) {
-                        return compiler_errors.compileFailFmt(state, "Tuple index {d} out of range (len {d})", .{ ci, obj.tuple.len });
-                    }
-                    break :blk obj.tuple[@intCast(ci)];
-                }
-                // Non-constant index: gradual
-                break :blk ir.TUnknown;
-            }
-            if (!ir.involvesUnknown(obj) and obj != .unknown) {
-                const d = try ownDisplay(state, obj_raw);
-                return compiler_errors.compileFailFmt(state, "Cannot index type '{s}'", .{d});
-            }
-            break :blk ir.TUnknown;
-        },
+        .member => |m| try inferMemberExpr(state, env, ta, m),
+        .index => |idx| try inferIndexExpr(state, env, ta, idx),
         .array_literal => |a| try inferArrayLiteral(state, env, ta, a),
         .struct_init => |init| try inferStructInit(state, env, ta, init),
-        .error_expr => |e| blk: {
-            if (e.args.len != 1) {
-                return compiler_errors.compileFailFmt(state, "error() takes exactly 1 argument (a code string)", .{});
-            }
-            const msg = try inferExpr(state, env, ta, e.args[0]);
-            try requireAssign(state, msg, ir.TString, "error(...)");
-            break :blk ir.TError;
-        },
-        .try_expr => |t| blk: {
-            const inner = try inferExpr(state, env, ta, t.expression);
-            if (!ir.involvesUnknown(inner)) {
-                if (inner != .error_ and !ir.isErrorUnion(inner) and inner != .unknown) {
-                    if (!ir.allowsError(inner)) {
-                        const d = try ownDisplay(state, inner);
-                        return compiler_errors.compileFailFmt(state, "'?' operator used on non-error-union type '{s}'", .{d});
-                    }
-                }
-                if (env.annotated_return) |ar| {
-                    if (!ir.allowsError(ar)) {
-                        const d = try ownDisplay(state, ar);
-                        return compiler_errors.compileFailFmt(state, "Cannot use '?' here: enclosing function return type '{s}' does not allow error", .{d});
-                    }
-                }
-            }
-            break :blk try ir.unwrapError(ta, inner);
-        },
-        .assignment => |a| blk: {
-            const val = try inferExpr(state, env, ta, a.right);
-            try rejectTypeValue(state, val, "an assigned value");
-            if (a.left.* == .primary) {
-                if (env.isConstBinding(a.left.primary.name)) {
-                    return compiler_errors.compileFailFmt(state, "Cannot reassign to constant variable '{s}'", .{a.left.primary.name});
-                }
-                // Against the *declared* type: a narrowed branch may re-widen
-                // the variable (`x = null` inside `if (x != null)`).
-                if (env.lookupDeclared(a.left.primary.name)) |existing| {
-                    try requireAssignFrom(state, val, existing, "assignment", a.right);
-                }
-            } else if (a.left.* == .member) {
-                const mem = a.left.member;
-                // A function/block local shadows any module-level const
-                // with the same name (incl. consts of other modules).
-                if (env.constPlaceRoot(mem.object)) |obj_name| {
-                    return compiler_errors.compileFailFmt(state, "Cannot mutate field of constant '{s}'", .{obj_name});
-                }
-                const obj = try inferExpr(state, env, ta, mem.object);
-                if (mem.property.* == .primary) {
-                    var field_obj = obj;
-                    if (field_obj == .defined) field_obj = field_obj.defined.underlying.*;
-                    if (field_obj == .tuple) {
-                        if (std.fmt.parseInt(i64, mem.property.primary.name, 10)) |ci| {
-                            if (ci < 0 or ci >= field_obj.tuple.len) {
-                                return compiler_errors.compileFailFmt(state, "Tuple field .{s} out of range (len {d})", .{ mem.property.primary.name, field_obj.tuple.len });
-                            }
-                            try requireAssignFrom(state, val, field_obj.tuple[@intCast(ci)], "assignment to tuple field", a.right);
-                        } else |_| {
-                            return compiler_errors.compileFailFmt(state, "Tuple fields are numeric (.0, .1, …), got '.{s}'", .{mem.property.primary.name});
-                        }
-                    } else if (field_obj == .array) {
-                        if (std.fmt.parseInt(i64, mem.property.primary.name, 10) catch null) |ci| {
-                            if (field_obj.array.length) |alen| {
-                                if (ci < 0 or ci >= @as(i64, @intCast(alen))) {
-                                    return compiler_errors.compileFailFmt(state, "Tuple field .{s} out of range (len {d})", .{ mem.property.primary.name, alen });
-                                }
-                            }
-                            try requireAssignFrom(state, val, field_obj.array.elem.*, "assignment to array element", a.right);
-                        } else {
-                            return compiler_errors.compileFailFmt(state, "Array fields are numeric (.0, .1, …), got '.{s}'", .{mem.property.primary.name});
-                        }
-                    } else if (ir.structNameOf(obj)) |sname| {
-                        if (std.mem.startsWith(u8, sname, "module:")) {
-                            const mod_path = sname["module:".len..];
-                            // A module may write another module's exported *mutable*
-                            // global (`internal.defaultOutput = bridge`); everything
-                            // else reachable through the namespace is read-only.
-                            if (path.moduleMemberIsMutableGlobal(state, mod_path, mem.property.primary.name)) {
-                                if (try resolveModuleMemberType(state, ta, mod_path, mem.property.primary.name)) |mt| {
-                                    try recordExprType(state, a.left, mt);
-                                    try requireAssignFrom(state, val, mt, "assignment to field", a.right);
-                                }
-                                break :blk val;
-                            }
-                            return compiler_errors.compileFailFmt(
-                                state,
-                                "Cannot assign to member '{s}' of imported module '{s}'",
-                                .{ mem.property.primary.name, mod_path },
-                            );
-                        }
-                        if (from_ast.lookupStruct(state, sname)) |def| {
-                            if (def.types.get(mem.property.primary.name) == null) {
-                                return compiler_errors.compileFailFmt(
-                                    state,
-                                    "Field '{s}' does not exist on '{s}'",
-                                    .{ mem.property.primary.name, ir.cleanTypeName(sname) },
-                                );
-                            }
-                        }
-                        const ft = try fieldTypeFromStruct(state, ta, sname, mem.property.primary.name);
-                        // Record the field type on the member node so editor
-                        // features (hover) can resolve assignment targets.
-                        try recordExprType(state, a.left, ft);
-                        try requireAssignFrom(state, val, ft, "assignment to field", a.right);
-                    } else {
-                        if (field_obj != .unknown) {
-                            const d = try ownDisplay(state, obj);
-                            return compiler_errors.compileFailFmt(state, "Cannot assign field '{s}' on type '{s}'", .{ mem.property.primary.name, d });
-                        }
-                    }
-                }
-            } else if (a.left.* == .index) {
-                if (a.left.index.is_slice) {
-                    return compiler_errors.compileFailFmt(state, "Cannot assign to a slice view", .{});
-                }
-                if (env.constPlaceRoot(a.left.index.object)) |obj_name| {
-                    return compiler_errors.compileFailFmt(state, "Cannot mutate elements of constant '{s}'", .{obj_name});
-                }
-                const obj_t = ir.peelForIndex(try inferExpr(state, env, ta, a.left.index.object));
-                const start_node = a.left.index.index orelse {
-                    return compiler_errors.compileFailFmt(state, "Expected index expression", .{});
-                };
-                const i = try inferExpr(state, env, ta, start_node);
-                if (!ir.involvesUnknown(i)) try requireAssign(state, i, ir.TInt, "index");
-                if (obj_t == .array) {
-                    try requireAssignFrom(state, val, obj_t.array.elem.*, "assignment to index", a.right);
-                } else if (obj_t == .tuple) {
-                    if (try constIntIndex(start_node)) |ci| {
-                        if (ci < 0 or ci >= obj_t.tuple.len) {
-                            return compiler_errors.compileFailFmt(state, "Tuple index {d} out of range (len {d})", .{ ci, obj_t.tuple.len });
-                        }
-                        try requireAssignFrom(state, val, obj_t.tuple[@intCast(ci)], "assignment to tuple index", a.right);
-                    }
-                }
-            }
-            break :blk val;
-        },
-        .block => |b| blk: {
-            try env.pushScope();
-            defer env.popScope();
-            if (b.label) |lab| try env.pushLabel(.{ .name = lab, .kind = .block });
-            defer {
-                if (b.label != null) env.popLabel();
-            }
-            var last: ir.Type = ir.TUnknown;
-            for (b.statements) |s| {
-                last = (try checkStmt(state, env, ta, s)) orelse ir.TUnknown;
-            }
-            if (b.label != null) {
-                break :blk try joinBreakTypes(state, env, ta, node);
-            }
-            break :blk last;
-        },
-        .if_expr => |i| blk: {
-            const cond_t = try inferExpr(state, env, ta, i.condition);
-            try env.pushScope();
-            defer env.popScope();
-            if (i.label) |lab| try env.pushLabel(.{ .name = lab, .kind = .if_ });
-            defer {
-                if (i.label != null) env.popLabel();
-            }
-            // `@if (@isError(x))` — narrow `x` to `error` in the then-body so
-            // `return x` typechecks against any error-union return.
-            if (isErrorNarrowName(i.condition)) |ename| {
-                try env.define(ename, ir.TError);
-            }
-            if (i.pipe_value) |pv| {
-                if (pv.* != .primary) return compiler_errors.compileFailFmt(state, "@if capture must be an identifier", .{});
-                const peeled = ir.peelDefined(cond_t);
-                if (ir.optionalPayload(peeled)) |opt| {
-                    try env.define(pv.primary.name, opt);
-                } else if (ir.isErrorUnion(peeled)) {
-                    const unwrapped = try ir.unwrapError(ta, peeled);
-                    try env.define(pv.primary.name, unwrapped);
-                } else if (state.strict) {
-                    const disp = try ownDisplay(state, cond_t);
-                    return compiler_errors.compileFailFmt(state, "Cannot capture from a non-container type '{s}'; @if capture requires an optional '?T' or an error union", .{disp});
-                } else {
-                    const unwrapped = cond_t;
-                    try env.define(pv.primary.name, unwrapped);
-                }
-            } else if (state.strict) {
-                if (!ir.isSubtype(ir.peelDefined(cond_t), ir.TBool)) {
-                    const disp = try ownDisplay(state, cond_t);
-                    return compiler_errors.compileFailFmt(state, "Condition of @if must be boolean ('bool' or 'u1'), got '{s}'; did you mean 'x != 0'?", .{disp});
-                }
-            }
-            _ = try inferExpr(state, env, ta, i.body);
-            if (i.else_body) |e| _ = try inferExpr(state, env, ta, e);
-            // Value-producing if (has else) joins break payloads.
-            if (i.else_body != null) {
-                break :blk try joinBreakTypes(state, env, ta, node);
-            }
-            break :blk ir.TUnknown;
-        },
-        .switch_expr => |sw| blk: {
-            const cond_t = try inferExpr(state, env, ta, sw.condition);
-            if (sw.label) |lab| try env.pushLabel(.{ .name = lab, .kind = .switch_, .cond_type = cond_t });
-            defer {
-                if (sw.label != null) env.popLabel();
-            }
-            // Narrow subject when switching on `e.kind` for a discrim struct union.
-            var narrow = try kindSwitchNarrowing(state, ta, env, sw.condition);
-            defer if (narrow) |*n| n.map.deinit();
-
-            var covered = std.StringHashMap(void).init(ta.allocator);
-            defer covered.deinit();
-            if (narrow) |n| {
-                for (sw.prongs) |prong| {
-                    if (prong.is_else) continue;
-                    for (prong.patterns) |pat| {
-                        if (resolveSwitchVariant(state, pat, n.enum_name)) |vname| {
-                            try covered.put(vname, {});
-                        }
-                    }
-                }
-            }
-
-            // Join break payloads while still narrowed (do not re-walk after scopes pop).
-            var acc: ?ir.Type = null;
-            for (sw.prongs) |prong| {
-                for (prong.patterns) |pat| _ = try inferExpr(state, env, ta, pat);
-                try env.pushScope();
-                defer env.popScope();
-                if (narrow) |n| {
-                    if (prong.is_else) {
-                        if (try remainingNarrowType(ta, n, &covered)) |rt| {
-                            try env.define(n.subject, rt);
-                        }
-                    } else if (prong.patterns.len == 1) {
-                        if (resolveSwitchVariant(state, prong.patterns[0], n.enum_name)) |vname| {
-                            if (n.map.get(vname)) |sname| {
-                                try env.define(n.subject, .{ .struct_ = sname });
-                            }
-                        }
-                    }
-                }
-                _ = try inferExpr(state, env, ta, prong.body);
-                try walkBreakValues(state, env, ta, prong.body, &acc, false);
-            }
-            break :blk acc orelse ir.TUnknown;
-        },
-        .for_expr => |f| blk: {
-            const expr_type = try inferExpr(state, env, ta, f.expr);
-            try env.pushScope();
-            defer env.popScope();
-            if (f.label) |lab| try env.pushLabel(.{ .name = lab, .kind = .loop });
-            defer {
-                if (f.label != null) env.popLabel();
-            }
-            if (f.captures.len > 0) {
-                if (f.expr.* == .binary and std.mem.eql(u8, f.expr.binary.operator, "..")) {
-                    if (f.captures.len > 1) return compiler_errors.compileFailFmt(state, "Range loop only supports 1 capture", .{});
-                    for (f.captures) |cap| try env.define(cap.name, ir.TInt);
-                } else if (ir.isByteSlice(expr_type) or expr_type == .array or ir.isString(expr_type)) {
-                    if (f.captures.len > 2) return compiler_errors.compileFailFmt(state, "Loop supports at most 2 captures", .{});
-                    const elem_type = if (expr_type == .array) expr_type.array.elem.* else ir.TU8;
-                    try env.define(f.captures[0].name, elem_type);
-                    if (f.captures.len > 1) {
-                        try env.define(f.captures[1].name, ir.TInt);
-                    }
-                } else if (ir.involvesUnknown(expr_type)) {
-                    // It might be a loop over an unknown optional payload or unknown array.
-                    // We assume it's valid and bind `unknown`.
-                    if (f.captures.len > 2) return compiler_errors.compileFailFmt(state, "Loop supports at most 2 captures", .{});
-                    if (f.captures.len > 0) try env.define(f.captures[0].name, ir.TUnknown);
-                    if (f.captures.len > 1) try env.define(f.captures[1].name, ir.TUnknown);
-                } else if (ir.optionalPayload(expr_type)) |payload| {
-                    if (f.captures.len > 1) return compiler_errors.compileFailFmt(state, "Optional while-loop only supports 1 capture", .{});
-                    try state.for_is_cond.put(&node.for_expr, {});
-                    try env.define(f.captures[0].name, payload);
-                } else {
-                    return compiler_errors.compileFailFmt(state, "Cannot iterate over type '{any}'", .{ir.typeTag(expr_type).?});
-                }
-            } else if (!(f.expr.* == .binary and std.mem.eql(u8, f.expr.binary.operator, ".."))) {
-                // Condition loop `@for (cond) { … }` — same invariant as `@if`:
-                // the condition must be a real boolean, no truthiness coercion.
-                if (state.strict and !ir.isSubtype(ir.peelDefined(expr_type), ir.TBool)) {
-                    const disp = try ownDisplay(state, expr_type);
-                    return compiler_errors.compileFailFmt(state, "Condition of @for must be boolean ('bool' or 'u1'), got '{s}'; did you mean 'i < n'?", .{disp});
-                }
-            }
-            _ = try inferExpr(state, env, ta, f.body);
-            break :blk ir.TUnknown;
-        },
-        .break_expr => |br| blk: {
-            if (br.value) |v| break :blk try inferExpr(state, env, ta, v);
-            break :blk ir.TUnknown;
-        },
-        .comptime_expr => |ce| blk: {
-            // `@comptime` carries a real type: infer it structurally from the
-            // inner expression using the typechecker's own knowledge. Evaluation
-            // of the value itself happens once, in codegen (`compileComptime`), so
-            // const values need not be materialized during the typecheck pass and
-            // blocks may freely reference earlier `@const`s.
-            //
-            // A block is typed by running its local declarations through the
-            // checker in a fresh scope and joining the types of its `break` values.
-            if (ce.expr.* == .block) {
-                try env.pushScope();
-                defer env.popScope();
-                for (ce.expr.block.statements) |s| _ = try checkStmt(state, env, ta, s);
-                break :blk try joinComptimeTypes(state, env, ta, ce.expr);
-            }
-            break :blk try inferExpr(state, env, ta, ce.expr);
-        },
+        .error_expr => |e| try inferErrorExprType(state, env, ta, e),
+        .try_expr => |t| try inferTryExprType(state, env, ta, t),
+        .assignment => |a| try inferAssignmentExpr(state, env, ta, a),
+        .block => |b| try inferBlockExprType(state, env, ta, node, b),
+        .if_expr => |i| try inferIfExprType(state, env, ta, node, i),
+        .switch_expr => |sw| try inferSwitchExprType(state, env, ta, sw),
+        .for_expr => |f| try inferForExprType(state, env, ta, node, f),
+        .break_expr => |br| try inferBreakExprType(state, env, ta, br),
+        .comptime_expr => |ce| try inferComptimeExprType(state, env, ta, ce),
         else => ir.TUnknown,
     };
+}
+
+fn inferPrimaryExpr(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, p: ast.Primary) TypecheckError!ir.Type {
+    if (p.kind == .identifier or p.kind == .register) {
+        if (env.lookup(p.name)) |t| return t;
+        if (state.global_type_irs.get(p.name)) |gt| {
+            if (gt != .unknown) return gt;
+        }
+        if (try funcTypeOfName(state, ta, p.name)) |ft| return ft;
+        if (state.templates.contains(p.name)) {
+            return compiler_errors.compileFailFmt(state, "Generic function '{s}' cannot be used as a value; call it with type arguments", .{ir.cleanTypeName(p.name)});
+        }
+    }
+    return ir.TUnknown;
+}
+
+fn inferUnaryExpr(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, u: ast.Unary) TypecheckError!ir.Type {
+    if (std.mem.eql(u8, u.operator, "const")) {
+        const prev = env.prefer_literals;
+        env.prefer_literals = true;
+        defer env.prefer_literals = prev;
+        return try inferExpr(state, env, ta, u.arg);
+    }
+    const t = try inferExpr(state, env, ta, u.arg);
+    if (std.mem.eql(u8, u.operator, "!")) return ir.TBool;
+    if (std.mem.eql(u8, u.operator, "&")) {
+        if (env.anyConstPlaceRoot(u.arg)) |name| {
+            return compiler_errors.compileFailFmt(state, "Cannot take the address of constant '{s}'", .{name});
+        }
+        if (ir.involvesUnknown(t)) return ir.TUnknown;
+        if (t == .ptr) {
+            return compiler_errors.compileFailFmt(state, "Cannot take the address of a pointer (no **T yet)", .{});
+        }
+        if (ir.optionalPayload(t) != null) {
+            return compiler_errors.compileFailFmt(state, "Cannot take the address of an optional; use a non-optional aggregate", .{});
+        }
+        if (!ir.isAddressableAggregate(t)) {
+            const d = try ownDisplay(state, t);
+            return compiler_errors.compileFailFmt(state, "Address-of requires an aggregate value (struct, array, or []T), got '{s}'", .{d});
+        }
+        return try ta.ptrType(t);
+    }
+    return t;
+}
+
+fn inferBinaryExpr(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, b: ast.Binary) TypecheckError!ir.Type {
+    if (std.mem.eql(u8, b.operator, "|>")) return try inferPipe(state, env, ta, &b);
+    if (std.mem.eql(u8, b.operator, "==") or std.mem.eql(u8, b.operator, "!=")) {
+        if (intrinsics.isTypeValueNode(state, env, b.left) or intrinsics.isTypeValueNode(state, env, b.right)) {
+            try checkTypeComparison(state, env, ta, b);
+            return ir.TBool;
+        }
+    }
+    const l = try inferExpr(state, env, ta, b.left);
+    const r = try inferExpr(state, env, ta, b.right);
+    const op = b.operator;
+    if (l == .type_ or r == .type_) {
+        return compiler_errors.compileFailFmt(state, "Operator '{s}' is not defined on 'type' values", .{op});
+    }
+    if (isCmpOrLogic(op)) {
+        if (std.mem.eql(u8, op, "<") or std.mem.eql(u8, op, "<=") or std.mem.eql(u8, op, ">") or std.mem.eql(u8, op, ">=")) {
+            if (!ir.involvesUnknown(l) and !ir.involvesUnknown(r)) {
+                // Ordered comparisons allow mixed numeric widths with a
+                // warning (runtime widens via f64). Arithmetic stays strict.
+                _ = try requireNumericPair(state, l, r, "comparison");
+            }
+        }
+        return ir.TBool;
+    }
+    if (std.mem.eql(u8, op, "+")) {
+        if (ir.isByteSlice(l) or ir.isByteSlice(r) or l == .str_lit or r == .str_lit or isStringBufferPtr(l) or isStringBufferPtr(r)) {
+            // String `+` no longer allocates. Use `@concat(allocator, a, b)`
+            // (frame-backed) or `@concat(buffer, a, b)` (writes into a `@new` buffer).
+            return compiler_errors.compileFailFmt(
+                state,
+                "string concatenation requires @concat(allocator, a, b) or @concat(buffer, a, b); '+' no longer concatenates strings",
+                .{},
+            );
+        }
+        if (!ir.involvesUnknown(l) and !ir.involvesUnknown(r)) {
+            return try coerceNumericPair(state, l, r, b.left, b.right, "numeric +");
+        }
+        return ir.TInt;
+    }
+    if (isArith(op)) {
+        if (!ir.involvesUnknown(l) and !ir.involvesUnknown(r)) {
+            return try coerceNumericPair(state, l, r, b.left, b.right, "operator");
+        }
+        return ir.TInt;
+    }
+    if (isBitwise(op)) {
+        if (!ir.involvesUnknown(l) and !ir.involvesUnknown(r)) {
+            return try coerceBitwisePair(state, l, r, b.left, b.right);
+        }
+        return ir.TInt;
+    }
+    if (isShift(op)) {
+        if (!ir.involvesUnknown(l) and !ir.involvesUnknown(r)) {
+            return try coerceShiftPair(state, l, r, b.left, b.right);
+        }
+        return ir.TInt;
+    }
+    return ir.TUnknown;
+}
+
+fn inferMemberExpr(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, m: ast.Member) TypecheckError!ir.Type {
+    if (m.property.* == .primary) {
+        if (from_ast.resolveErrorSetName(state, m.object)) |esname| {
+            if (state.error_sets.get(esname)) |ed| {
+                if (!ed.variants.contains(m.property.primary.name)) {
+                    return compiler_errors.compileFailFmt(state, "Unknown error member '{s}' on '{s}'", .{ m.property.primary.name, esname });
+                }
+                // Value `Set.Member` has parent set type (like enums).
+                return .{ .error_set = esname };
+            }
+        }
+        if (from_ast.resolveEnumName(state, m.object)) |ename| {
+            if (state.enums.get(ename)) |ed| {
+                if (!ed.variants.contains(m.property.primary.name)) {
+                    return compiler_errors.compileFailFmt(state, "Unknown enum variant '{s}' on '{s}'", .{ m.property.primary.name, ename });
+                }
+                // Value `Enum.Variant` has parent enum type; singleton `Enum.Variant` is a *type* annotation.
+                return .{ .enum_ = ename };
+            }
+        }
+    }
+    const obj = try inferExpr(state, env, ta, m.object);
+    if (state.strict and ir.optionalPayload(obj) != null) {
+        const d = try ownDisplay(state, obj);
+        return compiler_errors.compileFailFmt(
+            state,
+            "Cannot access field '{s}' on optional type '{s}'; unwrap with '@if' or '.?'",
+            .{ m.property.primary.name, d },
+        );
+    }
+    if (m.property.* == .primary) {
+        // Layout key first — `@type Name = {…}` registers under Name.
+        if (ir.structNameOf(obj)) |sname| {
+            if (std.mem.startsWith(u8, sname, "module:")) {
+                const mod_path = sname["module:".len..];
+                if (try resolveModuleMemberType(state, ta, mod_path, m.property.primary.name)) |mt| {
+                    return mt;
+                }
+                const mod_display = if (m.object.* == .primary) m.object.primary.name else mod_path;
+                return compiler_errors.compileFailFmt(state, "'{s}' has no export '{s}'", .{ mod_display, m.property.primary.name });
+            }
+            if (from_ast.lookupStruct(state, sname)) |def| {
+                if (def.types.get(m.property.primary.name) == null) {
+                    return compiler_errors.compileFailFmt(state, "Field '{s}' does not exist on '{s}'", .{ m.property.primary.name, ir.cleanTypeName(sname) });
+                }
+            }
+            return try fieldTypeFromStruct(state, ta, sname, m.property.primary.name);
+        }
+        const field_obj = ir.peelDefined(obj);
+        if (field_obj == .error_ or field_obj == .error_set or field_obj == .error_lit) {
+            const prop = m.property.primary.name;
+            if (std.mem.eql(u8, prop, "message")) {
+                return ir.TString;
+            }
+            return compiler_errors.compileFailFmt(state, "Unknown error field '{s}'", .{prop});
+        }
+        // Error unions (`T | error`) expose the message too; the
+        // emitter unwraps the error arm at runtime.
+        if (ir.isErrorUnion(field_obj)) {
+            const prop = m.property.primary.name;
+            if (std.mem.eql(u8, prop, "message")) {
+                return ir.TString;
+            }
+        }
+        // Tuple / array numeric field access: `.0`, `.1`, …
+        if (field_obj == .tuple) {
+            if (std.fmt.parseInt(i64, m.property.primary.name, 10)) |ci| {
+                if (ci < 0 or ci >= field_obj.tuple.len) {
+                    return compiler_errors.compileFailFmt(state, "Tuple field .{s} out of range (len {d})", .{ m.property.primary.name, field_obj.tuple.len });
+                }
+                return field_obj.tuple[@intCast(ci)];
+            } else |_| {
+                return compiler_errors.compileFailFmt(state, "Tuple fields are numeric (.0, .1, …), got '.{s}'", .{m.property.primary.name});
+            }
+        }
+        if (field_obj == .array) {
+            if (std.fmt.parseInt(i64, m.property.primary.name, 10) catch null) |ci| {
+                if (field_obj.array.length) |alen| {
+                    if (ci < 0 or ci >= @as(i64, @intCast(alen))) {
+                        return compiler_errors.compileFailFmt(state, "Tuple field .{s} out of range (len {d})", .{ m.property.primary.name, alen });
+                    }
+                }
+                return field_obj.array.elem.*;
+            }
+        }
+        if (field_obj == .shape) {
+            for (field_obj.shape) |sf| {
+                if (std.mem.eql(u8, sf.name, m.property.primary.name)) return sf.ty;
+            }
+            const d = try ownDisplay(state, field_obj);
+            return compiler_errors.compileFailFmt(state, "Field '{s}' does not exist on '{s}'", .{ m.property.primary.name, d });
+        }
+        if (field_obj == .union_) {
+            const info = try fieldTypeFromUnion(state, ta, field_obj, m.property.primary.name);
+            const ft = info.ty;
+            // Hard reject only for discrim struct unions (`Literal | Add`).
+            // Error unions (`T | error`) still allow gradual field access.
+            if (ft == .unknown) {
+                const d = try ownDisplay(state, field_obj);
+                if (try from_ast.discrimVariantMap(state, state.allocator, d)) |info_owned| {
+                    var info2 = info_owned;
+                    info2.map.deinit();
+                    return compiler_errors.compileFailFmt(state, "Field '{s}' is not available on all arms of '{s}' (narrow with @switch on .kind)", .{ m.property.primary.name, d });
+                }
+                if (state.strict) {
+                    return compiler_errors.compileFailFmt(state, "Field '{s}' is not available on union type '{s}'", .{ m.property.primary.name, d });
+                }
+            }
+            // Common Property Rule (Phase 3.2): every arm defines the field,
+            // but the types disagree — reject rather than silently union them.
+            if (info.conflict and state.strict) {
+                const d = try ownDisplay(state, field_obj);
+                return compiler_errors.compileFailFmt(state, "Field '{s}' has incompatible types across arms of union '{s}'; narrow with @switch on .kind or use @as", .{ m.property.primary.name, d });
+            }
+            return ft;
+        }
+        if (state.strict and field_obj != .unknown and ir.structNameOf(obj) == null and field_obj != .tuple and field_obj != .shape) {
+            const d = try ownDisplay(state, obj);
+            return compiler_errors.compileFailFmt(state, "Cannot access field '{s}' on type '{s}'", .{ m.property.primary.name, d });
+        }
+    }
+    if (state.strict and obj != .unknown) {
+        const d = try ownDisplay(state, obj);
+        return compiler_errors.compileFailFmt(state, "Cannot access property on type '{s}'", .{d});
+    }
+    return ir.TUnknown;
+}
+
+fn inferIndexExpr(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, idx: ast.Index) TypecheckError!ir.Type {
+    const obj_raw = try inferExpr(state, env, ta, idx.object);
+    // Auto-deref `*T` / `?*T` so `p[i]` works like field access on `*Struct`.
+    const obj = ir.peelForIndex(obj_raw);
+    if (idx.is_slice) {
+        if (idx.index) |start_node| {
+            const i = try inferExpr(state, env, ta, start_node);
+            if (!ir.involvesUnknown(i)) try requireAssign(state, i, ir.TInt, "slice start");
+        }
+        if (idx.end) |end_node| {
+            const e = try inferExpr(state, env, ta, end_node);
+            if (!ir.involvesUnknown(e)) try requireAssign(state, e, ir.TInt, "slice end");
+        }
+        if (obj == .array) {
+            return try ta.arrayType(obj.array.elem.*, null, obj.array.is_const);
+        }
+        if (!ir.involvesUnknown(obj) and obj != .unknown) {
+            const d = try ownDisplay(state, obj_raw);
+            return compiler_errors.compileFailFmt(state, "Cannot slice type '{s}'", .{d});
+        }
+        return ir.TUnknown;
+    }
+    const start_node = idx.index orelse {
+        return compiler_errors.compileFailFmt(state, "Expected index expression", .{});
+    };
+    const i = try inferExpr(state, env, ta, start_node);
+    if (!ir.involvesUnknown(i)) try requireAssign(state, i, ir.TInt, "index");
+    if (obj == .array) return obj.array.elem.*;
+    if (obj == .tuple) {
+        if (try constIntIndex(idx.index.?)) |ci| {
+            if (ci < 0 or ci >= obj.tuple.len) {
+                return compiler_errors.compileFailFmt(state, "Tuple index {d} out of range (len {d})", .{ ci, obj.tuple.len });
+            }
+            return obj.tuple[@intCast(ci)];
+        }
+        // Non-constant index: gradual
+        return ir.TUnknown;
+    }
+    if (!ir.involvesUnknown(obj) and obj != .unknown) {
+        const d = try ownDisplay(state, obj_raw);
+        return compiler_errors.compileFailFmt(state, "Cannot index type '{s}'", .{d});
+    }
+    return ir.TUnknown;
+}
+
+fn inferErrorExprType(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, e: ast.ErrorExpr) TypecheckError!ir.Type {
+    if (e.args.len != 1) {
+        return compiler_errors.compileFailFmt(state, "error() takes exactly 1 argument (a code string)", .{});
+    }
+    const msg = try inferExpr(state, env, ta, e.args[0]);
+    try requireAssign(state, msg, ir.TString, "error(...)");
+    return ir.TError;
+}
+
+fn inferTryExprType(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, t: ast.TryExpr) TypecheckError!ir.Type {
+    const inner = try inferExpr(state, env, ta, t.expression);
+    if (!ir.involvesUnknown(inner)) {
+        if (inner != .error_ and !ir.isErrorUnion(inner) and inner != .unknown) {
+            if (!ir.allowsError(inner)) {
+                const d = try ownDisplay(state, inner);
+                return compiler_errors.compileFailFmt(state, "'?' operator used on non-error-union type '{s}'", .{d});
+            }
+        }
+        if (env.annotated_return) |ar| {
+            if (!ir.allowsError(ar)) {
+                const d = try ownDisplay(state, ar);
+                return compiler_errors.compileFailFmt(state, "Cannot use '?' here: enclosing function return type '{s}' does not allow error", .{d});
+            }
+        }
+    }
+    return try ir.unwrapError(ta, inner);
+}
+
+fn inferAssignmentExpr(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, a: ast.Assignment) TypecheckError!ir.Type {
+    const val = try inferExpr(state, env, ta, a.right);
+    try rejectTypeValue(state, val, "an assigned value");
+    if (a.left.* == .primary) {
+        if (env.isConstBinding(a.left.primary.name)) {
+            return compiler_errors.compileFailFmt(state, "Cannot reassign to constant variable '{s}'", .{a.left.primary.name});
+        }
+        // Against the *declared* type: a narrowed branch may re-widen
+        // the variable (`x = null` inside `if (x != null)`).
+        if (env.lookupDeclared(a.left.primary.name)) |existing| {
+            try requireAssignFrom(state, val, existing, "assignment", a.right);
+        }
+    } else if (a.left.* == .member) {
+        const mem = a.left.member;
+        // A function/block local shadows any module-level const
+        // with the same name (incl. consts of other modules).
+        if (env.anyConstPlaceRoot(mem.object)) |obj_name| {
+            return compiler_errors.compileFailFmt(state, "Cannot mutate field of constant '{s}'", .{obj_name});
+        }
+        const obj = try inferExpr(state, env, ta, mem.object);
+        if (mem.property.* == .primary) {
+            var field_obj = obj;
+            if (field_obj == .defined) field_obj = field_obj.defined.underlying.*;
+            if (field_obj == .tuple) {
+                if (std.fmt.parseInt(i64, mem.property.primary.name, 10)) |ci| {
+                    if (ci < 0 or ci >= field_obj.tuple.len) {
+                        return compiler_errors.compileFailFmt(state, "Tuple field .{s} out of range (len {d})", .{ mem.property.primary.name, field_obj.tuple.len });
+                    }
+                    try requireAssignFrom(state, val, field_obj.tuple[@intCast(ci)], "assignment to tuple field", a.right);
+                } else |_| {
+                    return compiler_errors.compileFailFmt(state, "Tuple fields are numeric (.0, .1, …), got '.{s}'", .{mem.property.primary.name});
+                }
+            } else if (field_obj == .array) {
+                if (std.fmt.parseInt(i64, mem.property.primary.name, 10) catch null) |ci| {
+                    if (field_obj.array.length) |alen| {
+                        if (ci < 0 or ci >= @as(i64, @intCast(alen))) {
+                            return compiler_errors.compileFailFmt(state, "Tuple field .{s} out of range (len {d})", .{ mem.property.primary.name, alen });
+                        }
+                    }
+                    try requireAssignFrom(state, val, field_obj.array.elem.*, "assignment to array element", a.right);
+                } else {
+                    return compiler_errors.compileFailFmt(state, "Array fields are numeric (.0, .1, …), got '.{s}'", .{mem.property.primary.name});
+                }
+            } else if (ir.structNameOf(obj)) |sname| {
+                if (std.mem.startsWith(u8, sname, "module:")) {
+                    const mod_path = sname["module:".len..];
+                    // A module may write another module's exported *mutable*
+                    // global (`internal.defaultOutput = bridge`); everything
+                    // else reachable through the namespace is read-only.
+                    if (path.moduleMemberIsMutableGlobal(state, mod_path, mem.property.primary.name)) {
+                        if (try resolveModuleMemberType(state, ta, mod_path, mem.property.primary.name)) |mt| {
+                            try recordExprType(state, a.left, mt);
+                            try requireAssignFrom(state, val, mt, "assignment to field", a.right);
+                        }
+                        return val;
+                    }
+                    return compiler_errors.compileFailFmt(
+                        state,
+                        "Cannot assign to member '{s}' of imported module '{s}'",
+                        .{ mem.property.primary.name, mod_path },
+                    );
+                }
+                if (from_ast.lookupStruct(state, sname)) |def| {
+                    if (def.types.get(mem.property.primary.name) == null) {
+                        return compiler_errors.compileFailFmt(
+                            state,
+                            "Field '{s}' does not exist on '{s}'",
+                            .{ mem.property.primary.name, ir.cleanTypeName(sname) },
+                        );
+                    }
+                }
+                const ft = try fieldTypeFromStruct(state, ta, sname, mem.property.primary.name);
+                // Record the field type on the member node so editor
+                // features (hover) can resolve assignment targets.
+                try recordExprType(state, a.left, ft);
+                try requireAssignFrom(state, val, ft, "assignment to field", a.right);
+            } else if (ir.shapeFieldsOf(obj)) |shape_fields| {
+                var ft: ?ir.Type = null;
+                for (shape_fields) |sf| {
+                    if (std.mem.eql(u8, sf.name, mem.property.primary.name)) {
+                        ft = sf.ty;
+                        break;
+                    }
+                }
+                const field_type = ft orelse {
+                    const d = try ownDisplay(state, obj);
+                    return compiler_errors.compileFailFmt(
+                        state,
+                        "Field '{s}' does not exist on '{s}'",
+                        .{ mem.property.primary.name, d },
+                    );
+                };
+                try recordExprType(state, a.left, field_type);
+                try requireAssignFrom(state, val, field_type, "assignment to field", a.right);
+            } else {
+                if (field_obj != .unknown) {
+                    const d = try ownDisplay(state, obj);
+                    return compiler_errors.compileFailFmt(state, "Cannot assign field '{s}' on type '{s}'", .{ mem.property.primary.name, d });
+                }
+            }
+        }
+    } else if (a.left.* == .index) {
+        if (a.left.index.is_slice) {
+            return compiler_errors.compileFailFmt(state, "Cannot assign to a slice view", .{});
+        }
+        if (env.anyConstPlaceRoot(a.left.index.object)) |obj_name| {
+            return compiler_errors.compileFailFmt(state, "Cannot mutate elements of constant '{s}'", .{obj_name});
+        }
+        const obj_t = ir.peelForIndex(try inferExpr(state, env, ta, a.left.index.object));
+        const start_node = a.left.index.index orelse {
+            return compiler_errors.compileFailFmt(state, "Expected index expression", .{});
+        };
+        const i = try inferExpr(state, env, ta, start_node);
+        if (!ir.involvesUnknown(i)) try requireAssign(state, i, ir.TInt, "index");
+        if (obj_t == .array) {
+            try requireAssignFrom(state, val, obj_t.array.elem.*, "assignment to index", a.right);
+        } else if (obj_t == .tuple) {
+            if (try constIntIndex(start_node)) |ci| {
+                if (ci < 0 or ci >= obj_t.tuple.len) {
+                    return compiler_errors.compileFailFmt(state, "Tuple index {d} out of range (len {d})", .{ ci, obj_t.tuple.len });
+                }
+                try requireAssignFrom(state, val, obj_t.tuple[@intCast(ci)], "assignment to tuple index", a.right);
+            }
+        }
+    }
+    return val;
+}
+
+fn inferBlockExprType(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node: *ast.Node, b: ast.Block) TypecheckError!ir.Type {
+    try env.pushScope();
+    defer env.popScope();
+    if (b.label) |lab| try env.pushLabel(.{ .name = lab, .kind = .block });
+    defer {
+        if (b.label != null) env.popLabel();
+    }
+    var last: ir.Type = ir.TUnknown;
+    for (b.statements) |s| {
+        last = (try checkStmt(state, env, ta, s)) orelse ir.TUnknown;
+    }
+    if (b.label != null) {
+        return try joinBreakTypes(state, env, ta, node);
+    }
+    return last;
+}
+
+fn inferIfExprType(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node: *ast.Node, i: ast.If) TypecheckError!ir.Type {
+    const cond_t = try inferExpr(state, env, ta, i.condition);
+    try env.pushScope();
+    defer env.popScope();
+    if (i.label) |lab| try env.pushLabel(.{ .name = lab, .kind = .if_ });
+    defer {
+        if (i.label != null) env.popLabel();
+    }
+    // `@if (@isError(x))` — narrow `x` to `error` in the then-body so
+    // `return x` typechecks against any error-union return.
+    if (isErrorNarrowName(i.condition)) |ename| {
+        try env.define(ename, ir.TError);
+    }
+    if (i.pipe_value) |pv| {
+        if (pv.* != .primary) return compiler_errors.compileFailFmt(state, "@if capture must be an identifier", .{});
+        const peeled = ir.peelDefined(cond_t);
+        if (ir.optionalPayload(peeled)) |opt| {
+            try env.define(pv.primary.name, opt);
+        } else if (ir.isErrorUnion(peeled)) {
+            const unwrapped = try ir.unwrapError(ta, peeled);
+            try env.define(pv.primary.name, unwrapped);
+        } else if (state.strict) {
+            const disp = try ownDisplay(state, cond_t);
+            return compiler_errors.compileFailFmt(state, "Cannot capture from a non-container type '{s}'; @if capture requires an optional '?T' or an error union", .{disp});
+        } else {
+            const unwrapped = cond_t;
+            try env.define(pv.primary.name, unwrapped);
+        }
+    } else if (state.strict) {
+        if (!ir.isSubtype(ir.peelDefined(cond_t), ir.TBool)) {
+            const disp = try ownDisplay(state, cond_t);
+            return compiler_errors.compileFailFmt(state, "Condition of @if must be boolean ('bool' or 'u1'), got '{s}'; did you mean 'x != 0'?", .{disp});
+        }
+    }
+    _ = try inferExpr(state, env, ta, i.body);
+    if (i.else_body) |e| _ = try inferExpr(state, env, ta, e);
+    // Value-producing if (has else) joins break payloads.
+    if (i.else_body != null) {
+        return try joinBreakTypes(state, env, ta, node);
+    }
+    return ir.TUnknown;
+}
+
+fn inferSwitchExprType(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, sw: ast.Switch) TypecheckError!ir.Type {
+    const cond_t = try inferExpr(state, env, ta, sw.condition);
+    if (sw.label) |lab| try env.pushLabel(.{ .name = lab, .kind = .switch_, .cond_type = cond_t });
+    defer {
+        if (sw.label != null) env.popLabel();
+    }
+    // Narrow subject when switching on `e.kind` for a discrim struct union.
+    var narrow = try kindSwitchNarrowing(state, ta, env, sw.condition);
+    defer if (narrow) |*n| n.map.deinit();
+
+    var covered = std.StringHashMap(void).init(ta.allocator);
+    defer covered.deinit();
+    if (narrow) |n| {
+        for (sw.prongs) |prong| {
+            if (prong.is_else) continue;
+            for (prong.patterns) |pat| {
+                if (resolveSwitchVariant(state, pat, n.enum_name)) |vname| {
+                    try covered.put(vname, {});
+                }
+            }
+        }
+    }
+
+    // Join break payloads while still narrowed (do not re-walk after scopes pop).
+    var acc: ?ir.Type = null;
+    for (sw.prongs) |prong| {
+        for (prong.patterns) |pat| _ = try inferExpr(state, env, ta, pat);
+        try env.pushScope();
+        defer env.popScope();
+        if (narrow) |n| {
+            if (prong.is_else) {
+                if (try remainingNarrowType(ta, n, &covered)) |rt| {
+                    try env.define(n.subject, rt);
+                }
+            } else if (prong.patterns.len == 1) {
+                if (resolveSwitchVariant(state, prong.patterns[0], n.enum_name)) |vname| {
+                    if (n.map.get(vname)) |sname| {
+                        try env.define(n.subject, .{ .struct_ = sname });
+                    }
+                }
+            }
+        }
+        _ = try inferExpr(state, env, ta, prong.body);
+        try walkBreakValues(state, env, ta, prong.body, &acc, false);
+    }
+    return acc orelse ir.TUnknown;
+}
+
+fn inferForExprType(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node: *ast.Node, f: ast.For) TypecheckError!ir.Type {
+    const expr_type = try inferExpr(state, env, ta, f.expr);
+    try env.pushScope();
+    defer env.popScope();
+    if (f.label) |lab| try env.pushLabel(.{ .name = lab, .kind = .loop });
+    defer {
+        if (f.label != null) env.popLabel();
+    }
+    if (f.captures.len > 0) {
+        if (f.expr.* == .binary and std.mem.eql(u8, f.expr.binary.operator, "..")) {
+            if (f.captures.len > 1) return compiler_errors.compileFailFmt(state, "Range loop only supports 1 capture", .{});
+            for (f.captures) |cap| try env.define(cap.name, ir.TInt);
+        } else if (ir.isByteSlice(expr_type) or expr_type == .array or ir.isString(expr_type)) {
+            if (f.captures.len > 2) return compiler_errors.compileFailFmt(state, "Loop supports at most 2 captures", .{});
+            const elem_type = if (expr_type == .array) expr_type.array.elem.* else ir.TU8;
+            try env.define(f.captures[0].name, elem_type);
+            if (f.captures.len > 1) {
+                try env.define(f.captures[1].name, ir.TInt);
+            }
+        } else if (ir.involvesUnknown(expr_type)) {
+            // It might be a loop over an unknown optional payload or unknown array.
+            // We assume it's valid and bind `unknown`.
+            if (f.captures.len > 2) return compiler_errors.compileFailFmt(state, "Loop supports at most 2 captures", .{});
+            if (f.captures.len > 0) try env.define(f.captures[0].name, ir.TUnknown);
+            if (f.captures.len > 1) try env.define(f.captures[1].name, ir.TUnknown);
+        } else if (ir.optionalPayload(expr_type)) |payload| {
+            if (f.captures.len > 1) return compiler_errors.compileFailFmt(state, "Optional while-loop only supports 1 capture", .{});
+            try state.for_is_cond.put(&node.for_expr, {});
+            try env.define(f.captures[0].name, payload);
+        } else {
+            return compiler_errors.compileFailFmt(state, "Cannot iterate over type '{any}'", .{ir.typeTag(expr_type).?});
+        }
+    } else if (!(f.expr.* == .binary and std.mem.eql(u8, f.expr.binary.operator, ".."))) {
+        // Condition loop `@for (cond) { … }` — same invariant as `@if`:
+        // the condition must be a real boolean, no truthiness coercion.
+        if (state.strict and !ir.isSubtype(ir.peelDefined(expr_type), ir.TBool)) {
+            const disp = try ownDisplay(state, expr_type);
+            return compiler_errors.compileFailFmt(state, "Condition of @for must be boolean ('bool' or 'u1'), got '{s}'; did you mean 'i < n'?", .{disp});
+        }
+    }
+    _ = try inferExpr(state, env, ta, f.body);
+    return ir.TUnknown;
+}
+
+fn inferBreakExprType(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, br: ast.Break) TypecheckError!ir.Type {
+    if (br.value) |v| return try inferExpr(state, env, ta, v);
+    return ir.TUnknown;
+}
+
+fn inferComptimeExprType(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, ce: ast.ComptimeExpr) TypecheckError!ir.Type {
+    // `@comptime` carries a real type: infer it structurally from the
+    // inner expression using the typechecker's own knowledge. Evaluation
+    // of the value itself happens once, in codegen (`compileComptime`), so
+    // const values need not be materialized during the typecheck pass and
+    // blocks may freely reference earlier `@const`s.
+    //
+    // A block is typed by running its local declarations through the
+    // checker in a fresh scope and joining the types of its `break` values.
+    if (ce.expr.* == .block) {
+        try env.pushScope();
+        defer env.popScope();
+        for (ce.expr.block.statements) |s| _ = try checkStmt(state, env, ta, s);
+        return try joinComptimeTypes(state, env, ta, ce.expr);
+    }
+    return try inferExpr(state, env, ta, ce.expr);
 }
 
 /// `T == U` / `T != U` on types: both sides must be types; folded at compile time.
@@ -2101,7 +2137,7 @@ fn inferCall(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, call_
                 // Const-receiver check: a pointer-like self (unannotated or *T)
                 // can mutate the receiver. By-value self (T) clones; no self
                 // has no receiver handle and can't mutate.
-                if (env.constPlaceRoot(m.receiver)) |recv_name| {
+                if (env.anyConstPlaceRoot(m.receiver)) |recv_name| {
                     if (methodSelfIsPointerLike(state, m.name)) {
                         return compiler_errors.compileFailFmt(state, "Method might mutate constant '{s}'", .{recv_name});
                     }
@@ -2427,14 +2463,19 @@ fn inferArrayLiteral(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAllo
 }
 
 fn inferStructInit(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, init: ast.StructInit) TypecheckError!ir.Type {
-    const sn = from_ast.resolveStructName(state, init.type_expr) orelse {
+    if (init.type_expr) |te| {
+        if (te.* == .shape_type) return inferAnnotatedShapeInit(state, env, ta, te, init);
+    } else {
+        return inferInferredShapeInit(state, env, ta, init);
+    }
+    const sn = from_ast.resolveStructName(state, init.type_expr.?) orelse {
         return compiler_errors.compileFailFmt(state, "Invalid struct initialization type", .{});
     };
     var struct_name = sn;
     if (std.mem.indexOfScalar(u8, struct_name, '.') != null) {
         struct_name = path.resolveModuleType(state, struct_name) catch struct_name;
     }
-    try from_ast.checkStructInitExport(state, init.type_expr, struct_name);
+    try from_ast.checkStructInitExport(state, init.type_expr.?, struct_name);
 
     const is_typedef = state.typedefs.contains(struct_name);
     if (!state.structs.contains(struct_name) and !is_typedef) {
@@ -2489,6 +2530,82 @@ fn inferStructInit(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc,
         return try from_ast.resolveNamedType(struct_name, state, ta);
     }
     return .{ .struct_ = struct_name };
+}
+
+/// `$p: { x: f64; y: f64; } = { x: 1.0, y: 2.0 };` — check the literal
+/// against the annotated anonymous shape and yield that shape as its type.
+fn inferAnnotatedShapeInit(
+    state: *state_mod.CompilerState,
+    env: *Env,
+    ta: ir.TypeAlloc,
+    type_expr: *ast.Node,
+    init: ast.StructInit,
+) TypecheckError!ir.Type {
+    const shape_t = try from_ast.typeFromAst(type_expr, state, ta);
+    const fields = switch (ir.peelDefined(shape_t)) {
+        .shape => |f| f,
+        else => return compiler_errors.compileFailFmt(state, "Invalid struct initialization type", .{}),
+    };
+    const display = try ownDisplay(state, shape_t);
+
+    for (init.fields) |field| {
+        var expected: ?ir.Type = null;
+        for (fields) |sf| {
+            if (std.mem.eql(u8, sf.name, field.name)) {
+                expected = sf.ty;
+                break;
+            }
+        }
+        const exp = expected orelse {
+            return compiler_errors.compileFailFmt(state, "Unknown field '{s}' on '{s}'", .{ field.name, display });
+        };
+        const got = try inferExpr(state, env, ta, field.value);
+        var ctx_buf: [128]u8 = undefined;
+        const ctx = std.fmt.bufPrint(&ctx_buf, "Field '{s}' of '{s}'", .{ field.name, display }) catch "Field";
+        try requireAssignFrom(state, got, exp, ctx, field.value);
+    }
+    if (state.strict) {
+        for (fields) |sf| {
+            if (ir.optionalPayload(ir.peelDefined(sf.ty)) != null) continue;
+            var provided = false;
+            for (init.fields) |f| {
+                if (std.mem.eql(u8, f.name, sf.name)) {
+                    provided = true;
+                    break;
+                }
+            }
+            if (!provided) {
+                return compiler_errors.compileFailFmt(
+                    state,
+                    "Missing required field '{s}' in initialization of '{s}'; provide it in the initializer or declare the field optional ('?T')",
+                    .{ sf.name, display },
+                );
+            }
+        }
+    }
+    return shape_t;
+}
+
+/// `{ x: 1.0, y: 2.0 }` with no type annotation — infer an anonymous shape
+/// whose fields follow the literal's spelling and value types.
+fn inferInferredShapeInit(
+    state: *state_mod.CompilerState,
+    env: *Env,
+    ta: ir.TypeAlloc,
+    init: ast.StructInit,
+) TypecheckError!ir.Type {
+    var fields: std.ArrayList(ir.ShapeField) = .empty;
+    defer fields.deinit(ta.allocator);
+    for (init.fields) |field| {
+        for (fields.items) |sf| {
+            if (std.mem.eql(u8, sf.name, field.name)) {
+                return compiler_errors.compileFailFmt(state, "Duplicate field '{s}' in object literal", .{field.name});
+            }
+        }
+        const got = try inferExpr(state, env, ta, field.value);
+        try fields.append(ta.allocator, .{ .name = field.name, .ty = got });
+    }
+    return try ta.shapeType(fields.items);
 }
 
 fn checkStmt(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node: *ast.Node) TypecheckError!?ir.Type {

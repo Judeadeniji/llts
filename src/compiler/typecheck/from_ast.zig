@@ -1234,7 +1234,7 @@ pub fn resolveType(state: *state_mod.CompilerState, node: *ast.Node) ?[]const u8
             state.owned.append(state.allocator, out) catch {};
             break :blk out;
         },
-        .struct_init => |s| resolveStructName(state, s.type_expr),
+        .struct_init => |s| if (s.type_expr) |te| resolveStructName(state, te) else null,
         .unary => |u| blk: {
             if (std.mem.eql(u8, u.operator, "const")) {
                 break :blk resolveTypeLiteral(state, u.arg);
