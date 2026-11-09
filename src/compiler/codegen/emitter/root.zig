@@ -536,6 +536,15 @@ pub const Emitter = struct {
                     },
                 };
                 if (extra_success or success == null or (has_error and has_null)) return null;
+                // Gradual `unknown | error`: no success value is known yet, so
+                // at runtime the value is a bare error.
+                if (has_error and ir.isUnknown(success.?)) {
+                    vt.kind = .error_value;
+                    vt.clean = "error";
+                    vt.zig = "rt.err.Error";
+                    vt.may_error = true;
+                    return vt;
+                }
                 const inner = (try self.valTypeFromIR(node, success.?)) orelse return null;
                 const inner_p = try a.create(ValType);
                 inner_p.* = inner;
@@ -986,49 +995,15 @@ pub const Emitter = struct {
         if (self.recordedType(node)) |t| {
             if (try self.valTypeFromIR(node, t)) |vt| return vt;
         }
-        switch (node.*) {
-            .unwrap_expr => |u| {
-                const inner = try self.valueType(u.expression);
-                if (inner.kind == .optional and inner.payload != null) return inner.payload.?.*;
-                return inner;
-            },
-            .index => |ix| {
-                if (!ix.is_slice) {
-                    const object = try self.valueType(ix.object);
-                    if (object.elem) |elem| return elem.*;
+        // A call recorded while its callee was still unrefined (mutual
+        // recursion, forward calls) keeps a stale `unknown`; re-resolve it
+        // through the callee's final recorded return type.
+        if (node.* == .call) {
+            if (try self.resolveCallTargetKey(&node.call, 0)) |key| {
+                if (self.state.functions.get(key)) |def| {
+                    return try unit_mod.functionReturnType(self, key, def);
                 }
-            },
-            .member => |m| {
-                if (m.property.* == .primary) {
-                    const prop = m.property.primary.name;
-                    if (std.mem.eql(u8, prop, "message")) {
-                        const obj_t = try self.storageValueType(m.object);
-                        if (obj_t.kind == .error_value or obj_t.may_error) {
-                            return .{ .display = "string", .clean = "string", .kind = .string, .zig = "[]const u8" };
-                        }
-                    }
-                }
-                // `mod.CONST` — a module global emitted under its qualified key.
-                if ((path_mod.tryResolveStaticPath(self.state, node) catch null)) |import_key| {
-                    if (self.globals.get(import_key)) |g| return self.valTypeFor(node, g.ir_type, g.display);
-                }
-                if (try expr_mod.resolveMemberField(self, node, &m)) |target| {
-                    return target.info.fields[target.index].vt;
-                }
-
-            },
-            .call => |c| {
-                // Calls whose callee is a devirtualized function value have no
-                // recorded display; the result type is the target's return type.
-                if (self.state.type_of_results.get(node)) |_| {} else {
-                    if (try self.resolveCallTargetKey(&c, 0)) |key| {
-                        if (self.state.functions.get(key)) |def| {
-                            return try unit_mod.functionReturnType(self, key, def);
-                        }
-                    }
-                }
-            },
-            else => {},
+            }
         }
         return self.failAt(node, "native backend cannot infer the type of this expression", .{});
     }

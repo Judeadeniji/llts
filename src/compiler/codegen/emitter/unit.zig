@@ -271,7 +271,7 @@ pub fn emitTopLevel(self: *Emitter) !void {
 }
 
 pub fn functionReturnType(self: *Emitter, name: []const u8, def: state_mod.FunctionDef) !ValType {
-    var display = def.return_type orelse blk: {
+    const display = def.return_type orelse blk: {
         if (def.node.* == .function_decl) {
             if (def.node.function_decl.return_type) |rt| {
                 if (try from_ast.typeAstToDisplay(rt, self.state)) |disp| break :blk disp;
@@ -279,19 +279,6 @@ pub fn functionReturnType(self: *Emitter, name: []const u8, def: state_mod.Funct
         }
         break :blk "void";
     };
-    if (def.node.* == .function_decl) {
-        const f = def.node.function_decl;
-        const raw = if (f.return_type) |rt| try from_ast.typeAstToDisplay(rt, self.state) else null;
-        if (raw) |r| {
-            if (std.mem.eql(u8, r, "error")) display = "error";
-        } else if (std.mem.eql(u8, display, "unknown | error")) {
-            if (!bodyHasValuedReturn(f.body)) {
-                display = "void | error";
-            } else if (bodyReturnsOnlyErrors(self.state, f.body)) {
-                display = "error";
-            }
-        }
-    }
     const t = try self.valTypeFor(def.node, def.return_ir, display);
     if (t.clean.len == 0) {
         return self.failAt(def.node, "native backend does not support the return type of '{s}'", .{name});
@@ -378,52 +365,3 @@ pub fn zeroValue(self: *Emitter, t: ValType) ![]const u8 {
     };
 }
 
-fn bodyHasValuedReturn(node: *ast_mod.Node) bool {
-    return switch (node.*) {
-        .return_expr => |r| r.return_value != null,
-        .block => |b| blk: {
-            for (b.statements) |s| if (bodyHasValuedReturn(s)) break :blk true;
-            break :blk false;
-        },
-        .if_expr => |i| bodyHasValuedReturn(i.body) or (i.else_body != null and bodyHasValuedReturn(i.else_body.?)),
-        .switch_expr => |sw| blk: {
-            for (sw.prongs) |p| if (bodyHasValuedReturn(p.body)) break :blk true;
-            break :blk false;
-        },
-        .for_expr => |f| bodyHasValuedReturn(f.body),
-        .defer_stmt => |d| bodyHasValuedReturn(d.body),
-        else => false,
-    };
-}
-
-fn bodyReturnsOnlyErrors(state: *state_mod.CompilerState, node: *ast_mod.Node) bool {
-    return switch (node.*) {
-        .return_expr => |r| blk: {
-            const v = r.return_value orelse break :blk true;
-            if (v.* == .error_expr) break :blk true;
-            const disp = state.type_of_results.get(v) orelse break :blk false;
-            break :blk isPureErrorDisplay(state, disp);
-        },
-        .block => |b| blk: {
-            for (b.statements) |s| if (!bodyReturnsOnlyErrors(state, s)) break :blk false;
-            break :blk true;
-        },
-        .if_expr => |i| bodyReturnsOnlyErrors(state, i.body) and (i.else_body == null or bodyReturnsOnlyErrors(state, i.else_body.?)),
-        .switch_expr => |sw| blk: {
-            for (sw.prongs) |p| if (!bodyReturnsOnlyErrors(state, p.body)) break :blk false;
-            break :blk true;
-        },
-        .for_expr => |f| bodyReturnsOnlyErrors(state, f.body),
-        .defer_stmt => |d| bodyReturnsOnlyErrors(state, d.body),
-        else => true,
-    };
-}
-
-fn isPureErrorDisplay(state: *state_mod.CompilerState, display: []const u8) bool {
-    if (std.mem.eql(u8, display, "error")) return true;
-    if (state.error_sets.contains(display)) return true;
-    if (std.mem.lastIndexOfScalar(u8, display, '.')) |dot| {
-        return state.error_sets.contains(display[0..dot]);
-    }
-    return false;
-}
