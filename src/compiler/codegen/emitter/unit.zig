@@ -2,6 +2,7 @@ const std = @import("std");
 const ast_mod = @import("../../../ast/root.zig");
 const state_mod = @import("../../state.zig");
 const from_ast = @import("../../typecheck/from_ast.zig");
+const ir = @import("../../typecheck/ir.zig");
 const root_mod = @import("root.zig");
 const prescan_mod = @import("prescan.zig");
 const stmt_mod = @import("stmt.zig");
@@ -38,6 +39,7 @@ pub fn collectGlobals(self: *Emitter) !void {
             .name = d.name,
             .zig_name = try self.globalName(d.name),
             .display = display,
+            .ir_type = if (fn_key != null or module_path != null) null else self.declaredIRType(d),
             .node = s,
             .fn_key = fn_key,
             .module_path = module_path,
@@ -226,7 +228,7 @@ pub fn emitGlobalDecls(self: *Emitter) !void {
     for (names.items) |name| {
         const g = self.globals.get(name).?;
         if (g.fn_key != null or g.module_path != null) continue;
-        const vt = try self.classify(g.node, g.display);
+        const vt = try self.valTypeOrClassify(g.node, g.ir_type, g.display);
         try self.requireValueType(g.node, vt);
         try self.writer.print("var {s}: {s} = {s};\n", .{ g.zig_name, vt.zig, try zeroValue(self, vt) });
     }
@@ -256,7 +258,7 @@ pub fn emitTopLevel(self: *Emitter) !void {
             };
             if (g.fn_key != null or g.module_path != null) continue;
             try stmt_mod.emitLineMarker(self, s);
-            const vt = try self.classify(s, g.display);
+            const vt = try self.valTypeOrClassify(s, g.ir_type, g.display);
             const code = try expr_mod.emitValueCoerced(self, d.value, vt);
             try self.writeIndent();
             try self.writer.print("{s} = {s};\n", .{ g.zig_name, code });
@@ -290,7 +292,7 @@ pub fn functionReturnType(self: *Emitter, name: []const u8, def: state_mod.Funct
             }
         }
     }
-    const t = try self.classify(def.node, display);
+    const t = try self.valTypeOrClassify(def.node, def.return_ir, display);
     if (t.clean.len == 0) {
         return self.failAt(def.node, "native backend does not support the return type of '{s}'", .{name});
     }
@@ -327,13 +329,21 @@ pub fn prepareFunction(
         {
             display = try std.fmt.allocPrint(a, "*{s}", .{method_struct.?});
         }
-        const vt = try self.classify(f.params, display);
+        var ir_type: ?ir.Type = null;
+        if (p.type_annotation) |ann| {
+            ir_type = from_ast.typeFromAst(ann, self.state, self.state.typeAlloc()) catch null;
+        } else if (i == 0 and method_struct != null and std.mem.eql(u8, p.name, "self")) {
+            const struct_ty: ir.Type = .{ .struct_ = method_struct.? };
+            ir_type = try self.state.typeAlloc().ptrType(struct_ty);
+        }
+        const vt = try self.valTypeOrClassify(f.params, ir_type, display);
         try self.requireValueType(f.params, vt);
         const b = try a.create(Binding);
         b.* = .{
             .name = p.name,
             .zig_name = try self.paramArgName(p.name),
             .display = display,
+            .ir_type = ir_type,
             .is_param = true,
         };
         try base.put(p.name, b);
@@ -341,6 +351,7 @@ pub fn prepareFunction(
             .name = p.name,
             .arg_name = b.zig_name,
             .display = display,
+            .ir_type = ir_type,
             .zig = vt.zig,
             .kind = vt.kind,
         });

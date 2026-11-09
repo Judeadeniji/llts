@@ -49,7 +49,7 @@ pub fn emitAssignment(self: *Emitter, node: *ast_mod.Node, asn: *const ast_mod.A
                 return self.failAt(asn.left, "native backend only supports assigning to names", .{});
             }
             const target = try self.lookupBinding(asn.left, p.name);
-            const vt = try self.classify(node, target.display);
+            const vt = try self.valTypeOrClassify(node, target.ir_type, target.display);
             try self.requireValueType(node, vt);
             const rhs = if (bit_op) |op|
                 try expr_mod.emitCompoundBitwiseValue(self, asn.left, asn.right, op, vt)
@@ -816,7 +816,7 @@ pub fn emitLocalDeclaration(self: *Emitter, node: *ast_mod.Node, d: *const ast_m
         try self.scopes.items[self.scopes.items.len - 1].put(d.name, info);
         return;
     }
-    const vt = try self.classify(node, info.display);
+    const vt = try self.valTypeOrClassify(node, info.ir_type, info.display);
     try self.requireValueType(node, vt);
     if (info.zig_name.len == 0) info.zig_name = try self.localName(d.name);
 

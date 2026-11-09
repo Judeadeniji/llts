@@ -184,6 +184,7 @@ pub fn preScanStmt(self: *Emitter, node: *ast_mod.Node) anyerror!void {
                 .name = d.name,
                 .zig_name = "",
                 .display = if (fn_key != null) "func" else if (module_path != null) "module" else self.displayForDeclValue(&d) catch "unknown",
+                .ir_type = if (fn_key != null or module_path != null) null else self.declaredIRType(&d),
                 .fn_key = fn_key,
                 .module_path = module_path,
             };

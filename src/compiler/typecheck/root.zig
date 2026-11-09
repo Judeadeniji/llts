@@ -1262,6 +1262,7 @@ fn inferExprInner(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, 
         .struct_init => |init| try inferStructInit(state, env, ta, init),
         .error_expr => |e| try inferErrorExprType(state, env, ta, e),
         .try_expr => |t| try inferTryExprType(state, env, ta, t),
+        .unwrap_expr => |u| try inferUnwrapExprType(state, env, ta, u),
         .assignment => |a| try inferAssignmentExpr(state, env, ta, a),
         .block => |b| try inferBlockExprType(state, env, ta, node, b),
         .if_expr => |i| try inferIfExprType(state, env, ta, node, i),
@@ -1575,6 +1576,27 @@ fn inferTryExprType(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc
         }
     }
     return try ir.unwrapError(ta, inner);
+}
+
+/// `x.?` — assertion unwrap of an optional. The payload type is the single
+/// non-`null` arm of the union; the runtime traps when the value is `null`.
+fn inferUnwrapExprType(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, u: ast.UnwrapExpr) TypecheckError!ir.Type {
+    const inner = try inferExpr(state, env, ta, u.expression);
+    if (ir.involvesUnknown(inner)) return ir.TUnknown;
+    switch (ir.peelDefined(inner)) {
+        .union_ => |arms| {
+            var payload: ?ir.Type = null;
+            var extra = false;
+            for (arms) |arm| {
+                if (arm == .null) continue;
+                if (payload == null) payload = arm else extra = true;
+            }
+            if (payload != null and !extra) return payload.?;
+        },
+        else => {},
+    }
+    const d = try ownDisplay(state, inner);
+    return compiler_errors.compileFailFmt(state, "'.?' operator used on non-optional type '{s}'", .{d});
 }
 
 fn inferAssignmentExpr(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, a: ast.Assignment) TypecheckError!ir.Type {

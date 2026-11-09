@@ -117,6 +117,9 @@ pub const Binding = struct {
     /// Emitted Zig identifier.
     zig_name: []const u8,
     display: []const u8,
+    /// Compiler-recorded type for this binding; null for devirtualized
+    /// function/module values and synthesized captures.
+    ir_type: ?ir.Type = null,
     assigned: bool = false,
     reassigned: bool = false,
     read: bool = false,
@@ -131,6 +134,8 @@ pub const Global = struct {
     name: []const u8,
     zig_name: []const u8,
     display: []const u8,
+    /// Compiler-recorded type of the binding; null for function/module values.
+    ir_type: ?ir.Type = null,
     node: *ast_mod.Node,
     /// Statically known function value (`$f = add;` / `$p = mod.fn;`).
     fn_key: ?[]const u8 = null,
@@ -142,6 +147,7 @@ pub const ParamInfo = struct {
     name: []const u8,
     arg_name: []const u8,
     display: []const u8,
+    ir_type: ?ir.Type = null,
     zig: []const u8,
     kind: ValKind,
 };
@@ -214,11 +220,35 @@ pub const Emitter = struct {
     pub const Resolved = struct {
         zig_name: []const u8,
         display: []const u8,
+        ir_type: ?ir.Type = null,
     };
 
     /// Coerce a literal to a concrete type for contexts without one (tuple
     /// elements, explicit `@as`); ordinary assignments/arguments already
     /// provide a target type, so they use `emitValueCoerced` directly.
+    /// Project a compiler-recorded type onto `ValType`; fall back to the
+    /// recorded display only when no IR projection exists yet.
+    pub fn valTypeOrClassify(
+        self: *Emitter,
+        node: *ast_mod.Node,
+        t: ?ir.Type,
+        display: []const u8,
+    ) anyerror!ValType {
+        if (t) |ty| {
+            if (try self.valTypeFromIR(node, ty)) |vt| return vt;
+        }
+        return self.classify(node, display);
+    }
+
+    /// Compiler-recorded type of a declaration binding: its annotation when
+    /// present (authoritative), else the recorded initializer type.
+    pub fn declaredIRType(self: *Emitter, d: *const ast_mod.Declaration) ?ir.Type {
+        if (d.type_annotation) |ann| {
+            return from_ast.typeFromAst(ann, self.state, self.state.typeAlloc()) catch null;
+        }
+        return self.state.type_ir_of_results.get(d.value);
+    }
+
     pub fn classify(self: *Emitter, node: *ast_mod.Node, display_in: []const u8) anyerror!ValType {
         const a = self.arena.allocator();
         const display = std.mem.trim(u8, display_in, " \t");
@@ -467,7 +497,7 @@ pub const Emitter = struct {
 
         const fields = try a.alloc(StructField, seeds.items.len);
         for (seeds.items, 0..) |seed, i| {
-            const vt = try self.classify(node, seed.display);
+            const vt = try self.valTypeOrClassify(node, def.field_irs.get(seed.name), seed.display);
             if (vt.kind == .other or vt.kind == .void) {
                 return self.failAt(node, "native backend cannot store field '{s}.{s}' of type '{s}'", .{
                     clean, seed.name, seed.display,
@@ -1034,11 +1064,11 @@ pub const Emitter = struct {
         while (i > 0) {
             i -= 1;
             if (self.scopes.items[i].get(name)) |b| {
-                return .{ .zig_name = b.zig_name, .display = b.display };
+                return .{ .zig_name = b.zig_name, .display = b.display, .ir_type = b.ir_type };
             }
         }
         if (self.globals.get(name)) |g| {
-            return .{ .zig_name = g.zig_name, .display = g.display };
+            return .{ .zig_name = g.zig_name, .display = g.display, .ir_type = g.ir_type };
         }
         return self.failAt(node, "native backend cannot resolve '{s}'", .{name});
     }
@@ -1140,7 +1170,7 @@ pub const Emitter = struct {
         if (narrowed.kind != .error_value) return narrowed;
         if (node.* == .primary and (node.primary.kind == .identifier or node.primary.kind == .register)) {
             const b = try self.lookupBinding(node, node.primary.name);
-            const stored = try self.classify(node, b.display);
+            const stored = try self.valTypeOrClassify(node, b.ir_type, b.display);
             if (stored.may_error and stored.kind != .error_value) return stored;
         }
         return narrowed;
@@ -1176,7 +1206,7 @@ pub const Emitter = struct {
                 }
                 // `mod.CONST` — a module global emitted under its qualified key.
                 if ((path_mod.tryResolveStaticPath(self.state, node) catch null)) |import_key| {
-                    if (self.globals.get(import_key)) |g| return self.classify(node, g.display);
+                    if (self.globals.get(import_key)) |g| return self.valTypeOrClassify(node, g.ir_type, g.display);
                 }
                 if (try expr_mod.resolveMemberField(self, node, &m)) |target| {
                     return target.info.fields[target.index].vt;
