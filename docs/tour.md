@@ -24,6 +24,8 @@ $message: string = "Hello, LLTS!";
 - `@const` bindings cannot be reassigned; the compiler rejects rebinding.
 - Comments begin with `#` and continue to the end of the line.
 
+See the dedicated [**Variables, Bindings & Scoping Guide**](./variables-and-bindings.md) for detailed scoping rules, labeled block expressions, and immutability invariants.
+
 ---
 
 ## 2. Honest Numeric Widths
@@ -86,6 +88,8 @@ $point: { x: f64; y: f64; } = { x: 10.0, y: 20.0 };
 print(point.x);
 ```
 
+See [**Compound Types**](./types/compound-types.md) for arrays, slices, and shapes, and [**Strings & Multiline Templates**](./strings-and-templates.md) for text and interpolation.
+
 ---
 
 ## 4. Operators and Expressions
@@ -127,6 +131,8 @@ pub @func main() {
     print(result);
 }
 ```
+
+See the [**Operators & Expressions Guide**](./operators-and-expressions.md) for wrapping arithmetic, bitwise shifts, compound assignment, and the full precedence table.
 
 ---
 
@@ -375,5 +381,6 @@ See the [**Inline Assembly Guide**](./inline-assembly.md) for full documentation
 
 ## Next Steps
 
-- Consult the [**Language Reference**](./language-reference.md) for a complete reference on grammar and syntax rules.
-- Review the [**Documentation Roadmap**](./todo.md) to explore the planned in-depth guides for every feature.
+- Consult the [**Language Reference**](./language-reference.md) for a comprehensive reference across declarations, control flow, memory, and types.
+- Read [**Getting Started**](./getting-started.md) to set up your toolchain and build your first program.
+- Explore the topic guides in the [**Documentation Portal**](./README.md).

@@ -13,6 +13,15 @@ Welcome to the documentation for LLTS — a small systems language with a compac
 - [**Syntax & Grammar Reference**](syntax-and-grammar.md)  
   Formal specification of source encoding, tokens, comments, the `$` sigil, keywords, literal formats, operator precedence (14 levels), and EBNF grammar.
 
+- [**Variables, Bindings & Scoping**](variables-and-bindings.md)  
+  The `$` declaration-only sigil, mutable variables, immutable `@const` bindings, deep struct immutability, lexical scope frames, shadowing warnings, and labeled block expressions.
+
+- [**Operators & Expressions**](operators-and-expressions.md)  
+  Checked arithmetic traps, modular wrapping (`+%`, `-%`, `*%`), power (`^`/`**`), bitwise operators & shift ranges (`0..63`), boolean logic, null-coalescing (`??`), pipes (`|>`), and the complete 14-level precedence table.
+
+- [**Strings & Multiline Templates**](strings-and-templates.md)  
+  The `string` immutable byte slice type, character escapes, multiline fenced templates (`` ```...``` ``), string interpolation (`${expr}`), `len()`, string slicing, and concatenation via `@concat`.
+
 - [**Type System Documentation**](types/README.md)  
   In-depth guide to the LLTS type system:
   - [Primitive Widths & Scalar Types](types/primitive-widths.md) (`i8`–`i64`, `u1`–`u64`, floats, `void`, `never`, `@as`)

@@ -317,6 +317,7 @@ PrimaryType    ::= IDENTIFIER
 
 ## Next Steps
 
+- Explore variables and scoping: [**Variables, Bindings & Scoping**](./variables-and-bindings.md)
+- Explore operators and expressions: [**Operators & Expressions**](./operators-and-expressions.md)
 - Explore the type system in depth: [**Types Documentation**](./types/README.md)
 - Learn how to structure functions and control flow: [**Language Tour**](./tour.md)
-- Complete feature tracking: [**Documentation Roadmap**](./todo.md)

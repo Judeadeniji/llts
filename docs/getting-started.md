@@ -292,6 +292,6 @@ bun test tests/
 
 ## 8. Where to Go Next
 
+- [**Language Tour**](./tour.md) — Fast-paced walkthrough of LLTS features and paradigms.
 - [**Language Reference**](./language-reference.md) — Comprehensive guide to declarations, types, operators, memory semantics, and modules.
-- [**Inline Assembly Guide**](./inline-assembly.md) — Deep-dive into writing hardware-level `@asm` in native builds.
-- [**Documentation Roadmap**](./todo.md) — Full language feature matrix and tracking checklist.
+- [**Documentation Portal**](./README.md) — Master index of all topic guides and language specifications.
