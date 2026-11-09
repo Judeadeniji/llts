@@ -61,7 +61,7 @@ pub fn refineAfterFalseGuard(self: *Emitter, condition: *ast_mod.Node) !void {
 
     const binding = self.lookupBindingOptional(name_node.primary.name) orelse return;
     if (!binding.is_param or binding.assigned or binding.reassigned) return;
-    const value_type = try self.valTypeOrClassify(condition, binding.ir_type, binding.display);
+    const value_type = try self.valTypeFor(condition, binding.ir_type, binding.display);
     const width = value_type.width orelse return;
     var refined = integerTypeRange(width) orelse return;
     const bound = ofExpr(self, bound_node) orelse return;

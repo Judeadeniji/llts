@@ -228,7 +228,7 @@ pub fn emitGlobalDecls(self: *Emitter) !void {
     for (names.items) |name| {
         const g = self.globals.get(name).?;
         if (g.fn_key != null or g.module_path != null) continue;
-        const vt = try self.valTypeOrClassify(g.node, g.ir_type, g.display);
+        const vt = try self.valTypeFor(g.node, g.ir_type, g.display);
         try self.requireValueType(g.node, vt);
         try self.writer.print("var {s}: {s} = {s};\n", .{ g.zig_name, vt.zig, try zeroValue(self, vt) });
     }
@@ -258,7 +258,7 @@ pub fn emitTopLevel(self: *Emitter) !void {
             };
             if (g.fn_key != null or g.module_path != null) continue;
             try stmt_mod.emitLineMarker(self, s);
-            const vt = try self.valTypeOrClassify(s, g.ir_type, g.display);
+            const vt = try self.valTypeFor(s, g.ir_type, g.display);
             const code = try expr_mod.emitValueCoerced(self, d.value, vt);
             try self.writeIndent();
             try self.writer.print("{s} = {s};\n", .{ g.zig_name, code });
@@ -292,7 +292,7 @@ pub fn functionReturnType(self: *Emitter, name: []const u8, def: state_mod.Funct
             }
         }
     }
-    const t = try self.valTypeOrClassify(def.node, def.return_ir, display);
+    const t = try self.valTypeFor(def.node, def.return_ir, display);
     if (t.clean.len == 0) {
         return self.failAt(def.node, "native backend does not support the return type of '{s}'", .{name});
     }
@@ -336,7 +336,7 @@ pub fn prepareFunction(
             const struct_ty: ir.Type = .{ .struct_ = method_struct.? };
             ir_type = try self.state.typeAlloc().ptrType(struct_ty);
         }
-        const vt = try self.valTypeOrClassify(f.params, ir_type, display);
+        const vt = try self.valTypeFor(f.params, ir_type, display);
         try self.requireValueType(f.params, vt);
         const b = try a.create(Binding);
         b.* = .{

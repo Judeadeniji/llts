@@ -223,12 +223,10 @@ pub const Emitter = struct {
         ir_type: ?ir.Type = null,
     };
 
-    /// Coerce a literal to a concrete type for contexts without one (tuple
-    /// elements, explicit `@as`); ordinary assignments/arguments already
-    /// provide a target type, so they use `emitValueCoerced` directly.
-    /// Project a compiler-recorded type onto `ValType`; fall back to the
-    /// recorded display only when no IR projection exists yet.
-    pub fn valTypeOrClassify(
+    /// Lower a compiler-recorded type. Without a record (or when the recorded
+    /// shape has no runtime projection) the result is the unsupported `other`
+    /// kind carrying the recorded display; no display string is re-parsed.
+    pub fn valTypeFor(
         self: *Emitter,
         node: *ast_mod.Node,
         t: ?ir.Type,
@@ -237,7 +235,14 @@ pub const Emitter = struct {
         if (t) |ty| {
             if (try self.valTypeFromIR(node, ty)) |vt| return vt;
         }
-        return self.classify(node, display);
+        return .{ .display = display, .clean = display, .kind = .other, .zig = "void" };
+    }
+
+    /// Lower a compiler-recorded type that the run must be able to represent.
+    pub fn valTypeOfIR(self: *Emitter, node: *ast_mod.Node, t: ir.Type) anyerror!ValType {
+        if (try self.valTypeFromIR(node, t)) |vt| return vt;
+        const d = try ir.displayTypeQualifiedAlloc(self.arena.allocator(), t);
+        return self.failAt(node, "native backend (Phase 2) does not support type '{s}'", .{d});
     }
 
     /// Compiler-recorded type of a declaration binding: its annotation when
@@ -247,203 +252,6 @@ pub const Emitter = struct {
             return from_ast.typeFromAst(ann, self.state, self.state.typeAlloc()) catch null;
         }
         return self.state.type_ir_of_results.get(d.value);
-    }
-
-    pub fn classify(self: *Emitter, node: *ast_mod.Node, display_in: []const u8) anyerror!ValType {
-        const a = self.arena.allocator();
-        const display = std.mem.trim(u8, display_in, " \t");
-        const expanded = try self.expandTypedefs(display, 0);
-        var parts: std.ArrayList([]const u8) = .empty;
-        var has_error = false;
-        var it = std.mem.splitSequence(u8, expanded, "|");
-        while (it.next()) |part| {
-            const p = std.mem.trim(u8, part, " \t");
-            if (p.len == 0) continue;
-            if (self.isErrorDisplay(p)) {
-                has_error = true;
-                continue;
-            }
-            try parts.append(a, p);
-        }
-
-        const clean = if (parts.items.len == 1)
-            parts.items[0]
-        else if (parts.items.len == 0)
-            "void"
-        else
-            try std.mem.join(a, " | ", parts.items);
-
-        if (has_error and parts.items.len == 0) {
-            return .{
-                .display = display,
-                .clean = "error",
-                .kind = .error_value,
-                .zig = "rt.err.Error",
-                .may_error = true,
-            };
-        }
-        if (has_error) {
-            const success = try self.childType(node, clean);
-            var t = success.*;
-            t.display = display;
-            t.clean = clean;
-            t.may_error = true;
-            t.success = success;
-            t.zig = try std.fmt.allocPrint(a, "rt.err.Result({s})", .{success.zig});
-            return t;
-        }
-
-        var t: ValType = .{ .display = display, .clean = clean, .kind = .other, .zig = "void" };
-        if (std.mem.eql(u8, clean, "void")) {
-            t.kind = .void;
-            t.zig = "void";
-            return t;
-        }
-        if (std.mem.eql(u8, clean, "null")) {
-            t.kind = .null_value;
-            t.zig = "@TypeOf(null)";
-            return t;
-        }
-        if (isConstByteSequenceDisplay(clean)) {
-            t.kind = .string;
-            t.zig = "[]const u8";
-            t.is_const = true;
-            t.elem = try self.childType(node, "u8");
-            return t;
-        }
-        if (optionalPayloadDisplay(clean)) |payload_display| {
-            const payload = try self.childType(node, payload_display);
-            t.kind = .optional;
-            t.payload = payload;
-            t.zig = try std.fmt.allocPrint(a, "?{s}", .{payload.zig});
-            return t;
-        }
-        if (clean.len > 0 and clean[0] == '*') {
-            const payload = try self.childType(node, std.mem.trim(u8, clean[1..], " \t"));
-            t.kind = .pointer;
-            t.payload = payload;
-            t.zig = try std.fmt.allocPrint(a, "*{s}", .{payload.zig});
-            return t;
-        }
-        if (try parseArrayShape(a, clean)) |shape| {
-            const elem_name = if (std.mem.eql(u8, shape.elem, "byte")) "u8" else shape.elem;
-            const elem = try self.childType(node, elem_name);
-            t.elem = elem;
-            t.array_len = shape.length;
-            t.is_const = shape.is_const;
-            if (shape.is_const and shape.length == null and std.mem.eql(u8, elem.zig, "u8")) {
-                t.kind = .string;
-                t.zig = "[]const u8";
-                return t;
-            }
-            if (shape.length) |len| {
-                t.kind = .array;
-                t.zig = try std.fmt.allocPrint(a, "[{d}]{s}", .{ len, elem.zig });
-            } else {
-                t.kind = .slice;
-                t.zig = if (shape.is_const)
-                    try std.fmt.allocPrint(a, "[]const {s}", .{elem.zig})
-                else
-                    try std.fmt.allocPrint(a, "[]{s}", .{elem.zig});
-            }
-            return t;
-        }
-        if (try self.enumKind(clean)) |is_string_enum| {
-            if (is_string_enum) {
-                t.kind = .string;
-                t.zig = "[]const u8";
-            } else {
-                t.kind = .int;
-                t.width = .i64;
-                t.zig = "i64";
-            }
-            return t;
-        }
-        if (from_ast.lookupStruct(self.state, clean) != null) {
-            const info = try self.ensureStructType(node, clean);
-            t.kind = .struct_;
-            t.zig = info.zig_name;
-            return t;
-        }
-        if (std.mem.eql(u8, clean, "u1") or std.mem.eql(u8, clean, "bool") or std.mem.eql(u8, clean, "boolean")) {
-            t.kind = .bool;
-            t.zig = "bool";
-            t.width = .u1;
-            return t;
-        }
-        if (widths.fromName(clean)) |w| {
-            t.width = w;
-            if (w.isFloat()) {
-                t.kind = .float;
-                t.zig = switch (w.concrete()) {
-                    .f32 => "f32",
-                    else => "f64",
-                };
-            } else {
-                t.kind = .int;
-                t.zig = switch (w.concrete()) {
-                    .i8 => "i8",
-                    .i16 => "i16",
-                    .i32 => "i32",
-                    .i64, .isize => "i64",
-                    .u8 => "u8",
-                    .u16 => "u16",
-                    .u32 => "u32",
-                    .u64, .usize => "u64",
-                    .u1 => "bool",
-                    else => "i64",
-                };
-            }
-            return t;
-        }
-        const peeled = from_ast.peelTypedefDisplay(self.state, clean);
-        if (!std.mem.eql(u8, peeled, clean)) {
-            return self.classify(node, peeled);
-        }
-        return t;
-    }
-
-    fn expandTypedefs(self: *Emitter, display: []const u8, depth: usize) anyerror![]const u8 {
-        if (depth > 16) return display;
-        const a = self.arena.allocator();
-        var out: std.ArrayList([]const u8) = .empty;
-        var it = std.mem.splitSequence(u8, display, "|");
-        while (it.next()) |part| {
-            const trimmed = std.mem.trim(u8, part, " \t");
-            if (trimmed.len == 0) continue;
-            const key = from_ast.findTypedefKey(self.state, trimmed) orelse {
-                try out.append(a, trimmed);
-                continue;
-            };
-            const td = self.state.typedefs.get(key) orelse {
-                try out.append(a, trimmed);
-                continue;
-            };
-            if (std.mem.indexOfScalar(u8, td.underlying, '|') != null or
-                from_ast.typeAllowsErrorState(self.state, trimmed) or
-                from_ast.typeAllowsErrorState(self.state, td.underlying))
-            {
-                try out.append(a, try self.expandTypedefs(td.underlying, depth + 1));
-            } else {
-                try out.append(a, trimmed);
-            }
-        }
-        return std.mem.join(a, " | ", out.items);
-    }
-
-    fn isErrorDisplay(self: *Emitter, part: []const u8) bool {
-        if (std.mem.eql(u8, part, "error")) return true;
-        if (self.state.error_sets.contains(part)) return true;
-        if (std.mem.lastIndexOfScalar(u8, part, '.')) |dot| {
-            if (self.state.error_sets.contains(part[0..dot])) return true;
-        }
-        return false;
-    }
-
-    fn childType(self: *Emitter, node: *ast_mod.Node, display: []const u8) anyerror!*ValType {
-        const p = try self.arena.allocator().create(ValType);
-        p.* = try self.classify(node, display);
-        return p;
     }
 
     fn enumKind(self: *Emitter, clean: []const u8) !?bool {
@@ -497,7 +305,7 @@ pub const Emitter = struct {
 
         const fields = try a.alloc(StructField, seeds.items.len);
         for (seeds.items, 0..) |seed, i| {
-            const vt = try self.valTypeOrClassify(node, def.field_irs.get(seed.name), seed.display);
+            const vt = try self.valTypeFor(node, def.field_irs.get(seed.name), seed.display);
             if (vt.kind == .other or vt.kind == .void) {
                 return self.failAt(node, "native backend cannot store field '{s}.{s}' of type '{s}'", .{
                     clean, seed.name, seed.display,
@@ -516,14 +324,19 @@ pub const Emitter = struct {
         return info;
     }
 
-    pub fn structInfoForDisplay(self: *Emitter, node: *ast_mod.Node, display: []const u8) anyerror!?*StructType {
-        var clean = std.mem.trim(u8, display, " \t");
-        if (optionalPayloadDisplay(clean)) |payload| clean = payload;
-        while (clean.len > 0 and clean[0] == '*') {
-            clean = std.mem.trim(u8, clean[1..], " \t");
+    /// Struct layout behind a lowered type (`T`, `*T`, `?T`, `T | error`): peels
+    /// the handles the projection already produced instead of parsing them.
+    pub fn structInfoForValType(self: *Emitter, node: *ast_mod.Node, t_in: ValType) anyerror!?*StructType {
+        var vt = t_in;
+        while (true) {
+            switch (vt.kind) {
+                .struct_ => break,
+                .pointer, .optional => vt = (vt.payload orelse return null).*,
+                else => return null,
+            }
         }
-        if (from_ast.lookupStruct(self.state, clean) == null) return null;
-        return try self.ensureStructType(node, clean);
+        if (from_ast.lookupStruct(self.state, vt.display) == null) return null;
+        return try self.ensureStructType(node, vt.display);
     }
 
     pub fn emitStructTypeDecls(self: *Emitter) !void {
@@ -604,9 +417,9 @@ pub const Emitter = struct {
     }
 
     /// Project a recorded compiler type onto the emitter's `ValType`.
-    /// Returns null for shapes the emitter still resolves through a recorded
-    /// display (tuples, anonymous shapes, function values, singletons, plain
-    /// unions); callers then fall back to `classify` unchanged.
+    /// Returns null for shapes the run has no representation for (tuples,
+    /// function values, singletons, plain non-error unions); callers report
+    /// them as unsupported instead of re-parsing a display string.
     pub fn valTypeFromIR(self: *Emitter, node: *ast_mod.Node, t_in: ir.Type) anyerror!?ValType {
         const a = self.arena.allocator();
         const display = try ir.displayTypeQualifiedAlloc(a, t_in);
@@ -685,6 +498,14 @@ pub const Emitter = struct {
                 vt.payload = payload_p;
                 vt.zig = try std.fmt.allocPrint(a, "*{s}", .{payload.zig});
             },
+            .shape => {
+                // Keep the declared identity (`@type Point = { … };` is emitted
+                // as `Point`, not as a second layout for the shape spelling).
+                const info = try self.ensureStructType(node, display);
+                vt.kind = .struct_;
+                vt.clean = display;
+                vt.zig = info.zig_name;
+            },
             .struct_ => |name| {
                 if (std.mem.startsWith(u8, name, "module:")) return null;
                 const info = try self.ensureStructType(node, name);
@@ -734,23 +555,6 @@ pub const Emitter = struct {
             else => return null,
         }
         return vt;
-    }
-
-    pub fn displayForExpr(self: *Emitter, node: *ast_mod.Node) ![]const u8 {
-        if (isTypeOfCall(node)) return "string";
-        if (isSizeOfCall(node)) return "i64";
-        if (self.state.type_of_results.get(node)) |disp| return disp;
-        switch (node.*) {
-            .primary => |p| {
-                if (p.kind == .identifier or p.kind == .register) {
-                    const resolved = try self.lookupBinding(node, p.name);
-                    return resolved.display;
-                }
-            },
-            else => {},
-        }
-        if (from_ast.resolveType(self.state, node)) |disp| return disp;
-        return self.failAt(node, "native backend cannot infer the type of this expression", .{});
     }
 
     pub fn emit(self: *Emitter) !void {
@@ -1170,15 +974,15 @@ pub const Emitter = struct {
         if (narrowed.kind != .error_value) return narrowed;
         if (node.* == .primary and (node.primary.kind == .identifier or node.primary.kind == .register)) {
             const b = try self.lookupBinding(node, node.primary.name);
-            const stored = try self.valTypeOrClassify(node, b.ir_type, b.display);
+            const stored = try self.valTypeFor(node, b.ir_type, b.display);
             if (stored.may_error and stored.kind != .error_value) return stored;
         }
         return narrowed;
     }
 
     pub fn valueType(self: *Emitter, node: *ast_mod.Node) anyerror!ValType {
-        if (isTypeOfCall(node)) return try self.classify(node, "string");
-        if (isSizeOfCall(node)) return try self.classify(node, "i64");
+        if (isTypeOfCall(node)) return try self.valTypeOfIR(node, ir.TString);
+        if (isSizeOfCall(node)) return try self.valTypeOfIR(node, ir.TI64);
         if (self.recordedType(node)) |t| {
             if (try self.valTypeFromIR(node, t)) |vt| return vt;
         }
@@ -1206,14 +1010,12 @@ pub const Emitter = struct {
                 }
                 // `mod.CONST` — a module global emitted under its qualified key.
                 if ((path_mod.tryResolveStaticPath(self.state, node) catch null)) |import_key| {
-                    if (self.globals.get(import_key)) |g| return self.valTypeOrClassify(node, g.ir_type, g.display);
+                    if (self.globals.get(import_key)) |g| return self.valTypeFor(node, g.ir_type, g.display);
                 }
                 if (try expr_mod.resolveMemberField(self, node, &m)) |target| {
                     return target.info.fields[target.index].vt;
                 }
-                if (self.state.type_of_results.get(node)) |disp| {
-                    if (self.isErrorDisplay(disp)) return self.classify(node, disp);
-                }
+
             },
             .call => |c| {
                 // Calls whose callee is a devirtualized function value have no
@@ -1228,8 +1030,7 @@ pub const Emitter = struct {
             },
             else => {},
         }
-        const display = try self.displayForExpr(node);
-        return self.classify(node, display);
+        return self.failAt(node, "native backend cannot infer the type of this expression", .{});
     }
 
     pub fn writeIndent(self: *Emitter) !void {
@@ -1268,73 +1069,3 @@ pub fn isImportDecl(decl: *const ast_mod.Declaration) bool {
     return c.callee.* == .primary and std.mem.eql(u8, c.callee.primary.name, "@import");
 }
 
-fn isConstByteSequenceDisplay(clean: []const u8) bool {
-    return std.mem.eql(u8, clean, "string") or
-        std.mem.eql(u8, clean, "const []u8") or
-        std.mem.eql(u8, clean, "[]const u8") or
-        std.mem.eql(u8, clean, "const []byte") or
-        std.mem.eql(u8, clean, "[]const byte");
-}
-
-fn optionalPayloadDisplay(clean: []const u8) ?[]const u8 {
-    if (clean.len > 1 and clean[0] == '?') {
-        const payload = std.mem.trim(u8, clean[1..], " \t");
-        if (payload.len > 0) return payload;
-    }
-    if (std.mem.endsWith(u8, clean, " | null")) {
-        const payload = std.mem.trim(u8, clean[0 .. clean.len - " | null".len], " \t");
-        if (payload.len > 0) return payload;
-    }
-    if (std.mem.startsWith(u8, clean, "null | ")) {
-        const payload = std.mem.trim(u8, clean["null | ".len..], " \t");
-        if (payload.len > 0) return payload;
-    }
-    return null;
-}
-
-const ArrayShape = struct {
-    length: ?usize,
-    elem: []const u8,
-    is_const: bool = false,
-};
-
-fn parseArrayShape(a: std.mem.Allocator, clean: []const u8) !?ArrayShape {
-    var s = clean;
-    var is_const = false;
-    if (std.mem.startsWith(u8, s, "const ")) {
-        is_const = true;
-        s = std.mem.trim(u8, s[6..], " \t");
-    }
-    if (s.len < 2 or s[0] != '[') return null;
-
-    var length: ?usize = null;
-    var rest: []const u8 = undefined;
-    if (s[1] == ']') {
-        rest = std.mem.trim(u8, s[2..], " \t");
-    } else {
-        var i: usize = 1;
-        while (i < s.len and s[i] >= '0' and s[i] <= '9') : (i += 1) {}
-        if (i == 1 or i >= s.len or s[i] != ']') return null;
-        length = std.fmt.parseInt(usize, s[1..i], 10) catch return null;
-        rest = std.mem.trim(u8, s[i + 1 ..], " \t");
-    }
-
-    var has_const = false;
-    if (std.mem.startsWith(u8, rest, "const ")) {
-        has_const = true;
-        rest = std.mem.trim(u8, rest[6..], " \t");
-    }
-    if (rest.len == 0) return null;
-
-    var elem = rest;
-    if (has_const) {
-        // `[]const []T` qualifies the element; `[]const u8` is the canonical
-        // `const []u8` read-only slice.
-        if (std.mem.startsWith(u8, rest, "[")) {
-            elem = try std.fmt.allocPrint(a, "const {s}", .{rest});
-        } else {
-            is_const = true;
-        }
-    }
-    return .{ .length = length, .elem = elem, .is_const = is_const };
-}

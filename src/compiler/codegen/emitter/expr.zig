@@ -227,14 +227,12 @@ pub fn emitCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) any
             if (at.kind == .struct_ or
                 (at.kind == .pointer and at.payload != null and at.payload.?.kind == .struct_))
             {
-                var display = at.display;
                 var object = try emitExpr(self, arg);
                 if (at.kind == .pointer) {
-                    display = at.payload.?.display;
                     object = try std.fmt.allocPrint(a, "({s}).*", .{object});
                 }
-                const info = (try self.structInfoForDisplay(arg, display)) orelse {
-                    return self.failAt(arg, "native backend cannot resolve struct type '{s}'", .{display});
+                const info = (try self.structInfoForValType(arg, at)) orelse {
+                    return self.failAt(arg, "native backend cannot resolve struct type '{s}'", .{at.display});
                 };
                 try args_buf.append(a, try std.fmt.allocPrint(a, "rt.print.Struct{{ .bytes = &lls_bytes_{s}({s}) }}", .{
                     info.zig_name, object,
@@ -1106,7 +1104,7 @@ pub fn resolveMemberField(self: *Emitter, node: *ast_mod.Node, m: *const ast_mod
     if (m.object.* == .primary and self.state.error_sets.contains(m.object.primary.name)) return null;
     const field_name = m.property.primary.name;
     const obj_t = try self.valueType(m.object);
-    const info = (try self.structInfoForDisplay(m.object, obj_t.display)) orelse return null;
+    const info = (try self.structInfoForValType(m.object, obj_t)) orelse return null;
     const index = info.field_index.get(field_name) orelse {
         return self.failAt(m.property, "native backend cannot resolve field '{s}'", .{field_name});
     };

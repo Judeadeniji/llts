@@ -1,5 +1,6 @@
 const std = @import("std");
 const ast_mod = @import("../../../ast/root.zig");
+const ir = @import("../../typecheck/ir.zig");
 const root_mod = @import("root.zig");
 const prescan_mod = @import("prescan.zig");
 const expr_mod = @import("expr.zig");
@@ -49,7 +50,7 @@ pub fn emitAssignment(self: *Emitter, node: *ast_mod.Node, asn: *const ast_mod.A
                 return self.failAt(asn.left, "native backend only supports assigning to names", .{});
             }
             const target = try self.lookupBinding(asn.left, p.name);
-            const vt = try self.valTypeOrClassify(node, target.ir_type, target.display);
+            const vt = try self.valTypeFor(node, target.ir_type, target.display);
             try self.requireValueType(node, vt);
             const rhs = if (bit_op) |op|
                 try expr_mod.emitCompoundBitwiseValue(self, asn.left, asn.right, op, vt)
@@ -288,6 +289,7 @@ pub fn emitCaptureCondFor(self: *Emitter, node: *ast_mod.Node, f: *const ast_mod
     const payload = cond_t.payload orelse {
         return self.failAt(node, "native backend cannot determine the optional payload type", .{});
     };
+    const payload_ir: ?ir.Type = if (self.recordedType(f.expr)) |t| ir.optionalPayload(t) else null;
 
     self.counter += 1;
     const id = self.counter;
@@ -297,7 +299,7 @@ pub fn emitCaptureCondFor(self: *Emitter, node: *ast_mod.Node, f: *const ast_mod
 
     self.pushScope();
     const probe = try a.create(Binding);
-    probe.* = .{ .name = f.captures[0].name, .zig_name = "", .display = payload.display };
+    probe.* = .{ .name = f.captures[0].name, .zig_name = "", .display = payload.display, .ir_type = payload_ir };
     try self.scopes.items[self.scopes.items.len - 1].put(f.captures[0].name, probe);
     try prescan_mod.preScanStmt(self, f.body);
     const cap_read = probe.read;
@@ -319,7 +321,7 @@ pub fn emitCaptureCondFor(self: *Emitter, node: *ast_mod.Node, f: *const ast_mod
     self.pushScope();
     defer self.popScope();
     const b = try a.create(Binding);
-    b.* = .{ .name = f.captures[0].name, .zig_name = cap_name, .display = payload.display };
+    b.* = .{ .name = f.captures[0].name, .zig_name = cap_name, .display = payload.display, .ir_type = payload_ir };
     try self.scopes.items[self.scopes.items.len - 1].put(f.captures[0].name, b);
     if (!cap_read) {
         try self.writeIndent();
@@ -539,6 +541,10 @@ pub fn emitIterableFor(self: *Emitter, node: *ast_mod.Node, f: *const ast_mod.Fo
     const elem_t = iter_t.elem orelse {
         return self.failAt(node, "native backend cannot determine the element type of '{s}'", .{iter_t.display});
     };
+    const elem_ir: ?ir.Type = if (self.recordedType(f.expr)) |t| switch (ir.peelDefined(t)) {
+        .array => |arr| arr.elem.*,
+        else => null,
+    } else null;
 
     self.counter += 1;
     const id = self.counter;
@@ -551,12 +557,12 @@ pub fn emitIterableFor(self: *Emitter, node: *ast_mod.Node, f: *const ast_mod.Fo
 
     self.pushScope();
     const probe0 = try a.create(Binding);
-    probe0.* = .{ .name = f.captures[0].name, .zig_name = "", .display = elem_t.display };
+    probe0.* = .{ .name = f.captures[0].name, .zig_name = "", .display = elem_t.display, .ir_type = elem_ir };
     try self.scopes.items[self.scopes.items.len - 1].put(f.captures[0].name, probe0);
     var probe1: ?*Binding = null;
     if (f.captures.len > 1) {
         const b = try a.create(Binding);
-        b.* = .{ .name = f.captures[1].name, .zig_name = "", .display = "int" };
+        b.* = .{ .name = f.captures[1].name, .zig_name = "", .display = "int", .ir_type = ir.TI64 };
         try self.scopes.items[self.scopes.items.len - 1].put(f.captures[1].name, b);
         probe1 = b;
     }
@@ -588,14 +594,14 @@ pub fn emitIterableFor(self: *Emitter, node: *ast_mod.Node, f: *const ast_mod.Fo
     defer self.popScope();
     {
         const b = try a.create(Binding);
-        b.* = .{ .name = f.captures[0].name, .zig_name = cap0_name, .display = elem_t.display };
+        b.* = .{ .name = f.captures[0].name, .zig_name = cap0_name, .display = elem_t.display, .ir_type = elem_ir };
         try self.scopes.items[self.scopes.items.len - 1].put(f.captures[0].name, b);
     }
     if (f.captures.len > 1) {
         try self.writeIndent();
         try self.writer.print("const {s}: i64 = @intCast({s});\n", .{ cap1_name, raw1_name });
         const b = try a.create(Binding);
-        b.* = .{ .name = f.captures[1].name, .zig_name = cap1_name, .display = "int" };
+        b.* = .{ .name = f.captures[1].name, .zig_name = cap1_name, .display = "int", .ir_type = ir.TI64 };
         try self.scopes.items[self.scopes.items.len - 1].put(f.captures[1].name, b);
     }
     if (!cap0_read) {
@@ -655,6 +661,7 @@ pub fn emitCaptureIfChain(self: *Emitter, i: *const ast_mod.If, first: bool) any
     const payload = cond_t.payload orelse {
         return self.failAt(i.condition, "native backend cannot determine the optional payload type", .{});
     };
+    const payload_ir: ?ir.Type = if (self.recordedType(i.condition)) |t| ir.optionalPayload(t) else null;
     const pipe = i.pipe_value.?;
     const capture_name = switch (pipe.*) {
         .primary => |p| if (p.kind == .identifier or p.kind == .register)
@@ -671,7 +678,7 @@ pub fn emitCaptureIfChain(self: *Emitter, i: *const ast_mod.If, first: bool) any
 
     self.pushScope();
     const probe = try a.create(Binding);
-    probe.* = .{ .name = capture_name, .zig_name = "", .display = payload.display };
+    probe.* = .{ .name = capture_name, .zig_name = "", .display = payload.display, .ir_type = payload_ir };
     try self.scopes.items[self.scopes.items.len - 1].put(capture_name, probe);
     try prescan_mod.preScanStmt(self, i.body);
     const cap_read = probe.read;
@@ -685,7 +692,7 @@ pub fn emitCaptureIfChain(self: *Emitter, i: *const ast_mod.If, first: bool) any
     self.pushScope();
     defer self.popScope();
     const b = try a.create(Binding);
-    b.* = .{ .name = capture_name, .zig_name = cap_name, .display = payload.display };
+    b.* = .{ .name = capture_name, .zig_name = cap_name, .display = payload.display, .ir_type = payload_ir };
     try self.scopes.items[self.scopes.items.len - 1].put(capture_name, b);
     if (!cap_read) {
         try self.writeIndent();
@@ -816,7 +823,7 @@ pub fn emitLocalDeclaration(self: *Emitter, node: *ast_mod.Node, d: *const ast_m
         try self.scopes.items[self.scopes.items.len - 1].put(d.name, info);
         return;
     }
-    const vt = try self.valTypeOrClassify(node, info.ir_type, info.display);
+    const vt = try self.valTypeFor(node, info.ir_type, info.display);
     try self.requireValueType(node, vt);
     if (info.zig_name.len == 0) info.zig_name = try self.localName(d.name);
 
@@ -897,6 +904,7 @@ pub fn emitRangeFor(self: *Emitter, node: *ast_mod.Node, f: *const ast_mod.For) 
             .name = f.captures[0].name,
             .zig_name = cap_name,
             .display = "int",
+            .ir_type = ir.TI64,
         };
         if (range_mod.loopCapture(self, f)) |int_range| {
             try self.int_ranges.put(@intFromPtr(b), int_range);
