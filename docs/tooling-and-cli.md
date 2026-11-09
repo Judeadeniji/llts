@@ -10,6 +10,7 @@ The `llts` binary operates as both a just-in-time runner and an optimizing compi
 
 ```text
 Usage:
+  llts [flags]
   llts <command> [flags] [arguments]
 
 Commands:
@@ -44,6 +45,10 @@ llts run --native src/main.lls
 
 # Run natively with ReleaseFast optimizations
 llts run --native -O ReleaseFast src/main.lls
+
+# Evaluate code directly without creating a file
+llts -e 'print("Hello, world!")'
+llts run -e 'print(1 + 2)'
 ```
 
 > [!NOTE]
@@ -159,6 +164,7 @@ main: addr=0003 arity=0 variadic=false source_index=0
 | Flag | Short | Environment Variable | Default | Description |
 |---|---|---|---|---|
 | `--native` | `-n` | — | `false` | Enable the native backend (compiles machine code via Zig; implies `--strict`). |
+| `--eval` | `-e` | — | `""` | Evaluate inline source code string directly. |
 | `--strict` | `-s` | — | `false` (VM)<br>`true` (Native) | Enforce sound typing (mandatory parameter types, strict null/union safety). |
 | `--optimize` | `-O` | — | `Debug` | Native optimization mode: `Debug`, `ReleaseFast`, `ReleaseSafe`, `ReleaseSmall`. |
 | `--release` | `-r` | — | `false` | Disables debug symbols; sets optimization mode to `ReleaseFast`. |

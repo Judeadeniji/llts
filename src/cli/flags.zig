@@ -134,6 +134,14 @@ pub const version_flag = zli.Flag{
     .default_value = .{ .Bool = false },
 };
 
+pub const eval = zli.Flag{
+    .name = "eval",
+    .shortcut = "e",
+    .description = "Evaluate inline source code",
+    .type = .String,
+    .default_value = .{ .String = "" },
+};
+
 pub fn addCompileFlags(cmd: *zli.Command) !void {
     try cmd.addFlag(log_level);
     try cmd.addFlag(release);
@@ -155,6 +163,7 @@ pub fn addCompileFlags(cmd: *zli.Command) !void {
 pub fn addRunFlags(cmd: *zli.Command) !void {
     try addCompileFlags(cmd);
     try cmd.addFlag(max_memory);
+    try cmd.addFlag(eval);
 }
 
 pub fn addEmitZigFlags(cmd: *zli.Command) !void {

@@ -15,6 +15,10 @@ fn showHelp(ctx: zli.CommandContext) !void {
         version.print();
         std.process.exit(0);
     }
+    const eval_code = ctx.flag("eval", []const u8);
+    if (eval_code.len > 0) {
+        return run.execute(ctx);
+    }
     common.setLogLevel(ctx);
     try ctx.command.printHelp();
 }
@@ -26,7 +30,7 @@ pub fn build(stdout: anytype, stdin: anytype, gpa: std.mem.Allocator) !*zli.Comm
         .version = version.VERSION,
     }, showHelp);
 
-    try root.addFlag(flags.log_level);
+    try flags.addRunFlags(root);
     try root.addFlag(flags.version_flag);
 
     const version_sub = try zli.Command.init(stdout, stdin, gpa, .{
@@ -44,7 +48,7 @@ pub fn build(stdout: anytype, stdin: anytype, gpa: std.mem.Allocator) !*zli.Comm
     try run_cmd.addPositionalArg(.{
         .name = "file",
         .description = "Source (.lls) or bytecode (.llb) file to run",
-        .required = true,
+        .required = false,
     });
     try run_cmd.addPositionalArg(.{
         .name = "args",

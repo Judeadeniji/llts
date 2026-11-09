@@ -49,9 +49,40 @@ pub fn compileToFile(
     };
 }
 
-pub fn runFile(
+fn hasMain(allocator: std.mem.Allocator, source: []const u8) bool {
+    var scan_res = llts.scanner.scan(allocator, source, "[eval]") catch return false;
+    defer llts.scanner.deinitScanResult(&scan_res);
+
+    var i: usize = 0;
+    while (i + 1 < scan_res.tokens.items.len) : (i += 1) {
+        const tok = scan_res.tokens.items[i];
+        if (std.mem.eql(u8, tok.value, "func")) {
+            const next_tok = scan_res.tokens.items[i + 1];
+            if (next_tok.type == .identifier and std.mem.eql(u8, next_tok.value, "main")) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+pub fn prepareEvalSource(allocator: std.mem.Allocator, code: []const u8) ![]u8 {
+    if (hasMain(allocator, code)) {
+        return try allocator.dupe(u8, code);
+    }
+    const trimmed = std.mem.trim(u8, code, " \t\r\n");
+    const needs_semi = trimmed.len > 0 and trimmed[trimmed.len - 1] != ';' and trimmed[trimmed.len - 1] != '}';
+    if (needs_semi) {
+        return try std.fmt.allocPrint(allocator, "{s};\npub @func main() {{}}\n", .{code});
+    } else {
+        return try std.fmt.allocPrint(allocator, "{s}\npub @func main() {{}}\n", .{code});
+    }
+}
+
+pub fn runSource(
     allocator: std.mem.Allocator,
     path: []const u8,
+    source: []const u8,
     release: bool,
     strict: bool,
     script_args: []const []const u8,
@@ -59,9 +90,6 @@ pub fn runFile(
     comptime_max_loop_iterations: ?usize,
 ) !void {
     llts.diag.reset();
-    const source = common.readSourceOrExit(allocator, path);
-    defer allocator.free(source);
-
     llts.runSource(allocator, path, source, .{
         .debug = !release,
         .strict = strict,
@@ -74,6 +102,20 @@ pub fn runFile(
         }
         std.process.exit(1);
     };
+}
+
+pub fn runFile(
+    allocator: std.mem.Allocator,
+    path: []const u8,
+    release: bool,
+    strict: bool,
+    script_args: []const []const u8,
+    max_memory: usize,
+    comptime_max_loop_iterations: ?usize,
+) !void {
+    const source = common.readSourceOrExit(allocator, path);
+    defer allocator.free(source);
+    try runSource(allocator, path, source, release, strict, script_args, max_memory, comptime_max_loop_iterations);
 }
 
 pub fn dumpFile(
@@ -152,6 +194,40 @@ pub fn emitZig(
     }
 }
 
+pub fn compileNativeSource(
+    allocator: std.mem.Allocator,
+    path: []const u8,
+    source: []const u8,
+    release: bool,
+    strict: bool,
+    out_path: []const u8,
+    comptime_max_loop_iterations: ?usize,
+    zig_bin: []const u8,
+    target: ?[]const u8,
+    zig_opt: ?[]const u8,
+    emit_mode: llts.pipeline.EmitZigOptions.EmitMode,
+    runtime_path: ?[]const u8,
+    zig_args: []const []const u8,
+) !void {
+    llts.diag.reset();
+    llts.pipeline.compileNativeBinary(allocator, path, source, out_path, .{
+        .debug = !release,
+        .strict = strict,
+        .comptime_max_loop_iterations = comptime_max_loop_iterations,
+        .zig_bin = zig_bin,
+        .target = target,
+        .zig_optimize = zig_opt,
+        .emit_mode = emit_mode,
+        .runtime_path = runtime_path orelse "src/runtime/root.zig",
+        .zig_args = zig_args,
+    }) catch |err| {
+        if (!llts.diag.wasEmitted()) {
+            common.failExit("Native compile failed: {s}", .{common.reason(err)});
+        }
+        std.process.exit(1);
+    };
+}
+
 /// Compile an LLTS source file to a native binary via the native backend.
 /// Strict mode is on by default for native targets.
 pub fn compileNative(
@@ -168,23 +244,52 @@ pub fn compileNative(
     runtime_path: ?[]const u8,
     zig_args: []const []const u8,
 ) !void {
-    llts.diag.reset();
     const source = common.readSourceOrExit(allocator, path);
     defer allocator.free(source);
+    try compileNativeSource(
+        allocator,
+        path,
+        source,
+        release,
+        strict,
+        out_path,
+        comptime_max_loop_iterations,
+        zig_bin,
+        target,
+        zig_opt,
+        emit_mode,
+        runtime_path,
+        zig_args,
+    );
+}
 
-    llts.pipeline.compileNativeBinary(allocator, path, source, out_path, .{
+pub fn runNativeSource(
+    allocator: std.mem.Allocator,
+    path: []const u8,
+    source: []const u8,
+    release: bool,
+    strict: bool,
+    script_args: []const []const u8,
+    comptime_max_loop_iterations: ?usize,
+    zig_bin: []const u8,
+    target: ?[]const u8,
+    zig_opt: ?[]const u8,
+    runtime_path: ?[]const u8,
+    zig_args: []const []const u8,
+) !u8 {
+    llts.diag.reset();
+    return llts.pipeline.runNativeBinary(allocator, path, source, script_args, .{
         .debug = !release,
         .strict = strict,
         .comptime_max_loop_iterations = comptime_max_loop_iterations,
         .zig_bin = zig_bin,
         .target = target,
         .zig_optimize = zig_opt,
-        .emit_mode = emit_mode,
         .runtime_path = runtime_path orelse "src/runtime/root.zig",
         .zig_args = zig_args,
     }) catch |err| {
         if (!llts.diag.wasEmitted()) {
-            common.failExit("Native compile failed: {s}", .{common.reason(err)});
+            common.failExit("Native run failed: {s}", .{common.reason(err)});
         }
         std.process.exit(1);
     };
@@ -206,56 +311,20 @@ pub fn runNative(
     runtime_path: ?[]const u8,
     zig_args: []const []const u8,
 ) !u8 {
-    // Absolute path so spawn does not PATH-search a relative name.
-    const cwd_path = try std.fs.cwd().realpathAlloc(allocator, ".");
-    defer allocator.free(cwd_path);
-    const out_path = try std.fmt.allocPrint(allocator, "{s}/.llts_run_{d}", .{ cwd_path, std.time.milliTimestamp() });
-    defer allocator.free(out_path);
-
-    try compileNative(
+    const source = common.readSourceOrExit(allocator, path);
+    defer allocator.free(source);
+    return try runNativeSource(
         allocator,
         path,
+        source,
         release,
         strict,
-        out_path,
+        script_args,
         comptime_max_loop_iterations,
         zig_bin,
         target,
         zig_opt,
-        .bin,
         runtime_path,
         zig_args,
     );
-
-    var argv: std.ArrayList([]const u8) = .empty;
-    defer argv.deinit(allocator);
-    try argv.append(allocator, out_path);
-    try argv.appendSlice(allocator, script_args);
-
-    var child = std.process.Child.init(argv.items, allocator);
-    child.stdin_behavior = .Inherit;
-    child.stdout_behavior = .Inherit;
-    child.stderr_behavior = .Inherit;
-    const term = child.spawnAndWait() catch |err| {
-        std.fs.deleteFileAbsolute(out_path) catch {};
-        common.failExit("Cannot run native binary \"{s}\": {s}", .{ out_path, common.reason(err) });
-    };
-
-    std.fs.deleteFileAbsolute(out_path) catch {};
-
-    return switch (term) {
-        .Exited => |code| code,
-        .Signal => |sig| {
-            io.printStderr("Error: native program terminated by signal {d}\n", .{sig});
-            return 1;
-        },
-        .Stopped => |sig| {
-            io.printStderr("Error: native program stopped by signal {d}\n", .{sig});
-            return 1;
-        },
-        .Unknown => |code| {
-            io.printStderr("Error: native program ended with status {d}\n", .{code});
-            return 1;
-        },
-    };
 }

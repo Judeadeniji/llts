@@ -127,3 +127,99 @@ test "range for" {
     try std.testing.expectEqual(@as(u8, 0), result.code);
     try std.testing.expect(std.mem.indexOf(u8, result.stdout, "3") != null);
 }
+
+test "eval flag root" {
+    const allocator = std.testing.allocator;
+    var child = std.process.Child.init(&.{
+        "zig-out/bin/llts",
+        "-e",
+        "print(10 + 32)",
+    }, allocator);
+    child.stdout_behavior = .Pipe;
+    child.stderr_behavior = .Pipe;
+    try child.spawn();
+    const stdout = try child.stdout.?.readToEndAlloc(allocator, 1024 * 1024);
+    defer allocator.free(stdout);
+    const stderr = try child.stderr.?.readToEndAlloc(allocator, 1024 * 1024);
+    defer allocator.free(stderr);
+    const term = try child.wait();
+    const code: u8 = switch (term) {
+        .Exited => |c| @intCast(c),
+        else => 1,
+    };
+    try std.testing.expectEqual(@as(u8, 0), code);
+    try std.testing.expect(std.mem.indexOf(u8, stdout, "42") != null);
+}
+
+test "eval flag run subcommand" {
+    const allocator = std.testing.allocator;
+    var child = std.process.Child.init(&.{
+        "zig-out/bin/llts",
+        "run",
+        "-e",
+        "print(7 * 6)",
+    }, allocator);
+    child.stdout_behavior = .Pipe;
+    child.stderr_behavior = .Pipe;
+    try child.spawn();
+    const stdout = try child.stdout.?.readToEndAlloc(allocator, 1024 * 1024);
+    defer allocator.free(stdout);
+    const stderr = try child.stderr.?.readToEndAlloc(allocator, 1024 * 1024);
+    defer allocator.free(stderr);
+    const term = try child.wait();
+    const code: u8 = switch (term) {
+        .Exited => |c| @intCast(c),
+        else => 1,
+    };
+    try std.testing.expectEqual(@as(u8, 0), code);
+    try std.testing.expect(std.mem.indexOf(u8, stdout, "42") != null);
+}
+
+test "eval flag with args" {
+    const allocator = std.testing.allocator;
+    var child = std.process.Child.init(&.{
+        "zig-out/bin/llts",
+        "-e",
+        "print(__args()[1])",
+        "hello_from_arg",
+    }, allocator);
+    child.stdout_behavior = .Pipe;
+    child.stderr_behavior = .Pipe;
+    try child.spawn();
+    const stdout = try child.stdout.?.readToEndAlloc(allocator, 1024 * 1024);
+    defer allocator.free(stdout);
+    const stderr = try child.stderr.?.readToEndAlloc(allocator, 1024 * 1024);
+    defer allocator.free(stderr);
+    const term = try child.wait();
+    const code: u8 = switch (term) {
+        .Exited => |c| @intCast(c),
+        else => 1,
+    };
+    try std.testing.expectEqual(@as(u8, 0), code);
+    try std.testing.expect(std.mem.indexOf(u8, stdout, "hello_from_arg") != null);
+}
+
+test "eval flag native" {
+    const allocator = std.testing.allocator;
+    var child = std.process.Child.init(&.{
+        "zig-out/bin/llts",
+        "run",
+        "--native",
+        "-e",
+        "pub @func main() { print(999); }",
+    }, allocator);
+    child.stdout_behavior = .Pipe;
+    child.stderr_behavior = .Pipe;
+    try child.spawn();
+    const stdout = try child.stdout.?.readToEndAlloc(allocator, 1024 * 1024);
+    defer allocator.free(stdout);
+    const stderr = try child.stderr.?.readToEndAlloc(allocator, 1024 * 1024);
+    defer allocator.free(stderr);
+    const term = try child.wait();
+    const code: u8 = switch (term) {
+        .Exited => |c| @intCast(c),
+        else => 1,
+    };
+    try std.testing.expectEqual(@as(u8, 0), code);
+    try std.testing.expect(std.mem.indexOf(u8, stdout, "999") != null);
+}

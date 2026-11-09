@@ -11,6 +11,7 @@ const zig_backend = @import("compiler/codegen/root.zig");
 const print_fmt = @import("vm/builtins/print.zig");
 const report = @import("errors/report.zig");
 const diag = @import("errors/diag.zig");
+const io = @import("io/root.zig");
 
 pub const RunOptions = struct {
     debug: bool = true,
@@ -301,6 +302,113 @@ pub fn compileNativeBinary(
     try reportNativeBuildFailure(allocator, path, source, out.items, tmp_name, zig_stderr);
     diag.markEmitted();
     return error.NativeBuildFailed;
+}
+
+/// Run an LLTS source directly via `zig run` without creating a persistent binary.
+pub fn runNativeBinary(
+    allocator: std.mem.Allocator,
+    path: []const u8,
+    source: []const u8,
+    script_args: []const []const u8,
+    options: EmitZigOptions,
+) !u8 {
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(allocator);
+
+    try emitZigCode(allocator, path, source, out.writer(allocator), options);
+
+    const tmp_name = try std.fmt.allocPrint(
+        allocator,
+        ".llts_native_{d}.zig",
+        .{std.time.milliTimestamp()},
+    );
+    defer allocator.free(tmp_name);
+    try std.fs.cwd().writeFile(.{ .sub_path = tmp_name, .data = out.items });
+    defer std.fs.cwd().deleteFile(tmp_name) catch {};
+
+    var args: std.ArrayList([]const u8) = .empty;
+    defer args.deinit(allocator);
+
+    try args.append(allocator, options.zig_bin);
+    try args.append(allocator, "run");
+    if (options.target) |target| {
+        try args.append(allocator, "-target");
+        try args.append(allocator, target);
+    }
+    if (options.zig_optimize) |mode| {
+        try args.append(allocator, "-O");
+        try args.append(allocator, mode);
+    }
+    try args.append(allocator, "-lc");
+    for (options.zig_args) |extra| try args.append(allocator, extra);
+    try args.append(allocator, tmp_name);
+    if (script_args.len > 0) {
+        try args.append(allocator, "--");
+        for (script_args) |arg| {
+            try args.append(allocator, arg);
+        }
+    }
+
+    var child = std.process.Child.init(args.items, allocator);
+    child.stdin_behavior = .Inherit;
+    child.stdout_behavior = .Inherit;
+    child.stderr_behavior = .Pipe;
+    child.spawn() catch |err| {
+        std.debug.print("error: failed to run '{s}': {s} (set --zig-bin or LLTS_ZIG_BIN)\n", .{
+            options.zig_bin,
+            @errorName(err),
+        });
+        diag.markEmitted();
+        return error.NativeBuildFailed;
+    };
+
+    const zig_stderr = child.stderr.?.readToEndAlloc(allocator, 8 * 1024 * 1024) catch {
+        _ = child.wait() catch {};
+        std.debug.print("error: failed to read zig output\n", .{});
+        diag.markEmitted();
+        return error.NativeBuildFailed;
+    };
+    defer allocator.free(zig_stderr);
+
+    const term = child.wait() catch |err| {
+        std.debug.print("error: waiting for zig failed: {s}\n", .{@errorName(err)});
+        diag.markEmitted();
+        return error.NativeBuildFailed;
+    };
+
+    const code: u8 = switch (term) {
+        .Exited => |c| c,
+        .Signal => |sig| {
+            io.printStderr("Error: native program terminated by signal {d}\n", .{sig});
+            return 1;
+        },
+        .Stopped => |sig| {
+            io.printStderr("Error: native program stopped by signal {d}\n", .{sig});
+            return 1;
+        },
+        .Unknown => |c| {
+            io.printStderr("Error: native program ended with status {d}\n", .{c});
+            return 1;
+        },
+    };
+
+    if (code == 0) {
+        if (zig_stderr.len > 0) {
+            io.printStderr("{s}", .{zig_stderr});
+        }
+        return 0;
+    }
+
+    if (firstZigDiagnostic(zig_stderr, tmp_name) != null) {
+        try reportNativeBuildFailure(allocator, path, source, out.items, tmp_name, zig_stderr);
+        diag.markEmitted();
+        return code;
+    }
+
+    if (zig_stderr.len > 0) {
+        io.printStderr("{s}", .{zig_stderr});
+    }
+    return code;
 }
 
 const GeneratedSite = struct {

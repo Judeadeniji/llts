@@ -13,6 +13,7 @@ pub fn execute(ctx: zli.CommandContext) !void {
     const flag_emit_asm = ctx.flag("emit-asm", bool);
     const emit_kind = ctx.flag("emit", []const u8);
     _ = ctx.flag("emit-bytecode", bool);
+    const eval_code = ctx.flag("eval", []const u8);
 
     if (flag_emit_zig) {
         common.failExit("`llts run` cannot emit Zig source; use `llts emit-zig`", .{});
@@ -25,9 +26,64 @@ pub fn execute(ctx: zli.CommandContext) !void {
     // Native targets require strict mode by default (same as `build --native`).
     const strict = ctx.flag("strict", bool) or is_native;
 
-    const file = ctx.getArg("file").?;
     const max_memory = common.getMaxMemory(ctx.allocator, ctx);
     const comptime_iters = common.getComptimeMaxLoopIterations(ctx.allocator, ctx);
+
+    if (eval_code.len > 0) {
+        const source = try pipeline.prepareEvalSource(ctx.allocator, eval_code);
+        defer ctx.allocator.free(source);
+        const program_args = ctx.positional_args;
+
+        if (is_native) {
+            const zig_bin = try common.getZigBin(ctx.allocator, ctx);
+            errdefer ctx.allocator.free(zig_bin);
+            const target = common.getTarget(ctx);
+            const opt = common.getOptimize(ctx);
+            const runtime_path = common.getRuntimePath(ctx);
+            const zig_args = try common.getZigArgsFlagsOnly(ctx.allocator, ctx);
+            errdefer {
+                for (zig_args) |arg| ctx.allocator.free(arg);
+                ctx.allocator.free(zig_args);
+            }
+
+            const code = try pipeline.runNativeSource(
+                ctx.allocator,
+                "[eval]",
+                source,
+                release,
+                strict,
+                program_args,
+                comptime_iters,
+                zig_bin,
+                target,
+                opt,
+                runtime_path,
+                zig_args,
+            );
+            for (zig_args) |arg| ctx.allocator.free(arg);
+            ctx.allocator.free(zig_args);
+            ctx.allocator.free(zig_bin);
+            std.process.exit(code);
+        }
+
+        try pipeline.runSource(
+            ctx.allocator,
+            "[eval]",
+            source,
+            release,
+            strict,
+            program_args,
+            max_memory,
+            comptime_iters,
+        );
+        return;
+    }
+
+    const maybe_file = ctx.getArg("file");
+    if (maybe_file == null or maybe_file.?.len == 0) {
+        common.failExit("Missing source or bytecode file to run; use `llts run <file>` or `llts -e <code>`", .{});
+    }
+    const file = maybe_file.?;
 
     var program_args: []const []const u8 = &[_][]const u8{};
     if (ctx.positional_args.len > 1) {
