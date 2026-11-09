@@ -38,6 +38,9 @@ Welcome to the documentation for LLTS — a small systems language with a compac
 - [**Functions & Methods**](functions.md)  
   Function declarations (`@func`), entry point (`pub @func main`), parameter conventions, variadics (`...args`), struct methods with value and pointer receivers (`self` vs `self: *T`), first-class function values, the pipe operator (`|>`), and compile-time type functions.
 
+- [**Functional Programming & The Pipe Operator**](functional-and-pipes.md)  
+  First-class function types (`@func(...)`), function variables, higher-order functions, the pipe operator (`|>`), chaining syntax, precedence, method pipes, and zero-cost backend lowering.
+
 - [**Error Handling**](error-handling.md)  
   Explicit, typed error values: closed error sets (`@error`), dynamic errors (`error("...")`), error unions (`T | Error`), try propagation (`?`), assertion unwrap (`.?`), runtime checks (`@isError`), exhaustive matching (`@switch`), and cleanup with `errdefer`.
 

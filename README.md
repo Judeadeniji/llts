@@ -58,6 +58,7 @@ Comprehensive guides and specifications are available in the [`docs/`](./docs) d
 - [**Type System Guide**](./docs/types/README.md) — Primitive widths (`i8`–`i64`, `u1`–`u64`, floats), compound data (`[N]T`, `[]T`, `[A, B]`, `*T`), algebraic types (`?T`, `A | B`, narrowing), and user types (`@struct`, `@enum`, `@error`).
 - [**Control Flow**](./docs/control-flow.md) — Value-producing `@if`, pattern matching `@switch`, labeled continue, `@for` loops, and labeled blocks.
 - [**Functions & Methods**](./docs/functions.md) — Function declarations (`@func`), entry point (`pub @func main`), variadics (`...args`), struct methods (`self` vs `self: *T`), first-class functions, and pipes (`|>`).
+- [**Functional Programming & The Pipe Operator**](./docs/functional-and-pipes.md) — First-class function types (`@func(...)`), higher-order functions, the pipe operator (`|>`), chaining semantics, precedence, and zero-cost backend lowering.
 - [**Error Handling**](./docs/error-handling.md) — Closed error sets (`@error`), dynamic errors, error unions (`T ! E`), try propagation (`?`), unwrap (`.?`), and cleanup with `errdefer`.
 - [**Memory Model & Safety**](./docs/memory-and-safety.md) — Frame-local region stack allocation, compile-time escape analysis, auto-cloning scalar structs, and LIFO cleanups (`defer`/`errdefer`).
 - [**Metaprogramming & Compile-Time**](./docs/metaprogramming.md) — Type introspection (`@typeOf`, `@sizeOf`, `@nameOf`), explicit casting (`@as`), generic type functions, monomorphization, and `@comptime`.
