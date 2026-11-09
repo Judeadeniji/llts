@@ -897,7 +897,7 @@ pub const Emitter = struct {
         if (self.globals.get(name)) |g| {
             return .{ .zig_name = g.zig_name, .display = g.display };
         }
-        return self.failAt(node, "native backend cannot resolve '{s}' (imports/aggregates are Phase 3)", .{name});
+        return self.failAt(node, "native backend cannot resolve '{s}'", .{name});
     }
 
     pub fn mangle(self: *Emitter, name: []const u8) ![]const u8 {

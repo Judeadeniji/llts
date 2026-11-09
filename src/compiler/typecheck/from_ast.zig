@@ -651,7 +651,23 @@ fn resolveImportedType(node: *ast.Node, state: ?*state_mod.CompilerState, ta: ir
     }
 
     const q = resolveStructName(st, node) orelse {
-        return compile_error.compileFailFmt(st, "Unknown type", .{});
+        const loc = node.loc();
+        const path = if (loc.path.len > 0) loc.path else st.chunk.file;
+        // Name the type the user actually wrote; resolution already failed, so
+        // this must come from the AST rather than a second type lookup.
+        const written = switch (node.*) {
+            .primary => |p| p.name,
+            .member => |m| if (m.property.* == .primary) m.property.primary.name else "<type expression>",
+            else => "<type expression>",
+        };
+        return compile_error.compileFailAt(
+            st,
+            path,
+            loc.line,
+            loc.column,
+            "Unknown type '{s}'",
+            .{written},
+        );
     };
     if (st.typedefs.contains(q)) {
         try checkStructInitExport(st, node, q);
