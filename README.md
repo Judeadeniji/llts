@@ -48,6 +48,8 @@ Bindings are introduced with `$`; the sigil is only used at the declaration site
 
 Comprehensive guides are available in the [`docs/`](./docs) directory:
 
+- [**Getting Started**](./docs/getting-started.md) — Prerequisites, building from source, writing your first `.lls` program, and running on the VM vs native compiler.
+- [**Language Tour**](./docs/tour.md) — Fast-paced walkthrough of LLTS: bindings, honest widths, arrays/slices, control flow expressions, methods, memory model, errors, and metaprogramming.
 - [**Language Reference**](./docs/language-reference.md) — Detailed guide to declarations, control flow, operators, type system, memory semantics, error handling, and modules.
 - [**Inline Assembly Guide**](./docs/inline-assembly.md) — Reference for the `@asm` intrinsic in native compilation, including operand constraints, clobbers, register mapping, and verified Linux x86-64 examples.
 
