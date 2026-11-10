@@ -2154,7 +2154,7 @@ fn inferCall(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, call_
     const name: ?[]const u8 = if (method) |m| m.name else resolveCalleeName(state, c);
     const named_fn = if (name) |n| state.functions.contains(n) else false;
     if (name != null and (method != null or named_fn)) {
-        try state.call_targets.put(c.callee, .{
+        const target: state_mod.CallTarget = .{
             .key = name.?,
             .receiver_mode = if (method != null)
                 (if (methodSelfIsPointerLike(state, name.?))
@@ -2163,7 +2163,10 @@ fn inferCall(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, call_
                     state_mod.ReceiverModeKind.value)
             else
                 state_mod.ReceiverModeKind.none,
-        });
+            .generic_instance = null,
+        };
+        try state.call_targets.put(call_node, target);
+        try state.call_targets.put(c.callee, target);
     }
     if (method != null or named_fn) {
         var params: std.ArrayList(ir.Type) = .empty;
@@ -2389,6 +2392,13 @@ fn inferGenericCall(
 
     const inst = try generics.instantiateFunction(state, name, template, qualified.items, clean.items, call_node.loc());
     try state.generic_calls.put(call_node, .{ .instance = inst, .template = template });
+    const target: state_mod.CallTarget = .{
+        .key = inst,
+        .receiver_mode = .none,
+        .generic_instance = inst,
+    };
+    try state.call_targets.put(call_node, target);
+    try state.call_targets.put(c.callee, target);
 
     var params: std.ArrayList(ir.Type) = .empty;
     defer params.deinit(ta.allocator);

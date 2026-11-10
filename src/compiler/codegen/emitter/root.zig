@@ -11,10 +11,9 @@
 //! comparisons, string concatenation, `print`, structured `@if`, scalar
 //! `@switch`, loops, aggregates (structs/arrays/slices/optionals/pointers),
 //! error values and unions, struct methods (pointer and by-value `self`),
-//! and `@import` modules (qualified calls, structs, and globals). Function
-//! values are statically devirtualized into direct calls (see
-//! `resolveFunctionValue`), so no runtime function type is emitted; using one
-//! as a value is rejected. Remaining gaps (native `__*` std backends) are
+//! and `@import` modules (qualified calls, structs, and globals). Calls are
+//! resolved during typecheck and recorded in `state.call_targets`; using a function
+//! as a runtime value is rejected. Remaining gaps (native `__*` std backends) are
 //! rejected with a compile-time diagnostic. The LLTS typechecker owns semantic
 //! validation; the emitter only rejects shapes it cannot lower and never adds
 //! its own runtime assertions.
@@ -29,7 +28,6 @@ const widths = @import("../../widths.zig");
 const compile_errors = @import("../../../errors/compile.zig");
 const root_mod = @import("../root.zig");
 const unit_mod = @import("unit.zig");
-const prescan_mod = @import("prescan.zig");
 const stmt_mod = @import("stmt.zig");
 const expr_mod = @import("expr.zig");
 
@@ -642,59 +640,18 @@ pub const Emitter = struct {
     /// is a struct (or `*struct`) and `method` is not a field.
     pub fn methodTarget(self: *Emitter, member: *ast_mod.Node) anyerror!?MethodTarget {
         if (member.* != .member) return null;
-        const m = member.member;
-        const object = m.object;
-        if (m.property.* != .primary) return null;
-        const prop = m.property.primary.name;
-        // Typecheck's recorded target wins over re-resolution.
-        if (self.state.call_targets.get(member)) |t| {
-            const recv_t = try self.valueType(object);
-            return .{
-                .key = t.key,
-                .mode = switch (t.receiver_mode) {
-                    .none => .none,
-                    .pointer => .pointer,
-                    .value => .value,
-                },
-                .receiver_is_pointer = recv_t.kind == .pointer,
-            };
-        }
-        // Module exports are not receivers; resolve them through the static path.
-        if ((path_mod.tryResolveStaticPath(self.state, object) catch null) != null) return null;
-        const recv_t = try self.valueType(object);
-        if (recv_t.may_error or recv_t.kind == .error_value) return null;
-        const struct_t: ValType = switch (recv_t.kind) {
-            .struct_ => recv_t,
-            .pointer => if (recv_t.payload != null and recv_t.payload.?.kind == .struct_) recv_t.payload.?.* else return null,
-            else => return null,
-        };
-        const sd = from_ast.lookupStruct(self.state, struct_t.clean) orelse return null;
-        if (sd.offsets.contains(prop)) return null;
-        const key = try std.fmt.allocPrint(self.arena.allocator(), "{s}::{s}", .{ sd.name, prop });
-        const def = self.state.functions.get(key) orelse return null;
+        const target = self.state.call_targets.get(member) orelse return null;
+        if (target.receiver_mode == .none) return null;
+        const recv_t = try self.valueType(member.member.object);
         return .{
-            .key = key,
-            .mode = self.methodSelfMode(def),
+            .key = target.key,
+            .mode = switch (target.receiver_mode) {
+                .none => .none,
+                .pointer => .pointer,
+                .value => .value,
+            },
             .receiver_is_pointer = recv_t.kind == .pointer,
         };
-    }
-
-    /// `self` shape for a method: absent, pointer-like (unannotated or `*T`), or
-    /// by-value (`self: T`, which the VM shallow-clones at the call site).
-    pub fn methodSelfMode(self: *Emitter, def: state_mod.FunctionDef) ReceiverMode {
-        if (def.node.* != .function_decl) return .none;
-        const f = &def.node.function_decl;
-        const plist = switch (f.params.*) {
-            .params => |p| p.params,
-            else => return .none,
-        };
-        if (plist.len == 0) return .none;
-        const self_param = plist[0];
-        if (!std.mem.eql(u8, self_param.name, "self")) return .none;
-        const ann = self_param.type_annotation orelse return .pointer;
-        const disp = from_ast.typeAstToDisplay(ann, self.state) catch null;
-        if (disp == null or disp.?.len == 0) return .pointer;
-        return if (disp.?[0] == '*') .pointer else .value;
     }
 
     pub fn lookupBindingOptional(self: *Emitter, name: []const u8) ?*Binding {
@@ -704,35 +661,6 @@ pub const Emitter = struct {
             if (self.scopes.items[i].get(name)) |b| return b;
         }
         return null;
-    }
-
-    /// Static function value: a function name, a binding/global holding one, a
-    /// module export, or a call whose callee statically returns one. Null when
-    /// the expression is a runtime value. Depth-capped for recursion.
-    pub fn resolveFunctionValue(self: *Emitter, node: *ast_mod.Node, depth: u32) anyerror!?[]const u8 {
-        if (depth > 8) return null;
-        switch (node.*) {
-            .primary => |p| {
-                if (p.kind != .identifier and p.kind != .register) return null;
-                if (self.state.functions.contains(p.name)) return p.name;
-                if (self.lookupBindingOptional(p.name)) |b| {
-                    if (b.fn_key) |k| return k;
-                    return null;
-                }
-                if (self.globals.get(p.name)) |g| return g.fn_key;
-                return null;
-            },
-            .member => {
-                const key = (path_mod.tryResolveStaticPath(self.state, node) catch null) orelse return null;
-                if (self.state.functions.contains(key)) return key;
-                return null;
-            },
-            .call => |c| {
-                const callee_key = (try self.resolveCallTargetKey(&c, depth)) orelse return null;
-                return try self.functionReturnsFunction(callee_key, depth + 1);
-            },
-            else => return null,
-        }
     }
 
     /// Module namespace value (`std.fmt`, `lib.sub`) or null.
@@ -754,87 +682,6 @@ pub const Emitter = struct {
                 return null;
             },
             else => return null,
-        }
-    }
-
-    /// Key of the function a call dispatches to (direct, module export, or
-    /// method), without evaluating the call itself.
-    pub fn resolveCallTargetKey(self: *Emitter, c: *const ast_mod.Call, depth: u32) anyerror!?[]const u8 {
-        if (depth > 8) return null;
-        // Typecheck's recorded target (direct, module, and method calls).
-        if (self.state.call_targets.get(c.callee)) |t| return t.key;
-        switch (c.callee.*) {
-            .primary => |p| {
-                if (p.kind != .identifier and p.kind != .register) return null;
-                if (self.state.functions.contains(p.name)) return p.name;
-                if (self.lookupBindingOptional(p.name)) |b| {
-                    if (b.fn_key) |k| return k;
-                    return null;
-                }
-                if (self.globals.get(p.name)) |g| return g.fn_key;
-                return null;
-            },
-            .member => |m| {
-                if (m.property.* != .primary) return null;
-                if (try self.methodTarget(c.callee)) |t| return t.key;
-                const key = (path_mod.tryResolveStaticPath(self.state, c.callee) catch null) orelse return null;
-                if (self.state.functions.contains(key)) return key;
-                return null;
-            },
-            else => return try self.resolveFunctionValue(c.callee, depth + 1),
-        }
-    }
-
-    /// When every valued `return` in `name` yields the same statically known
-    /// function, return that function's key (the function is a pure factory and
-    /// is never emitted). Null for ordinary functions.
-    pub fn functionReturnsFunction(self: *Emitter, name: []const u8, depth: u32) anyerror!?[]const u8 {
-        if (depth > 8) return null;
-        const def = self.state.functions.get(name) orelse return null;
-        if (def.node.* != .function_decl) return null;
-        var scan = ReturnScan{ .keys = .empty };
-        defer scan.keys.deinit(self.allocator);
-        try self.scanReturns(def.node.function_decl.body, &scan, depth);
-        if (scan.unknown or scan.bare or scan.keys.items.len != 1) return null;
-        return scan.keys.items[0];
-    }
-
-    const ReturnScan = struct {
-        keys: std.ArrayList([]const u8),
-        unknown: bool = false,
-        bare: bool = false,
-    };
-
-    fn scanReturns(self: *Emitter, node: *ast_mod.Node, out: *ReturnScan, depth: u32) anyerror!void {
-        switch (node.*) {
-            .function_decl => {},
-            .return_expr => |r| {
-                const v = r.return_value orelse {
-                    out.bare = true;
-                    return;
-                };
-                if (try self.resolveFunctionValue(v, depth + 1)) |key| {
-                    for (out.keys.items) |existing| {
-                        if (std.mem.eql(u8, existing, key)) return;
-                    }
-                    try out.keys.append(self.allocator, key);
-                } else {
-                    out.unknown = true;
-                }
-            },
-            .block => |b| {
-                for (b.statements) |s| try self.scanReturns(s, out, depth);
-            },
-            .if_expr => |i| {
-                try self.scanReturns(i.body, out, depth);
-                if (i.else_body) |e| try self.scanReturns(e, out, depth);
-            },
-            .switch_expr => |sw| {
-                for (sw.prongs) |prong| try self.scanReturns(prong.body, out, depth);
-            },
-            .for_expr => |f| try self.scanReturns(f.body, out, depth),
-            .defer_stmt => |d| try self.scanReturns(d.body, out, depth),
-            else => {},
         }
     }
 
@@ -967,7 +814,7 @@ pub const Emitter = struct {
     }
 
     pub fn emitDeferredAtScopeEnd(self: *Emitter, statements: []*ast_mod.Node) anyerror!void {
-        if (statements.len > 0 and prescan_mod.stmtTerminates(self, statements[statements.len - 1])) return;
+        if (statements.len > 0 and stmt_mod.stmtTerminates(statements[statements.len - 1])) return;
         try self.emitDeferredScope();
     }
 
@@ -1019,9 +866,10 @@ pub const Emitter = struct {
         // recursion, forward calls) keeps a stale `unknown`; re-resolve it
         // through the callee's final recorded return type.
         if (node.* == .call) {
-            if (try self.resolveCallTargetKey(&node.call, 0)) |key| {
-                if (self.state.functions.get(key)) |def| {
-                    return try unit_mod.functionReturnType(self, key, def);
+            const target = self.state.call_targets.get(node) orelse self.state.call_targets.get(node.call.callee);
+            if (target) |t| {
+                if (self.state.functions.get(t.key)) |def| {
+                    return try unit_mod.functionReturnType(self, t.key, def);
                 }
             }
         }

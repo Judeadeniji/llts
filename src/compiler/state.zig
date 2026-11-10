@@ -36,10 +36,24 @@ pub const AllocRegion = enum {
 /// Receiver passing mode for a recorded method call.
 pub const ReceiverModeKind = enum { none, pointer, value };
 
+/// Per-binding mutation/read facts recorded by the binding-facts analysis pass.
+/// Keyed by declaration node, parameter pointer, for-node, or if-node.
+pub const BindingFacts = struct {
+    /// The binding is read at least once (drives `_ = x;` suppression).
+    read: bool = false,
+    /// The binding's place root is written (through pointer/index/member);
+    /// drives `var` for struct/non-pointer locals and mutable param copies.
+    assigned: bool = false,
+    /// The binding is the direct LHS of an assignment (`x = …`); always
+    /// implies `assigned = true`.  Drives `var` for all types.
+    reassigned: bool = false,
+};
+
 /// A call target resolved by typecheck (see `CompilerState.call_targets`).
 pub const CallTarget = struct {
     key: []const u8,
     receiver_mode: ReceiverModeKind = .none,
+    generic_instance: ?[]const u8 = null,
 };
 
 pub const FunctionDef = struct {
@@ -281,6 +295,16 @@ pub const CompilerState = struct {
     /// `@nameOf` lowering plan per call node (variant spelling as declared).
     name_of_plans: std.AutoHashMap(*ast.Node, NameOfPlan),
     for_is_cond: std.AutoHashMap(*const ast.For, void),
+    /// Mutation/read facts per local declaration, populated by the
+    /// binding-facts analysis pass and consumed by the native emitter.
+    binding_facts: std.AutoHashMap(*ast.Node, BindingFacts),
+    /// Mutation/read facts per function parameter (keyed by param struct ptr).
+    param_facts: std.AutoHashMap(*const ast.Param, BindingFacts),
+    /// Mutation/read facts for for-loop captures: for node → [2]BindingFacts
+    /// (index 0 = element capture, index 1 = index capture if present).
+    for_capture_facts: std.AutoHashMap(*const ast.For, [2]BindingFacts),
+    /// Mutation/read facts for @if pipe-value captures: if node → BindingFacts.
+    if_capture_facts: std.AutoHashMap(*const ast.If, BindingFacts),
     last_emitted_line: i32 = -1,
     last_emitted_column: i32 = -1,
     /// When true, bare struct/array literals use immortal heap (globals / return of literals).
@@ -353,6 +377,10 @@ pub fn create(allocator: std.mem.Allocator) !CompilerState {
         .size_of_results = std.AutoHashMap(*ast.Node, i32).init(allocator),
         .name_of_plans = std.AutoHashMap(*ast.Node, NameOfPlan).init(allocator),
         .for_is_cond = std.AutoHashMap(*const ast.For, void).init(allocator),
+        .binding_facts = std.AutoHashMap(*ast.Node, BindingFacts).init(allocator),
+        .param_facts = std.AutoHashMap(*const ast.Param, BindingFacts).init(allocator),
+        .for_capture_facts = std.AutoHashMap(*const ast.For, [2]BindingFacts).init(allocator),
+        .if_capture_facts = std.AutoHashMap(*const ast.If, BindingFacts).init(allocator),
         .import_from = std.StringHashMap(ImportFrame).init(allocator),
     };
     try state.native_globals.put("print", {});
@@ -499,6 +527,10 @@ pub fn deinit(self: *CompilerState) void {
     self.size_of_results.deinit();
     self.name_of_plans.deinit();
     self.for_is_cond.deinit();
+    self.binding_facts.deinit();
+    self.param_facts.deinit();
+    self.for_capture_facts.deinit();
+    self.if_capture_facts.deinit();
     self.import_stack.deinit(self.allocator);
     self.import_from.deinit();
     if (self.last_error_message.len > 0) self.allocator.free(self.last_error_message);

@@ -19,6 +19,7 @@ pub const from_ast = @import("typecheck/from_ast.zig");
 pub const ir = @import("typecheck/ir.zig");
 const compile_errors = @import("../errors/compile.zig");
 pub const unused = @import("unused.zig");
+const binding_facts = @import("analyze/binding_facts.zig");
 
 pub const CompileOptions = struct {
     debug: bool = true,
@@ -69,6 +70,7 @@ pub fn analyze(
     try typecheck.typecheck(&state, doc);
     try requireEntryMain(&state, doc);
     unused.detectAndWarn(&state, doc);
+    try binding_facts.analyze(&state, doc);
 
     return state;
 }

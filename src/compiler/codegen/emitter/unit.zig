@@ -4,7 +4,6 @@ const state_mod = @import("../../state.zig");
 const from_ast = @import("../../typecheck/from_ast.zig");
 const ir = @import("../../typecheck/ir.zig");
 const root_mod = @import("root.zig");
-const prescan_mod = @import("prescan.zig");
 const stmt_mod = @import("stmt.zig");
 const expr_mod = @import("expr.zig");
 const range_mod = @import("range.zig");
@@ -23,7 +22,15 @@ pub fn collectGlobals(self: *Emitter) !void {
             if (!r.shouldEmitTopLevel(self.doc, s)) continue;
         }
         if (self.globals.contains(d.name)) continue;
-        const fn_key = self.resolveFunctionValue(d.value, 0) catch null;
+        const fn_key: ?[]const u8 = blk: {
+            if (d.value.* == .primary and (d.value.primary.kind == .identifier or d.value.primary.kind == .register)) {
+                if (self.state.functions.contains(d.value.primary.name)) break :blk d.value.primary.name;
+            }
+            if (self.state.type_ir_of_results.get(d.value)) |t| {
+                if (ir.peelDefined(t) == .func) break :blk d.name;
+            }
+            break :blk null;
+        };
         const module_path = if (fn_key == null) self.resolveModuleValue(d.value) else null;
         const display = if (fn_key != null)
             "func"
@@ -171,7 +178,7 @@ pub fn emitFunction(self: *Emitter, name: []const u8, def: state_mod.FunctionDef
     self.pushScope();
     try stmt_mod.emitStatements(self, block.statements);
     try self.emitDeferredAtScopeEnd(block.statements);
-    const terminates = block.statements.len > 0 and prescan_mod.stmtTerminates(self, block.statements[block.statements.len - 1]);
+    const terminates = block.statements.len > 0 and stmt_mod.stmtTerminates(block.statements[block.statements.len - 1]);
     if (!terminates and ret.may_error) {
         if (ret.kind == .error_value) {
             self.popScope();
@@ -208,9 +215,6 @@ pub fn emitFunctions(self: *Emitter) !void {
 
     for (names.items) |name| {
         const def = self.state.functions.get(name) orelse continue;
-        // Pure function factories are devirtualized into direct calls and have
-        // no emit-able body (their result is a function, not a value).
-        if (try self.functionReturnsFunction(name, 0) != null) continue;
         try emitFunction(self, name, def);
     }
 }
@@ -333,6 +337,12 @@ pub fn prepareFunction(
             .ir_type = ir_type,
             .is_param = true,
         };
+        // Initialize mutation/read flags from the compiler-recorded facts.
+        if (self.state.param_facts.get(&p)) |facts| {
+            b.read = facts.read;
+            b.assigned = facts.assigned;
+            b.reassigned = facts.reassigned;
+        }
         try base.put(p.name, b);
         try self.params.append(a, .{
             .name = p.name,
@@ -345,8 +355,6 @@ pub fn prepareFunction(
     }
     try self.scopes.append(a, base);
     try self.defer_scopes.append(a, .empty);
-
-    try prescan_mod.preScanStmt(self, f.body);
 }
 
 pub fn zeroValue(self: *Emitter, t: ValType) ![]const u8 {

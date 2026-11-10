@@ -104,11 +104,9 @@ pub fn build(b: *std.Build) void {
     const run_step = b.step("run", "Run llts");
     run_step.dependOn(&run_cmd.step);
 
-    // `zig build release` — same three tools built in ReleaseSafe and installed
-    // over zig-out/. A Debug compiler spends ~40x longer in the typechecker than
-    // a ReleaseSafe one, so this is the mode you want for everyday `llts build`.
-    // `zig build` still produces Debug (better panics/traces while hacking on it).
-    const release_install = addReleaseTools(b, target);
+    // `zig build release` — same tools built in ReleaseSafe and installed
+    // over zig-out/.
+    _ = addReleaseTools(b, target);
 
     // const mod_tests = b.addTest(.{
     //     .root_module = llts_mod,
@@ -123,7 +121,7 @@ pub fn build(b: *std.Build) void {
         }),
     });
     const run_integration = b.addRunArtifact(integration_tests);
-    run_integration.step.dependOn(release_install);
+    run_integration.step.dependOn(b.getInstallStep());
     run_integration.setCwd(b.path("."));
 
     const lsp_e2e_tests = b.addTest(.{
@@ -134,7 +132,7 @@ pub fn build(b: *std.Build) void {
         }),
     });
     const run_lsp_e2e = b.addRunArtifact(lsp_e2e_tests);
-    run_lsp_e2e.step.dependOn(release_install);
+    run_lsp_e2e.step.dependOn(b.getInstallStep());
     run_lsp_e2e.setCwd(b.path("."));
 
     const lsp_unit_tests = b.addTest(.{

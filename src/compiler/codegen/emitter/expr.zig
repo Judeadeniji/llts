@@ -208,8 +208,8 @@ pub fn emitCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) any
     if (c.callee.* != .primary and c.callee.* != .call) {
         return self.failAt(node, "native backend (Phase 2) only supports direct function calls", .{});
     }
-    // A `.call` callee is a devirtualized function value (`f()()`), handled by
-    // `resolveFunctionValue` below; it has no builtin name.
+    // A `.call` callee is a devirtualized function call (`f()()`), recorded in
+    // `state.call_targets`; it has no builtin name.
     const callee: []const u8 = if (c.callee.* == .primary) c.callee.primary.name else "";
 
     if (std.mem.eql(u8, callee, "print")) {
@@ -277,19 +277,18 @@ pub fn emitCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) any
     }
 
     var target_name: ?[]const u8 = null;
-    if (self.state.generic_calls.get(node)) |gc| {
+    if (self.state.call_targets.get(node)) |t| {
+        target_name = t.key;
+    } else if (self.state.call_targets.get(c.callee)) |t| {
+        target_name = t.key;
+    } else if (self.state.generic_calls.get(node)) |gc| {
         target_name = gc.instance;
-    } else if (try self.resolveFunctionValue(c.callee, 0)) |key| {
-        target_name = key;
+    } else if (c.callee.* == .primary and self.state.functions.contains(c.callee.primary.name)) {
+        target_name = c.callee.primary.name;
     }
     const name = target_name orelse {
         return self.failAt(node, "native backend cannot resolve function '{s}' (function values must be called directly)", .{callee});
     };
-    // Pure factories are devirtualized at their call sites and never emitted;
-    // using one as a runtime value has no representation.
-    if (try self.functionReturnsFunction(name, 0)) |_| {
-        return self.failAt(node, "native backend cannot materialize function value '{s}'; call it directly", .{name});
-    }
     if (self.reach) |*r| {
         if (!r.isFunctionReachable(name)) {
             return self.failAt(node, "internal: function '{s}' not marked reachable", .{name});
@@ -351,12 +350,12 @@ fn emitExtendedAsm(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) 
     return buf.toOwnedSlice(self.arena.allocator());
 }
 
-/// `mod.fn(args)` / `mod.sub.fn(args)` — resolves the static path to a
-/// `module::export` function and emits a direct call.
+/// `mod.fn(args)` / `mod.sub.fn(args)` — emits a direct call to a module export.
 fn emitModuleCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) !?[]const u8 {
     const a = self.arena.allocator();
-    const resolved = (path_mod.tryResolveStaticPath(self.state, c.callee) catch null) orelse return null;
-    const name = if (self.state.generic_calls.get(node)) |gc| gc.instance else resolved;
+    const target = self.state.call_targets.get(node) orelse self.state.call_targets.get(c.callee) orelse return null;
+    if (target.receiver_mode != .none) return null;
+    const name = target.key;
     if (!self.state.functions.contains(name)) return null;
     if (self.reach) |*r| {
         if (!r.isFunctionReachable(name)) {

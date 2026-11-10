@@ -1,8 +1,8 @@
 const std = @import("std");
 const ast_mod = @import("../../../ast/root.zig");
 const ir = @import("../../typecheck/ir.zig");
+const state_mod = @import("../../state.zig");
 const root_mod = @import("root.zig");
-const prescan_mod = @import("prescan.zig");
 const expr_mod = @import("expr.zig");
 const range_mod = @import("range.zig");
 const Emitter = root_mod.Emitter;
@@ -297,13 +297,7 @@ pub fn emitCaptureCondFor(self: *Emitter, node: *ast_mod.Node, f: *const ast_mod
     const cap_name = try self.localName(f.captures[0].name);
     const zig_label = try loopZigLabel(self, f, id);
 
-    self.pushScope();
-    const probe = try a.create(Binding);
-    probe.* = .{ .name = f.captures[0].name, .zig_name = "", .display = payload.display, .ir_type = payload_ir };
-    try self.scopes.items[self.scopes.items.len - 1].put(f.captures[0].name, probe);
-    try prescan_mod.preScanStmt(self, f.body);
-    const cap_read = probe.read;
-    self.popScope();
+    const cap_read = if (self.state.for_capture_facts.get(f)) |facts| facts[0].read else false;
 
     try self.loop_targets.append(a, .{ .label = f.label, .zig_label = zig_label, .scope_depth = self.scopes.items.len });
     defer _ = self.loop_targets.pop();
@@ -555,22 +549,10 @@ pub fn emitIterableFor(self: *Emitter, node: *ast_mod.Node, f: *const ast_mod.Fo
     const cap1_name = if (f.captures.len > 1) try self.localName(f.captures[1].name) else "";
     const raw1_name = try std.fmt.allocPrint(a, "lls_iter_i_{d}", .{id});
 
-    self.pushScope();
-    const probe0 = try a.create(Binding);
-    probe0.* = .{ .name = f.captures[0].name, .zig_name = "", .display = elem_t.display, .ir_type = elem_ir };
-    try self.scopes.items[self.scopes.items.len - 1].put(f.captures[0].name, probe0);
-    var probe1: ?*Binding = null;
-    if (f.captures.len > 1) {
-        const b = try a.create(Binding);
-        b.* = .{ .name = f.captures[1].name, .zig_name = "", .display = "int", .ir_type = ir.TI64 };
-        try self.scopes.items[self.scopes.items.len - 1].put(f.captures[1].name, b);
-        probe1 = b;
-    }
+    const for_facts = self.state.for_capture_facts.get(f);
+    const cap0_read = if (for_facts) |facts| facts[0].read else false;
+    const cap1_read = if (for_facts) |facts| facts[1].read else false;
     const body = try forBody(self, node, f);
-    try prescan_mod.preScanStmt(self, f.body);
-    const cap0_read = probe0.read;
-    const cap1_read = if (probe1) |b| b.read else false;
-    self.popScope();
 
     try self.writeIndent();
     try self.writer.writeAll("{\n");
@@ -676,13 +658,7 @@ pub fn emitCaptureIfChain(self: *Emitter, i: *const ast_mod.If, first: bool) any
     const tmp_name = try std.fmt.allocPrint(a, "lls_ifopt_{d}", .{id});
     const cap_name = try self.localName(capture_name);
 
-    self.pushScope();
-    const probe = try a.create(Binding);
-    probe.* = .{ .name = capture_name, .zig_name = "", .display = payload.display, .ir_type = payload_ir };
-    try self.scopes.items[self.scopes.items.len - 1].put(capture_name, probe);
-    try prescan_mod.preScanStmt(self, i.body);
-    const cap_read = probe.read;
-    self.popScope();
+    const cap_read = if (self.state.if_capture_facts.get(i)) |facts| facts.read else false;
 
     if (first) try self.writeIndent();
     try self.writer.print("const {s}: {s} = {s};\n", .{ tmp_name, cond_t.zig, try expr_mod.emitExpr(self, i.condition) });
@@ -814,8 +790,33 @@ fn emitSourceSiteMarker(self: *Emitter, node: *ast_mod.Node) !void {
 }
 
 pub fn emitLocalDeclaration(self: *Emitter, node: *ast_mod.Node, d: *const ast_mod.Declaration) !void {
-    const info = self.infos.get(node) orelse {
-        return self.failAt(node, "internal: missing binding for local '{s}'", .{d.name});
+    const a = self.arena.allocator();
+    const info = if (self.infos.get(node)) |b| b else blk: {
+        const b = try a.create(Binding);
+        const fn_key: ?[]const u8 = blk_fn: {
+            if (d.value.* == .primary and (d.value.primary.kind == .identifier or d.value.primary.kind == .register)) {
+                if (self.state.functions.contains(d.value.primary.name)) break :blk_fn d.value.primary.name;
+            }
+            if (self.state.type_ir_of_results.get(d.value)) |t| {
+                if (ir.peelDefined(t) == .func) break :blk_fn d.name;
+            }
+            break :blk_fn null;
+        };
+        const module_path = if (fn_key == null) self.resolveModuleValue(d.value) else null;
+        const facts = self.state.binding_facts.get(node) orelse state_mod.BindingFacts{};
+        b.* = .{
+            .name = d.name,
+            .zig_name = "",
+            .display = if (fn_key != null) "func" else if (module_path != null) "module" else self.displayForDeclValue(d) catch "unknown",
+            .ir_type = if (fn_key != null or module_path != null) null else self.declaredIRType(d),
+            .fn_key = fn_key,
+            .module_path = module_path,
+            .read = facts.read,
+            .assigned = facts.assigned,
+            .reassigned = facts.reassigned,
+        };
+        try self.infos.put(node, b);
+        break :blk b;
     };
     // Function values and module namespaces are devirtualized at their call
     // sites; they have no Zig variable.
@@ -932,10 +933,33 @@ pub fn emitRangeFor(self: *Emitter, node: *ast_mod.Node, f: *const ast_mod.For) 
     try self.writer.writeAll("}\n");
 }
 
+pub fn stmtTerminates(node: *ast_mod.Node) bool {
+    return switch (node.*) {
+        .return_expr, .break_expr, .continue_expr => true,
+        .block => |b| blk: {
+            if (b.statements.len == 0) break :blk false;
+            break :blk stmtTerminates(b.statements[b.statements.len - 1]);
+        },
+        .if_expr => |i| blk: {
+            const else_body = i.else_body orelse break :blk false;
+            break :blk stmtTerminates(i.body) and stmtTerminates(else_body);
+        },
+        .switch_expr => |sw| blk: {
+            var has_else = false;
+            for (sw.prongs) |prong| {
+                if (prong.is_else) has_else = true;
+                if (!stmtTerminates(prong.body)) break :blk false;
+            }
+            break :blk has_else and sw.prongs.len > 0;
+        },
+        else => false,
+    };
+}
+
 pub fn emitStatements(self: *Emitter, statements: []*ast_mod.Node) !void {
     for (statements) |s| {
         try emitStmt(self, s);
-        if (prescan_mod.stmtTerminates(self, s)) break;
+        if (stmtTerminates(s)) break;
     }
 }
 
@@ -981,7 +1005,7 @@ pub fn emitStmt(self: *Emitter, node: *ast_mod.Node) anyerror!void {
         .assignment => |*asn| try emitAssignment(self, node, asn),
         .if_expr => |i| {
             try emitIfStmt(self, node, &i);
-            if (i.else_body == null and prescan_mod.stmtTerminates(self, i.body)) {
+            if (i.else_body == null and stmtTerminates(i.body)) {
                 try range_mod.refineAfterFalseGuard(self, i.condition);
             }
         },
