@@ -141,7 +141,12 @@ pub fn typecheck(state: *CompilerState, env: *typecheck_root.Env, ta: ir.TypeAll
                 };
                 try state.size_of_results.put(call_node, size);
             } else {
-                _ = try typecheck_root.inferExpr(state, env, ta, arg);
+                const t = try typecheck_root.inferExpr(state, env, ta, arg);
+                if (try layout.sizeOfType(state, t)) |size| {
+                    try state.size_of_results.put(call_node, size);
+                } else if (try staticTypeArgSize(state, arg)) |size| {
+                    try state.size_of_results.put(call_node, size);
+                }
             }
             return ir.TInt;
         },

@@ -8,7 +8,6 @@ const intrinsics_mod = @import("../../intrinsics.zig");
 const root_mod = @import("root.zig");
 const unit_mod = @import("unit.zig");
 const stmt_mod = @import("stmt.zig");
-const range_mod = @import("range.zig");
 const Emitter = root_mod.Emitter;
 const ValType = root_mod.ValType;
 const MemberTarget = root_mod.MemberTarget;
@@ -79,6 +78,10 @@ fn emitPipe(self: *Emitter, b: *const ast_mod.Binary) ![]const u8 {
 pub fn emitCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) anyerror![]const u8 {
     const a = self.arena.allocator();
 
+    if (self.state.type_call_results.get(node)) |disp| {
+        return self.zigString(disp);
+    }
+
     if (c.callee.* == .primary and std.mem.startsWith(u8, c.callee.primary.name, "@")) {
         const intrinsic = c.callee.primary.name;
         if (std.mem.eql(u8, intrinsic, "@asm")) {
@@ -137,9 +140,6 @@ pub fn emitCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) any
             if (self.state.size_of_results.get(node)) |size| {
                 return std.fmt.allocPrint(a, "@as(i64, {d})", .{size});
             }
-            if (try intrinsics_mod.staticTypeArgSize(self.state, c.args[0])) |size| {
-                return std.fmt.allocPrint(a, "@as(i64, {d})", .{size});
-            }
             return self.failAt(node, "native backend cannot determine @sizeOf statically", .{});
         }
         if (std.mem.eql(u8, intrinsic, "@nameOf")) {
@@ -181,12 +181,6 @@ pub fn emitCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) any
             return std.fmt.allocPrint(a, "{s}: {{ _ = {s}; break :{s} (try rt.print.concatDisplay(ctx, {s}, {s})); }}", .{
                 label, try emitExpr(self, c.args[0]), label, a_code, b_code,
             });
-        }
-        if (std.mem.eql(u8, intrinsic, "@typeOf")) {
-            if (self.state.type_call_results.get(node)) |disp| {
-                return self.zigString(disp);
-            }
-            return self.failAt(node, "native backend cannot determine @typeOf result", .{});
         }
         if (std.mem.eql(u8, intrinsic, "len")) {
             if (c.args.len != 1) return self.failAt(node, "len expects 1 argument", .{});
@@ -767,7 +761,7 @@ pub fn emitIntBinary(self: *Emitter, node: *ast_mod.Node, b: *const ast_mod.Bina
             '-' => "sub",
             else => "mul",
         };
-        if (range_mod.resultFits(self, b.left, b.right, op, w)) {
+        if (self.state.proven_arithmetic.contains(node)) {
             plain_call = try std.fmt.allocPrint(a, "(rt.arith.{s}Proven(.{s}, {s}, {s}))", .{
                 base, @tagName(w), try emitI64Operand(self, b.left), try emitI64Operand(self, b.right),
             });

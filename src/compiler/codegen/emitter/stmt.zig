@@ -4,7 +4,6 @@ const ir = @import("../../typecheck/ir.zig");
 const state_mod = @import("../../state.zig");
 const root_mod = @import("root.zig");
 const expr_mod = @import("expr.zig");
-const range_mod = @import("range.zig");
 const Emitter = root_mod.Emitter;
 const ValType = root_mod.ValType;
 const Binding = root_mod.Binding;
@@ -832,11 +831,6 @@ pub fn emitLocalDeclaration(self: *Emitter, node: *ast_mod.Node, d: *const ast_m
         try expr_mod.emitValueCoerced(self, d.value, vt)
     else
         try expr_mod.emitExpr(self, d.value);
-    if (d.is_const) {
-        if (range_mod.ofExpr(self, d.value)) |int_range| {
-            try self.int_ranges.put(@intFromPtr(info), int_range);
-        }
-    }
 
     // Index stores into `[]byte` / string views don't reassign the slice header,
     // so Zig wants `const` (same as `.slice` / `.pointer`). Use `var` only when
@@ -907,9 +901,6 @@ pub fn emitRangeFor(self: *Emitter, node: *ast_mod.Node, f: *const ast_mod.For) 
             .display = "int",
             .ir_type = ir.TI64,
         };
-        if (range_mod.loopCapture(self, f)) |int_range| {
-            try self.int_ranges.put(@intFromPtr(b), int_range);
-        }
         try self.scopes.items[self.scopes.items.len - 1].put(f.captures[0].name, b);
     }
 
@@ -980,12 +971,7 @@ pub fn emitStmt(self: *Emitter, node: *ast_mod.Node) anyerror!void {
             try self.writer.writeAll("}\n");
         },
         .assignment => |*asn| try emitAssignment(self, node, asn),
-        .if_expr => |i| {
-            try emitIfStmt(self, node, &i);
-            if (i.else_body == null and (self.state.terminates.get(i.body) orelse false)) {
-                try range_mod.refineAfterFalseGuard(self, i.condition);
-            }
-        },
+        .if_expr => |i| try emitIfStmt(self, node, &i),
         .switch_expr => |sw| try emitSwitchStmt(self, node, &sw),
         .for_expr => |f| try emitForStmt(self, node, &f),
         .break_expr => |b| try emitBreak(self, node, &b),

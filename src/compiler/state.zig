@@ -309,6 +309,9 @@ pub const CompilerState = struct {
     /// A node terminates (true) if control flow cannot fall through past it
     /// (e.g. return, break, continue, call to never, or composite branch termination).
     terminates: std.AutoHashMap(*ast.Node, bool),
+    /// Proven arithmetic operations: binary expression node → void.
+    /// Present when an operation (+, -, *) is statically proven not to overflow its target width.
+    proven_arithmetic: std.AutoHashMap(*ast.Node, void),
     last_emitted_line: i32 = -1,
     last_emitted_column: i32 = -1,
     /// When true, bare struct/array literals use immortal heap (globals / return of literals).
@@ -386,6 +389,7 @@ pub fn create(allocator: std.mem.Allocator) !CompilerState {
         .for_capture_facts = std.AutoHashMap(*const ast.For, [2]BindingFacts).init(allocator),
         .if_capture_facts = std.AutoHashMap(*const ast.If, BindingFacts).init(allocator),
         .terminates = std.AutoHashMap(*ast.Node, bool).init(allocator),
+        .proven_arithmetic = std.AutoHashMap(*ast.Node, void).init(allocator),
         .import_from = std.StringHashMap(ImportFrame).init(allocator),
     };
     try state.native_globals.put("print", {});
@@ -537,6 +541,7 @@ pub fn deinit(self: *CompilerState) void {
     self.for_capture_facts.deinit();
     self.if_capture_facts.deinit();
     self.terminates.deinit();
+    self.proven_arithmetic.deinit();
     self.import_stack.deinit(self.allocator);
     self.import_from.deinit();
     if (self.last_error_message.len > 0) self.allocator.free(self.last_error_message);

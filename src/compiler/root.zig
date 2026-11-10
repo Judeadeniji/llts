@@ -20,6 +20,7 @@ pub const ir = @import("typecheck/ir.zig");
 const compile_errors = @import("../errors/compile.zig");
 pub const unused = @import("unused.zig");
 const binding_facts = @import("analyze/binding_facts.zig");
+const range_facts = @import("analyze/range.zig");
 
 pub const CompileOptions = struct {
     debug: bool = true,
@@ -71,6 +72,7 @@ pub fn analyze(
     try requireEntryMain(&state, doc);
     unused.detectAndWarn(&state, doc);
     try binding_facts.analyze(&state, doc);
+    try range_facts.analyze(&state, doc);
 
     return state;
 }
