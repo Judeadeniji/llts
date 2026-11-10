@@ -283,7 +283,7 @@ pub fn emitCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) any
     const name = target_name orelse {
         return self.failAt(node, "native backend cannot resolve function '{s}' (function values must be called directly)", .{callee});
     };
-    if (self.reach) |*r| {
+    if (self.reach) |r| {
         if (!r.isFunctionReachable(name)) {
             return self.failAt(node, "internal: function '{s}' not marked reachable", .{name});
         }
@@ -351,7 +351,7 @@ fn emitModuleCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) !
     if (target.receiver_mode != .none) return null;
     const name = target.key;
     if (!self.state.functions.contains(name)) return null;
-    if (self.reach) |*r| {
+    if (self.reach) |r| {
         if (!r.isFunctionReachable(name)) {
             return self.failAt(node, "internal: function '{s}' not marked reachable", .{name});
         }
@@ -375,7 +375,7 @@ fn emitMethodCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) !
     const m = &c.callee.member;
     if (m.property.* != .primary) return null;
     const target = (self.methodTarget(c.callee) catch null) orelse return null;
-    if (self.reach) |*r| {
+    if (self.reach) |r| {
         if (!r.isFunctionReachable(target.key)) {
             return self.failAt(node, "internal: function '{s}' not marked reachable", .{target.key});
         }

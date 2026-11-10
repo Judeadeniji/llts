@@ -17,7 +17,7 @@ pub fn collectGlobals(self: *Emitter) !void {
         if (s.* != .declaration) continue;
         const d = &s.declaration;
         if (root_mod.isImportDecl(d)) continue;
-        if (self.reach) |*r| {
+        if (self.reach) |r| {
             if (!r.shouldEmitTopLevel(self.doc, s)) continue;
         }
         if (self.globals.contains(d.name)) continue;
@@ -197,7 +197,7 @@ pub fn emitFunction(self: *Emitter, name: []const u8, def: state_mod.FunctionDef
 pub fn emitFunctions(self: *Emitter) !void {
     const a = self.arena.allocator();
     var names: std.ArrayList([]const u8) = .empty;
-    if (self.reach) |*r| {
+    if (self.reach) |r| {
         var it = r.functions.keyIterator();
         while (it.next()) |name| try names.append(a, name.*);
     }
@@ -245,7 +245,7 @@ pub fn emitTopLevel(self: *Emitter) !void {
     for (self.doc.statements) |s| {
         if (s.* == .function_decl or s.* == .struct_decl or s.* == .enum_decl or
             s.* == .error_decl or s.* == .type_decl or s.* == .extern_decl) continue;
-        if (self.reach) |*r| {
+        if (self.reach) |r| {
             if (!r.shouldEmitTopLevel(self.doc, s)) continue;
         }
         if (s.* == .declaration) {

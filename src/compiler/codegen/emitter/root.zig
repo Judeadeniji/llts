@@ -186,7 +186,7 @@ pub const Emitter = struct {
     doc: *ast_mod.Document,
     state: *CompilerState,
 
-    reach: ?reachability.Result = null,
+    reach: ?*const reachability.Result = null,
     runtime_path: []const u8 = "",
     globals: std.StringHashMap(*Global),
     struct_types: std.ArrayList(*StructType) = .empty,
@@ -366,7 +366,6 @@ pub const Emitter = struct {
     }
 
     pub fn deinit(self: *Emitter) void {
-        if (self.reach) |*r| r.deinit();
         self.globals.deinit();
         self.struct_by_key.deinit();
         self.infos.deinit();
@@ -554,7 +553,10 @@ pub const Emitter = struct {
     }
 
     pub fn emit(self: *Emitter) !void {
-        self.reach = try reachability.compute(self.state, self.doc);
+        if (self.state.reachability == null) {
+            self.state.reachability = try reachability.compute(self.state, self.doc);
+        }
+        self.reach = &self.state.reachability.?;
         self.runtime_path = std.fs.cwd().realpathAlloc(self.arena.allocator(), self.options.runtime_path) catch {
             return self.failNoLoc("runtime path '{s}' not found (pass --runtime-path)", .{self.options.runtime_path});
         };

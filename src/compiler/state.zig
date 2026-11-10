@@ -5,6 +5,7 @@ pub const const_eval = @import("const_eval.zig");
 pub const ConstValue = const_eval.ConstValue;
 const layout = @import("layout.zig");
 const ir = @import("typecheck/ir.zig");
+const reachability = @import("reachability.zig");
 
 pub const Local = struct {
     name: []const u8,
@@ -312,6 +313,9 @@ pub const CompilerState = struct {
     /// Proven arithmetic operations: binary expression node → void.
     /// Present when an operation (+, -, *) is statically proven not to overflow its target width.
     proven_arithmetic: std.AutoHashMap(*ast.Node, void),
+    /// Reachability analysis computed during `compiler.analyze`:
+    /// maps reachable function and global names from main and top-level entry points.
+    reachability: ?reachability.Result = null,
     last_emitted_line: i32 = -1,
     last_emitted_column: i32 = -1,
     /// When true, bare struct/array literals use immortal heap (globals / return of literals).
@@ -542,6 +546,7 @@ pub fn deinit(self: *CompilerState) void {
     self.if_capture_facts.deinit();
     self.terminates.deinit();
     self.proven_arithmetic.deinit();
+    if (self.reachability) |*r| r.deinit();
     self.import_stack.deinit(self.allocator);
     self.import_from.deinit();
     if (self.last_error_message.len > 0) self.allocator.free(self.last_error_message);

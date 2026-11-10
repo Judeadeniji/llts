@@ -70,6 +70,7 @@ pub fn analyze(
 
     try typecheck.typecheck(&state, doc);
     try requireEntryMain(&state, doc);
+    state.reachability = try reachability.compute(&state, doc);
     unused.detectAndWarn(&state, doc);
     try binding_facts.analyze(&state, doc);
     try range_facts.analyze(&state, doc);
@@ -105,8 +106,10 @@ pub fn prepareForTypecheck(state: *state_mod.CompilerState, doc: *ast.Document) 
 }
 
 pub fn emitBytecode(state: *state_mod.CompilerState, doc: *ast.Document) !chunk_mod.Chunk {
-    var reach = try reachability.compute(state, doc);
-    defer reach.deinit();
+    if (state.reachability == null) {
+        state.reachability = try reachability.compute(state, doc);
+    }
+    const reach = &state.reachability.?;
 
     // Skip over function bodies to top-level. OP_JUMP is u16-relative, so chain
     // trampolines every ~60KiB when the function blob exceeds one hop.
