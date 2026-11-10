@@ -305,6 +305,10 @@ pub const CompilerState = struct {
     for_capture_facts: std.AutoHashMap(*const ast.For, [2]BindingFacts),
     /// Mutation/read facts for @if pipe-value captures: if node → BindingFacts.
     if_capture_facts: std.AutoHashMap(*const ast.If, BindingFacts),
+    /// Control-flow termination per statement/expression node.
+    /// A node terminates (true) if control flow cannot fall through past it
+    /// (e.g. return, break, continue, call to never, or composite branch termination).
+    terminates: std.AutoHashMap(*ast.Node, bool),
     last_emitted_line: i32 = -1,
     last_emitted_column: i32 = -1,
     /// When true, bare struct/array literals use immortal heap (globals / return of literals).
@@ -381,6 +385,7 @@ pub fn create(allocator: std.mem.Allocator) !CompilerState {
         .param_facts = std.AutoHashMap(*const ast.Param, BindingFacts).init(allocator),
         .for_capture_facts = std.AutoHashMap(*const ast.For, [2]BindingFacts).init(allocator),
         .if_capture_facts = std.AutoHashMap(*const ast.If, BindingFacts).init(allocator),
+        .terminates = std.AutoHashMap(*ast.Node, bool).init(allocator),
         .import_from = std.StringHashMap(ImportFrame).init(allocator),
     };
     try state.native_globals.put("print", {});
@@ -531,6 +536,7 @@ pub fn deinit(self: *CompilerState) void {
     self.param_facts.deinit();
     self.for_capture_facts.deinit();
     self.if_capture_facts.deinit();
+    self.terminates.deinit();
     self.import_stack.deinit(self.allocator);
     self.import_from.deinit();
     if (self.last_error_message.len > 0) self.allocator.free(self.last_error_message);

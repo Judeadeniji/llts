@@ -933,33 +933,10 @@ pub fn emitRangeFor(self: *Emitter, node: *ast_mod.Node, f: *const ast_mod.For) 
     try self.writer.writeAll("}\n");
 }
 
-pub fn stmtTerminates(node: *ast_mod.Node) bool {
-    return switch (node.*) {
-        .return_expr, .break_expr, .continue_expr => true,
-        .block => |b| blk: {
-            if (b.statements.len == 0) break :blk false;
-            break :blk stmtTerminates(b.statements[b.statements.len - 1]);
-        },
-        .if_expr => |i| blk: {
-            const else_body = i.else_body orelse break :blk false;
-            break :blk stmtTerminates(i.body) and stmtTerminates(else_body);
-        },
-        .switch_expr => |sw| blk: {
-            var has_else = false;
-            for (sw.prongs) |prong| {
-                if (prong.is_else) has_else = true;
-                if (!stmtTerminates(prong.body)) break :blk false;
-            }
-            break :blk has_else and sw.prongs.len > 0;
-        },
-        else => false,
-    };
-}
-
 pub fn emitStatements(self: *Emitter, statements: []*ast_mod.Node) !void {
     for (statements) |s| {
         try emitStmt(self, s);
-        if (stmtTerminates(s)) break;
+        if (self.state.terminates.get(s) orelse false) break;
     }
 }
 
@@ -1005,7 +982,7 @@ pub fn emitStmt(self: *Emitter, node: *ast_mod.Node) anyerror!void {
         .assignment => |*asn| try emitAssignment(self, node, asn),
         .if_expr => |i| {
             try emitIfStmt(self, node, &i);
-            if (i.else_body == null and stmtTerminates(i.body)) {
+            if (i.else_body == null and (self.state.terminates.get(i.body) orelse false)) {
                 try range_mod.refineAfterFalseGuard(self, i.condition);
             }
         },

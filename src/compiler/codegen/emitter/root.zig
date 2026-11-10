@@ -814,7 +814,7 @@ pub const Emitter = struct {
     }
 
     pub fn emitDeferredAtScopeEnd(self: *Emitter, statements: []*ast_mod.Node) anyerror!void {
-        if (statements.len > 0 and stmt_mod.stmtTerminates(statements[statements.len - 1])) return;
+        if (statements.len > 0 and (self.state.terminates.get(statements[statements.len - 1]) orelse false)) return;
         try self.emitDeferredScope();
     }
 

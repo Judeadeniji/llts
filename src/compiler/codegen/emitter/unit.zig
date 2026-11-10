@@ -178,7 +178,7 @@ pub fn emitFunction(self: *Emitter, name: []const u8, def: state_mod.FunctionDef
     self.pushScope();
     try stmt_mod.emitStatements(self, block.statements);
     try self.emitDeferredAtScopeEnd(block.statements);
-    const terminates = block.statements.len > 0 and stmt_mod.stmtTerminates(block.statements[block.statements.len - 1]);
+    const terminates = block.statements.len > 0 and (self.state.terminates.get(block.statements[block.statements.len - 1]) orelse false);
     if (!terminates and ret.may_error) {
         if (ret.kind == .error_value) {
             self.popScope();

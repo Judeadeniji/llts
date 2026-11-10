@@ -3194,6 +3194,135 @@ fn nodeAlwaysReturns(node: *ast.Node) bool {
     };
 }
 
+/// Visit every direct child expression/statement of `node`, discarding the
+/// result. Facts for each child (and, recursively, its subtree) are recorded
+/// by `computeNodeTermination`'s cache write.
+fn visitChildren(state: *state_mod.CompilerState, node: *ast.Node) error{OutOfMemory}!void {
+    switch (node.*) {
+        .return_expr => |r| if (r.return_value) |v| {
+            _ = try computeNodeTermination(state, v);
+        },
+        .break_expr => |br| if (br.value) |v| {
+            _ = try computeNodeTermination(state, v);
+        },
+        .continue_expr => |c| if (c.value) |v| {
+            _ = try computeNodeTermination(state, v);
+        },
+        .try_expr => |t| _ = try computeNodeTermination(state, t.expression),
+        .unwrap_expr => |u| _ = try computeNodeTermination(state, u.expression),
+        .declaration => |d| _ = try computeNodeTermination(state, d.value),
+        .assignment => |a| {
+            _ = try computeNodeTermination(state, a.left);
+            _ = try computeNodeTermination(state, a.right);
+        },
+        .call => |c| {
+            _ = try computeNodeTermination(state, c.callee);
+            for (c.args) |a| _ = try computeNodeTermination(state, a);
+        },
+        .binary => |b| {
+            _ = try computeNodeTermination(state, b.left);
+            _ = try computeNodeTermination(state, b.right);
+        },
+        .unary => |u| _ = try computeNodeTermination(state, u.arg),
+        .member => |m| _ = try computeNodeTermination(state, m.object),
+        .index => |ix| {
+            _ = try computeNodeTermination(state, ix.object);
+            if (ix.index) |i| _ = try computeNodeTermination(state, i);
+            if (ix.end) |e| _ = try computeNodeTermination(state, e);
+        },
+        .array_literal => |a| for (a.elements) |el| {
+            _ = try computeNodeTermination(state, el);
+        },
+        .struct_init => |si| for (si.fields) |f| {
+            _ = try computeNodeTermination(state, f.value);
+        },
+        .error_expr => |e| for (e.args) |a| {
+            _ = try computeNodeTermination(state, a);
+        },
+        .comptime_expr => |ce| _ = try computeNodeTermination(state, ce.expr),
+        .for_expr => |f| {
+            _ = try computeNodeTermination(state, f.expr);
+            _ = try computeNodeTermination(state, f.body);
+        },
+        .defer_stmt => |d| _ = try computeNodeTermination(state, d.body),
+        else => {},
+    }
+}
+
+pub fn computeNodeTermination(state: *state_mod.CompilerState, node: *ast.Node) error{OutOfMemory}!bool {
+    if (state.terminates.get(node)) |cached| return cached;
+
+    const is_term = switch (node.*) {
+        .return_expr, .break_expr, .continue_expr => blk: {
+            try visitChildren(state, node);
+            break :blk true;
+        },
+        .call => blk: {
+            try visitChildren(state, node);
+            break :blk callReturnsNever(state, node);
+        },
+        .block => |b| blk: {
+            var term = false;
+            // No short-circuit: dead code after a terminator still gets facts.
+            for (b.statements) |s| {
+                if (try computeNodeTermination(state, s)) term = true;
+            }
+            break :blk term;
+        },
+        .if_expr => |ife| blk: {
+            _ = try computeNodeTermination(state, ife.condition);
+            if (ife.pipe_value) |pv| _ = try computeNodeTermination(state, pv);
+            const then_term = try computeNodeTermination(state, ife.body);
+            const else_term = if (ife.else_body) |eb|
+                try computeNodeTermination(state, eb)
+            else
+                false;
+            break :blk then_term and else_term;
+        },
+        .switch_expr => |sw| blk: {
+            _ = try computeNodeTermination(state, sw.condition);
+            var has_else = false;
+            var all_term = sw.prongs.len > 0;
+            for (sw.prongs) |p| {
+                if (p.is_else) has_else = true;
+                for (p.patterns) |pat| _ = try computeNodeTermination(state, pat);
+                if (!try computeNodeTermination(state, p.body)) all_term = false;
+            }
+            break :blk has_else and all_term;
+        },
+        else => blk: {
+            try visitChildren(state, node); // for/defer/call-like/leaf nodes
+            break :blk false;
+        },
+    };
+
+    try state.terminates.put(node, is_term);
+    return is_term;
+}
+
+pub fn recordControlFlowFacts(state: *state_mod.CompilerState, doc: *ast.Document) error{OutOfMemory}!void {
+    var it = state.functions.valueIterator();
+    while (it.next()) |def| {
+        if (def.node.* == .function_decl) {
+            _ = try computeNodeTermination(state, def.node.function_decl.body);
+        }
+    }
+    for (doc.statements) |s| {
+        switch (s.*) {
+            .function_decl, .struct_decl, .enum_decl, .error_decl, .type_decl, .extern_decl => continue,
+            else => _ = try computeNodeTermination(state, s),
+        }
+    }
+    for (state.module_docs.items) |mdoc| {
+        for (mdoc.statements) |s| {
+            switch (s.*) {
+                .function_decl, .struct_decl, .enum_decl, .error_decl, .type_decl, .extern_decl => continue,
+                else => _ = try computeNodeTermination(state, s),
+            }
+        }
+    }
+}
+
 /// Infer a function's return type from the IR recorded for its return
 /// expressions. Null means no valued return and no error path.
 fn inferReturnTypeFromBody(state: *state_mod.CompilerState, body: *ast.Node) TypecheckError!?ir.Type {
@@ -3540,6 +3669,7 @@ pub fn typecheck(state: *state_mod.CompilerState, doc: *ast.Document) TypecheckE
         checkFunction(state, ta, f, &top_consts, &decl_env.globals) catch |e| return instantiationFailed(p, e);
     }
 
+    try recordControlFlowFacts(state, doc);
     try verifyTypeCaches(state);
 }
 
