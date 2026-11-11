@@ -633,16 +633,20 @@ pub fn emitIfChain(self: *Emitter, node: *ast_mod.Node, i: *const ast_mod.If, fi
 pub fn emitCaptureIfChain(self: *Emitter, node: *ast_mod.Node, i: *const ast_mod.If, first: bool) anyerror!void {
     const a = self.arena.allocator();
     const cond_t = try self.valueType(i.condition);
-    if (cond_t.may_error) {
-        return self.failAt(i.condition, "native backend does not support error-union @if captures yet", .{});
+    const is_error_union = cond_t.may_error and cond_t.kind != .error_value;
+    if (!is_error_union and cond_t.kind != .optional) {
+        return self.failAt(i.condition, "@if capture requires an optional or error-union value, got '{s}'", .{cond_t.display});
     }
-    if (cond_t.kind != .optional) {
-        return self.failAt(i.condition, "@if capture requires an optional value, got '{s}'", .{cond_t.display});
-    }
-    const payload = cond_t.payload orelse {
-        return self.failAt(i.condition, "native backend cannot determine the optional payload type", .{});
+    const payload = (if (is_error_union) cond_t.success else cond_t.payload) orelse {
+        return self.failAt(i.condition, "native backend cannot determine the payload type of '{s}'", .{cond_t.display});
     };
-    const payload_ir: ?ir.Type = if (self.recordedType(i.condition)) |t| ir.optionalPayload(t) else null;
+    const payload_ir: ?ir.Type = if (self.recordedType(i.condition)) |t| blk: {
+        if (is_error_union) {
+            break :blk ir.unwrapError(self.state.typeAlloc(), t) catch null;
+        } else {
+            break :blk ir.optionalPayload(t);
+        }
+    } else null;
     const pipe = i.pipe_value.?;
     const capture_name = switch (pipe.*) {
         .primary => |p| if (p.kind == .identifier or p.kind == .register)
@@ -654,17 +658,31 @@ pub fn emitCaptureIfChain(self: *Emitter, node: *ast_mod.Node, i: *const ast_mod
 
     self.counter += 1;
     const id = self.counter;
-    const tmp_name = try std.fmt.allocPrint(a, "lls_ifopt_{d}", .{id});
+    const tmp_name = if (is_error_union)
+        try std.fmt.allocPrint(a, "lls_ifres_{d}", .{id})
+    else
+        try std.fmt.allocPrint(a, "lls_ifopt_{d}", .{id});
     const cap_name = try self.localName(capture_name);
 
     // Key by the outer *ast.Node so the pointer is stable across traversal.
-    const cap_read = if (self.state.if_capture_facts.get(node)) |facts| facts.read else false;
+    const cap_facts = self.state.if_capture_facts.get(node);
+    const cap_read = if (cap_facts) |f| f.read else false;
+    const cap_assigned = if (cap_facts) |f| f.assigned else false;
+    const cap_reassigned = if (cap_facts) |f| f.reassigned else false;
 
     if (first) try self.writeIndent();
     try self.writer.print("const {s}: {s} = {s};\n", .{ tmp_name, cond_t.zig, try expr_mod.emitExpr(self, i.condition) });
     if (first) try self.writeIndent();
-    try self.writer.print("if ({s}) |{s}| {{\n", .{ tmp_name, cap_name });
-    self.indent += 1;
+    if (is_error_union) {
+        try self.writer.print("if ({s} == .ok) {{\n", .{tmp_name});
+        self.indent += 1;
+        const kw = if (cap_reassigned or (cap_assigned and payload.kind != .pointer and payload.kind != .slice and payload.kind != .string)) "var" else "const";
+        try self.writeIndent();
+        try self.writer.print("{s} {s}: {s} = {s}.ok;\n", .{ kw, cap_name, payload.zig, tmp_name });
+    } else {
+        try self.writer.print("if ({s}) |{s}| {{\n", .{ tmp_name, cap_name });
+        self.indent += 1;
+    }
     self.pushScope();
     defer self.popScope();
     const b = try a.create(Binding);
@@ -672,7 +690,11 @@ pub fn emitCaptureIfChain(self: *Emitter, node: *ast_mod.Node, i: *const ast_mod
     try self.scopes.items[self.scopes.items.len - 1].put(capture_name, b);
     if (!cap_read) {
         try self.writeIndent();
-        try self.writer.print("_ = {s};\n", .{cap_name});
+        if (cap_assigned) {
+            try self.writer.print("_ = &{s};\n", .{cap_name});
+        } else {
+            try self.writer.print("_ = {s};\n", .{cap_name});
+        }
     }
     const body = switch (i.body.*) {
         .block => |*blk| blk,

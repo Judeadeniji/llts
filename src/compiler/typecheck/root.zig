@@ -2694,13 +2694,21 @@ fn inferGenericCall(
         }
     }
     // Type args may be implicit, so arguments line up with the instance's
-    // value params (its type params are not parameters of the copy).
-    for (c.args, 0..) |a, i| {
+    // value params (its type params are not parameters of the copy). When they
+    // are explicit they lead the argument list and bind no value slot.
+    const ps_len = generics.params(&template.function_decl).len - (if (receiver != null) @as(usize, 1) else 0);
+    var type_arg_count: usize = 0;
+    if (c.args.len == ps_len) {
+        for (generics.params(&template.function_decl)) |p| {
+            if (generics.isTypeParam(p)) type_arg_count += 1;
+        }
+    }
+    for (c.args[type_arg_count..], type_arg_count..) |a, i| {
         const at = try inferExpr(state, env, ta, a);
-        if (i + offset < params.items.len) {
+        if (i - type_arg_count + offset < params.items.len) {
             var ctx_buf: [96]u8 = undefined;
-            const ctx = std.fmt.bufPrint(&ctx_buf, "argument {d} of '{s}'", .{ i + 1, ir.cleanTypeName(name) }) catch "argument";
-            try requireAssignFrom(state, at, params.items[i + offset], ctx, a);
+            const ctx = std.fmt.bufPrint(&ctx_buf, "argument {d} of '{s}'", .{ i - type_arg_count + 1, ir.cleanTypeName(name) }) catch "argument";
+            try requireAssignFrom(state, at, params.items[i - type_arg_count + offset], ctx, a);
         }
     }
     return try fnReturnType(state, ta, inst);
