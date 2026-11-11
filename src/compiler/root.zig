@@ -535,7 +535,7 @@ fn collectFuncs(state: *state_mod.CompilerState, node: *ast.Node, struct_name: ?
     switch (node.*) {
         .function_decl => |*fn_decl| {
             if (generics.isTemplate(fn_decl)) {
-                return generics.registerTemplate(state, node, struct_name != null);
+                return generics.registerTemplate(state, node, struct_name);
             }
             if (struct_name) |sn| {
                 if (std.mem.indexOf(u8, fn_decl.name, "::") == null) {

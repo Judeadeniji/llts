@@ -987,7 +987,7 @@ fn resolveMethodCallee(
     if (sd.offsets.contains(prop)) return null; // field, not method
     const method_name = try std.fmt.allocPrint(state.allocator, "{s}::{s}", .{ sd.name, prop });
     try state.owned.append(state.allocator, method_name);
-    if (!state.functions.contains(method_name)) return null;
+    if (!state.functions.contains(method_name) and !state.templates.contains(method_name)) return null;
     return .{ .name = method_name, .receiver = mem.object };
 }
 
@@ -2123,7 +2123,7 @@ fn inferCall(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, call_
             if (generics.returnsType(&template.function_decl)) {
                 return try inferTypeFunctionCall(state, env, ta, call_node, c, callee_name, template);
             }
-            return try inferGenericCall(state, env, ta, call_node, c, callee_name, template);
+            return try inferGenericCall(state, env, ta, call_node, c, callee_name, template, null);
         }
     }
 
@@ -2168,6 +2168,14 @@ fn inferCall(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, call_
 
     const method = try resolveMethodCallee(state, env, ta, c);
     const name: ?[]const u8 = if (method) |m| m.name else resolveCalleeName(state, c);
+
+    // Generic struct method: `box.get(i64)`. The receiver is an implicit
+    // leading argument of the instance, not one of `c.args`.
+    if (method) |m| {
+        if (state.templates.get(m.name)) |template| {
+            return try inferGenericCall(state, env, ta, call_node, c, m.name, template, m.receiver);
+        }
+    }
     const named_fn = if (name) |n| state.functions.contains(n) else false;
     if (name != null and (method != null or named_fn)) {
         const target: state_mod.CallTarget = .{
@@ -2274,13 +2282,16 @@ fn collectTypeArgs(
     qualified: *std.ArrayList([]const u8),
     clean: *std.ArrayList([]const u8),
     values: ?*std.StringHashMap(i64),
+    skip_self: bool,
 ) TypecheckError!void {
-    const ps = generics.params(&template.function_decl);
+    const all_ps = generics.params(&template.function_decl);
+    // A method's receiver is passed implicitly, never among `c.args`.
+    const ps = if (skip_self and all_ps.len > 0) all_ps[1..] else all_ps;
     const shown = ir.cleanTypeName(name);
     if (c.args.len != ps.len) {
         // Implicit type arguments: `max(3, 9)` for `max(T: type, a: T, b: T)`.
         if (!generics.returnsType(&template.function_decl) and
-            try inferTypeArgsFromValues(state, env, ta, c, name, template, qualified, clean))
+            try inferTypeArgsFromValues(state, env, ta, c, name, template, qualified, clean, skip_self))
         {
             return;
         }
@@ -2328,8 +2339,10 @@ fn inferTypeArgsFromValues(
     template: *ast.Node,
     qualified: *std.ArrayList([]const u8),
     clean: *std.ArrayList([]const u8),
+    skip_self: bool,
 ) TypecheckError!bool {
-    const ps = generics.params(&template.function_decl);
+    const all_ps = generics.params(&template.function_decl);
+    const ps = if (skip_self and all_ps.len > 0) all_ps[1..] else all_ps;
     const shown = ir.cleanTypeName(name);
     var value_params: std.ArrayList(ast.Param) = .empty;
     defer value_params.deinit(ta.allocator);
@@ -2402,7 +2415,7 @@ fn inferTypeFunctionCall(
     defer clean.deinit(ta.allocator);
     var values = std.StringHashMap(i64).init(ta.allocator);
     defer values.deinit();
-    try collectTypeArgs(state, env, ta, c, name, template, &qualified, &clean, &values);
+    try collectTypeArgs(state, env, ta, c, name, template, &qualified, &clean, &values, false);
 
     const memo = try generics.memoKey(state, name, qualified.items);
     var disp: []const u8 = undefined;
@@ -2559,26 +2572,36 @@ fn inferGenericCall(
     c: *const ast.Call,
     name: []const u8,
     template: *ast.Node,
+    receiver: ?*ast.Node,
 ) TypecheckError!ir.Type {
     var qualified: std.ArrayList([]const u8) = .empty;
     defer qualified.deinit(ta.allocator);
     var clean: std.ArrayList([]const u8) = .empty;
     defer clean.deinit(ta.allocator);
-    try collectTypeArgs(state, env, ta, c, name, template, &qualified, &clean, null);
+    try collectTypeArgs(state, env, ta, c, name, template, &qualified, &clean, null, receiver != null);
 
     const inst = try generics.instantiateFunction(state, name, template, qualified.items, clean.items, call_node.loc());
     var value_count: usize = 0;
     for (generics.params(&template.function_decl)) |p| {
         if (!generics.isTypeParam(p)) value_count += 1;
     }
+    // A method's receiver is not among the call's arguments.
+    if (receiver != null and value_count > 0) value_count -= 1;
     try state.generic_calls.put(call_node, .{
         .instance = inst,
         .template = template,
         .value_args = value_count,
+        .receiver = receiver != null,
     });
     const target: state_mod.CallTarget = .{
         .key = inst,
-        .receiver_mode = .none,
+        .receiver_mode = if (receiver != null)
+            (if (methodSelfIsPointerLike(state, inst))
+                state_mod.ReceiverModeKind.pointer
+            else
+                state_mod.ReceiverModeKind.value)
+        else
+            state_mod.ReceiverModeKind.none,
         .generic_instance = inst,
     };
     try state.call_targets.put(call_node, target);
@@ -2590,14 +2613,27 @@ fn inferGenericCall(
     var variadic = false;
     _ = try fnParamTypes(state, ta, inst, &params, &rest, &variadic);
 
+    // The receiver is the instance's first value param.
+    const offset: usize = if (receiver != null) 1 else 0;
+    if (receiver) |recv| {
+        if (env.anyConstPlaceRoot(recv)) |recv_name| {
+            if (methodSelfIsPointerLike(state, inst)) {
+                return compiler_errors.compileFailFmt(state, "Method might mutate constant '{s}'", .{recv_name});
+            }
+        }
+        if (params.items.len > 0) {
+            const recv_ty = try inferExpr(state, env, ta, recv);
+            try requireMethodReceiver(state, recv_ty, params.items[0], inst, recv);
+        }
+    }
     // Type args may be implicit, so arguments line up with the instance's
     // value params (its type params are not parameters of the copy).
     for (c.args, 0..) |a, i| {
         const at = try inferExpr(state, env, ta, a);
-        if (i < params.items.len) {
+        if (i + offset < params.items.len) {
             var ctx_buf: [96]u8 = undefined;
             const ctx = std.fmt.bufPrint(&ctx_buf, "argument {d} of '{s}'", .{ i + 1, ir.cleanTypeName(name) }) catch "argument";
-            try requireAssignFrom(state, at, params.items[i], ctx, a);
+            try requireAssignFrom(state, at, params.items[i + offset], ctx, a);
         }
     }
     return try fnReturnType(state, ta, inst);

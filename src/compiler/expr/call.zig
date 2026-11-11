@@ -45,6 +45,10 @@ pub fn compileCall(state: *CompilerState, c: *const ast.Call, node: *ast.Node) !
     if (state.generic_calls.get(node)) |gc| {
         const n = @min(gc.value_args, c.args.len);
         const value_args = c.args[c.args.len - n ..];
+        if (gc.receiver and c.callee.* == .member) {
+            try emitMethodCall(state, gc.instance, c.callee.member.object, value_args);
+            return;
+        }
         if (try emitNamedCall(state, gc.instance, value_args, false, null)) return;
         return compile_errors.compileFailFmt(state, "Internal error: missing generic instance '{s}'", .{gc.instance});
     }

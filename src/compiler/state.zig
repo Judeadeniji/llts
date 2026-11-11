@@ -78,6 +78,9 @@ pub const GenericCall = struct {
     /// Number of trailing call arguments that are values; the leading ones are
     /// type arguments (explicit or inferred) and are dropped at codegen.
     value_args: usize,
+    /// `obj.method(…)`: the receiver is an implicit leading argument of the
+    /// instance, so the emitter passes `obj` before the value arguments.
+    receiver: bool = false,
 };
 
 pub const PendingInstance = struct {

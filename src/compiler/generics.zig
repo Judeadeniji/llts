@@ -82,11 +82,19 @@ fn cleanName(name: []const u8) []const u8 {
     return if (std.mem.lastIndexOf(u8, name, "::")) |i| name[i + 2 ..] else name;
 }
 
-pub fn registerTemplate(state: *CompilerState, node: *ast.Node, in_struct: bool) !void {
+pub fn registerTemplate(state: *CompilerState, node: *ast.Node, struct_name: ?[]const u8) !void {
     const f = &node.function_decl;
     noteLoc(state, f.loc);
-    if (in_struct) {
-        return compile_errors.compileFailFmt(state, "Struct methods cannot take type parameters yet ('{s}')", .{cleanName(f.name)});
+    if (struct_name) |sn| {
+        // Same mangling as non-template methods, so calls resolve `T::name`.
+        if (std.mem.indexOf(u8, f.name, "::") == null) {
+            const mangled = try std.fmt.allocPrint(state.allocator, "{s}::{s}", .{ sn, f.name });
+            try state.owned.append(state.allocator, mangled);
+            f.name = mangled;
+        }
+        if (returnsType(f)) {
+            return compile_errors.compileFailFmt(state, "Struct method '{s}' cannot be a type function ('type' return)", .{cleanName(f.name)});
+        }
     }
     for (params(f)) |p| {
         if (isTypeParam(p) and p.is_rest) {
