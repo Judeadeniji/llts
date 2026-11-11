@@ -72,6 +72,12 @@ pub const ValType = struct {
         return self.kind == .int and self.width != null and
             (self.width.? == .u64 or self.width.? == .usize);
     }
+
+    pub fn isByteSequence(self: ValType) bool {
+        if (self.kind == .string) return true;
+        if ((self.kind == .slice or self.kind == .array) and self.elem != null and std.mem.eql(u8, self.elem.?.zig, "u8")) return true;
+        return false;
+    }
 };
 
 pub const StructField = struct {

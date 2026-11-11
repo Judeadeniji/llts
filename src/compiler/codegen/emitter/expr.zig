@@ -453,9 +453,13 @@ pub fn emitComparison(self: *Emitter, node: *ast_mod.Node, b: *const ast_mod.Bin
             return if (negate) std.fmt.allocPrint(a, "(!{s})", .{base}) else base;
         }
         if (lt_null and rt_null) return if (negate) "false" else "true";
-        if (isByteSliceType(lt) and isByteSliceType(rt)) {
+        if (lt.isByteSequence() and rt.isByteSequence()) {
+            const l_expr = try emitExpr(self, b.left);
+            const r_expr = try emitExpr(self, b.right);
+            const left_slice = if (lt.kind == .array) try std.fmt.allocPrint(a, "({s})[0..]", .{l_expr}) else l_expr;
+            const right_slice = if (rt.kind == .array) try std.fmt.allocPrint(a, "({s})[0..]", .{r_expr}) else r_expr;
             const base = try std.fmt.allocPrint(a, "rt.arith.eqStr({s}, {s})", .{
-                try emitExpr(self, b.left), try emitExpr(self, b.right),
+                left_slice, right_slice,
             });
             return if (negate) std.fmt.allocPrint(a, "(!{s})", .{base}) else base;
         }

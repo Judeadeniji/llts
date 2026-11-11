@@ -394,6 +394,12 @@ pub fn emitEqualityCode(self: *Emitter, left: []const u8, lt: ValType, right_nod
     if (rt.may_error and !(lt.kind == .error_value and rt.kind == .error_value)) {
         return self.failAt(right_node, "error-union value must be handled with '?' before @switch", .{});
     }
+    if (lt.isByteSequence() and rt.isByteSequence()) {
+        const left_slice = if (lt.kind == .array) try std.fmt.allocPrint(a, "{s}[0..]", .{left}) else left;
+        const r_expr = try expr_mod.emitExpr(self, right_node);
+        const right_slice = if (rt.kind == .array) try std.fmt.allocPrint(a, "({s})[0..]", .{r_expr}) else r_expr;
+        return std.fmt.allocPrint(a, "rt.arith.eqStr({s}, {s})", .{ left_slice, right_slice });
+    }
     if (lt.kind != rt.kind) {
         return self.failAt(right_node, "cannot compare @switch '{s}' with pattern '{s}'", .{ lt.display, rt.display });
     }
@@ -1465,6 +1471,7 @@ pub fn switchScrutineeType(self: *Emitter, node: *ast_mod.Node, sw: *const ast_m
     if (vt.may_error and vt.kind != .error_value) {
         return self.failAt(node, "error-union value must be handled with '?' before @switch", .{});
     }
+    if (vt.isByteSequence()) return vt;
     switch (vt.kind) {
         .int, .float, .bool, .string, .error_value => {},
         else => return self.failAt(node, "native backend (Phase 3) does not support @switch on '{s}' yet", .{vt.display}),

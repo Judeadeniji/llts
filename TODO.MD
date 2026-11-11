@@ -144,7 +144,7 @@ Tracked lowering differences and remaining parity gaps between bytecode VM and n
 - [x] **Value-producing `@if` with captures** — `$x = @if (opt) |v| { break v; } @else { break 0; };` lowers to a labeled block capturing the optional payload before branching into value breaks.
 - [x] **Error-union captures in `@if`** — `@if (res) |val|` on `T | error` checks `.ok` and unwraps the success payload before entering the body.
 - [x] **Key capture facts by `*const ast.Node`** — `state.if_capture_facts` and `state.for_capture_facts` now key on `*const ast.Node` in `binding_facts.zig` and the emitter, preventing false "pointless discard of capture" errors.
-- [ ] **`@switch` on non-primitives (strings, structured types)** — `@switch (s)` on string slices fails with `native backend (Phase 3) does not support @switch on '[]const u8' yet` (`stmt.zig`). Solution: lower string switch statements to `std.mem.eql` if-else chains or hash switches.
+- [x] **`@switch` on non-primitives (strings, structured types)** — lowered string switches, byte slices (`[]u8`), and byte arrays (`[N]u8`) to `rt.arith.eqStr` branch chains.
 - [ ] **Rest / variadic parameters (`...rest: []T`)** — `@func fn(...rest: []int)` fails with `native backend does not support variadic functions yet` / `rest parameters yet` (`unit.zig`). Solution: emit Zig slice parameters `rest: []const T` and pack call-site arguments into stack arrays.
 - [ ] **Materialization of first-class function values** — returning or passing function values at runtime fails with `native backend (Phase 2) does not support return type '@func(...)'` (`tests/55_emit_zig.test.ts`). Solution: typecheck establishes concrete machine function pointer types and linkage metadata in `CompilerState`; native emitter generates Zig function pointers (`*const fn(...) ...`) when devirtualization cannot resolve a single static target.
 - [ ] **Standard library modules for native (`std/*`)** — deferred: no standard library in llts-zig for now. Examples importing `std/*` (23 of 39) require stdlib modules when designed.
@@ -157,17 +157,18 @@ Discrepancies where current documentation in `docs/` differs from compiler capab
 
 #### Backend Parity & Limitations Discrepancies
 - [ ] **First-class function values** — `docs/functional-and-pipes.md` documents storing `@func` in variables, callbacks, and structs/shapes with "direct indirect-call machine dispatch", but native backend only supports statically resolved direct calls. Document the current native limitation.
-- [ ] **String `@switch` prongs** — `docs/control-flow.md` gives an example of `@switch (role)` matching string literals (`"admin"`), but native compilation rejects string prongs with `native backend (Phase 3) does not support @switch on '[]const u8' yet`. Clarify VM-only status or native gap.
+- [x] **String `@switch` prongs** — string switch prongs are lowered to branch chains calling `rt.arith.eqStr`; matches `docs/control-flow.md`.
 - [ ] **Variadic / rest parameters** — `docs/functions.md` documents `@func sum(...args): i64`, but native backend rejects variadics (`native backend does not support variadic functions yet` / `rest parameters yet`). Note backend status.
 - [ ] **Heterogeneous tuples** — `docs/sequences.md` documents tuples (`[i64, string]`, `pair.0`, `record.0 = 10`), but tuples are not yet lowered in the native backend (`valTypeFromIR` returns `null`). Document native status.
-- [ ] **`@nameOf` on runtime enums** — `docs/intrinsics.md` summary table lists `@nameOf` as fully supported across VM & Native, but runtime enum values currently fail natively with `native backend cannot lower runtime @nameOf on enums yet`. Note enum runtime limitation.
+- [x] **`@nameOf` on runtime enums** — implemented in `dbaf7be`; documentation in `docs/intrinsics.md` matches.
 - [ ] **Union return types & general unions** — `docs/types/algebraic-types.md` documents arbitrary unions (`i64 | string`, `i64 | ParseError` return), but native backend rejects non-optional/non-bare-error unions. Clarify native backend support boundary.
-- [ ] **Value-producing `@if` with captures** — `docs/control-flow.md` documents value `@if` and optional captures, but combining them (`$x = @if (opt) |v| { break v; } @else { break 0; };`) is rejected natively with `native backend does not support @if captures yet`.
+- [x] **Value-producing `@if` with captures** — implemented in `6f38a2a`; documentation in `docs/control-flow.md` matches.
 - [ ] **Backend compatibility matrix** — `docs/tooling-and-cli.md` and `docs/getting-started.md` mention `--native` but lack a feature compatibility matrix distinguishing VM-supported vs native-ready features.
 
 #### Undocumented Compiler Features
 - [ ] **Value parameters on type functions** — type functions can take integer value parameters evaluated at compile time (`@func Pick(T: type, n: i64): type { @if (n == 1) { return T; } return ?T; }`). Missing from `docs/metaprogramming.md`.
 - [ ] **Type argument inference on generic functions** — generic functions infer type arguments from value parameters (`max(3, 9)` infers `T = i64`). Missing from `docs/metaprogramming.md` and `docs/functions.md`.
+- [ ] **Generic struct declarations & method type parameters** — `@struct Box[T]` and method-level type parameters (`pub @func map[U](self, ...)`) added in recent commits (`7843ea5`, `f54f97f`, `41cde0e`). Missing from `docs/types/user-defined.md` and `docs/metaprogramming.md`.
 - [ ] **Compound `@if` condition folding in type functions** — type-function `@if` folds `!`, `&&`, `||`, and comparisons (`<`, `<=`, `>`, `>=`, `==`, `!=`) over types and compile-time integers. Missing from `docs/metaprogramming.md`.
 - [ ] **Anonymous struct initialization from type-function shapes** — object literals can initialize shape types returned from type functions (`$x: Make(i64) = { a: 1 };`). Missing from `docs/types/user-defined.md` and `docs/metaprogramming.md`.
 

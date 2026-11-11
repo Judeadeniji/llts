@@ -399,6 +399,16 @@ pub @func main() {
         @else => { break 6; },
     };
     print(f);
+    $arr: [4]u8 = "test";
+    @switch (arr) {
+        "test" => { print("arr-matched"); },
+        @else => { print("arr-other"); },
+    }
+    $sl: []u8 = arr[0..4];
+    @switch (sl) {
+        "test" => { print("slice-matched"); },
+        @else => { print("slice-other"); },
+    }
 }
 `,
     (generated) => {
