@@ -48,6 +48,24 @@ pub fn params(f: *const ast.FunctionDecl) []ast.Param {
     return f.params.params.params;
 }
 
+/// Integer type names a type function's value parameter may use.
+const int_type_names = [_][]const u8{
+    "i8", "i16", "i32", "i64", "u1",  "u8",  "u16",
+    "u32", "u64", "isize", "usize", "int", "number", "byte",
+};
+
+fn isIntAnnotation(n: ?*const ast.Node) bool {
+    const t = n orelse return false;
+    if (t.* != .primary or t.primary.kind != .identifier) return false;
+    for (int_type_names) |name| if (std.mem.eql(u8, t.primary.name, name)) return true;
+    return false;
+}
+
+/// A compile-time `i64` value parameter on a type function (`Pick(T: type, n: i64)`).
+pub fn isValueParam(f: *const ast.FunctionDecl, p: ast.Param) bool {
+    return returnsType(f) and !isTypeParam(p);
+}
+
 pub fn isTemplate(f: *const ast.FunctionDecl) bool {
     if (returnsType(f)) return true;
     for (params(f)) |p| if (isTypeParam(p)) return true;
@@ -77,7 +95,12 @@ pub fn registerTemplate(state: *CompilerState, node: *ast.Node, in_struct: bool)
         }
         if (returnsType(f) and !isTypeParam(p)) {
             noteLoc(state, p.loc);
-            return compile_errors.compileFailFmt(state, "Type function '{s}' may only take 'type' parameters ('{s}' is not)", .{ cleanName(f.name), p.name });
+            if (p.is_rest) {
+                return compile_errors.compileFailFmt(state, "Rest parameter '{s}' cannot be a type function value parameter", .{p.name});
+            }
+            if (!isIntAnnotation(p.type_annotation)) {
+                return compile_errors.compileFailFmt(state, "Type function '{s}' value parameter '{s}' must have an integer type", .{ cleanName(f.name), p.name });
+            }
         }
     }
     try state.templates.put(f.name, node);
@@ -143,9 +166,12 @@ fn bindCopyInner(state: *CompilerState, template: *ast.Node, name: []const u8, q
     defer renames.deinit();
     var kept: std.ArrayList(ast.Param) = .empty;
     var ai: usize = 0;
+    const type_fn = returnsType(f);
     for (params(f)) |p| {
         if (!isTypeParam(p)) {
-            try kept.append(arena, p);
+            // A type function's value parameters are compile-time only: the
+            // body is evaluated, never emitted, so they are dropped from the copy.
+            if (!type_fn) try kept.append(arena, p);
             continue;
         }
         const key = try std.fmt.allocPrint(state.allocator, "{s}::{s}", .{ prefix, p.name });

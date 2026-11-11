@@ -2245,7 +2245,9 @@ fn inferCall(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, call_
     return ir.TUnknown;
 }
 
-/// Denote the arguments in a template's `type` param positions.
+/// Denote the arguments in a template's `type` param positions, and read the
+/// compile-time value of a type function's value params (`values`, keyed by
+/// param name) so they can be substituted into the instance's `@if`s.
 fn collectTypeArgs(
     state: *state_mod.CompilerState,
     env: *Env,
@@ -2255,6 +2257,7 @@ fn collectTypeArgs(
     template: *ast.Node,
     qualified: *std.ArrayList([]const u8),
     clean: *std.ArrayList([]const u8),
+    values: ?*std.StringHashMap(i64),
 ) TypecheckError!void {
     const ps = generics.params(&template.function_decl);
     const shown = ir.cleanTypeName(name);
@@ -2262,7 +2265,18 @@ fn collectTypeArgs(
         return compiler_errors.compileFailFmt(state, "Function '{s}' expected {d} arguments, got {d}", .{ shown, ps.len, c.args.len });
     }
     for (ps, c.args, 0..) |p, a, i| {
-        if (!generics.isTypeParam(p)) continue;
+        if (!generics.isTypeParam(p)) {
+            if (!generics.isValueParam(&template.function_decl, p)) continue;
+            noteDiag(state, a);
+            const v = (try constArgValue(a)) orelse {
+                return compiler_errors.compileFailFmt(state, "Argument {d} of '{s}' must be a compile-time integer", .{ i + 1, shown });
+            };
+            const text = try std.fmt.allocPrint(ta.allocator, "{d}", .{v});
+            try qualified.append(ta.allocator, text);
+            try clean.append(ta.allocator, text);
+            if (values) |m| try m.put(p.name, v);
+            continue;
+        }
         noteDiag(state, a);
         if (!intrinsics.isTypeValueNode(state, env, a)) {
             return compiler_errors.compileFailFmt(state, "Argument {d} of '{s}' must be a type", .{ i + 1, shown });
@@ -2274,6 +2288,23 @@ fn collectTypeArgs(
         try qualified.append(ta.allocator, try ownDisplayQualified(state, t));
         try clean.append(ta.allocator, try ownDisplay(state, t));
     }
+}
+
+/// Compile-time integer value of a type function argument: an integer literal,
+/// a negated literal, or a `@const` integer known to the checker.
+fn constArgValue(node: *ast.Node) TypecheckError!?i64 {
+    if (try constIntIndex(node)) |v| return v;
+    if (node.* == .unary) {
+        const u = node.unary;
+        if (std.mem.eql(u8, u.operator, "-")) {
+            if (try constIntIndex(u.arg)) |v| return -v;
+        }
+        return null;
+    }
+    if (node.* == .literal and node.literal.literal_type == .boolean) {
+        return if (std.mem.eql(u8, node.literal.value, "true")) 1 else 0;
+    }
+    return null;
 }
 
 /// `Opt(i64)`: evaluate the type function at compile time (memoized per
@@ -2291,7 +2322,9 @@ fn inferTypeFunctionCall(
     defer qualified.deinit(ta.allocator);
     var clean: std.ArrayList([]const u8) = .empty;
     defer clean.deinit(ta.allocator);
-    try collectTypeArgs(state, env, ta, c, name, template, &qualified, &clean);
+    var values = std.StringHashMap(i64).init(ta.allocator);
+    defer values.deinit();
+    try collectTypeArgs(state, env, ta, c, name, template, &qualified, &clean, &values);
 
     const memo = try generics.memoKey(state, name, qualified.items);
     var disp: []const u8 = undefined;
@@ -2309,7 +2342,8 @@ fn inferTypeFunctionCall(
         var fenv = Env.init(ta.allocator);
         defer fenv.deinit();
         fenv.decl_globals = env.decl_globals;
-        const result = (try evalTypeBody(state, &fenv, ta, copy.function_decl.body, name)) orelse {
+        var ev = TypeFnEval{ .state = state, .env = &fenv, .ta = ta, .name = name, .values = &values };
+        const result = (try ev.body(copy.function_decl.body)) orelse {
             noteDiag(state, template);
             return compiler_errors.compileFailFmt(state, "Type function '{s}' did not return a type", .{ir.cleanTypeName(name)});
         };
@@ -2323,83 +2357,119 @@ fn inferTypeFunctionCall(
     return ir.TType;
 }
 
-/// Fold a type function's `@if` condition at compile time. Handles boolean
-/// literals, `!`, `&&` / `||`, and `==` / `!=` between types. Returns null when
-/// the condition is not foldable.
-fn evalTypeCond(
+/// One type-function instance being evaluated at compile time: its template
+/// name plus the compile-time values of its value params.
+const TypeFnEval = struct {
     state: *state_mod.CompilerState,
     env: *Env,
     ta: ir.TypeAlloc,
-    cond: *ast.Node,
-) TypecheckError!?bool {
-    switch (cond.*) {
-        .literal => |l| {
-            if (l.literal_type == .boolean) return std.mem.eql(u8, l.value, "true");
-            return null;
-        },
-        .unary => |u| {
-            if (!std.mem.eql(u8, u.operator, "!")) return null;
-            const v = (try evalTypeCond(state, env, ta, u.arg)) orelse return null;
-            return !v;
-        },
-        .binary => |b| {
-            if (std.mem.eql(u8, b.operator, "||") or std.mem.eql(u8, b.operator, "&&")) {
-                const l = (try evalTypeCond(state, env, ta, b.left)) orelse return null;
-                const r = (try evalTypeCond(state, env, ta, b.right)) orelse return null;
-                return if (std.mem.eql(u8, b.operator, "||")) (l or r) else (l and r);
-            }
-            if (!std.mem.eql(u8, b.operator, "==") and !std.mem.eql(u8, b.operator, "!=")) return null;
-            if (!intrinsics.isTypeValueNode(state, env, b.left) or !intrinsics.isTypeValueNode(state, env, b.right)) return null;
-            try checkTypeComparison(state, env, ta, b);
-            return state.type_eq_folds.get(b.left);
-        },
-        else => return null,
-    }
-}
+    name: []const u8,
+    values: *const std.StringHashMap(i64),
 
-/// First `return` reached in a type function body. Only `return <type>`,
-/// `@if` on folded type comparisons, and local typedefs are allowed.
-fn evalTypeBody(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node: *ast.Node, name: []const u8) TypecheckError!?ir.Type {
-    noteDiag(state, node);
-    const shown = ir.cleanTypeName(name);
-    switch (node.*) {
-        .block => |b| {
-            for (b.statements) |s| {
-                if (try evalTypeBody(state, env, ta, s, name)) |t| return t;
-            }
-            return null;
-        },
-        .type_decl => return null,
-        .return_expr => |r| {
-            const v = r.return_value orelse {
-                return compiler_errors.compileFailFmt(state, "Type function '{s}' must return a type", .{shown});
-            };
-            try intrinsics.resolveTypeExprs(state, env, ta, v);
-            if (!intrinsics.isTypeValueNode(state, env, v)) {
-                return compiler_errors.compileFailFmt(state, "Type function '{s}' must return a type", .{shown});
-            }
-            const t = try intrinsics.denotedType(state, env, ta, v);
-            if (ir.involvesUnknown(t)) {
-                return compiler_errors.compileFailFmt(state, "Type function '{s}' returned a type that is not known here", .{shown});
-            }
-            return t;
-        },
-        .if_expr => |i| {
-            const go = (try evalTypeCond(state, env, ta, i.condition)) orelse {
-                noteDiag(state, i.condition);
-                return compiler_errors.compileFailFmt(state, "Type function '{s}': an @if condition must fold to a compile-time boolean", .{shown});
-            };
-            if (go) return try evalTypeBody(state, env, ta, i.body, name);
-            if (i.else_body) |e| return try evalTypeBody(state, env, ta, e, name);
-            return null;
-        },
-        else => return compiler_errors.compileFailFmt(
-            state,
-            "Type function '{s}' may only contain 'return', '@if' on types, and '@alias'/'@type'",
-            .{shown},
-        ),
+    fn shown(self: *const TypeFnEval) []const u8 {
+        return ir.cleanTypeName(self.name);
     }
-}
+
+    /// Compile-time integer value of `node`: a literal, a negated literal, or a
+    /// value param of the instance being evaluated.
+    fn constInt(self: *TypeFnEval, node: *ast.Node) TypecheckError!?i64 {
+        if (try constArgValue(node)) |v| return v;
+        switch (node.*) {
+            .primary => |p| if (p.kind == .identifier) return self.values.get(p.name),
+            .unary => |u| if (std.mem.eql(u8, u.operator, "-")) {
+                const v = (try self.constInt(u.arg)) orelse return null;
+                return -v;
+            },
+            else => {},
+        }
+        return null;
+    }
+
+    /// Fold an `@if` condition at compile time. Handles boolean literals, `!`,
+    /// `&&` / `||`, comparisons between types, and comparisons between integer
+    /// values known at compile time. Returns null when the condition cannot fold.
+    fn cond(self: *TypeFnEval, node: *ast.Node) TypecheckError!?bool {
+        switch (node.*) {
+            .literal => |l| {
+                if (l.literal_type == .boolean) return std.mem.eql(u8, l.value, "true");
+                return null;
+            },
+            .unary => |u| {
+                if (!std.mem.eql(u8, u.operator, "!")) return null;
+                const v = (try self.cond(u.arg)) orelse return null;
+                return !v;
+            },
+            .binary => |b| {
+                if (std.mem.eql(u8, b.operator, "||") or std.mem.eql(u8, b.operator, "&&")) {
+                    const l = (try self.cond(b.left)) orelse return null;
+                    const r = (try self.cond(b.right)) orelse return null;
+                    return if (std.mem.eql(u8, b.operator, "||")) (l or r) else (l and r);
+                }
+                const op = b.operator;
+                const is_cmp = std.mem.eql(u8, op, "==") or std.mem.eql(u8, op, "!=") or
+                    std.mem.eql(u8, op, "<") or std.mem.eql(u8, op, "<=") or
+                    std.mem.eql(u8, op, ">") or std.mem.eql(u8, op, ">=");
+                if (!is_cmp) return null;
+                if (try self.constInt(b.left)) |l| {
+                    const r = (try self.constInt(b.right)) orelse return null;
+                    return if (std.mem.eql(u8, op, "==")) l == r else if (std.mem.eql(u8, op, "!=")) l != r else if (std.mem.eql(u8, op, "<")) l < r else if (std.mem.eql(u8, op, "<=")) l <= r else if (std.mem.eql(u8, op, ">")) l > r else l >= r;
+                }
+                if (!std.mem.eql(u8, op, "==") and !std.mem.eql(u8, op, "!=")) return null;
+                if (!intrinsics.isTypeValueNode(self.state, self.env, b.left) or !intrinsics.isTypeValueNode(self.state, self.env, b.right)) return null;
+                try checkTypeComparison(self.state, self.env, self.ta, b);
+                return self.state.type_eq_folds.get(b.left);
+            },
+            else => return null,
+        }
+    }
+
+    /// First `return` reached in a type function body. Only `return <type>`,
+    /// `@if` on folded conditions, and local typedefs are allowed.
+    fn body(self: *TypeFnEval, node: *ast.Node) TypecheckError!?ir.Type {
+        const state = self.state;
+        const env = self.env;
+        const ta = self.ta;
+        const name = self.shown();
+        noteDiag(state, node);
+        switch (node.*) {
+            .block => |b| {
+                for (b.statements) |s| {
+                    if (try self.body(s)) |t| return t;
+                }
+                return null;
+            },
+            .type_decl => return null,
+            .return_expr => |r| {
+                const v = r.return_value orelse {
+                    return compiler_errors.compileFailFmt(state, "Type function '{s}' must return a type", .{name});
+                };
+                try intrinsics.resolveTypeExprs(state, env, ta, v);
+                if (!intrinsics.isTypeValueNode(state, env, v)) {
+                    return compiler_errors.compileFailFmt(state, "Type function '{s}' must return a type", .{name});
+                }
+                const t = try intrinsics.denotedType(state, env, ta, v);
+                if (ir.involvesUnknown(t)) {
+                    return compiler_errors.compileFailFmt(state, "Type function '{s}' returned a type that is not known here", .{name});
+                }
+                return t;
+            },
+            .if_expr => |i| {
+                const go = (try self.cond(i.condition)) orelse {
+                    noteDiag(state, i.condition);
+                    return compiler_errors.compileFailFmt(state, "Type function '{s}': an @if condition must fold to a compile-time boolean", .{name});
+                };
+                if (go) return try self.body(i.body);
+                if (i.else_body) |e| return try self.body(e);
+                return null;
+            },
+            else => return compiler_errors.compileFailFmt(
+                state,
+                "Type function '{s}' may only contain 'return', '@if' on types, and '@alias'/'@type'",
+                .{name},
+            ),
+        }
+    }
+};
 
 /// `max(i64, a, b)`: instantiate for the type arguments, then check the value
 /// arguments against the instance's signature.
@@ -2416,7 +2486,7 @@ fn inferGenericCall(
     defer qualified.deinit(ta.allocator);
     var clean: std.ArrayList([]const u8) = .empty;
     defer clean.deinit(ta.allocator);
-    try collectTypeArgs(state, env, ta, c, name, template, &qualified, &clean);
+    try collectTypeArgs(state, env, ta, c, name, template, &qualified, &clean, null);
 
     const inst = try generics.instantiateFunction(state, name, template, qualified.items, clean.items, call_node.loc());
     try state.generic_calls.put(call_node, .{ .instance = inst, .template = template });
