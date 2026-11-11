@@ -43,12 +43,9 @@ pub fn compileCall(state: *CompilerState, c: *const ast.Call, node: *ast.Node) !
 
     // Generic call: the instance takes only the value arguments.
     if (state.generic_calls.get(node)) |gc| {
-        var value_args: std.ArrayList(*ast.Node) = .empty;
-        defer value_args.deinit(state.allocator);
-        for (generics.params(&gc.template.function_decl), c.args) |p, a| {
-            if (!generics.isTypeParam(p)) try value_args.append(state.allocator, a);
-        }
-        if (try emitNamedCall(state, gc.instance, value_args.items, false, null)) return;
+        const n = @min(gc.value_args, c.args.len);
+        const value_args = c.args[c.args.len - n ..];
+        if (try emitNamedCall(state, gc.instance, value_args, false, null)) return;
         return compile_errors.compileFailFmt(state, "Internal error: missing generic instance '{s}'", .{gc.instance});
     }
 

@@ -73,9 +73,11 @@ pub const FunctionDef = struct {
 
 pub const GenericCall = struct {
     instance: []const u8,
-    /// The template's `function_decl` node (its params mark which call
-    /// arguments are types and so are dropped at codegen).
+    /// The template's `function_decl` node.
     template: *ast.Node,
+    /// Number of trailing call arguments that are values; the leading ones are
+    /// type arguments (explicit or inferred) and are dropped at codegen.
+    value_args: usize,
 };
 
 pub const PendingInstance = struct {

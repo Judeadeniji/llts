@@ -130,6 +130,17 @@ Rule: the native emitter lowers compiler facts and never re-derives them. See `.
 - [x] **Remove dead/duplicate intrinsic handling** — done: removed unreachable duplicate `@typeOf` branch in `emitCall` (`expr.zig`), routed `type_call_results` at call entry, and removed `staticTypeArgSize` fallback from `@sizeOf`.
 - [x] **Enforce the contract in tests** — done: added contract unit tests in `tests/integration.zig` and `tests/57.4_compiler_authority.test.ts` asserting (a) explicit lowering failure diagnostics, (b) total absence of display-string type parsers, `range_mod`, and `prescan` in the emitter, and (c) deterministic emitted code across runs.
 
+### Native Backend Lowering Gaps
+
+Tracked lowering differences and remaining parity gaps between bytecode VM and native emitter:
+
+- [ ] **Runtime `@nameOf` on enums** — runtime `@nameOf(e)` on an enum value fails with `native backend cannot lower runtime @nameOf on enums yet` (`examples/enums.lls`, `examples/name_of.lls`, `tests/15_enums.test.ts`). Solution: compiler analysis records variant name lookup in `state.name_of_plans`, emitter outputs exhaustive tag-to-string mapping.
+- [ ] **Top-level global type propagation for computed expressions** — `$g = @if (true) { break 3; } @else { break 4; }; print(g);` fails with `native backend cannot infer the type of this expression` (`tests/55_emit_zig.test.ts:321`, `770`). Solution: persist all non-unknown resolved types (including `.width` and other composite IR types) in `state.global_type_irs` / `global_types` when `persist_global` is true.
+- [ ] **General tagged unions and union return types** — discriminated struct unions (`Literal | Add`) and general union returns (`int | AppError`) fail with `native backend (Phase 2) does not support type 'Expr'` (`examples/tagged.lls`, `tests/55_emit_zig.test.ts:675`). Solution: lower discriminated unions to Zig tagged unions.
+- [ ] **Standard library modules for native (`std/*`)** — 23 of 39 `examples/*.lls` fail with `Unknown module 'std/index'` / `std/mem` / `std/fs` / `std/list` / `std/fmt` because `std/` modules currently only exist as VM host runtime bindings. Solution: provide `.lls` standard library sources or native Zig runtime bindings for `std/*`.
+- [ ] **Materialization of first-class function values** — returning or passing function values at runtime fails with `native backend (Phase 2) does not support return type '@func(...)'` (`tests/55_emit_zig.test.ts:873`). Solution: support Zig function pointers (`*const fn(...) ...`) when devirtualization cannot resolve a single static target.
+- [ ] **Standalone library compilation mode** — compiling modules without `pub @func main()` fails with `native backend requires a pub @func main() entry point` (`examples/import_test_lib.lls`). Solution: support library/module emission mode in `emit-zig`.
+
 ### P1 — Missing Language Features
 
 - [x] **Explicit error handling** — `error(msg)` and `?`.
@@ -167,7 +178,7 @@ Rule: the native emitter lowers compiler facts and never re-derives them. See `.
   - [ ] **Anonymous structs** — nameless shape types as first-class struct types: a type fn can *return* `{ a: T }` (`print(Make(i64))` → `{a: i64}`) and annotations parse (`$x: { a: i64; }`), but init of such values fails ("Invalid struct initialization type") even for the plain form `$x: { a: i64; } = { a: 1 }`. Workaround: `@type Named = Make(i64)` / `@type Named = { a: i64; }` then `Named { … }` / `$x: Named = { … }` (verified working). Decide nominal vs structural typing and init/literal syntax.
   - [ ] **Local `@alias` from a type function** — `@alias L = Opt(i64)` inside a function body resolves to `unknown`; direct `$x: Opt(i64)` annotation, local `@type L = Opt(i64)`, and top-level `@alias` all work.
   - [x] **Type-fn `@if` beyond a single type compare** — conditions fold through `!`, `&&`, `||` and multiple type `==` / `!=` comparisons (`evalTypeCond`). Value conditions (`@if (N == 1)`) come with value params below.
-  - [ ] **Type-argument inference** — `max(3, 9)` rejected with an arg-count error; type args are always explicit (`max(i64, 3, 9)`).
+  - [x] **Type-argument inference** — `max(3, 9)` binds `T` from the value arguments' types (`inferTypeArgsFromValues`); explicit `max(i64, 3, 9)` still works, and an unfixable param reports "Cannot infer type argument 'T' … pass it explicitly". Call sites record `GenericCall.value_args`, so codegen drops the leading type arguments instead of re-deriving the split.
   - [ ] **Generic struct / enum declarations** — `@struct Box(T: type)` is a parse error; only free functions take type params today.
 - [x] **Local `@type` / `@alias` inside blocks** — lexically block-scoped (nested blocks, `@comptime`, block expressions, top-level blocks; shadowing allowed); hoisted under a `<fn>[::<n>]::Name` key (`src/compiler/local_types.zig`, `tests/51_local_types.test.ts`).
 - [x] **`@nameOf(enum_or_error)`** — variant/member spelling as declared (`tests/15_enums.test.ts`, `tests/37_error_sets.test.ts`).

@@ -2262,6 +2262,12 @@ fn collectTypeArgs(
     const ps = generics.params(&template.function_decl);
     const shown = ir.cleanTypeName(name);
     if (c.args.len != ps.len) {
+        // Implicit type arguments: `max(3, 9)` for `max(T: type, a: T, b: T)`.
+        if (!generics.returnsType(&template.function_decl) and
+            try inferTypeArgsFromValues(state, env, ta, c, name, template, qualified, clean))
+        {
+            return;
+        }
         return compiler_errors.compileFailFmt(state, "Function '{s}' expected {d} arguments, got {d}", .{ shown, ps.len, c.args.len });
     }
     for (ps, c.args, 0..) |p, a, i| {
@@ -2288,6 +2294,62 @@ fn collectTypeArgs(
         try qualified.append(ta.allocator, try ownDisplayQualified(state, t));
         try clean.append(ta.allocator, try ownDisplay(state, t));
     }
+}
+
+const InferredTypeArg = struct { qualified: []const u8, clean: []const u8 };
+
+/// Bind a generic function's type params from the types of its value arguments
+/// (`max(3, 9)` → `T = i64`). A type param is bound from the first value param
+/// whose annotation is exactly that type param. Returns false when the argument
+/// count does not match the template's value params, so the caller can report
+/// the usual arity error.
+fn inferTypeArgsFromValues(
+    state: *state_mod.CompilerState,
+    env: *Env,
+    ta: ir.TypeAlloc,
+    c: *const ast.Call,
+    name: []const u8,
+    template: *ast.Node,
+    qualified: *std.ArrayList([]const u8),
+    clean: *std.ArrayList([]const u8),
+) TypecheckError!bool {
+    const ps = generics.params(&template.function_decl);
+    const shown = ir.cleanTypeName(name);
+    var value_params: std.ArrayList(ast.Param) = .empty;
+    defer value_params.deinit(ta.allocator);
+    for (ps) |p| if (!generics.isTypeParam(p)) try value_params.append(ta.allocator, p);
+    if (c.args.len != value_params.items.len) return false;
+
+    var bound = std.StringHashMap(InferredTypeArg).init(ta.allocator);
+    defer bound.deinit();
+    for (value_params.items, c.args) |p, a| {
+        const ann = p.type_annotation orelse continue;
+        if (ann.* != .primary or ann.primary.kind != .identifier) continue;
+        const pname = ann.primary.name;
+        var is_type_param = false;
+        for (ps) |tp| {
+            if (generics.isTypeParam(tp) and std.mem.eql(u8, tp.name, pname)) is_type_param = true;
+        }
+        if (!is_type_param or bound.contains(pname)) continue;
+        const t = try inferExpr(state, env, ta, a);
+        if (ir.involvesUnknown(t)) {
+            noteDiag(state, a);
+            return compiler_errors.compileFailFmt(state, "Cannot infer type argument '{s}' of '{s}': the argument's type is unknown", .{ pname, shown });
+        }
+        try bound.put(pname, .{
+            .qualified = try ownDisplayQualified(state, t),
+            .clean = try ownDisplay(state, t),
+        });
+    }
+    for (ps) |p| {
+        if (!generics.isTypeParam(p)) continue;
+        const arg = bound.get(p.name) orelse {
+            return compiler_errors.compileFailFmt(state, "Cannot infer type argument '{s}' of '{s}': no argument fixes it (pass it explicitly)", .{ p.name, shown });
+        };
+        try qualified.append(ta.allocator, arg.qualified);
+        try clean.append(ta.allocator, arg.clean);
+    }
+    return true;
 }
 
 /// Compile-time integer value of a type function argument: an integer literal,
@@ -2489,7 +2551,15 @@ fn inferGenericCall(
     try collectTypeArgs(state, env, ta, c, name, template, &qualified, &clean, null);
 
     const inst = try generics.instantiateFunction(state, name, template, qualified.items, clean.items, call_node.loc());
-    try state.generic_calls.put(call_node, .{ .instance = inst, .template = template });
+    var value_count: usize = 0;
+    for (generics.params(&template.function_decl)) |p| {
+        if (!generics.isTypeParam(p)) value_count += 1;
+    }
+    try state.generic_calls.put(call_node, .{
+        .instance = inst,
+        .template = template,
+        .value_args = value_count,
+    });
     const target: state_mod.CallTarget = .{
         .key = inst,
         .receiver_mode = .none,
@@ -2504,16 +2574,15 @@ fn inferGenericCall(
     var variadic = false;
     _ = try fnParamTypes(state, ta, inst, &params, &rest, &variadic);
 
-    var vi: usize = 0;
-    for (generics.params(&template.function_decl), c.args, 0..) |p, a, i| {
-        if (generics.isTypeParam(p)) continue;
+    // Type args may be implicit, so arguments line up with the instance's
+    // value params (its type params are not parameters of the copy).
+    for (c.args, 0..) |a, i| {
         const at = try inferExpr(state, env, ta, a);
-        if (vi < params.items.len) {
+        if (i < params.items.len) {
             var ctx_buf: [96]u8 = undefined;
             const ctx = std.fmt.bufPrint(&ctx_buf, "argument {d} of '{s}'", .{ i + 1, ir.cleanTypeName(name) }) catch "argument";
-            try requireAssignFrom(state, at, params.items[vi], ctx, a);
+            try requireAssignFrom(state, at, params.items[i], ctx, a);
         }
-        vi += 1;
     }
     return try fnReturnType(state, ta, inst);
 }
