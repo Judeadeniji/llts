@@ -252,6 +252,34 @@ pub @func main() {
   refer to themselves through a pointer (`next: ?*Name(T)`).
 - Methods of an instance are ordinary methods of that instance
   (`Name(T)::method`); a method may still take type parameters of its own.
-- Only `type` parameters are allowed: a struct is laid out per instantiation,
-  so a value parameter (which could size an array field) is rejected.
-  `@enum` declarations cannot take parameters — variants carry no types.
+- Integer value parameters size array fields: `@struct Buffer(T: type, N: i64)
+  { items: [N]T; }`. The value substitutes into array lengths only (never into
+  a field's runtime value), is part of the instance key, and must be a
+  compile-time integer, so `Buffer(u8, 4)` and `Buffer(u8, 8)` are distinct
+  types. `@enum` declarations cannot take parameters — variants carry no types.
+- An instance is only a type until something uses it: its methods are checked
+  on first use, so a method that does not hold for every element type
+  (`sum` over `Buffer(bool, 4)`) cannot break an unrelated `@sizeOf` use.
+
+## 10. Returning Object Literals
+
+A function with a declared return type accepts a bare object literal that
+matches it, so `Point { … }` need not be repeated:
+
+```lls
+@struct Point { x: i64; y: i64; }
+
+@func origin(): Point {
+    return { x: 0, y: 0 };
+}
+```
+
+The literal is checked field-by-field against the declared type, and the
+result has that type (so `origin().x` and `@sizeOf(Point)` behave as expected).
+This also works for anonymous shape returns and generic instances:
+
+```lls
+@func pair(): { a: i64; b: bool } { return { a: 1, b: true }; }
+
+@func wrap(T: type, v: T): Box(T) { return { v: v }; }
+```

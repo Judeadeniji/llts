@@ -315,7 +315,8 @@ fn parseShapeType(self: *Parser) ParseError!*Node {
         const field_name = try self.consume(.identifier, "Expected field name in shape type", null);
         _ = try self.consume(.delimiter, "Expected ':' after field name", ":");
         const field_type = try parseType(self);
-        _ = try self.consume(.delimiter, "Expected ';' after field in shape type", ";");
+        // The separator is optional: `{ x: i64; y: i64 }` and `{ x: i64 }`.
+        if (self.checkDelim(";")) _ = self.advance();
         try fields.append(self.arena, .{
             .name = try self.dupe(field_name.value),
             .type_annotation = field_type,

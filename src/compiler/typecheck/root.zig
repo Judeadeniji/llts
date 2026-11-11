@@ -2850,6 +2850,22 @@ fn inferStructInit(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc,
         return compiler_errors.compileFailFmt(state, "Unknown struct '{s}'", .{bare});
     }
 
+    try checkInitAgainstStruct(state, env, ta, struct_name, init);
+    if (is_typedef) {
+        return try from_ast.resolveNamedType(struct_name, state, ta);
+    }
+    return .{ .struct_ = struct_name };
+}
+
+/// Check `{ … }` field values against a named struct's fields (and, under
+/// `--strict`, that every non-optional field is provided).
+fn checkInitAgainstStruct(
+    state: *state_mod.CompilerState,
+    env: *Env,
+    ta: ir.TypeAlloc,
+    struct_name: []const u8,
+    init: ast.StructInit,
+) TypecheckError!void {
     for (init.fields) |field| {
         const expected = try fieldTypeFromStruct(state, ta, struct_name, field.name);
         if (expected == .unknown) {
@@ -2891,10 +2907,6 @@ fn inferStructInit(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc,
             }
         }
     }
-    if (is_typedef) {
-        return try from_ast.resolveNamedType(struct_name, state, ta);
-    }
-    return .{ .struct_ = struct_name };
 }
 
 /// `$p: { x: f64; y: f64; } = { x: 1.0, y: 2.0 };` — check the literal
@@ -2907,9 +2919,24 @@ fn inferAnnotatedShapeInit(
     init: ast.StructInit,
 ) TypecheckError!ir.Type {
     const shape_t = try from_ast.typeFromAst(type_expr, state, ta);
+    if (ir.peelDefined(shape_t) != .shape) {
+        return compiler_errors.compileFailFmt(state, "Invalid struct initialization type", .{});
+    }
+    try checkInitAgainstShape(state, env, ta, shape_t, init);
+    return shape_t;
+}
+
+/// Check `{ … }` field values against an anonymous shape type.
+fn checkInitAgainstShape(
+    state: *state_mod.CompilerState,
+    env: *Env,
+    ta: ir.TypeAlloc,
+    shape_t: ir.Type,
+    init: ast.StructInit,
+) TypecheckError!void {
     const fields = switch (ir.peelDefined(shape_t)) {
         .shape => |f| f,
-        else => return compiler_errors.compileFailFmt(state, "Invalid struct initialization type", .{}),
+        else => return,
     };
     const display = try ownDisplay(state, shape_t);
 
@@ -2948,7 +2975,6 @@ fn inferAnnotatedShapeInit(
             }
         }
     }
-    return shape_t;
 }
 
 /// `{ x: 1.0, y: 2.0 }` with no type annotation — infer an anonymous shape
@@ -2971,6 +2997,38 @@ fn inferInferredShapeInit(
         try fields.append(ta.allocator, .{ .name = field.name, .ty = got });
     }
     return try ta.shapeType(fields.items);
+}
+
+/// `return { x: 1, y: 2 };` where the function declares a struct or shape
+/// return type — check the literal against that type and give it that type.
+/// Returns null when `v` is not a bare object literal, or the function has no
+/// concrete struct/shape return type to check against.
+fn inferReturnInit(
+    state: *state_mod.CompilerState,
+    env: *Env,
+    ta: ir.TypeAlloc,
+    v: *ast.Node,
+) TypecheckError!?ir.Type {
+    if (v.* != .struct_init) return null;
+    const init = v.struct_init;
+    if (init.type_expr != null) return null;
+    const declared = env.expected_return orelse return null;
+    const peeled = ir.peelDefined(declared);
+    const t: ?ir.Type = switch (peeled) {
+        .struct_ => |name| blk: {
+            if (from_ast.lookupStruct(state, name) == null) break :blk null;
+            try checkInitAgainstStruct(state, env, ta, name, init);
+            break :blk peeled;
+        },
+        .shape => blk: {
+            try checkInitAgainstShape(state, env, ta, peeled, init);
+            break :blk peeled;
+        },
+        else => null,
+    };
+    const result = t orelse return null;
+    try recordExprType(state, v, result);
+    return result;
 }
 
 fn checkStmt(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node: *ast.Node) TypecheckError!?ir.Type {
@@ -3107,6 +3165,14 @@ fn checkStmt(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node:
             return null;
         },
         .return_expr => |r| {
+            // `return { … };` in a typed function is checked against the
+            // declared return type, so the literal does not have to repeat it.
+            if (r.return_value) |v| {
+                if (try inferReturnInit(state, env, ta, v)) |t| {
+                    try rejectTypeValue(state, t, "a return value");
+                    return t;
+                }
+            }
             const t = if (r.return_value) |v| try inferExpr(state, env, ta, v) else ir.TVoid;
             try rejectTypeValue(state, t, "a return value");
             if (env.expected_return) |er| {
