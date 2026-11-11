@@ -522,6 +522,21 @@ pub const Emitter = struct {
                     vt.zig = "i64";
                 }
             },
+            .str_lit => {
+                vt.kind = .string;
+                vt.zig = "[]const u8";
+                vt.is_const = true;
+            },
+            .int_lit => {
+                vt.kind = .int;
+                vt.width = .i64;
+                vt.zig = "i64";
+            },
+            .bool_lit => {
+                vt.kind = .bool;
+                vt.width = .u1;
+                vt.zig = "bool";
+            },
             .union_ => |arms| {
                 var has_error = false;
                 var has_null = false;

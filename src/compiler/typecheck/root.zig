@@ -4015,6 +4015,9 @@ fn resolveSignatureTypes(state: *state_mod.CompilerState, env: *Env, ta: ir.Type
     var any_call = from_ast.typeNodeHasCall(f.return_type);
     for (plist) |p| any_call = any_call or from_ast.typeNodeHasCall(p.type_annotation);
     if (!any_call) return;
+    // A template's signature only means something once its type params are
+    // bound: the declaration is skipped and each instance is resolved below.
+    for (plist) |p| if (generics.isTypeParam(p)) return;
 
     try env.pushScope();
     defer env.popScope();
