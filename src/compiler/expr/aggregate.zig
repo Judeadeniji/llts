@@ -6,6 +6,7 @@ const state_mod = @import("../state.zig");
 const expr = @import("root.zig");
 const path = @import("path.zig");
 const types = @import("../typecheck/from_ast.zig");
+const ir = @import("../typecheck/ir.zig");
 const compiler_errors = @import("../../errors/compile.zig");
 const layout = @import("../layout.zig");
 
@@ -356,7 +357,9 @@ fn resolveStructDef(state: *CompilerState, node: *ast.Node, init: *const ast.Str
     // Shape annotations and inferred object literals use the display spelling
     // of the structural type as the layout key (layouts registered lazily).
     if (init.type_expr) |te| {
-        if (te.* == .shape_type) {
+        // Inline shape annotation, or a type function that *returns* a shape
+        // (`$x: Make(i64) = { a: 1 }`). Both key the layout by display spelling.
+        if (te.* == .shape_type or (types.typeNodeHasCall(te) and ir.peelDefined(state.type_call_ir_results.get(te) orelse ir.TUnknown) == .shape)) {
             const display = (try types.typeAstToDisplayQualified(te, state)) orelse {
                 return compiler_errors.compileFailFmt(state, "Invalid struct initialization type", .{});
             };

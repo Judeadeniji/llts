@@ -2705,6 +2705,13 @@ fn inferArrayLiteral(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAllo
 fn inferStructInit(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, init: ast.StructInit) TypecheckError!ir.Type {
     if (init.type_expr) |te| {
         if (te.* == .shape_type) return inferAnnotatedShapeInit(state, env, ta, te, init);
+        // A type function can *return* an anonymous shape (`Make(i64)`): the
+        // annotation denotes a shape even though it is spelled as a call.
+        if (from_ast.typeNodeHasCall(te)) {
+            try intrinsics.resolveTypeExprs(state, env, ta, te);
+            const denoted = try from_ast.typeFromAst(te, state, ta);
+            if (ir.peelDefined(denoted) == .shape) return inferAnnotatedShapeInit(state, env, ta, te, init);
+        }
     } else {
         return inferInferredShapeInit(state, env, ta, init);
     }
