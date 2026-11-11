@@ -4103,6 +4103,9 @@ pub fn typecheck(state: *state_mod.CompilerState, doc: *ast.Document) TypecheckE
             if (s.struct_decl.params.len > 0) continue;
             for (s.struct_decl.methods) |m| {
                 if (m.* != .function_decl) continue;
+                // A method with type params is a template: only its instances
+                // are checked, once the params are bound.
+                if (generics.isTemplate(&m.function_decl)) continue;
                 if (reach) |*r| if (!r.isFunctionReachable(m.function_decl.name)) continue;
                 try checkFunction(state, ta, &m.function_decl, &top_consts, &decl_env.globals);
             }

@@ -723,9 +723,6 @@ pub fn emitIfStmt(self: *Emitter, node: *ast_mod.Node, i: *const ast_mod.If) !vo
 }
 
 pub fn emitIfValue(self: *Emitter, node: *ast_mod.Node, i: *const ast_mod.If) ![]const u8 {
-    if (i.pipe_value != null) {
-        return self.failAt(node, "native backend does not support @if captures yet", .{});
-    }
     if (i.else_body == null) {
         return self.failAt(node, "value-producing @if requires @else", .{});
     }
