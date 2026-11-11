@@ -301,7 +301,7 @@ pub fn prepareFunction(
     self.defer_scopes.clearRetainingCapacity();
 
     var base = std.StringHashMap(*Binding).init(a);
-    for (params, 0..) |p, i| {
+    for (params, 0..) |*p, i| {
         if (p.is_rest) return self.failAt(f.params, "native backend does not support rest parameters yet", .{});
         var display = if (p.type_annotation) |ann|
             (try from_ast.typeAstToDisplay(ann, self.state)) orelse "unknown"
@@ -332,7 +332,7 @@ pub fn prepareFunction(
             .is_param = true,
         };
         // Initialize mutation/read flags from the compiler-recorded facts.
-        if (self.state.param_facts.get(&p)) |facts| {
+        if (self.state.param_facts.get(p)) |facts| {
             b.read = facts.read;
             b.assigned = facts.assigned;
             b.reassigned = facts.reassigned;
@@ -366,4 +366,3 @@ pub fn zeroValue(self: *Emitter, t: ValType) ![]const u8 {
             self.failNoLoc("native backend cannot zero-initialize type '{s}'", .{t.display}),
     };
 }
-

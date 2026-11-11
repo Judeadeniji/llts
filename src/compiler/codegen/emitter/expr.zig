@@ -151,7 +151,7 @@ pub fn emitCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) any
                 .fold => |spelling| self.zigString(spelling),
                 .decl_name => |spelling| self.zigString(spelling),
                 .error_code => std.fmt.allocPrint(a, "({s}).message", .{try errorOperandCode(self, c.args[0])}),
-                .enum_type => self.failAt(node, "native backend cannot lower runtime @nameOf on enums yet", .{}),
+                .enum_type => |ename| emitNameOfEnum(self, node, ename, c.args[0]),
             };
         }
         if (std.mem.eql(u8, intrinsic, "@as")) {
@@ -1257,10 +1257,9 @@ pub fn emitSlice(self: *Emitter, node: *ast_mod.Node, ix: *const ast_mod.Index) 
         \\}}
     , .{
         obj_decl, obj_name, obj_t.zig, object_expr,
-        lo_name,  lo_code,  hi_name,
-        hi_code,  lo_name,  hi_name,
-        lo_name,  hi_name,  obj_name,
-        lo_name,  hi_name,  obj_name,
+        lo_name,  lo_code,  hi_name,   hi_code,
+        lo_name,  hi_name,  lo_name,   hi_name,
+        obj_name, lo_name,  hi_name,   obj_name,
         obj_name, lo_name,  hi_name,
     });
 }
@@ -1475,6 +1474,57 @@ pub fn isNumericLiteral(node: *ast_mod.Node) bool {
         .number, .hex, .octal, .binary => true,
         else => false,
     };
+}
+
+fn emitNameOfEnum(self: *Emitter, node: *ast_mod.Node, ename: []const u8, arg: *ast_mod.Node) ![]const u8 {
+    const a = self.arena.allocator();
+    const ed = self.state.enums.get(ename) orelse {
+        return self.failAt(node, "native backend cannot resolve enum type '{s}' for @nameOf", .{ename});
+    };
+
+    const Entry = struct { name: []const u8, val: i32 };
+    var variants: std.ArrayList(Entry) = .empty;
+    defer variants.deinit(a);
+    var it = ed.variants.iterator();
+    while (it.next()) |e| {
+        try variants.append(a, .{ .name = e.key_ptr.*, .val = e.value_ptr.* });
+    }
+    std.mem.sort(Entry, variants.items, {}, struct {
+        fn less(_: void, x: Entry, y: Entry) bool {
+            return x.val < y.val;
+        }
+    }.less);
+
+    self.counter += 1;
+    const id = self.counter;
+    const arg_code = try emitExpr(self, arg);
+
+    var out: std.ArrayList(u8) = .empty;
+    const w = out.writer(a);
+    if (ed.isString()) {
+        const values = ed.string_values.?;
+        try w.print("blk: {{ const lls_nameof_{d} = {s}; ", .{ id, arg_code });
+        for (variants.items) |item| {
+            const s = values.get(item.name) orelse continue;
+            try w.print("if (rt.arith.eqStr(lls_nameof_{d}, {s})) break :blk {s}; ", .{
+                id, try self.zigString(s), try self.zigString(item.name),
+            });
+        }
+        try w.writeAll("break :blk \"\"; }");
+        return out.toOwnedSlice(a);
+    }
+
+    try w.print("blk: {{ const lls_nameof_{d}: i64 = {s}; break :blk switch (lls_nameof_{d}) {{ ", .{
+        id, arg_code, id,
+    });
+    var prev: ?i32 = null;
+    for (variants.items) |item| {
+        if (prev != null and prev.? == item.val) continue;
+        prev = item.val;
+        try w.print("{d} => {s}, ", .{ item.val, try self.zigString(item.name) });
+    }
+    try w.writeAll("else => \"\", }; }");
+    return out.toOwnedSlice(a);
 }
 
 fn exprHasEffects(node: *ast_mod.Node) bool {
