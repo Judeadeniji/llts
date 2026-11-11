@@ -13,6 +13,9 @@ const state_mod = @import("state.zig");
 const local_types = @import("local_types.zig");
 const compile_errors = @import("../errors/compile.zig");
 const from_ast = @import("typecheck/from_ast.zig");
+const typecheck_root = @import("typecheck/root.zig");
+const ir = @import("typecheck/ir.zig");
+const layout = @import("layout.zig");
 const compiler_root = @import("root.zig");
 
 const CompilerState = state_mod.CompilerState;
@@ -203,6 +206,172 @@ fn bindCopyInner(state: *CompilerState, template: *ast.Node, name: []const u8, q
     local_types.rename(f.body, &renames);
     try local_types.hoistFunction(state, f, prefix);
     return copy;
+}
+
+// ── generic struct declarations ─────────────────────────────────────────────
+
+/// Validate `@struct Name(T: type, …)` and register it as a template. The
+/// declaration itself is never laid out or emitted: each distinct argument
+/// list instantiates an entry in `state.structs` (see `instantiateStruct`).
+pub fn registerStructTemplate(state: *CompilerState, node: *ast.Node) Error!void {
+    const s = &node.struct_decl;
+    for (s.params) |p| {
+        noteLoc(state, p.loc);
+        if (p.is_rest) {
+            return compile_errors.compileFailFmt(state, "Struct '{s}' parameter '{s}' cannot be a rest parameter", .{ cleanName(s.name), p.name });
+        }
+        if (!isTypeParam(p)) {
+            return compile_errors.compileFailFmt(
+                state,
+                "Struct '{s}' parameter '{s}' must be of type 'type': fields are laid out per instantiation, so value parameters are not supported",
+                .{ cleanName(s.name), p.name },
+            );
+        }
+    }
+    try state.struct_templates.put(s.name, node);
+}
+
+/// Instantiate a generic struct for `qualified_args` and return its key
+/// (`Name(T)`, module-qualified when the template is). Idempotent: the key is
+/// itself the memo, so a second use — or a self-referential field — returns the
+/// same instance.
+pub fn instantiateStruct(
+    state: *CompilerState,
+    env: *typecheck_root.Env,
+    ta: ir.TypeAlloc,
+    template_name: []const u8,
+    template: *ast.Node,
+    qualified_args: []const []const u8,
+    site: ast.Location,
+) Error![]const u8 {
+    const name = try memoKey(state, template_name, qualified_args);
+    if (state.structs.contains(name)) return name;
+
+    const depth = state.instance_depth + 1;
+    if (depth > max_depth) {
+        return compile_errors.compileFailFmt(state, "Generic struct instantiation too deep (instantiating '{s}')", .{name});
+    }
+
+    // Register an empty layout first. A self-referential field (`?*Name(T)`)
+    // then resolves to this instance instead of instantiating it forever; the
+    // real layout replaces it below.
+    try state.structs.put(name, .{
+        .name = name,
+        .size = 0,
+        .offsets = std.StringHashMap(i32).init(state.allocator),
+        .types = std.StringHashMap([]const u8).init(state.allocator),
+    });
+
+    const arena = state.generic_arena.allocator();
+    const copy = clone.cloneNode(arena, template) catch |e| return narrow(e);
+    const s = &copy.struct_decl;
+    s.name = name;
+    s.params = &.{};
+
+    const saved_depth = state.instance_depth;
+    state.instance_depth = depth;
+    defer state.instance_depth = saved_depth;
+
+    state.instance_counter += 1;
+    const prefix = try std.fmt.allocPrint(state.allocator, "{s}${d}", .{ template_name, state.instance_counter });
+    try state.owned.append(state.allocator, prefix);
+    var renames = local_types.Renames.init(state.allocator);
+    defer renames.deinit();
+    for (template.struct_decl.params, qualified_args) |p, arg| {
+        const key = try std.fmt.allocPrint(state.allocator, "{s}::{s}", .{ prefix, p.name });
+        try state.owned.append(state.allocator, key);
+        try state.typedefs.put(key, .{
+            .name = key,
+            .underlying = arg,
+            .ir = try from_ast.parseDisplayType(state, state.typeAlloc(), arg, null),
+            .distinct = false,
+        });
+        if (arg.len > 0 and arg[0] == '{') try from_ast.ensureShapeLayoutFromDisplay(state, arg);
+        try renames.put(p.name, key);
+    }
+
+    for (s.fields) |*f| local_types.renameOpt(f.type_annotation, &renames);
+    for (s.methods) |m| {
+        if (m.* != .function_decl) continue;
+        const f = &m.function_decl;
+        switch (f.params.*) {
+            .params => |*ps| for (ps.params) |*p| local_types.renameOpt(p.type_annotation, &renames),
+            else => {},
+        }
+        local_types.renameOpt(f.return_type, &renames);
+        local_types.rename(f.body, &renames);
+    }
+
+    try layoutStructInstance(state, env, ta, name, s);
+
+    // Methods: mangled under the instance key, then registered like ordinary
+    // methods so typecheck, reachability and the emitter all see them.
+    for (s.methods) |m| {
+        if (m.* != .function_decl) continue;
+        const f = &m.function_decl;
+        // Module structs already carry `<module>::<Type>::<method>`; keep only
+        // the method and re-prefix with this instance's key.
+        const short = if (std.mem.lastIndexOf(u8, f.name, "::")) |i| f.name[i + 2 ..] else f.name;
+        const mangled = try std.fmt.allocPrint(state.allocator, "{s}::{s}", .{ name, short });
+        try state.owned.append(state.allocator, mangled);
+        f.name = mangled;
+
+        // Signature annotations that were type calls (`Name(T)`) must be
+        // resolved while the instance's type params are bound, so the
+        // function's recorded return / param types are facts, not `unknown`.
+        switch (f.params.*) {
+            .params => |*ps| for (ps.params) |*p| {
+                const ann = p.type_annotation orelse continue;
+                if (!from_ast.typeNodeHasCall(ann)) continue;
+                _ = typecheck_root.resolveStructFieldType(state, env, ta, ann) catch |e| return narrow(e);
+            },
+            else => {},
+        }
+        if (f.return_type) |rt| {
+            if (from_ast.typeNodeHasCall(rt)) {
+                _ = typecheck_root.resolveStructFieldType(state, env, ta, rt) catch |e| return narrow(e);
+            }
+        }
+        local_types.hoistFunction(state, f, f.name) catch |e| return narrow(e);
+        compiler_root.registerFunction(state, m) catch |e| return narrow(e);
+        // A method with its own type params is a template (instantiated on call).
+        if (state.templates.contains(f.name)) continue;
+        try state.instance_fns.put(f.name, {});
+        try state.pending_instances.append(state.allocator, .{ .name = f.name, .depth = depth, .site = site });
+    }
+    return name;
+}
+
+fn layoutStructInstance(
+    state: *CompilerState,
+    env: *typecheck_root.Env,
+    ta: ir.TypeAlloc,
+    name: []const u8,
+    s: *const ast.StructDecl,
+) Error!void {
+    var type_map = std.StringHashMap([]const u8).init(state.allocator);
+    var field_irs: std.StringHashMapUnmanaged(ir.Type) = .{};
+    var specs: std.ArrayList(layout.FieldSpec) = .empty;
+    defer specs.deinit(state.allocator);
+
+    for (s.fields) |field| {
+        var t: ir.Type = ir.TUnknown;
+        if (field.type_annotation) |ann| {
+            t = typecheck_root.resolveStructFieldType(state, env, ta, ann) catch |e| return narrow(e);
+        }
+        const disp = try ir.displayTypeQualifiedAlloc(state.allocator, t);
+        try state.owned.append(state.allocator, disp);
+        try type_map.put(field.name, disp);
+        try field_irs.put(state.allocator, field.name, t);
+        try specs.append(state.allocator, .{ .name = field.name, .type_name = disp });
+    }
+
+    const laid = try layout.layoutFields(state.allocator, specs.items);
+    const def = state.structs.getPtr(name) orelse return error.CompileError;
+    def.size = laid.size;
+    def.offsets = laid.offsets;
+    def.types = type_map;
+    def.field_irs = field_irs;
 }
 
 /// Instance of a generic (value) function for `qualified_args`, created and

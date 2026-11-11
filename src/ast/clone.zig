@@ -136,6 +136,7 @@ pub fn cloneNode(a: std.mem.Allocator, n: *const Node) Error!*Node {
             }
             c.fields = fields;
             c.methods = try cloneSlice(a, s.methods);
+            c.params = try cloneParams(a, s.params);
             break :blk .{ .struct_decl = c };
         },
         .type_decl => |td| blk: {
@@ -218,6 +219,15 @@ pub fn cloneNode(a: std.mem.Allocator, n: *const Node) Error!*Node {
             break :blk .{ .shape_type = c };
         },
     };
+    return out;
+}
+
+fn cloneParams(a: std.mem.Allocator, params: []root.Param) Error![]root.Param {
+    const out = try a.alloc(root.Param, params.len);
+    for (params, out) |src, *dst| {
+        dst.* = src;
+        dst.type_annotation = try cloneOpt(a, src.type_annotation);
+    }
     return out;
 }
 

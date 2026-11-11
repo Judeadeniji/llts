@@ -645,6 +645,16 @@ pub const Emitter = struct {
         };
     }
 
+    /// The call's arguments that exist at runtime. A generic call's leading
+    /// arguments are compile-time type arguments, so they are not passed.
+    pub fn runtimeArgs(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) []*ast_mod.Node {
+        if (self.state.generic_calls.get(node)) |gc| {
+            const n = @min(gc.value_args, c.args.len);
+            return c.args[c.args.len - n ..];
+        }
+        return c.args;
+    }
+
     pub fn lookupBindingOptional(self: *Emitter, name: []const u8) ?*Binding {
         var i = self.scopes.items.len;
         while (i > 0) {
@@ -686,9 +696,12 @@ pub const Emitter = struct {
 
     /// Struct canon name for a method function key (`Type::method`), or null
     /// for ordinary functions and module exports (`std/fmt.lls::sprintf`).
+    /// The struct a function key belongs to: everything before the last `::`,
+    /// whether the key is `Type::method`, `module::Type::method`, or a generic
+    /// instance `Type(T)::method`. A free module function's prefix is not a
+    /// struct, so it resolves to null.
     pub fn methodStructFor(self: *Emitter, name: []const u8) ?[]const u8 {
-        const sep = std.mem.indexOf(u8, name, "::") orelse return null;
-        if (std.mem.indexOfScalar(u8, name, '/') != null) return null;
+        const sep = std.mem.lastIndexOf(u8, name, "::") orelse return null;
         const prefix = name[0..sep];
         const sd = from_ast.lookupStruct(self.state, prefix) orelse return null;
         return sd.name;

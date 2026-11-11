@@ -1025,8 +1025,11 @@ fn fnParamTypes(state: *state_mod.CompilerState, ta: ir.TypeAlloc, func_name: []
     };
     out_variadic.* = is_variadic;
     out_rest.* = null;
+    // The owner is everything before the *last* `::`: `Type::method` for a
+    // plain method, `module::Type::method` for a module one, and
+    // `Type(T)::method` for a generic instance.
     const method_struct: ?[]const u8 = blk: {
-        if (std.mem.indexOf(u8, f.name, "::")) |idx| {
+        if (std.mem.lastIndexOf(u8, f.name, "::")) |idx| {
             const sname = f.name[0..idx];
             if (state.structs.contains(sname)) break :blk sname;
         }
@@ -2119,6 +2122,11 @@ fn inferCall(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, call_
     }
 
     if (resolveCalleeName(state, c)) |callee_name| {
+        // `Name(T)` — a generic struct used as a type: instantiate it and
+        // record the denoted struct for every type position / struct init.
+        if (state.struct_templates.get(callee_name)) |template| {
+            return try inferGenericStructCall(state, env, ta, call_node, c, callee_name, template);
+        }
         if (state.templates.get(callee_name)) |template| {
             if (generics.returnsType(&template.function_decl)) {
                 return try inferTypeFunctionCall(state, env, ta, call_node, c, callee_name, template);
@@ -2267,6 +2275,42 @@ fn inferCall(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, call_
     }
     for (c.args) |a| _ = try inferExpr(state, env, ta, a);
     return ir.TUnknown;
+}
+
+/// `Name(T)` — instantiate a generic struct from its type arguments and
+/// record the denoted struct (`Name(T)`) for the call node.
+fn inferGenericStructCall(
+    state: *state_mod.CompilerState,
+    env: *Env,
+    ta: ir.TypeAlloc,
+    call_node: *ast.Node,
+    c: *const ast.Call,
+    name: []const u8,
+    template: *ast.Node,
+) TypecheckError!ir.Type {
+    const ps = template.struct_decl.params;
+    const shown = ir.cleanTypeName(name);
+    if (c.args.len != ps.len) {
+        return compiler_errors.compileFailFmt(state, "Struct '{s}' expects {d} type argument(s), got {d}", .{ shown, ps.len, c.args.len });
+    }
+    var qualified: std.ArrayList([]const u8) = .empty;
+    defer qualified.deinit(ta.allocator);
+    for (ps, c.args, 0..) |_, a, i| {
+        noteDiag(state, a);
+        if (!intrinsics.isTypeValueNode(state, env, a)) {
+            return compiler_errors.compileFailFmt(state, "Argument {d} of '{s}' must be a type", .{ i + 1, shown });
+        }
+        const t = try intrinsics.denotedType(state, env, ta, a);
+        if (ir.involvesUnknown(t)) {
+            return compiler_errors.compileFailFmt(state, "Argument {d} of '{s}': the type is not known here", .{ i + 1, shown });
+        }
+        try qualified.append(ta.allocator, try ownDisplayQualified(state, t));
+    }
+
+    const inst = try generics.instantiateStruct(state, env, ta, name, template, qualified.items, call_node.loc());
+    try state.type_call_results.put(call_node, inst);
+    try state.type_call_ir_results.put(call_node, .{ .struct_ = inst });
+    return ir.TType;
 }
 
 /// Denote the arguments in a template's `type` param positions, and read the
@@ -2739,33 +2783,48 @@ fn inferArrayLiteral(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAllo
 }
 
 fn inferStructInit(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, init: ast.StructInit) TypecheckError!ir.Type {
+    // A call annotation denotes whichever type its callee returns: a shape
+    // (`Make(T)`) or an instantiated generic struct (`Name(T)`).
+    var denoted_struct: ?[]const u8 = null;
     if (init.type_expr) |te| {
         if (te.* == .shape_type) return inferAnnotatedShapeInit(state, env, ta, te, init);
-        // A type function can *return* an anonymous shape (`Make(i64)`): the
-        // annotation denotes a shape even though it is spelled as a call.
         if (from_ast.typeNodeHasCall(te)) {
             try intrinsics.resolveTypeExprs(state, env, ta, te);
             const denoted = try from_ast.typeFromAst(te, state, ta);
-            if (ir.peelDefined(denoted) == .shape) return inferAnnotatedShapeInit(state, env, ta, te, init);
+            const peeled = ir.peelDefined(denoted);
+            if (peeled == .shape) return inferAnnotatedShapeInit(state, env, ta, te, init);
+            if (peeled != .struct_) {
+                const d = try ownDisplay(state, denoted);
+                return compiler_errors.compileFailFmt(state, "Cannot initialize a value of type '{s}' with '{{…}}'", .{d});
+            }
+            denoted_struct = peeled.struct_;
         }
     } else {
         return inferInferredShapeInit(state, env, ta, init);
     }
-    const sn = from_ast.resolveStructName(state, init.type_expr.?) orelse {
-        return compiler_errors.compileFailFmt(state, "Invalid struct initialization type", .{});
+    const struct_name = denoted_struct orelse blk: {
+        const sn = from_ast.resolveStructName(state, init.type_expr.?) orelse {
+            return compiler_errors.compileFailFmt(state, "Invalid struct initialization type", .{});
+        };
+        if (std.mem.indexOfScalar(u8, sn, '.') != null) {
+            break :blk path.resolveModuleType(state, sn) catch sn;
+        }
+        try from_ast.checkStructInitExport(state, init.type_expr.?, sn);
+        break :blk sn;
     };
-    var struct_name = sn;
-    if (std.mem.indexOfScalar(u8, struct_name, '.') != null) {
-        struct_name = path.resolveModuleType(state, struct_name) catch struct_name;
-    }
-    try from_ast.checkStructInitExport(state, init.type_expr.?, struct_name);
 
+    // `lookupStruct` peels `@alias` / `@type` and lazily registers shape
+    // layouts, so an alias of an instantiated struct initializes here too.
     const is_typedef = state.typedefs.contains(struct_name);
-    if (!state.structs.contains(struct_name) and !is_typedef) {
-        return compiler_errors.compileFailFmt(state, "Unknown struct '{s}'", .{sn});
-    }
-    if (is_typedef and !state.structs.contains(struct_name)) {
-        return compiler_errors.compileFailFmt(state, "Type '{s}' is not an object shape (cannot initialize with '{{…}}')", .{sn});
+    if (from_ast.lookupStruct(state, struct_name) == null) {
+        const bare = ir.cleanTypeName(struct_name);
+        if (state.struct_templates.contains(struct_name)) {
+            return compiler_errors.compileFailFmt(state, "Generic struct '{s}' needs type arguments, e.g. '{s}(T)'", .{ bare, bare });
+        }
+        if (is_typedef) {
+            return compiler_errors.compileFailFmt(state, "Type '{s}' is not an object shape (cannot initialize with '{{…}}')", .{bare});
+        }
+        return compiler_errors.compileFailFmt(state, "Unknown struct '{s}'", .{bare});
     }
 
     for (init.fields) |field| {
@@ -3177,7 +3236,7 @@ fn checkFunction(
             t = try from_ast.typeFromAst(ann, state, ta);
         } else if (state.strict) {
             var is_method_self = false;
-            if (std.mem.indexOf(u8, f.name, "::")) |idx| {
+            if (std.mem.lastIndexOf(u8, f.name, "::")) |idx| {
                 const sname = f.name[0..idx];
                 if (state.structs.contains(sname) and i == 0 and std.mem.eql(u8, pnode.name, "self")) {
                     is_method_self = true;
@@ -3187,9 +3246,9 @@ fn checkFunction(
                 return compiler_errors.compileFailFmt(state, "Parameter '{s}' of function '{s}' must have an explicit type annotation in strict mode; did you mean '{s}: int'?", .{ pnode.name, f.name, pnode.name });
             }
         }
-        if (std.mem.indexOf(u8, f.name, "::")) |idx| {
+        if (std.mem.lastIndexOf(u8, f.name, "::")) |idx| {
             const sname = f.name[0..idx];
-            // Module-qualified free funcs use `path.lls::name`; only bare struct names are methods.
+            // Module-qualified free funcs use `path.lls::name`; only struct keys are methods.
             if (state.structs.contains(sname) and i == 0) {
                 if (!std.mem.eql(u8, pnode.name, "self")) {
                     return compiler_errors.compileFailFmt(state, "Method '{s}' must have its first parameter named 'self'", .{f.name});
@@ -3718,6 +3777,19 @@ fn resolveDeclTypeNode(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAl
     return t;
 }
 
+/// Field type of a generic struct instance being laid out (`generics.zig`).
+/// Same rules as a declaration-level type: calls are resolved first when the
+/// field itself is one (`next: ?*Name(T)` instantiates `Name(T)`).
+pub fn resolveStructFieldType(
+    state: *state_mod.CompilerState,
+    env: *Env,
+    ta: ir.TypeAlloc,
+    ann: *ast.Node,
+) TypecheckError!ir.Type {
+    if (from_ast.typeNodeHasCall(ann)) return resolveDeclTypeNode(state, env, ta, ann);
+    return from_ast.typeFromAst(ann, state, ta);
+}
+
 /// Globals visible to declaration-level type expressions and function bodies:
 /// already-typed module globals, plus top-level declarations whose type is
 /// statically known (annotated, or initialized with a literal).
@@ -3871,6 +3943,8 @@ pub fn typecheck(state: *state_mod.CompilerState, doc: *ast.Document) TypecheckE
             if (state.templates.contains(s.function_decl.name)) continue;
             try resolveSignatureTypes(state, &decl_env, ta, &s.function_decl);
         } else if (s.* == .struct_decl) {
+            // A generic struct's methods belong to its instances, not the template.
+            if (s.struct_decl.params.len > 0) continue;
             for (s.struct_decl.methods) |m| {
                 if (m.* == .function_decl) try resolveSignatureTypes(state, &decl_env, ta, &m.function_decl);
             }
@@ -3894,6 +3968,7 @@ pub fn typecheck(state: *state_mod.CompilerState, doc: *ast.Document) TypecheckE
             if (reach) |*r| if (!r.isFunctionReachable(s.function_decl.name)) continue;
             try checkFunction(state, ta, &s.function_decl, &top_consts, &decl_env.globals);
         } else if (s.* == .struct_decl) {
+            if (s.struct_decl.params.len > 0) continue;
             for (s.struct_decl.methods) |m| {
                 if (m.* != .function_decl) continue;
                 if (reach) |*r| if (!r.isFunctionReachable(m.function_decl.name)) continue;

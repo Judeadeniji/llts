@@ -290,7 +290,7 @@ pub fn emitCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) any
     }
 
     var args_buf: std.ArrayList([]const u8) = .empty;
-    for (c.args) |arg| {
+    for (self.runtimeArgs(node, c)) |arg| {
         try args_buf.append(a, try emitExpr(self, arg));
     }
     const args_joined = try std.mem.join(a, ", ", args_buf.items);
@@ -357,7 +357,7 @@ fn emitModuleCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) !
         }
     }
     var args_buf: std.ArrayList([]const u8) = .empty;
-    for (c.args) |arg| {
+    for (self.runtimeArgs(node, c)) |arg| {
         try args_buf.append(a, try emitExpr(self, arg));
     }
     const zig_fn = try self.fnName(name);
@@ -404,7 +404,7 @@ fn emitMethodCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) !
             }
         },
     }
-    for (c.args) |arg| {
+    for (self.runtimeArgs(node, c)) |arg| {
         try args_buf.append(a, try emitExpr(self, arg));
     }
     const zig_fn = try self.fnName(target.key);

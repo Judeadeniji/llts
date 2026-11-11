@@ -237,7 +237,9 @@ FunctionDecl   ::= ( "pub" )? "@func" IDENTIFIER "(" ParameterList? ")" ( ":" Ty
 ParameterList  ::= Parameter ( "," Parameter )* ( "," "..." )? ;
 Parameter      ::= IDENTIFIER ( ":" Type )? ;
 
-StructDecl     ::= ( "pub" )? "@struct" IDENTIFIER "{" StructMember* "}" ;
+StructDecl     ::= ( "pub" )? "@struct" IDENTIFIER StructParams? "{" StructMember* "}" ;
+# Generic struct template: each distinct argument list is its own struct.
+StructParams   ::= "(" "IDENTIFIER" ":" "type" ( "," "IDENTIFIER" ":" "type" )* ")" ;
 StructMember   ::= IDENTIFIER ":" Type ";"
                  | FunctionDecl ;
 

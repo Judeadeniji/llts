@@ -217,3 +217,41 @@ pub @func main() {
 
 - Executed strictly at compile time.
 - Returns concrete structural shapes, tuples, or union types.
+
+---
+
+## 9. Generic Struct Declarations
+
+A struct may take type parameters. The declaration itself is a template: it is
+never laid out or emitted. Every distinct argument list instantiates its own
+struct, with the parameters substituted in the fields and in the methods:
+
+```lls
+@struct Pair(A: type, B: type) {
+    first: A;
+    second: B;
+
+    @func swap(self): Pair(B, A) {
+        return Pair(B, A) { first: self.second, second: self.first };
+    }
+}
+
+pub @func main() {
+    # `Pair(i64, bool)` and `Pair(bool, i64)` are distinct structs.
+    $p: Pair(i64, bool) = { first: 1, second: true };
+    $q = p.swap();
+    print(q.first, q.second); # true 1
+}
+```
+
+- `Name(T)` is a type, so it works anywhere a type does: annotations,
+  parameters, returns, struct fields, `@alias`, `@sizeOf`, `@new`.
+- `Name(T) { … }` is the object literal form; an annotated `$x: Name(T) = { … }`
+  is equivalent.
+- Instances nest (`Name(Other(T))` instantiates the inner type first) and may
+  refer to themselves through a pointer (`next: ?*Name(T)`).
+- Methods of an instance are ordinary methods of that instance
+  (`Name(T)::method`); a method may still take type parameters of its own.
+- Only `type` parameters are allowed: a struct is laid out per instantiation,
+  so a value parameter (which could size an array field) is rejected.
+  `@enum` declarations cannot take parameters — variants carry no types.

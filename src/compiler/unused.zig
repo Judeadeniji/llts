@@ -423,6 +423,11 @@ fn walkFunctionDecl(ctx: *Context, f: ast.FunctionDecl, is_struct_method: bool, 
             if (p.type_annotation) |ta| walkTypeNode(ctx, ta, worklist);
             // Skip `self` receiver in struct methods
             if (is_struct_method and idx == 0 and std.mem.eql(u8, p.name, "self")) continue;
+            // A `type` parameter is compile-time only: it is never bound at
+            // runtime, so "unused" does not apply.
+            if (p.type_annotation) |ta| {
+                if (ta.* == .primary and std.mem.eql(u8, ta.primary.name, "type")) continue;
+            }
             ctx.addLocal(p.name, .parameter, p.loc, worklist) catch {};
         }
     }

@@ -11,6 +11,12 @@ const Node = ast.Node;
 pub fn parseCompilerStruct(self: *Parser) ParseError!*Node {
     const struct_token = self.previous() orelse return error.ParseFailed;
     const name = try self.consume(.identifier, "Expected struct name", null);
+    // `@struct Name(T: type)` — generic struct template.
+    var params: []ast.Param = &.{};
+    if (self.checkDelim("(")) {
+        _ = self.advance();
+        params = (try decl.parseParamsList(self)).elements;
+    }
     _ = try self.consume(.delimiter, "Expected '{' before struct body", "{");
 
     var fields: std.ArrayList(ast.StructField) = .empty;
@@ -44,6 +50,7 @@ pub fn parseCompilerStruct(self: *Parser) ParseError!*Node {
         .name = try self.dupe(name.value),
         .fields = try fields.toOwnedSlice(self.arena),
         .methods = try methods.toOwnedSlice(self.arena),
+        .params = params,
         .loc = self.locOf(struct_token),
     } });
 }

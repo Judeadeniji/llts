@@ -124,6 +124,8 @@ pub fn isTypeCall(state: ?*state_mod.CompilerState, node: *const ast.Node) bool 
         callee.primary.name
     else
         (expr_path.tryResolveStaticPath(st, callee) catch null) orelse return false;
+    // `Name(T)` — a generic struct instantiation is a type, not a value.
+    if (st.struct_templates.contains(name)) return true;
     const template = st.templates.get(name) orelse return false;
     const rt = template.function_decl.return_type orelse return false;
     return rt.* == .primary and std.mem.eql(u8, rt.primary.name, "type");
@@ -296,6 +298,17 @@ fn literalTypeFromAst(state: ?*state_mod.CompilerState, lit: ast.Literal) FromAs
     };
 }
 
+/// A generic struct used without arguments — name it with the arguments it
+/// needs so there is something concrete to lay out.
+fn missingTypeArgs(state: *state_mod.CompilerState, name: []const u8) FromAstError {
+    const bare = ir.cleanTypeName(name);
+    return compile_error.compileFailFmt(
+        state,
+        "Generic struct '{s}' needs type arguments, e.g. '{s}(T)'",
+        .{ bare, bare },
+    );
+}
+
 pub fn resolveNamedType(name: []const u8, state: ?*state_mod.CompilerState, ta: ir.TypeAlloc) FromAstError!ir.Type {
     const t = ir.namedType(name);
     if (t != .struct_) return t;
@@ -306,6 +319,7 @@ pub fn resolveNamedType(name: []const u8, state: ?*state_mod.CompilerState, ta: 
         if (st.error_sets.contains(name)) return .{ .error_set = name };
         if (st.enums.contains(name)) return .{ .enum_ = name };
         if (st.structs.contains(name)) return .{ .struct_ = name };
+        if (st.struct_templates.contains(name)) return missingTypeArgs(st, name);
         return compile_error.compileFailFmt(st, "Unknown type '{s}'", .{name});
     }
     return t;
@@ -592,6 +606,7 @@ pub fn parseDisplayType(
         if (findErrorSetKey(st, s)) |k| return .{ .error_set = k };
         if (findEnumKey(st, s)) |k| return .{ .enum_ = k };
         if (findStructKey(st, s)) |k| return .{ .struct_ = k };
+        if (st.struct_templates.contains(s)) return missingTypeArgs(st, s);
         return compile_error.compileFailFmt(st, "Unknown type '{s}'", .{s});
     }
     return try ir.parseDisplayType(ta, s);

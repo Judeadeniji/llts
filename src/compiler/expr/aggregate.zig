@@ -367,6 +367,15 @@ fn resolveStructDef(state: *CompilerState, node: *ast.Node, init: *const ast.Str
                 return compiler_errors.compileFailFmt(state, "Unknown struct '{s}'", .{display});
             };
         }
+        // A generic struct instantiation keys its layout by the denoted type.
+        if (types.isTypeCall(state, te)) {
+            const display = state.type_call_results.get(te) orelse {
+                return compiler_errors.compileFailFmt(state, "Invalid struct initialization type", .{});
+            };
+            return types.lookupStruct(state, display) orelse {
+                return compiler_errors.compileFailFmt(state, "Unknown struct '{s}'", .{display});
+            };
+        }
     } else {
         const display = state.type_of_results.get(node) orelse {
             return compiler_errors.compileFailFmt(state, "Cannot infer object literal type", .{});

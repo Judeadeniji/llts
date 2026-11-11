@@ -170,6 +170,13 @@ fn parsePostfix(self: *Parser) ParseError!*Node {
                 e = try finishStructInit(self, e, tok);
                 continue;
             }
+            // `Type(T) { field: value }` — an object literal whose type is an
+            // instantiation. Require field-init shape so a call followed by a
+            // block (`f(x) { … }`) still parses as two statements.
+            if (e.* == .call and looksLikeFieldInitObject(self)) {
+                e = try finishStructInit(self, e, tok);
+                continue;
+            }
         }
         // `.?` assertion-unwrap: panics if the value is null, otherwise unwraps.
         if (tok.type == .delimiter and std.mem.eql(u8, tok.value, ".?")) {

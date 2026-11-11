@@ -64,6 +64,7 @@ pub fn analyze(
     try registerModuleDecls(&state, doc);
 
     for (doc.statements) |s| {
+        if (s.* == .struct_decl and s.struct_decl.params.len > 0) continue; // instantiated on use
         if (s.* == .struct_decl or s.* == .enum_decl or s.* == .error_decl or s.* == .type_decl) try stmt.compileStatement(&state, s);
     }
     try local_types.hoist(&state, doc.statements);
@@ -297,6 +298,11 @@ fn fnVariadic(node: *ast.Node) bool {
 fn registerStructNames(state: *state_mod.CompilerState, doc: *ast.Document) !void {
     for (doc.statements) |s| {
         if (s.* == .struct_decl) {
+            // `@struct Name(T: type)` is a template: registered, never laid out.
+            if (s.struct_decl.params.len > 0) {
+                try generics.registerStructTemplate(state, s);
+                continue;
+            }
             try state.structs.put(s.struct_decl.name, .{
                 .name = s.struct_decl.name,
                 .size = 0,
@@ -568,6 +574,8 @@ fn collectFuncs(state: *state_mod.CompilerState, node: *ast.Node, struct_name: ?
             });
         },
         .struct_decl => |s| {
+            // A generic struct's methods are registered per instance, not here.
+            if (s.params.len > 0) return;
             for (s.methods) |m| try collectFuncs(state, m, s.name);
         },
         .block => |b| for (b.statements) |s| try collectFuncs(state, s, null),

@@ -125,9 +125,10 @@ pub fn parseCompilerFunc(self: *Parser) ParseError!*Node {
     } });
 }
 
-const ParamsResult = struct { elements: []ast.Param, is_variadic: bool };
+pub const ParamsResult = struct { elements: []ast.Param, is_variadic: bool };
 
-fn parseParamsList(self: *Parser) ParseError!ParamsResult {
+/// `name: T, …)` — params up to and including the closing `)`.
+pub fn parseParamsList(self: *Parser) ParseError!ParamsResult {
     if (self.checkDelim(")")) {
         _ = self.advance();
         return .{ .elements = &.{}, .is_variadic = false };

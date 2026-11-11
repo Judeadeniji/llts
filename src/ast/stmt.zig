@@ -114,6 +114,10 @@ pub const StructDecl = struct {
     name: []const u8,
     fields: []StructField,
     methods: []*Node,
+    /// `@struct Name(T: type)` — a generic struct template. Only type params
+    /// are allowed; the declaration itself is never laid out or emitted, each
+    /// distinct argument list gets its own instance (`Name(T)`).
+    params: []Param = &.{},
     is_public: bool = false,
     loc: Location,
 };
@@ -128,6 +132,9 @@ pub const EnumVariant = struct {
 pub const EnumDecl = struct {
     name: []const u8,
     variants: []const EnumVariant,
+    /// Parsed so `@enum Name(T: type)` reports a clear error instead of a
+    /// syntax error; enums carry no member types, so params are rejected.
+    params: []Param = &.{},
     is_public: bool = false,
     loc: Location,
 };

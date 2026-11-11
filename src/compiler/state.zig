@@ -221,6 +221,10 @@ pub const CompilerState = struct {
     /// Functions with a `type` param or `: type` return (see `generics.zig`).
     /// Never typechecked or emitted; only their instances are.
     templates: std.StringHashMap(*ast.Node),
+    /// Generic struct declarations (`@struct Name(T: type)`), keyed by their
+    /// (possibly module-qualified) name. Never laid out or emitted; each
+    /// distinct argument list instantiates one entry of `structs`.
+    struct_templates: std.StringHashMap(*ast.Node),
     /// `template(qualified type args)` → type display (type functions) or
     /// instance function name (generic functions).
     instances: std.StringHashMap([]const u8),
@@ -368,6 +372,7 @@ pub fn create(allocator: std.mem.Allocator) !CompilerState {
         .typedefs = std.StringHashMap(TypeDef).init(allocator),
         .local_type_decls = std.AutoHashMap(*const ast.TypeDecl, void).init(allocator),
         .templates = std.StringHashMap(*ast.Node).init(allocator),
+        .struct_templates = std.StringHashMap(*ast.Node).init(allocator),
         .instances = std.StringHashMap([]const u8).init(allocator),
         .instance_type_irs = std.StringHashMap(ir.Type).init(allocator),
         .instance_fns = std.StringHashMap(void).init(allocator),
@@ -514,6 +519,7 @@ pub fn deinit(self: *CompilerState) void {
     self.typedefs.deinit();
     self.local_type_decls.deinit();
     self.templates.deinit();
+    self.struct_templates.deinit();
     self.instances.deinit();
     self.instance_type_irs.deinit();
     self.instance_fns.deinit();

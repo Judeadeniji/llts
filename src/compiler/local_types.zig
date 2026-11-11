@@ -39,6 +39,8 @@ pub fn hoist(state: *CompilerState, statements: []*ast.Node) !void {
             // Template bodies are hoisted per instance (see `generics.zig`).
             .function_decl => |*f| if (!state.templates.contains(f.name)) try hoistFunction(state, f, f.name),
             .struct_decl => |st| {
+                // Generic struct methods are hoisted per instance (`generics.zig`).
+                if (st.params.len > 0) continue;
                 for (st.methods) |m| {
                     if (m.* != .function_decl) continue;
                     const owner = try std.fmt.allocPrint(state.allocator, "{s}::{s}", .{ st.name, m.function_decl.name });

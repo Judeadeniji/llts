@@ -388,6 +388,13 @@ pub fn compileStruct(state: *CompilerState, s: *const ast.StructDecl) !void {
 }
 
 pub fn compileEnum(state: *CompilerState, e: *const ast.EnumDecl) !void {
+    if (e.params.len > 0) {
+        return compile_errors.compileFailFmt(
+            state,
+            "Enum '{s}' cannot take type parameters: variants carry no types to parameterize",
+            .{e.name},
+        );
+    }
     var variants = std.StringHashMap(i32).init(state.allocator);
     var string_values: ?std.StringHashMap([]const u8) = null;
     errdefer if (string_values) |*sv| sv.deinit();
