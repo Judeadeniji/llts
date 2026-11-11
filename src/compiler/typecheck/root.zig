@@ -2875,7 +2875,10 @@ fn checkInitAgainstStruct(
                 }
             }
         }
-        const got = try inferExpr(state, env, ta, field.value);
+        // A nested `{ … }` takes the field's declared type instead of
+        // inferring a structural shape of its own.
+        const got = (try inferInitAgainstType(state, env, ta, field.value, expected)) orelse
+            try inferExpr(state, env, ta, field.value);
         var ctx_buf: [128]u8 = undefined;
         const ctx = std.fmt.bufPrint(&ctx_buf, "Field '{s}' of '{s}'", .{ field.name, ir.cleanTypeName(struct_name) }) catch "Field";
         try requireAssignFrom(state, got, expected, ctx, field.value);
@@ -2951,7 +2954,8 @@ fn checkInitAgainstShape(
         const exp = expected orelse {
             return compiler_errors.compileFailFmt(state, "Unknown field '{s}' on '{s}'", .{ field.name, display });
         };
-        const got = try inferExpr(state, env, ta, field.value);
+        const got = (try inferInitAgainstType(state, env, ta, field.value, exp)) orelse
+            try inferExpr(state, env, ta, field.value);
         var ctx_buf: [128]u8 = undefined;
         const ctx = std.fmt.bufPrint(&ctx_buf, "Field '{s}' of '{s}'", .{ field.name, display }) catch "Field";
         try requireAssignFrom(state, got, exp, ctx, field.value);
@@ -3009,11 +3013,26 @@ fn inferReturnInit(
     ta: ir.TypeAlloc,
     v: *ast.Node,
 ) TypecheckError!?ir.Type {
+    const declared = env.expected_return orelse return null;
+    return inferInitAgainstType(state, env, ta, v, declared);
+}
+
+/// Type a bare `{ … }` literal against the type the context expects — a named
+/// struct or an anonymous shape. Used for `return { … }` and for a literal
+/// nested in a field, so `pt: { x: 1, y: 2 }` becomes the field's type.
+/// Returns null when `v` is not a bare literal or `expected` is neither.
+fn inferInitAgainstType(
+    state: *state_mod.CompilerState,
+    env: *Env,
+    ta: ir.TypeAlloc,
+    v: *ast.Node,
+    expected: ir.Type,
+) TypecheckError!?ir.Type {
     if (v.* != .struct_init) return null;
     const init = v.struct_init;
     if (init.type_expr != null) return null;
-    const declared = env.expected_return orelse return null;
-    const peeled = ir.peelDefined(declared);
+    if (ir.isUnknown(expected) or ir.isNever(expected)) return null;
+    const peeled = ir.peelDefined(expected);
     const t: ?ir.Type = switch (peeled) {
         .struct_ => |name| blk: {
             if (from_ast.lookupStruct(state, name) == null) break :blk null;
@@ -3437,12 +3456,23 @@ fn checkFunction(
             // If the body *does* `return <expr>` but inference could not refine
             // (e.g. thin wrappers around natives), leave unknown — never stamp void.
             const weak_ret = if (def.return_ir) |t|
-                ir.isUnknown(t) or ir.isNull(t)
+                ir.isUnknown(t) or ir.isNull(t) or ir.hasUnknownSuccessArm(t)
             else
                 def.return_type == null;
             if (weak_ret) {
-                def.return_type = try ownDisplayQualified(state, ir.TVoid);
-                def.return_ir = ir.TVoid;
+                const cur_ir = def.return_ir;
+                const cur_allows_error = if (cur_ir) |c|
+                    ir.allowsError(c)
+                else if (def.return_type) |c|
+                    from_ast.typeAllowsError(c)
+                else
+                    false;
+                const final: ir.Type = if (cur_allows_error)
+                    try ta.unionType(&.{ ir.TVoid, ir.TError })
+                else
+                    ir.TVoid;
+                def.return_type = try ownDisplayQualified(state, final);
+                def.return_ir = final;
             }
         }
     }
@@ -3722,7 +3752,14 @@ fn inferReturnTypeFromBody(state: *state_mod.CompilerState, body: *ast.Node) Typ
     }
     // Keep a success arm open — pure `error` breaks `T = f()?` when f's success
     // type is not yet refined (call-order / mutual recursion).
-    if (has_error) return try state.typeAlloc().unionType(&.{ ir.TUnknown, ir.TError });
+    // If the function has no valued return statements, normal flow falls
+    // through to void, so the return type is `void | error`.
+    if (has_error) {
+        if (!bodyHasValuedReturn(body)) {
+            return try state.typeAlloc().unionType(&.{ ir.TVoid, ir.TError });
+        }
+        return try state.typeAlloc().unionType(&.{ ir.TUnknown, ir.TError });
+    }
     return null;
 }
 
@@ -3982,6 +4019,9 @@ fn resolveSignatureTypes(state: *state_mod.CompilerState, env: *Env, ta: ir.Type
     try env.pushScope();
     defer env.popScope();
     for (plist) |p| {
+        // `T: type` is a compile-time parameter, not a runtime slot: its
+        // annotation is the `type` keyword itself.
+        if (generics.isTypeParam(p)) continue;
         var t: ir.Type = ir.TUnknown;
         if (p.type_annotation) |ann| {
             t = if (from_ast.typeNodeHasCall(ann)) try resolveDeclTypeNode(state, env, ta, ann) else try from_ast.typeFromAst(ann, state, ta);
