@@ -1935,6 +1935,22 @@ fn rejectTypeValue(state: *state_mod.CompilerState, t: ir.Type, what: []const u8
     return compiler_errors.compileFailFmt(state, "Cannot use a 'type' value as {s}; types exist only at compile time (name a type with '@alias')", .{what});
 }
 
+/// Fill in a hoisted local typedef whose RHS contains type-returning calls.
+fn resolveLocalTypeDecl(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, td: *const ast.TypeDecl) TypecheckError!void {
+    const entry = state.typedefs.getPtr(td.name) orelse return;
+    if (entry.ir) |known| {
+        if (known != .unknown) return;
+    }
+    if (!from_ast.typeNodeHasCall(td.type_expr)) return;
+    try intrinsics.resolveTypeExprs(state, env, ta, td.type_expr);
+    const disp = (try from_ast.typeAstToDisplayQualified(td.type_expr, state)) orelse return;
+    entry.underlying = disp;
+    entry.ir = try from_ast.typeFromAst(td.type_expr, state, ta);
+    if (disp.len > 0 and disp[0] == '{' and !std.mem.eql(u8, disp, td.name)) {
+        try from_ast.ensureShapeLayoutFromDisplayAs(state, disp, td.name);
+    }
+}
+
 fn joinBreakTypes(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node: *ast.Node) TypecheckError!ir.Type {
     var acc: ?ir.Type = null;
     try walkBreakValues(state, env, ta, node, &acc, false);
@@ -3018,7 +3034,14 @@ fn checkStmt(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node:
             _ = try checkStmt(state, env, ta, d.body);
             return null;
         },
-        .function_decl, .struct_decl, .enum_decl, .error_decl, .type_decl, .extern_decl => return null,
+        .type_decl => |*td| {
+            // Local `@type` / `@alias` are hoisted before the body is checked,
+            // so a type-function RHS (`@alias L = Opt(i64)`) could not be
+            // evaluated then. Resolve it here, where `env` is live.
+            if (state.local_type_decls.contains(td)) try resolveLocalTypeDecl(state, env, ta, td);
+            return null;
+        },
+        .function_decl, .struct_decl, .enum_decl, .error_decl, .extern_decl => return null,
         .block => return try inferExpr(state, env, ta, node),
         else => {
             const t = try inferExpr(state, env, ta, node);
