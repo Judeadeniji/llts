@@ -2648,6 +2648,19 @@ fn inferGenericCall(
     try collectTypeArgs(state, env, ta, c, name, template, &qualified, &clean, null, receiver != null);
 
     const inst = try generics.instantiateFunction(state, name, template, qualified.items, clean.items, call_node.loc());
+    // The instance's signature is resolved lazily, but the call's own type is
+    // needed right here (`$r = f(x)` with `f(): Name(T)`). Resolve a type-call
+    // return now instead of reporting `unknown`.
+    if (state.functions.getPtr(inst)) |def| {
+        if (def.return_ir == null and def.node.* == .function_decl) {
+            if (def.node.function_decl.return_type) |rt| {
+                if (from_ast.typeNodeHasCall(rt)) {
+                    intrinsics.resolveTypeExprs(state, env, ta, rt) catch {};
+                    def.return_ir = from_ast.typeFromAst(rt, state, ta) catch null;
+                }
+            }
+        }
+    }
     var value_count: usize = 0;
     for (generics.params(&template.function_decl)) |p| {
         if (!generics.isTypeParam(p)) value_count += 1;

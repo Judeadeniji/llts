@@ -126,6 +126,42 @@ Methods are functions declared directly inside a `@struct` body. The first param
 3. **Explicit `self: T`:** Value receiver; the struct is copied onto the callee's frame, leaving the caller's original struct untouched.
 4. **Invocation:** Both value and pointer instances use identical dot syntax: `c.increment()`.
 
+### Method Type Parameters
+
+A method may take `type` parameters (and compile-time integer parameters)
+of its own, on a plain struct as well as on a generic instance. The receiver
+is still the implicit first argument and never counts among the arguments you
+pass:
+
+```lls
+@struct Pair(A: type, B: type) { first: A; second: B; }
+
+@struct Point {
+    x: i64;
+    y: i64;
+
+    @func as(self, T: type): T { return @as(T, self.x); }
+    @func pairWith(self, T: type, v: T): Pair(i64, T) { return { first: self.x, second: v }; }
+}
+
+pub @func main() {
+    $p: Point = { x: 3, y: 4 };
+    print(p.as(f64));                # 3
+    $q = p.pairWith(bool, true);     # explicit type argument
+    print(q.first, q.second);        # 3 true
+    $r = p.pairWith(false);          # inferred from the value argument
+    print(r.first, r.second);        # 3 false
+}
+```
+
+Each distinct argument list instantiates the method once, so `p.as(f64)` and
+`p.as(i64)` are different functions with different return types. Explicit type
+arguments lead the argument list and bind no value parameter; when they are
+omitted they are inferred from the value arguments. A method's return type may
+name a generic instance (`Pair(i64, T)`) or an anonymous shape
+(`{ value: i64; extra: T }`), and a call to one already has that type — so
+`$q = p.pairWith(bool, true)` needs no annotation.
+
 ---
 
 ## 6. First-Class Functions
