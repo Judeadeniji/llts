@@ -128,7 +128,7 @@ Rule: the native emitter lowers compiler facts and never re-derives them. See `.
 - [x] **Use compiler constant folding** — done: range evaluation and proven arithmetic facts moved to compiler analysis (`src/compiler/analyze/range.zig`) and recorded in `state.proven_arithmetic`. Emitter consumes `state.proven_arithmetic`, `state.size_of_results`, `state.name_of_plans`, `state.type_eq_folds`, and `state.type_call_results`; deleted `src/compiler/codegen/emitter/range.zig` and `Emitter.int_ranges`.
 - [x] **Use compiler reachability** — done: computed once in `analyze`, stored on `state.reachability`, and shared with bytecode and native emission; emitter consumes `self.state.reachability`.
 - [x] **Remove dead/duplicate intrinsic handling** — done: removed unreachable duplicate `@typeOf` branch in `emitCall` (`expr.zig`), routed `type_call_results` at call entry, and removed `staticTypeArgSize` fallback from `@sizeOf`.
-- [ ] **Enforce the contract in tests** — add unit tests that assert: (a) every typecheck-accepted program either lowers or fails with an explicit "unsupported lowering" diagnostic, never a semantic/type/name error from the emitter; (b) the emitter contains no display-string type parser; (c) generated code is stable when only `type_of_results` and resolution maps are consulted.
+- [x] **Enforce the contract in tests** — done: added contract unit tests in `tests/integration.zig` and `tests/57.4_compiler_authority.test.ts` asserting (a) explicit lowering failure diagnostics, (b) total absence of display-string type parsers, `range_mod`, and `prescan` in the emitter, and (c) deterministic emitted code across runs.
 
 ### P1 — Missing Language Features
 

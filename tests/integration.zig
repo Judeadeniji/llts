@@ -223,3 +223,89 @@ test "eval flag native" {
     try std.testing.expectEqual(@as(u8, 0), code);
     try std.testing.expect(std.mem.indexOf(u8, stdout, "999") != null);
 }
+
+test "compiler authority: emitter contains no display-string type parser or AST re-evaluators" {
+    const allocator = std.testing.allocator;
+    const emitter_dir_path = "src/compiler/codegen/emitter";
+    var dir = try std.fs.cwd().openDir(emitter_dir_path, .{ .iterate = true });
+    defer dir.close();
+
+    var it = dir.iterate();
+    const forbidden = [_][]const u8{
+        "fn classify",
+        "fn expandTypedefs",
+        "fn isErrorDisplay",
+        "fn childType",
+        "fn parseArrayShape",
+        "fn optionalPayloadDisplay",
+        "fn isConstByteSequenceDisplay",
+        "fn displayForExpr",
+        "fn stmtTerminates",
+        "range_mod",
+        "prescan",
+        "int_ranges",
+    };
+
+    while (try it.next()) |entry| {
+        if (entry.kind != .file) continue;
+        if (!std.mem.endsWith(u8, entry.name, ".zig")) continue;
+        const content = try dir.readFileAlloc(allocator, entry.name, 1024 * 1024);
+        defer allocator.free(content);
+
+        for (forbidden) |pattern| {
+            if (std.mem.indexOf(u8, content, pattern) != null) {
+                std.debug.print("Found forbidden pattern '{s}' in {s}/{s}\n", .{ pattern, emitter_dir_path, entry.name });
+                try std.testing.expect(false);
+            }
+        }
+    }
+}
+
+test "compiler authority: generated code is deterministic across multiple emits" {
+    const allocator = std.testing.allocator;
+    const tmp_path = "/tmp/llts_authority_test.lls";
+    const src =
+        \\@const $MAX = 100;
+        \\@func helper(x: int): int {
+        \\    @if (x < 2) return x;
+        \\    return x * 2;
+        \\}
+        \\pub @func main() {
+        \\    var total: int = 0;
+        \\    @for (0..10) |i| {
+        \\        total = total + helper(i);
+        \\    }
+        \\    print(total);
+        \\}
+        \\
+    ;
+    {
+        const f = try std.fs.createFileAbsolute(tmp_path, .{});
+        defer f.close();
+        try f.writeAll(src);
+    }
+
+    // Run 1
+    var child1 = std.process.Child.init(&.{ "zig-out/bin/llts", "emit-zig", tmp_path }, allocator);
+    child1.stdout_behavior = .Pipe;
+    child1.stderr_behavior = .Pipe;
+    try child1.spawn();
+    const stdout1 = try child1.stdout.?.readToEndAlloc(allocator, 1024 * 1024);
+    defer allocator.free(stdout1);
+    const stderr1 = try child1.stderr.?.readToEndAlloc(allocator, 1024 * 1024);
+    defer allocator.free(stderr1);
+    _ = try child1.wait();
+
+    // Run 2
+    var child2 = std.process.Child.init(&.{ "zig-out/bin/llts", "emit-zig", tmp_path }, allocator);
+    child2.stdout_behavior = .Pipe;
+    child2.stderr_behavior = .Pipe;
+    try child2.spawn();
+    const stdout2 = try child2.stdout.?.readToEndAlloc(allocator, 1024 * 1024);
+    defer allocator.free(stdout2);
+    const stderr2 = try child2.stderr.?.readToEndAlloc(allocator, 1024 * 1024);
+    defer allocator.free(stderr2);
+    _ = try child2.wait();
+
+    try std.testing.expectEqualStrings(stdout1, stdout2);
+}
