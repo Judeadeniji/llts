@@ -3006,10 +3006,14 @@ fn checkStmt(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node:
                     }
                 } else {
                     try env.define(d.name, value_type);
-                    // Persist pointer / array / function displays so emit can resolve layout / types.
-                    // Skip `error` — builtin `error` struct would steal LOAD_FIELD from runtime errors.
+                    // Persist every resolved global type (widths, pointers, arrays,
+                    // functions, unions, …) so emit can resolve the binding without
+                    // re-inferring it. Skip `error` — the builtin `error` struct would
+                    // steal LOAD_FIELD from runtime errors — and unit/bottom/type.
                     if (persist_global and
-                        (value_type == .ptr or value_type == .array or value_type == .func))
+                        value_type != .unknown and value_type != .void and
+                        value_type != .never and value_type != .type_ and
+                        value_type != .error_)
                     {
                         const disp = try ownDisplayQualified(state, value_type);
                         try state.global_types.put(d.name, disp);
@@ -3739,6 +3743,48 @@ fn seedDeclEnv(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, doc
     }
 }
 
+/// Infer computed top-level global types before function bodies are checked so
+/// a function that reads a global declared later still sees its type. Literal
+/// and annotated declarations were already seeded by `seedDeclEnv`; errors are
+/// reported by the real top-level pass, so inference failures are skipped here.
+fn seedGlobalValueTypes(state: *state_mod.CompilerState, ta: ir.TypeAlloc, doc: *ast.Document, decl_env: *Env) TypecheckError!void {
+    var env = Env.init(ta.allocator);
+    defer env.deinit();
+    try env.pushScope();
+    var git = decl_env.globals.iterator();
+    while (git.next()) |e| try env.globals.put(e.key_ptr.*, e.value_ptr.*);
+
+    // `$lib = @import(...)` declarations are removed from the statement list by
+    // import resolution; the alias lives in `global_type_irs` under a `$` key.
+    var mit = state.global_type_irs.iterator();
+    while (mit.next()) |e| {
+        const key = e.key_ptr.*;
+        if (key.len < 2 or key[0] != '$') continue;
+        if (e.value_ptr.* != .struct_) continue;
+        if (!std.mem.startsWith(u8, e.value_ptr.struct_, "module:")) continue;
+        try decl_env.globals.put(key[1..], e.value_ptr.*);
+        try env.globals.put(key[1..], e.value_ptr.*);
+    }
+
+    for (doc.statements) |s| {
+        if (s.* != .declaration) continue;
+        const d = &s.declaration;
+        const t = env.globals.get(d.name) orelse blk: {
+            const inferred = inferExpr(state, &env, ta, d.value) catch |err| {
+                if (err == error.OutOfMemory) return err;
+                continue;
+            };
+            break :blk inferred;
+        };
+        if (t == .unknown or t == .void or t == .never or t == .type_ or t == .error_) continue;
+        const disp = try ownDisplayQualified(state, t);
+        try state.global_types.put(d.name, disp);
+        try state.global_type_irs.put(d.name, t);
+        try decl_env.globals.put(d.name, t);
+        try env.globals.put(d.name, t);
+    }
+}
+
 /// Top-level `@type` / `@alias` whose RHS is type-returning: the pre-typecheck
 /// pass recorded `unknown`; resolve it now and update the typedef.
 fn resolveTypeDeclCalls(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, doc: *ast.Document) TypecheckError!void {
@@ -3830,6 +3876,8 @@ pub fn typecheck(state: *state_mod.CompilerState, doc: *ast.Document) TypecheckE
             }
         }
     }
+
+    try seedGlobalValueTypes(state, ta, doc, &decl_env);
 
     var top_consts = std.StringHashMap(void).init(ta.allocator);
     defer top_consts.deinit();

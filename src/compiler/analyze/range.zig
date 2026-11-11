@@ -319,7 +319,11 @@ pub fn analyze(state: *state_mod.CompilerState, doc: *ast.Document) anyerror!voi
                 try analyzer.globals.put(s.declaration.name, r);
                 if (!std.mem.startsWith(u8, s.declaration.name, "$")) {
                     const dollar = try std.fmt.allocPrint(analyzer.allocator, "${s}", .{s.declaration.name});
-                    try analyzer.globals.put(dollar, r);
+                    if (analyzer.globals.contains(dollar)) {
+                        analyzer.allocator.free(dollar);
+                    } else {
+                        try analyzer.globals.put(dollar, r);
+                    }
                 }
             }
         }
@@ -332,7 +336,11 @@ pub fn analyze(state: *state_mod.CompilerState, doc: *ast.Document) anyerror!voi
                     try analyzer.globals.put(s.declaration.name, r);
                     if (!std.mem.startsWith(u8, s.declaration.name, "$")) {
                         const dollar = try std.fmt.allocPrint(analyzer.allocator, "${s}", .{s.declaration.name});
-                        try analyzer.globals.put(dollar, r);
+                        if (analyzer.globals.contains(dollar)) {
+                            analyzer.allocator.free(dollar);
+                        } else {
+                            try analyzer.globals.put(dollar, r);
+                        }
                     }
                 }
             }
