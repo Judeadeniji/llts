@@ -2323,6 +2323,40 @@ fn inferTypeFunctionCall(
     return ir.TType;
 }
 
+/// Fold a type function's `@if` condition at compile time. Handles boolean
+/// literals, `!`, `&&` / `||`, and `==` / `!=` between types. Returns null when
+/// the condition is not foldable.
+fn evalTypeCond(
+    state: *state_mod.CompilerState,
+    env: *Env,
+    ta: ir.TypeAlloc,
+    cond: *ast.Node,
+) TypecheckError!?bool {
+    switch (cond.*) {
+        .literal => |l| {
+            if (l.literal_type == .boolean) return std.mem.eql(u8, l.value, "true");
+            return null;
+        },
+        .unary => |u| {
+            if (!std.mem.eql(u8, u.operator, "!")) return null;
+            const v = (try evalTypeCond(state, env, ta, u.arg)) orelse return null;
+            return !v;
+        },
+        .binary => |b| {
+            if (std.mem.eql(u8, b.operator, "||") or std.mem.eql(u8, b.operator, "&&")) {
+                const l = (try evalTypeCond(state, env, ta, b.left)) orelse return null;
+                const r = (try evalTypeCond(state, env, ta, b.right)) orelse return null;
+                return if (std.mem.eql(u8, b.operator, "||")) (l or r) else (l and r);
+            }
+            if (!std.mem.eql(u8, b.operator, "==") and !std.mem.eql(u8, b.operator, "!=")) return null;
+            if (!intrinsics.isTypeValueNode(state, env, b.left) or !intrinsics.isTypeValueNode(state, env, b.right)) return null;
+            try checkTypeComparison(state, env, ta, b);
+            return state.type_eq_folds.get(b.left);
+        },
+        else => return null,
+    }
+}
+
 /// First `return` reached in a type function body. Only `return <type>`,
 /// `@if` on folded type comparisons, and local typedefs are allowed.
 fn evalTypeBody(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node: *ast.Node, name: []const u8) TypecheckError!?ir.Type {
@@ -2351,15 +2385,9 @@ fn evalTypeBody(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, no
             return t;
         },
         .if_expr => |i| {
-            _ = try inferExpr(state, env, ta, i.condition);
-            const taken: ?bool = switch (i.condition.*) {
-                .binary => |b| state.type_eq_folds.get(b.left),
-                .literal => |l| if (l.literal_type == .boolean) std.mem.eql(u8, l.value, "true") else null,
-                else => null,
-            };
-            const go = taken orelse {
+            const go = (try evalTypeCond(state, env, ta, i.condition)) orelse {
                 noteDiag(state, i.condition);
-                return compiler_errors.compileFailFmt(state, "Type function '{s}': an @if condition must compare types", .{shown});
+                return compiler_errors.compileFailFmt(state, "Type function '{s}': an @if condition must fold to a compile-time boolean", .{shown});
             };
             if (go) return try evalTypeBody(state, env, ta, i.body, name);
             if (i.else_body) |e| return try evalTypeBody(state, env, ta, e, name);
