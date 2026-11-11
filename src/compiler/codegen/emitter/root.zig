@@ -402,6 +402,19 @@ pub const Emitter = struct {
         return t;
     }
 
+    /// Flatten a union's arms through aliases and nested unions so `int | AppError`
+    /// (where `AppError = IoError | HttpError`) classifies as one success plus
+    /// error arms instead of two opaque success arms.
+    fn appendUnionArms(a: std.mem.Allocator, out: *std.ArrayList(ir.Type), arms: []const ir.Type) !void {
+        for (arms) |arm| {
+            switch (ir.peelDefined(arm)) {
+                .union_ => |inner| try appendUnionArms(a, out, inner),
+                .never => {},
+                else => try out.append(a, arm),
+            }
+        }
+    }
+
     /// Project a recorded compiler type onto the emitter's `ValType`.
     /// Returns null for shapes the run has no representation for (tuples,
     /// function values, singletons, plain non-error unions); callers report
@@ -514,7 +527,10 @@ pub const Emitter = struct {
                 var has_null = false;
                 var success: ?ir.Type = null;
                 var extra_success = false;
-                for (arms) |arm| switch (arm) {
+                var flat: std.ArrayList(ir.Type) = .empty;
+                defer flat.deinit(a);
+                try appendUnionArms(a, &flat, arms);
+                for (flat.items) |arm| switch (ir.peelDefined(arm)) {
                     .error_, .error_set, .error_lit => has_error = true,
                     .null => has_null = true,
                     else => {
@@ -914,4 +930,3 @@ pub fn isImportDecl(decl: *const ast_mod.Declaration) bool {
     const c = decl.value.call;
     return c.callee.* == .primary and std.mem.eql(u8, c.callee.primary.name, "@import");
 }
-

@@ -240,6 +240,12 @@ pub const CompilerState = struct {
     method_index: std.StringHashMap(std.ArrayList([]const u8)),
     /// Instances created during typecheck, checked before typecheck ends.
     pending_instances: std.ArrayList(PendingInstance) = .empty,
+    /// Methods of generic struct instances that exist but have not been called.
+    /// They are registered as functions so calls resolve, but are only
+    /// typechecked (and emitted) once something actually calls them — a method
+    /// that does not hold for every element type must not break unrelated uses
+    /// of the instance (`@sizeOf(Name(u8, 4))` must not typecheck `sum`).
+    instance_methods: std.StringHashMap(PendingInstance) = undefined,
     /// Instantiation nesting of the code being checked (0 = not in an instance).
     instance_depth: u32 = 0,
     /// Typecheck only functions reachable from `main` / exported top-level code.
@@ -310,11 +316,14 @@ pub const CompilerState = struct {
     binding_facts: std.AutoHashMap(*ast.Node, BindingFacts),
     /// Mutation/read facts per function parameter (keyed by param struct ptr).
     param_facts: std.AutoHashMap(*const ast.Param, BindingFacts),
-    /// Mutation/read facts for for-loop captures: for node → [2]BindingFacts
+    /// Mutation/read facts for for-loop captures: for_expr Node → [2]BindingFacts
     /// (index 0 = element capture, index 1 = index capture if present).
-    for_capture_facts: std.AutoHashMap(*const ast.For, [2]BindingFacts),
-    /// Mutation/read facts for @if pipe-value captures: if node → BindingFacts.
-    if_capture_facts: std.AutoHashMap(*const ast.If, BindingFacts),
+    /// Keyed by *ast.Node (the .for_expr node) so the pointer is stable across
+    /// traversal (not a stack copy of the interior ast.For struct).
+    for_capture_facts: std.AutoHashMap(*const ast.Node, [2]BindingFacts),
+    /// Mutation/read facts for @if pipe-value captures: if_expr Node → BindingFacts.
+    /// Keyed by *ast.Node (the .if_expr node) for the same stability reason.
+    if_capture_facts: std.AutoHashMap(*const ast.Node, BindingFacts),
     /// Control-flow termination per statement/expression node.
     /// A node terminates (true) if control flow cannot fall through past it
     /// (e.g. return, break, continue, call to never, or composite branch termination).
@@ -377,6 +386,7 @@ pub fn create(allocator: std.mem.Allocator) !CompilerState {
         .instance_type_irs = std.StringHashMap(ir.Type).init(allocator),
         .instance_fns = std.StringHashMap(void).init(allocator),
         .generic_calls = std.AutoHashMap(*ast.Node, GenericCall).init(allocator),
+        .instance_methods = std.StringHashMap(PendingInstance).init(allocator),
         .method_index = std.StringHashMap(std.ArrayList([]const u8)).init(allocator),
         .generic_arena = std.heap.ArenaAllocator.init(allocator),
         .type_arena = std.heap.ArenaAllocator.init(allocator),
@@ -400,8 +410,8 @@ pub fn create(allocator: std.mem.Allocator) !CompilerState {
         .for_is_cond = std.AutoHashMap(*const ast.For, void).init(allocator),
         .binding_facts = std.AutoHashMap(*ast.Node, BindingFacts).init(allocator),
         .param_facts = std.AutoHashMap(*const ast.Param, BindingFacts).init(allocator),
-        .for_capture_facts = std.AutoHashMap(*const ast.For, [2]BindingFacts).init(allocator),
-        .if_capture_facts = std.AutoHashMap(*const ast.If, BindingFacts).init(allocator),
+        .for_capture_facts = std.AutoHashMap(*const ast.Node, [2]BindingFacts).init(allocator),
+        .if_capture_facts = std.AutoHashMap(*const ast.Node, BindingFacts).init(allocator),
         .terminates = std.AutoHashMap(*ast.Node, bool).init(allocator),
         .proven_arithmetic = std.AutoHashMap(*ast.Node, void).init(allocator),
         .import_from = std.StringHashMap(ImportFrame).init(allocator),
@@ -525,6 +535,7 @@ pub fn deinit(self: *CompilerState) void {
     self.instance_fns.deinit();
     self.generic_calls.deinit();
     self.pending_instances.deinit(self.allocator);
+    self.instance_methods.deinit();
     self.generic_arena.deinit();
     self.type_arena.deinit();
     var dit = self.defer_stacks.iterator();

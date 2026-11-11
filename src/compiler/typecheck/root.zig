@@ -991,6 +991,20 @@ fn resolveMethodCallee(
     return .{ .name = method_name, .receiver = mem.object };
 }
 
+/// A generic struct instance's method is registered as a function but only
+/// typechecked once something calls it: this records that first use. An unused
+/// method that does not hold for every element type (`Name(u8, 4)::sum`) must
+/// not fail instances that never call it.
+fn noteInstanceMethodUse(state: *state_mod.CompilerState, name: []const u8) TypecheckError!void {
+    const pending = state.instance_methods.fetchRemove(name) orelse return;
+    try state.instance_fns.put(name, {});
+    try state.pending_instances.append(state.allocator, .{
+        .name = name,
+        .depth = pending.value.depth,
+        .site = pending.value.site,
+    });
+}
+
 /// True when the method's `self` param is a pointer to the struct:
 /// unannotated (defaults to *T) or explicitly `*T`. A by-value `self: T`
 /// (or no self at all) cannot mutate the caller's original.
@@ -2175,6 +2189,7 @@ fn inferCall(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, call_
     }
 
     const method = try resolveMethodCallee(state, env, ta, c);
+    if (method) |m| try noteInstanceMethodUse(state, m.name);
     const name: ?[]const u8 = if (method) |m| m.name else resolveCalleeName(state, c);
 
     // Generic struct method: `box.get(i64)`. The receiver is an implicit
@@ -2277,8 +2292,9 @@ fn inferCall(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, call_
     return ir.TUnknown;
 }
 
-/// `Name(T)` — instantiate a generic struct from its type arguments and
-/// record the denoted struct (`Name(T)`) for the call node.
+/// `Name(T, N)` — instantiate a generic struct from its arguments and record
+/// the denoted struct (`Name(T, N)`) for the call node. Type arguments are
+/// denoted types; value arguments must be compile-time integers.
 fn inferGenericStructCall(
     state: *state_mod.CompilerState,
     env: *Env,
@@ -2291,12 +2307,19 @@ fn inferGenericStructCall(
     const ps = template.struct_decl.params;
     const shown = ir.cleanTypeName(name);
     if (c.args.len != ps.len) {
-        return compiler_errors.compileFailFmt(state, "Struct '{s}' expects {d} type argument(s), got {d}", .{ shown, ps.len, c.args.len });
+        return compiler_errors.compileFailFmt(state, "Struct '{s}' expects {d} argument(s), got {d}", .{ shown, ps.len, c.args.len });
     }
     var qualified: std.ArrayList([]const u8) = .empty;
     defer qualified.deinit(ta.allocator);
-    for (ps, c.args, 0..) |_, a, i| {
+    for (ps, c.args, 0..) |p, a, i| {
         noteDiag(state, a);
+        if (!generics.isTypeParam(p)) {
+            const v = (try constArgValue(a)) orelse {
+                return compiler_errors.compileFailFmt(state, "Argument {d} of '{s}' must be a compile-time integer", .{ i + 1, shown });
+            };
+            try qualified.append(ta.allocator, try std.fmt.allocPrint(ta.allocator, "{d}", .{v}));
+            continue;
+        }
         if (!intrinsics.isTypeValueNode(state, env, a)) {
             return compiler_errors.compileFailFmt(state, "Argument {d} of '{s}' must be a type", .{ i + 1, shown });
         }
@@ -4024,6 +4047,10 @@ pub fn typecheck(state: *state_mod.CompilerState, doc: *ast.Document) TypecheckE
         resolveSignatureTypes(state, &decl_env, ta, f) catch |e| return instantiationFailed(p, e);
         checkFunction(state, ta, f, &top_consts, &decl_env.globals) catch |e| return instantiationFailed(p, e);
     }
+
+    // Instance methods nobody called were never typechecked; forget them before
+    // reachability so a name in the call index cannot pull them in unchecking.
+    generics.dropUnusedInstanceMethods(state);
 
     try recordControlFlowFacts(state, doc);
     try verifyTypeCaches(state);

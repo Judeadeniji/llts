@@ -108,32 +108,27 @@ fn parseTypeOperand(self: *Parser) ParseError!*Node {
             } });
         }
 
-        // `[N]T` — length token immediately followed by `]`
+        // `[N]T` — length token immediately followed by `]`. The length is an
+        // integer literal or a name (a generic struct's value parameter).
         if (self.check(.number) or self.check(.hex) or self.check(.octal) or self.check(.binary)) {
             if (self.peek(1)) |n1| {
                 if (n1.type == .delimiter and std.mem.eql(u8, n1.value, "]")) {
                     const num_tok = self.advance().?;
                     _ = self.advance(); // `]`
-                    var has_const = false;
-                    if (self.checkKeyword("const")) {
-                        _ = self.advance();
-                        has_const = true;
+                    return try parseArrayElem(self, start, num_tok.value);
+                }
+            }
+        }
+        if (self.check(.identifier)) {
+            if (self.peek(1)) |n1| {
+                if (n1.type == .delimiter and std.mem.eql(u8, n1.value, "]")) {
+                    // `[T]` alone is a one-tuple; `[T]U` sizes an array.
+                    const sized = if (self.peek(2)) |after| startsTypeAtom(after) else false;
+                    if (sized) {
+                        const name_tok = self.advance().?;
+                        _ = self.advance(); // `]`
+                        return try parseArrayElem(self, start, name_tok.value);
                     }
-                    const elem = try parseType(self);
-                    var is_const = false;
-                    if (has_const) {
-                        if (elem.* == .array_type) {
-                            elem.array_type.is_const = true;
-                        } else {
-                            is_const = true;
-                        }
-                    }
-                    return self.create(.{ .array_type = .{
-                        .elem = elem,
-                        .length_text = try self.dupe(num_tok.value),
-                        .is_const = is_const,
-                        .loc = self.locOf(start),
-                    } });
                 }
             }
         }
@@ -272,6 +267,43 @@ fn parseTypeAtom(self: *Parser) ParseError!*Node {
         } });
     }
     return node;
+}
+
+/// `const?` element type of `[<length>]` — shared by the literal-length and
+/// named-length forms.
+fn parseArrayElem(self: *Parser, start: ctx.Token, length_text: []const u8) ParseError!*Node {
+    var has_const = false;
+    if (self.checkKeyword("const")) {
+        _ = self.advance();
+        has_const = true;
+    }
+    const elem = try parseType(self);
+    var is_const = false;
+    if (has_const) {
+        if (elem.* == .array_type) {
+            elem.array_type.is_const = true;
+        } else {
+            is_const = true;
+        }
+    }
+    return self.create(.{ .array_type = .{
+        .elem = elem,
+        .length_text = try self.dupe(length_text),
+        .is_const = is_const,
+        .loc = self.locOf(start),
+    } });
+}
+
+/// Does `tok` begin a type atom? Distinguishes `[T]U` (array sized by `T`)
+/// from `[T]` (one-tuple type).
+fn startsTypeAtom(tok: ctx.Token) bool {
+    return switch (tok.type) {
+        .identifier, .string, .number, .boolean => true,
+        .compiler_keyword => std.mem.eql(u8, tok.value, "func"),
+        .delimiter => std.mem.eql(u8, tok.value, "[") or std.mem.eql(u8, tok.value, "*") or
+            std.mem.eql(u8, tok.value, "?") or std.mem.eql(u8, tok.value, "{"),
+        else => false,
+    };
 }
 
 /// `{ name: Type; … }` — same field syntax as `@struct`, no methods.

@@ -7,8 +7,8 @@
 //! Keys written into CompilerState:
 //!   state.binding_facts       : *ast.Node (declaration node) → BindingFacts
 //!   state.param_facts         : *const ast.Param              → BindingFacts
-//!   state.for_capture_facts   : *const ast.For               → [2]BindingFacts
-//!   state.if_capture_facts    : *const ast.If                → BindingFacts
+//!   state.for_capture_facts   : *const ast.Node (for_expr)   → [2]BindingFacts
+//!   state.if_capture_facts    : *const ast.Node (if_expr)    → BindingFacts
 
 const std = @import("std");
 const ast = @import("../../ast/root.zig");
@@ -19,6 +19,11 @@ const state_mod = @import("../state.zig");
 /// Walk every function body in `state.functions` and all top-level statements,
 /// populating `state.binding_facts`, `state.param_facts`,
 /// `state.for_capture_facts`, and `state.if_capture_facts`.
+/// Keys written into CompilerState:
+///   state.binding_facts       : *ast.Node (declaration node) → BindingFacts
+///   state.param_facts         : *const ast.Param              → BindingFacts
+///   state.for_capture_facts   : *const ast.Node (for_expr)   → [2]BindingFacts
+///   state.if_capture_facts    : *const ast.Node (if_expr)    → BindingFacts
 pub fn analyze(state: *state_mod.CompilerState, doc: *ast.Document) !void {
     // 1. Analyze every registered function (includes methods, module functions, generic instances)
     var it = state.functions.valueIterator();
@@ -73,10 +78,12 @@ const ScopeEntry = union(enum) {
     decl: *ast.Node,
     param: *const ast.Param,
     for_cap: struct {
-        for_node: *const ast.For,
+        /// The *ast.Node carrying the .for_expr variant (stable address).
+        for_node: *const ast.Node,
         index: usize,
     },
-    if_cap: *const ast.If,
+    /// The *ast.Node carrying the .if_expr variant (stable address).
+    if_cap: *const ast.Node,
 };
 
 const Scope = std.StringHashMap(ScopeEntry);
@@ -117,12 +124,12 @@ const Ctx = struct {
         try scope.put(name, .{ .param = p });
     }
 
-    fn putForCapture(ctx: *Ctx, name: []const u8, for_node: *const ast.For, index: usize) !void {
+    fn putForCapture(ctx: *Ctx, name: []const u8, for_node: *const ast.Node, index: usize) !void {
         const scope = &ctx.scopes.items[ctx.scopes.items.len - 1];
         try scope.put(name, .{ .for_cap = .{ .for_node = for_node, .index = index } });
     }
 
-    fn putIfCapture(ctx: *Ctx, name: []const u8, if_node: *const ast.If) !void {
+    fn putIfCapture(ctx: *Ctx, name: []const u8, if_node: *const ast.Node) !void {
         const scope = &ctx.scopes.items[ctx.scopes.items.len - 1];
         try scope.put(name, .{ .if_cap = if_node });
     }
@@ -380,9 +387,9 @@ const Ctx = struct {
                         (pv.primary.kind == .identifier or pv.primary.kind == .register))
                     {
                         const cap_name = pv.primary.name;
-                        try ctx.state.if_capture_facts.put(i, .{});
+                        try ctx.state.if_capture_facts.put(node, .{});
                         try ctx.pushScope();
-                        try ctx.putIfCapture(cap_name, i);
+                        try ctx.putIfCapture(cap_name, node);
                         try ctx.walkStmt(i.body);
                         ctx.popScope();
                     } else {
@@ -396,10 +403,10 @@ const Ctx = struct {
             },
             .for_expr => |*f| {
                 try ctx.walkExpr(f.expr);
-                try ctx.state.for_capture_facts.put(f, .{ .{}, .{} });
+                try ctx.state.for_capture_facts.put(node, .{ .{}, .{} });
                 try ctx.pushScope();
                 for (f.captures, 0..) |cap, ci| {
-                    if (ci < 2) try ctx.putForCapture(cap.name, f, ci);
+                    if (ci < 2) try ctx.putForCapture(cap.name, node, ci);
                 }
                 try ctx.walkStmt(f.body);
                 ctx.popScope();

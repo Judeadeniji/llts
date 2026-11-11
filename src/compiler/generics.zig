@@ -210,7 +210,7 @@ fn bindCopyInner(state: *CompilerState, template: *ast.Node, name: []const u8, q
 
 // ── generic struct declarations ─────────────────────────────────────────────
 
-/// Validate `@struct Name(T: type, …)` and register it as a template. The
+/// Validate `@struct Name(T: type, N: i64)` and register it as a template. The
 /// declaration itself is never laid out or emitted: each distinct argument
 /// list instantiates an entry in `state.structs` (see `instantiateStruct`).
 pub fn registerStructTemplate(state: *CompilerState, node: *ast.Node) Error!void {
@@ -220,10 +220,10 @@ pub fn registerStructTemplate(state: *CompilerState, node: *ast.Node) Error!void
         if (p.is_rest) {
             return compile_errors.compileFailFmt(state, "Struct '{s}' parameter '{s}' cannot be a rest parameter", .{ cleanName(s.name), p.name });
         }
-        if (!isTypeParam(p)) {
+        if (!isTypeParam(p) and !isIntAnnotation(p.type_annotation)) {
             return compile_errors.compileFailFmt(
                 state,
-                "Struct '{s}' parameter '{s}' must be of type 'type': fields are laid out per instantiation, so value parameters are not supported",
+                "Struct '{s}' parameter '{s}' must be a 'type' or an integer type: a struct is laid out per instantiation, so a value parameter can only size fields",
                 .{ cleanName(s.name), p.name },
             );
         }
@@ -277,7 +277,15 @@ pub fn instantiateStruct(
     try state.owned.append(state.allocator, prefix);
     var renames = local_types.Renames.init(state.allocator);
     defer renames.deinit();
+    // Value params (`N: i64`) only size array fields, so they substitute into
+    // array lengths instead of becoming type aliases.
+    var lengths = std.StringHashMap([]const u8).init(state.allocator);
+    defer lengths.deinit();
     for (template.struct_decl.params, qualified_args) |p, arg| {
+        if (!isTypeParam(p)) {
+            try lengths.put(p.name, arg);
+            continue;
+        }
         const key = try std.fmt.allocPrint(state.allocator, "{s}::{s}", .{ prefix, p.name });
         try state.owned.append(state.allocator, key);
         try state.typedefs.put(key, .{
@@ -290,16 +298,24 @@ pub fn instantiateStruct(
         try renames.put(p.name, key);
     }
 
-    for (s.fields) |*f| local_types.renameOpt(f.type_annotation, &renames);
+    for (s.fields) |*f| {
+        local_types.renameOpt(f.type_annotation, &renames);
+        local_types.substituteLengths(f.type_annotation, &lengths);
+    }
     for (s.methods) |m| {
         if (m.* != .function_decl) continue;
         const f = &m.function_decl;
         switch (f.params.*) {
-            .params => |*ps| for (ps.params) |*p| local_types.renameOpt(p.type_annotation, &renames),
+            .params => |*ps| for (ps.params) |*p| {
+                local_types.renameOpt(p.type_annotation, &renames);
+                local_types.substituteLengths(p.type_annotation, &lengths);
+            },
             else => {},
         }
         local_types.renameOpt(f.return_type, &renames);
+        local_types.substituteLengths(f.return_type, &lengths);
         local_types.rename(f.body, &renames);
+        local_types.substituteLengths(f.body, &lengths);
     }
 
     try layoutStructInstance(state, env, ta, name, s);
@@ -336,10 +352,27 @@ pub fn instantiateStruct(
         compiler_root.registerFunction(state, m) catch |e| return narrow(e);
         // A method with its own type params is a template (instantiated on call).
         if (state.templates.contains(f.name)) continue;
-        try state.instance_fns.put(f.name, {});
-        try state.pending_instances.append(state.allocator, .{ .name = f.name, .depth = depth, .site = site });
+        // Lazily checked: typecheck queues an instance method when it sees a
+        // call to it, so an unused method that only holds for some element
+        // types cannot break the instances that never use it.
+        try state.instance_methods.put(f.name, .{ .name = f.name, .depth = depth, .site = site });
     }
     return name;
+}
+
+/// Drop instance methods that nothing called. Their bodies were never
+/// typechecked, so they must not reach reachability or the emitter — a bare
+/// method name in the call index would otherwise pull them in as candidates.
+pub fn dropUnusedInstanceMethods(state: *CompilerState) void {
+    var it = state.instance_methods.keyIterator();
+    while (it.next()) |name| {
+        if (state.functions.fetchRemove(name.*)) |kv| {
+            var def = kv.value;
+            def.calls.deinit();
+            def.forward_jumps.deinit(state.allocator);
+        }
+    }
+    state.instance_methods.clearRetainingCapacity();
 }
 
 fn layoutStructInstance(

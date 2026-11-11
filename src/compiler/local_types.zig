@@ -184,6 +184,11 @@ const Scoped = struct {
         }
     }
 
+    /// Scoped hoisting never rewrites array lengths.
+    fn length(_: *const Scoped, _: []const u8) ?[]const u8 {
+        return null;
+    }
+
     fn lookup(self: *const Scoped, name: []const u8) ?[]const u8 {
         var i = self.scopes.items.len;
         while (i > 0) {
@@ -259,11 +264,18 @@ const Scoped = struct {
 };
 
 /// One flat set of renames applied everywhere (type parameters of a generic instance).
+/// `lengths` substitutes value parameters into array lengths (`[N]T`).
 const Flat = struct {
-    renames: *const Renames,
+    renames: ?*const Renames = null,
+    lengths: ?*const std.StringHashMap([]const u8) = null,
 
     fn lookup(self: *const Flat, name: []const u8) ?[]const u8 {
-        return self.renames.get(name);
+        const r = self.renames orelse return null;
+        return r.get(name);
+    }
+    fn length(self: *const Flat, text: []const u8) ?[]const u8 {
+        const l = self.lengths orelse return null;
+        return l.get(text);
     }
     fn enter(_: *Flat, _: []*ast.Node) Error!void {}
     fn leave(_: *Flat) void {}
@@ -313,6 +325,14 @@ pub fn renameOpt(node: ?*ast.Node, renames: *const Renames) void {
 pub fn rename(node: *ast.Node, renames: *const Renames) void {
     var ctx = Flat{ .renames = renames };
     walk(node, &ctx) catch unreachable;
+}
+
+/// Replace array lengths spelled as a value parameter with its argument
+/// (`[N]T` → `[4]T`). Used by generic struct instances.
+pub fn substituteLengths(node: ?*ast.Node, lengths: *const std.StringHashMap([]const u8)) void {
+    const n = node orelse return;
+    var ctx = Flat{ .lengths = lengths };
+    walk(n, &ctx) catch unreachable;
 }
 
 fn walkOpt(node: ?*ast.Node, ctx: anytype) Error!void {
@@ -388,7 +408,12 @@ fn walk(node: *ast.Node, ctx: anytype) Error!void {
         .unwrap_expr => |u| try walk(u.expression, ctx),
         .error_expr => |e| for (e.args) |a| try walk(a, ctx),
         .comptime_expr => |c| try walk(c.expr, ctx),
-        .array_type => |a| try walk(a.elem, ctx),
+        .array_type => |*a| {
+            try walk(a.elem, ctx);
+            if (a.length_text) |text| {
+                if (ctx.length(text)) |sub| a.length_text = sub;
+            }
+        },
         .pointer_type => |p| try walk(p.elem, ctx),
         .tuple_type => |t| for (t.elems) |e| try walk(e, ctx),
         .union_type => |u| {

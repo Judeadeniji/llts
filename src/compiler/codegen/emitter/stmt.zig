@@ -296,7 +296,7 @@ pub fn emitCaptureCondFor(self: *Emitter, node: *ast_mod.Node, f: *const ast_mod
     const cap_name = try self.localName(f.captures[0].name);
     const zig_label = try loopZigLabel(self, f, id);
 
-    const cap_read = if (self.state.for_capture_facts.get(f)) |facts| facts[0].read else false;
+    const cap_read = if (self.state.for_capture_facts.get(node)) |facts| facts[0].read else false;
 
     try self.loop_targets.append(a, .{ .label = f.label, .zig_label = zig_label, .scope_depth = self.scopes.items.len });
     defer _ = self.loop_targets.pop();
@@ -548,7 +548,7 @@ pub fn emitIterableFor(self: *Emitter, node: *ast_mod.Node, f: *const ast_mod.Fo
     const cap1_name = if (f.captures.len > 1) try self.localName(f.captures[1].name) else "";
     const raw1_name = try std.fmt.allocPrint(a, "lls_iter_i_{d}", .{id});
 
-    const for_facts = self.state.for_capture_facts.get(f);
+    const for_facts = self.state.for_capture_facts.get(node);
     const cap0_read = if (for_facts) |facts| facts[0].read else false;
     const cap1_read = if (for_facts) |facts| facts[1].read else false;
     const body = try forBody(self, node, f);
@@ -615,8 +615,8 @@ pub fn emitIfBody(self: *Emitter, body: *ast_mod.Node) !void {
     self.popScope();
 }
 
-pub fn emitIfChain(self: *Emitter, i: *const ast_mod.If, first: bool) anyerror!void {
-    if (i.pipe_value != null) return emitCaptureIfChain(self, i, first);
+pub fn emitIfChain(self: *Emitter, node: *ast_mod.Node, i: *const ast_mod.If, first: bool) anyerror!void {
+    if (i.pipe_value != null) return emitCaptureIfChain(self, node, i, first);
 
     const cond = try emitCondition(self, i.condition);
     if (first) try self.writeIndent();
@@ -630,7 +630,7 @@ pub fn emitIfChain(self: *Emitter, i: *const ast_mod.If, first: bool) anyerror!v
     try emitIfElse(self, i.else_body);
 }
 
-pub fn emitCaptureIfChain(self: *Emitter, i: *const ast_mod.If, first: bool) anyerror!void {
+pub fn emitCaptureIfChain(self: *Emitter, node: *ast_mod.Node, i: *const ast_mod.If, first: bool) anyerror!void {
     const a = self.arena.allocator();
     const cond_t = try self.valueType(i.condition);
     if (cond_t.may_error) {
@@ -657,7 +657,8 @@ pub fn emitCaptureIfChain(self: *Emitter, i: *const ast_mod.If, first: bool) any
     const tmp_name = try std.fmt.allocPrint(a, "lls_ifopt_{d}", .{id});
     const cap_name = try self.localName(capture_name);
 
-    const cap_read = if (self.state.if_capture_facts.get(i)) |facts| facts.read else false;
+    // Key by the outer *ast.Node so the pointer is stable across traversal.
+    const cap_read = if (self.state.if_capture_facts.get(node)) |facts| facts.read else false;
 
     if (first) try self.writeIndent();
     try self.writer.print("const {s}: {s} = {s};\n", .{ tmp_name, cond_t.zig, try expr_mod.emitExpr(self, i.condition) });
@@ -693,13 +694,13 @@ pub fn emitIfElse(self: *Emitter, else_body: ?*ast_mod.Node) !void {
                 if (nested.pipe_value != null) {
                     try self.writer.writeAll(" else {\n");
                     self.indent += 1;
-                    try emitCaptureIfChain(self, nested, true);
+                    try emitCaptureIfChain(self, eb, nested, true);
                     self.indent -= 1;
                     try self.writeIndent();
                     try self.writer.writeAll("}\n");
                 } else {
                     try self.writer.writeAll(" else ");
-                    try emitIfChain(self, nested, false);
+                    try emitIfChain(self, eb, nested, false);
                 }
             },
             .block => {
@@ -718,8 +719,7 @@ pub fn emitIfElse(self: *Emitter, else_body: ?*ast_mod.Node) !void {
 }
 
 pub fn emitIfStmt(self: *Emitter, node: *ast_mod.Node, i: *const ast_mod.If) !void {
-    _ = node;
-    try emitIfChain(self, i, true);
+    try emitIfChain(self, node, i, true);
 }
 
 pub fn emitIfValue(self: *Emitter, node: *ast_mod.Node, i: *const ast_mod.If) ![]const u8 {
@@ -749,7 +749,7 @@ pub fn emitIfValue(self: *Emitter, node: *ast_mod.Node, i: *const ast_mod.If) ![
     defer self.writer = old_writer;
 
     self.indent += 1;
-    try emitIfChain(self, i, true);
+    try emitIfChain(self, node, i, true);
     self.indent -= 1;
     try self.writeIndent();
     try self.writer.writeAll("}");
