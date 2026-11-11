@@ -552,7 +552,7 @@ pub const Emitter = struct {
                         if (success == null) success = arm else extra_success = true;
                     },
                 };
-                if (extra_success or success == null or (has_error and has_null)) return null;
+                if (extra_success or success == null) return null;
                 // Gradual `unknown | error`: no success value is known yet, so
                 // at runtime the value is a bare error.
                 if (has_error and ir.isUnknown(success.?)) {
@@ -562,7 +562,18 @@ pub const Emitter = struct {
                     vt.may_error = true;
                     return vt;
                 }
-                const inner = (try self.valTypeFromIR(node, success.?)) orelse return null;
+                const raw_inner = (try self.valTypeFromIR(node, success.?)) orelse return null;
+                const inner: ValType = if (has_null and has_error) blk: {
+                    const raw_p = try a.create(ValType);
+                    raw_p.* = raw_inner;
+                    break :blk .{
+                        .display = try std.fmt.allocPrint(a, "?{s}", .{raw_inner.display}),
+                        .clean = raw_inner.clean,
+                        .kind = .optional,
+                        .payload = raw_p,
+                        .zig = try std.fmt.allocPrint(a, "?{s}", .{raw_inner.zig}),
+                    };
+                } else raw_inner;
                 const inner_p = try a.create(ValType);
                 inner_p.* = inner;
                 if (has_error) {

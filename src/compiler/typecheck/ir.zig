@@ -629,7 +629,10 @@ pub fn isSubtype(a: Type, b: Type) bool {
             .defined => |ad| std.mem.eql(u8, ad.name, d.name),
             else => isSubtype(a, d.underlying.*),
         },
-        .union_ => |arms| subtypeOfAny(a, arms),
+        .union_ => |arms| switch (a) {
+            .union_ => |a_arms| subtypeAll(a_arms, b),
+            else => subtypeOfAny(a, arms),
+        },
         .array => |ba| switch (a) {
             .array => arraySubtype(a, b),
             .str_lit => |s| ba.elem.* == .u8 and (ba.length == null or ba.length.? == s.len),
