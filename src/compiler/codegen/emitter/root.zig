@@ -503,7 +503,7 @@ pub const Emitter = struct {
                 vt.payload = payload_p;
                 vt.zig = try std.fmt.allocPrint(a, "*{s}", .{payload.zig});
             },
-            .shape => {
+            .shape, .tuple => {
                 // Keep the declared identity (`@type Point = { … };` is emitted
                 // as `Point`, not as a second layout for the shape spelling).
                 const info = try self.ensureStructType(node, display);

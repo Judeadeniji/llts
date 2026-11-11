@@ -75,6 +75,22 @@ fn emitPipe(self: *Emitter, b: *const ast_mod.Binary) ![]const u8 {
     return emitCall(self, right, &synth);
 }
 
+fn calleeParamValType(self: *Emitter, func_name: []const u8, arg_idx: usize) ?ValType {
+    const def = self.state.functions.get(func_name) orelse return null;
+    if (def.node.* != .function_decl) return null;
+    const f = &def.node.function_decl;
+    const params = switch (f.params.*) {
+        .params => |p| p.params,
+        else => return null,
+    };
+    if (arg_idx >= params.len) return null;
+    const p = params[arg_idx];
+    const p_ann = p.type_annotation orelse return null;
+    const ta = self.state.typeAlloc();
+    const tir = from_ast.typeFromAst(p_ann, self.state, ta) catch return null;
+    return self.valTypeFromIR(p_ann, tir) catch null;
+}
+
 pub fn emitCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) anyerror![]const u8 {
     const a = self.arena.allocator();
 
@@ -290,8 +306,14 @@ pub fn emitCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) any
     }
 
     var args_buf: std.ArrayList([]const u8) = .empty;
-    for (self.runtimeArgs(node, c)) |arg| {
-        try args_buf.append(a, try emitExpr(self, arg));
+    const r_args = self.runtimeArgs(node, c);
+    for (r_args, 0..) |arg, i| {
+        const param_vt = calleeParamValType(self, name, i);
+        if (param_vt) |pt| {
+            try args_buf.append(a, try emitValueCoerced(self, arg, pt));
+        } else {
+            try args_buf.append(a, try emitExpr(self, arg));
+        }
     }
     const args_joined = try std.mem.join(a, ", ", args_buf.items);
     const zig_fn = try self.fnName(name);
@@ -357,8 +379,14 @@ fn emitModuleCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) !
         }
     }
     var args_buf: std.ArrayList([]const u8) = .empty;
-    for (self.runtimeArgs(node, c)) |arg| {
-        try args_buf.append(a, try emitExpr(self, arg));
+    const r_args = self.runtimeArgs(node, c);
+    for (r_args, 0..) |arg, i| {
+        const param_vt = calleeParamValType(self, name, i);
+        if (param_vt) |pt| {
+            try args_buf.append(a, try emitValueCoerced(self, arg, pt));
+        } else {
+            try args_buf.append(a, try emitExpr(self, arg));
+        }
     }
     const zig_fn = try self.fnName(name);
     if (args_buf.items.len == 0) {
@@ -404,8 +432,15 @@ fn emitMethodCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) !
             }
         },
     }
-    for (self.runtimeArgs(node, c)) |arg| {
-        try args_buf.append(a, try emitExpr(self, arg));
+    const r_args = self.runtimeArgs(node, c);
+    for (r_args, 0..) |arg, i| {
+        const param_idx = if (target.mode == .none) i else i + 1;
+        const param_vt = calleeParamValType(self, target.key, param_idx);
+        if (param_vt) |pt| {
+            try args_buf.append(a, try emitValueCoerced(self, arg, pt));
+        } else {
+            try args_buf.append(a, try emitExpr(self, arg));
+        }
     }
     const zig_fn = try self.fnName(target.key);
     if (args_buf.items.len == 0) {
@@ -525,7 +560,13 @@ pub fn emitExpr(self: *Emitter, node: *ast_mod.Node) anyerror![]const u8 {
         .call => |c| return emitCall(self, node, &c),
         .member => |m| return emitMember(self, node, &m),
         .index => |ix| return emitIndex(self, node, &ix),
-        .array_literal => |al| return emitArrayLiteral(self, node, &al, try self.valueType(node)),
+        .array_literal => |al| {
+            const vt = try self.valueType(node);
+            if (vt.kind == .struct_) {
+                return emitTupleLiteral(self, node, &al, vt);
+            }
+            return emitArrayLiteral(self, node, &al, vt);
+        },
         .struct_init => |si| return emitStructLiteral(self, node, &si, try self.valueType(node)),
         .unwrap_expr => |u| return emitOptionalUnwrap(self, node, &u),
         .comptime_expr => |ce| return emitExpr(self, ce.expr),
@@ -963,6 +1004,9 @@ pub fn emitValueCoercedMode(self: *Emitter, node: *ast_mod.Node, target: ValType
     if (node.* == .array_literal and target.kind == .array) {
         return emitArrayLiteral(self, node, &node.array_literal, target);
     }
+    if (node.* == .array_literal and target.kind == .struct_) {
+        return emitTupleLiteral(self, node, &node.array_literal, target);
+    }
     // `@as(string, [104, 105])` / `@as([]byte, […])` — integer-literal arrays
     // become a fresh byte slice (same path as slice literals).
     if (node.* == .array_literal and (target.kind == .slice or target.kind == .string)) {
@@ -1187,6 +1231,22 @@ pub fn emitIndex(self: *Emitter, node: *ast_mod.Node, ix: *const ast_mod.Index) 
         obj_t = payload.*;
         object_expr = try std.fmt.allocPrint(a, "({s}).*", .{object_expr});
     }
+    if (obj_t.kind == .struct_) {
+        if (try self.structInfoForValType(node, obj_t)) |info| {
+            if (ix.index) |idx_node| {
+                const idx_str = switch (idx_node.*) {
+                    .literal => |lit| if (lit.literal_type == .number) lit.value else null,
+                    else => null,
+                };
+                if (idx_str) |s| {
+                    if (info.field_index.get(s)) |fidx| {
+                        const field = info.fields[fidx];
+                        return std.fmt.allocPrint(a, "({s}).{s}", .{ object_expr, field.zig_name });
+                    }
+                }
+            }
+        }
+    }
     const word: []const u8 = switch (obj_t.kind) {
         .string => "String",
         .slice => "Slice",
@@ -1266,6 +1326,23 @@ pub fn emitSlice(self: *Emitter, node: *ast_mod.Node, ix: *const ast_mod.Index) 
         obj_name, lo_name,  hi_name,   obj_name,
         obj_name, lo_name,  hi_name,
     });
+}
+
+pub fn emitTupleLiteral(self: *Emitter, node: *ast_mod.Node, al: *const ast_mod.ArrayLiteral, target: ValType) ![]const u8 {
+    const a = self.arena.allocator();
+    const info = (try self.structInfoForValType(node, target)) orelse {
+        return self.failAt(node, "native backend cannot determine tuple layout for '{s}'", .{target.display});
+    };
+    if (al.elements.len != info.fields.len) {
+        return self.failAt(node, "tuple literal element count ({d}) does not match expected ({d})", .{ al.elements.len, info.fields.len });
+    }
+    var parts: std.ArrayList([]const u8) = .empty;
+    for (al.elements, info.fields) |element, field| {
+        const val_code = try emitValueCoerced(self, element, field.vt);
+        try parts.append(a, try std.fmt.allocPrint(a, ".{s} = {s}", .{ field.zig_name, val_code }));
+    }
+    const joined = try std.mem.join(a, ", ", parts.items);
+    return std.fmt.allocPrint(a, "{s}{{ {s} }}", .{ target.zig, joined });
 }
 
 pub fn emitArrayLiteral(self: *Emitter, node: *ast_mod.Node, al: *const ast_mod.ArrayLiteral, target: ValType) ![]const u8 {

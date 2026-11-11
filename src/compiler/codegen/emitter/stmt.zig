@@ -103,6 +103,28 @@ pub fn emitIndexAssignment(
     if (obj_t.is_const or obj_t.kind == .string) {
         return self.failAt(node, "cannot assign to elements of a const slice or string", .{});
     }
+    if (obj_t.kind == .struct_) {
+        if (try self.structInfoForValType(node, obj_t)) |info| {
+            if (ix.index) |idx_node| {
+                const idx_str = switch (idx_node.*) {
+                    .literal => |lit| if (lit.literal_type == .number) lit.value else null,
+                    else => null,
+                };
+                if (idx_str) |s| {
+                    if (info.field_index.get(s)) |fidx| {
+                        const field = info.fields[fidx];
+                        const rhs = if (bit_op) |op|
+                            try expr_mod.emitCompoundBitwiseValue(self, asn.left, asn.right, op, field.vt)
+                        else
+                            try expr_mod.emitValueCoerced(self, asn.right, field.vt);
+                        try self.writeIndent();
+                        try self.writer.print("{s}.{s} = {s};\n", .{ obj_code, field.zig_name, rhs });
+                        return;
+                    }
+                }
+            }
+        }
+    }
     const word: []const u8 = switch (obj_t.kind) {
         .array => "Array",
         .slice => "Slice",

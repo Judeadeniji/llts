@@ -1123,3 +1123,31 @@ pub @func main() {
 }
 `);
 }, 60_000);
+
+test("emits tuples with dot and index access, mutation, and function passing", () => {
+  expectParity(`
+@func describe(t: [i64, string, bool]): string {
+    @if (t.2) {
+        return t.1;
+    }
+    return "inactive";
+}
+
+pub @func main() {
+    $entry: [i64, string, bool] = [42, "hello", true];
+    print(entry.0);
+    print(entry.1);
+    $msg = describe(entry);
+    print(msg);
+    $inactive = describe([99, "world", false]);
+    print(inactive);
+
+    $tup: [i64, i64] = [100, 200];
+    tup[0] = 111;
+    tup.1 = 222;
+    print(tup.0);
+    print(tup[1]);
+}
+`);
+}, 60_000);
+

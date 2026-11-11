@@ -751,7 +751,47 @@ pub fn lookupStruct(state: *state_mod.CompilerState, display: []const u8) ?state
         ensureShapeLayoutFromDisplay(state, peeled) catch return null;
         return state.structs.get(peeled);
     }
+    // Lazy-layout tuples `[T, U, …]`.
+    if (peeled.len > 0 and peeled[0] == '[' and std.mem.indexOfScalar(u8, peeled, ',') != null) {
+        ensureTupleLayoutFromDisplay(state, peeled) catch return null;
+        return state.structs.get(peeled);
+    }
     return null;
+}
+
+/// Parse a tuple display `[T, U, …]` and register packed layout under that key (idempotent).
+pub fn ensureTupleLayoutFromDisplay(state: *state_mod.CompilerState, display: []const u8) FromAstError!void {
+    if (state.structs.contains(display)) return;
+    if (display.len < 2 or display[0] != '[' or display[display.len - 1] != ']') return;
+
+    const ta = state.typeAlloc();
+    const t = try parseDisplayType(state, ta, display, null);
+    if (t != .tuple) return;
+
+    var type_map = std.StringHashMap([]const u8).init(state.allocator);
+    var field_irs: std.StringHashMapUnmanaged(ir.Type) = .{};
+    var field_list: std.ArrayList(layout.FieldSpec) = .empty;
+    defer field_list.deinit(state.allocator);
+
+    for (t.tuple, 0..) |elem_ir, i| {
+        const field_disp = try ir.displayTypeQualifiedAlloc(state.allocator, elem_ir);
+        try state.owned.append(state.allocator, field_disp);
+        const name_owned = try std.fmt.allocPrint(state.allocator, "{d}", .{i});
+        try state.owned.append(state.allocator, name_owned);
+        try type_map.put(name_owned, field_disp);
+        try field_irs.put(state.allocator, name_owned, elem_ir);
+        try field_list.append(state.allocator, .{ .name = name_owned, .type_name = field_disp });
+    }
+    const laid = try layout.layoutFields(state.allocator, field_list.items);
+    const key_owned = try state.allocator.dupe(u8, display);
+    try state.owned.append(state.allocator, key_owned);
+    try state.structs.put(key_owned, .{
+        .name = key_owned,
+        .size = laid.size,
+        .offsets = laid.offsets,
+        .types = type_map,
+        .field_irs = field_irs,
+    });
 }
 
 /// Parse a shape display and register packed layout under that key (idempotent).
