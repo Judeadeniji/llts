@@ -340,3 +340,10 @@ The pipe operator introduces **zero runtime overhead**. It is purely a syntactic
   try lls_fn_add(ctx, 10, 5);
   ```
   Method pipes (`4 |> c.add`) lower directly to method calls (`Counter::add(ctx, c, 4)`).
+
+### 7.1 Native Backend Support for First-Class Functions
+
+In the native backend (`emit-zig`), first-class function values are handled as follows:
+- **Static Devirtualization:** When a function alias (e.g. `$pick = lib.mul`) or a function returning a function (`getAdder()(1, 2)`) is called, the compiler statically resolves the call target and emits a direct call to the mangled function (`lls_fn_...`).
+- **Function Pointer Signatures:** Functions returning or taking `@func(...)` types lower to concrete Zig function pointer types (`*const fn(*rt.Context, ...) anyerror!Ret`).
+- **Runtime Materialization Restriction:** Function values cannot be passed directly to generic runtime formatting positions like `print(...)`; attempting to do so is rejected at compile time with `cannot materialize function value at runtime`.
