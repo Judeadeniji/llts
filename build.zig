@@ -181,6 +181,24 @@ pub fn build(b: *std.Build) void {
     const native_test_step = b.step("native-test", "Run native backend suite");
     native_test_step.dependOn(&run_native_tests.step);
 
+    const suite_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/suite/runner.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "llts", .module = llts_mod },
+            },
+        }),
+    });
+    suite_tests.root_module.link_libc = true;
+    const run_suite_tests = b.addRunArtifact(suite_tests);
+    run_suite_tests.step.dependOn(b.getInstallStep());
+    run_suite_tests.setCwd(b.path("."));
+
+    const suite_test_step = b.step("suite-test", "Run compiler pipeline suite (scanner, parser, compiler, typecheck, pipeline)");
+    suite_test_step.dependOn(&run_suite_tests.step);
+
     const test_step = b.step("test", "Run unit tests");
     // test_step.dependOn(&run_mod_tests.step);
     test_step.dependOn(&run_integration.step);
@@ -188,4 +206,5 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_lsp_unit.step);
     test_step.dependOn(&run_runtime_tests.step);
     test_step.dependOn(&run_native_tests.step);
+    test_step.dependOn(&run_suite_tests.step);
 }

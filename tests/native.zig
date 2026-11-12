@@ -399,3 +399,43 @@ test "native execution: multi-arg print with struct and string" {
     ;
     try expectNativeStdout(allocator, src, expected);
 }
+
+test "native execution: string slicing" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\pub @func main() {
+        \\    $s = "hello world";
+        \\    print(s[0..5]);
+        \\    print(s[6..]);
+        \\    print(s[..5]);
+        \\}
+    ;
+    try expectNativeStdout(allocator, src, "hello\nworld\nhello\n");
+}
+
+test "native execution: bitwise, float arithmetic, and value @if capture" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\pub @func main() {
+        \\    $a = 5 & 3;
+        \\    $b = 5 | 2;
+        \\    $c = 5 ^ 1;
+        \\    $d = 1 << 4;
+        \\    $e = 32 >> 2;
+        \\    print(a, b, c, d, e);
+        \\
+        \\    $f1: float = 3.5;
+        \\    $f2: float = 1.5;
+        \\    print(f1 + f2, f1 - f2);
+        \\
+        \\    $opt: ?int = 42;
+        \\    @if (opt) |v| {
+        \\        print("has val", v);
+        \\    }
+        \\    $none: ?int = null;
+        \\    $val = @if (none) |v| { break v; } @else { break 99; };
+        \\    print(val);
+        \\}
+    ;
+    try expectNativeStdout(allocator, src, "1 7 5 16 8\n5 2\nhas val 42\n99\n");
+}
