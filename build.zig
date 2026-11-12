@@ -163,10 +163,29 @@ pub fn build(b: *std.Build) void {
     const runtime_test_step = b.step("runtime-test", "Run native runtime unit tests");
     runtime_test_step.dependOn(&run_runtime_tests.step);
 
+    const native_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/native.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "llts", .module = llts_mod },
+            },
+        }),
+    });
+    native_tests.root_module.link_libc = true;
+    const run_native_tests = b.addRunArtifact(native_tests);
+    run_native_tests.step.dependOn(b.getInstallStep());
+    run_native_tests.setCwd(b.path("."));
+
+    const native_test_step = b.step("native-test", "Run native backend suite");
+    native_test_step.dependOn(&run_native_tests.step);
+
     const test_step = b.step("test", "Run unit tests");
     // test_step.dependOn(&run_mod_tests.step);
     test_step.dependOn(&run_integration.step);
     test_step.dependOn(&run_lsp_e2e.step);
     test_step.dependOn(&run_lsp_unit.step);
     test_step.dependOn(&run_runtime_tests.step);
+    test_step.dependOn(&run_native_tests.step);
 }

@@ -1,6 +1,8 @@
 # Zig
 .zig-cache/
 zig-out/
+zig-pkg/
+.llts_native_*.zig
 
 # Bun / Node
 node_modules/
