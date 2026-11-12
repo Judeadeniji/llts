@@ -433,8 +433,10 @@ fn enqueueMethodTargets(
 }
 
 fn resolveCallTarget(state: *CompilerState, callee: *ast.Node) !?[]const u8 {
+    if (state.call_return_targets.get(callee)) |target| return target;
     if (try path.tryResolveStaticPath(state, callee)) |p| return p;
     if (callee.* == .primary and callee.primary.kind == .identifier) {
+        if (state.fn_aliases.get(callee.primary.name)) |aliased| return aliased;
         return callee.primary.name;
     }
     return null;

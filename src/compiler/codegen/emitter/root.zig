@@ -48,6 +48,7 @@ pub const ValKind = enum {
     pointer,
     null_value,
     error_value,
+    func,
 };
 
 pub const ValType = struct {
@@ -553,6 +554,22 @@ pub const Emitter = struct {
                 vt.kind = .void;
                 vt.zig = "void";
             },
+            .func => |f| {
+                vt.kind = .func;
+                const ret_vt = (try self.valTypeFromIR(node, f.ret.*)) orelse return null;
+                var param_zigs: std.ArrayList([]const u8) = .empty;
+                try param_zigs.append(a, "*rt.Context");
+                for (f.params) |p| {
+                    const p_vt = (try self.valTypeFromIR(node, p)) orelse return null;
+                    try param_zigs.append(a, p_vt.zig);
+                }
+                const params_joined = try std.mem.join(a, ", ", param_zigs.items);
+                vt.zig = try std.fmt.allocPrint(a, "*const fn({s}) anyerror!{s}", .{
+                    params_joined,
+                    ret_vt.zig,
+                });
+                return vt;
+            },
             .error_, .error_set, .error_lit => {
                 vt.kind = .error_value;
                 vt.clean = "error";
@@ -903,6 +920,16 @@ pub const Emitter = struct {
         }
         if (self.globals.get(name)) |g| {
             return .{ .zig_name = g.zig_name, .display = g.display, .ir_type = g.ir_type };
+        }
+        if (self.state.functions.get(name)) |_| {
+            const zname = try self.fnName(name);
+            const rec_ir = self.recordedType(node);
+            return .{ .zig_name = zname, .display = "@func", .ir_type = rec_ir };
+        }
+        if (self.state.fn_aliases.get(name)) |aliased| {
+            const zname = try self.fnName(aliased);
+            const rec_ir = self.recordedType(node);
+            return .{ .zig_name = zname, .display = "@func", .ir_type = rec_ir };
         }
         return self.failAt(node, "native backend cannot resolve '{s}'", .{name});
     }

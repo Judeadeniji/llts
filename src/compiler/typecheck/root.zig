@@ -1090,9 +1090,63 @@ fn fnParamTypes(state: *state_mod.CompilerState, ta: ir.TypeAlloc, func_name: []
 }
 
 fn resolveCalleeName(state: *state_mod.CompilerState, call: *const ast.Call) ?[]const u8 {
-    if (call.callee.* == .primary) return call.callee.primary.name;
+    if (call.callee.* == .primary) {
+        if (state.fn_aliases.get(call.callee.primary.name)) |aliased| return aliased;
+        return call.callee.primary.name;
+    }
     if (path.tryResolveStaticPath(state, call.callee) catch null) |p| return p;
+    if (state.call_return_targets.get(call.callee)) |target| return target;
     return null;
+}
+
+fn recordFnAliasIfAny(state: *state_mod.CompilerState, name: []const u8, value: *ast.Node) !void {
+    if (value.* == .primary and (value.primary.kind == .identifier or value.primary.kind == .register)) {
+        if (state.functions.contains(value.primary.name)) {
+            try state.fn_aliases.put(name, value.primary.name);
+            return;
+        }
+        if (state.fn_aliases.get(value.primary.name)) |aliased| {
+            try state.fn_aliases.put(name, aliased);
+            return;
+        }
+    }
+    if (path.tryResolveStaticPath(state, value) catch null) |p| {
+        if (state.functions.contains(p)) {
+            try state.fn_aliases.put(name, p);
+            return;
+        }
+    }
+}
+
+fn scanReturnFunctionTarget(state: *state_mod.CompilerState, node: *ast.Node) ?[]const u8 {
+    switch (node.*) {
+        .return_expr => |r| {
+            if (r.return_value) |v| {
+                if (v.* == .primary and (v.primary.kind == .identifier or v.primary.kind == .register)) {
+                    if (state.functions.contains(v.primary.name)) return v.primary.name;
+                    if (state.fn_aliases.get(v.primary.name)) |aliased| return aliased;
+                }
+                if (path.tryResolveStaticPath(state, v) catch null) |p| {
+                    if (state.functions.contains(p)) return p;
+                }
+            }
+            return null;
+        },
+        .block => |b| {
+            for (b.statements) |s| {
+                if (scanReturnFunctionTarget(state, s)) |t| return t;
+            }
+            return null;
+        },
+        .if_expr => |ife| {
+            if (scanReturnFunctionTarget(state, ife.body)) |t| return t;
+            if (ife.else_body) |eb| {
+                if (scanReturnFunctionTarget(state, eb)) |t| return t;
+            }
+            return null;
+        },
+        else => return null,
+    }
 }
 
 /// `lhs |> f(a)` typechecks as the call `f(lhs, a)`: the left operand is the
@@ -2227,6 +2281,11 @@ fn inferCall(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, call_
         };
         try state.call_targets.put(call_node, target);
         try state.call_targets.put(c.callee, target);
+        if (state.functions.get(name.?)) |def| {
+            if (def.return_fn_target) |rft| {
+                try state.call_return_targets.put(call_node, rft);
+            }
+        }
     }
     if (method != null or named_fn) {
         var params: std.ArrayList(ir.Type) = .empty;
@@ -3131,6 +3190,7 @@ fn checkStmt(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node:
                 if (d.is_const) try env.putConstName(d.name);
                 return null;
             }
+            try recordFnAliasIfAny(state, d.name, d.value);
             const prev_lit = env.prefer_literals;
             // `@const $k = "x"` → `"x"`; arrays/arithmetic keep ordinary inference.
             // Explicit `const expr` still enables deep literal typing.
@@ -3447,6 +3507,9 @@ fn checkFunction(
         def_ptr.rest_ir = rest_ty;
         if (def_ptr.param_irs == null) {
             def_ptr.param_irs = try ta.allocator.dupe(ir.Type, params_buf.items);
+        }
+        if (scanReturnFunctionTarget(state, f.body)) |rft| {
+            def_ptr.return_fn_target = rft;
         }
     }
 
@@ -4040,6 +4103,7 @@ fn seedGlobalValueTypes(state: *state_mod.CompilerState, ta: ir.TypeAlloc, doc: 
     for (doc.statements) |s| {
         if (s.* != .declaration) continue;
         const d = &s.declaration;
+        try recordFnAliasIfAny(state, d.name, d.value);
         const t = env.globals.get(d.name) orelse blk: {
             const inferred = inferExpr(state, &env, ta, d.value) catch |err| {
                 if (err == error.OutOfMemory) return err;

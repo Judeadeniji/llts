@@ -30,6 +30,7 @@ pub fn emitAssignment(self: *Emitter, node: *ast_mod.Node, asn: *const ast_mod.A
             const n = asn.right.primary;
             if (n.kind == .identifier or n.kind == .register) {
                 if (self.state.functions.contains(n.name)) return;
+                if (self.state.fn_aliases.contains(n.name)) return;
                 if (self.lookupBindingOptional(n.name)) |b| {
                     if (b.fn_key != null or b.module_path != null) return;
                 }

@@ -72,6 +72,7 @@ pub const FunctionDef = struct {
     param_irs: ?[]const ir.Type = null,
     rest_ir: ?ir.Type = null,
     is_variadic: bool = false,
+    return_fn_target: ?[]const u8 = null,
 };
 
 pub const GenericCall = struct {
@@ -311,6 +312,10 @@ pub const CompilerState = struct {
     /// receiver passing mode. The native emitter consumes this instead of
     /// re-resolving names, struct layout, and receiver shapes itself.
     call_targets: std.AutoHashMap(*ast.Node, CallTarget),
+    /// Statically known function name aliases ($pick = lib.mul).
+    fn_aliases: std.StringHashMap([]const u8),
+    /// Call nodes whose return value is statically known to be a function name.
+    call_return_targets: std.AutoHashMap(*ast.Node, []const u8),
     /// Type-valued node (`@typeOf(x)`, or a type name used as a value) → qualified
     /// display of the type it denotes. Filled by typecheck; read by `typeFromAst`
     /// so type-returning expressions work in every type position.
@@ -435,6 +440,8 @@ pub fn create(allocator: std.mem.Allocator) !CompilerState {
         .type_of_results = std.AutoHashMap(*ast.Node, []const u8).init(allocator),
         .type_ir_of_results = std.AutoHashMap(*ast.Node, ir.Type).init(allocator),
         .call_targets = std.AutoHashMap(*ast.Node, CallTarget).init(allocator),
+        .fn_aliases = std.StringHashMap([]const u8).init(allocator),
+        .call_return_targets = std.AutoHashMap(*ast.Node, []const u8).init(allocator),
         .type_call_results = std.AutoHashMap(*ast.Node, []const u8).init(allocator),
         .type_call_ir_results = std.AutoHashMap(*ast.Node, ir.Type).init(allocator),
         .type_eq_folds = std.AutoHashMap(*ast.Node, bool).init(allocator),
@@ -590,6 +597,8 @@ pub fn deinit(self: *CompilerState) void {
     self.type_of_results.deinit();
     self.type_ir_of_results.deinit();
     self.call_targets.deinit();
+    self.fn_aliases.deinit();
+    self.call_return_targets.deinit();
     self.type_call_results.deinit();
     self.type_call_ir_results.deinit();
     self.type_eq_folds.deinit();

@@ -332,6 +332,9 @@ pub fn emitCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) any
                 continue;
             }
             const at = try self.valueType(arg);
+            if (at.kind == .func) {
+                return self.failAt(arg, "cannot materialize function value at runtime", .{});
+            }
             if (at.kind == .struct_ or
                 (at.kind == .pointer and at.payload != null and at.payload.?.kind == .struct_))
             {
@@ -393,25 +396,54 @@ pub fn emitCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) any
         target_name = gc.instance;
     } else if (c.callee.* == .primary and self.state.functions.contains(c.callee.primary.name)) {
         target_name = c.callee.primary.name;
+    } else if (c.callee.* == .primary and self.state.fn_aliases.get(c.callee.primary.name) != null) {
+        target_name = self.state.fn_aliases.get(c.callee.primary.name);
     }
-    const name = target_name orelse {
-        return self.failAt(node, "native backend cannot resolve function '{s}' (function values must be called directly)", .{callee});
-    };
-    if (self.reach) |r| {
-        if (!r.isFunctionReachable(name)) {
-            return self.failAt(node, "internal: function '{s}' not marked reachable", .{name});
+    if (target_name) |name| {
+        if (self.reach) |r| {
+            if (!r.isFunctionReachable(name)) {
+                return self.failAt(node, "internal: function '{s}' not marked reachable", .{name});
+            }
         }
+
+        var args_buf: std.ArrayList([]const u8) = .empty;
+        const r_args = self.runtimeArgs(node, c);
+        try emitCallArguments(self, node, name, r_args, 0, &args_buf);
+        const args_joined = try std.mem.join(a, ", ", args_buf.items);
+        const zig_fn = try self.fnName(name);
+
+        if (c.callee.* == .call) {
+            self.counter += 1;
+            const cid = self.counter;
+            const callee_code = try emitExpr(self, c.callee);
+            if (args_joined.len == 0) {
+                return std.fmt.allocPrint(a, "lls_call_{d}: {{ _ = {s}; break :lls_call_{d} (try {s}(ctx)); }}", .{ cid, callee_code, cid, zig_fn });
+            }
+            return std.fmt.allocPrint(a, "lls_call_{d}: {{ _ = {s}; break :lls_call_{d} (try {s}(ctx, {s})); }}", .{ cid, callee_code, cid, zig_fn, args_joined });
+        }
+
+        if (args_joined.len == 0) {
+            return std.fmt.allocPrint(a, "(try {s}(ctx))", .{zig_fn});
+        }
+        return std.fmt.allocPrint(a, "(try {s}(ctx, {s}))", .{ zig_fn, args_joined });
     }
 
-    var args_buf: std.ArrayList([]const u8) = .empty;
-    const r_args = self.runtimeArgs(node, c);
-    try emitCallArguments(self, node, name, r_args, 0, &args_buf);
-    const args_joined = try std.mem.join(a, ", ", args_buf.items);
-    const zig_fn = try self.fnName(name);
-    if (args_joined.len == 0) {
-        return std.fmt.allocPrint(a, "(try {s}(ctx))", .{zig_fn});
+    const callee_vt = self.valueType(c.callee) catch null;
+    if (callee_vt != null and callee_vt.?.kind == .func) {
+        var args_buf: std.ArrayList([]const u8) = .empty;
+        const r_args = self.runtimeArgs(node, c);
+        for (r_args) |arg| {
+            try args_buf.append(a, try emitExpr(self, arg));
+        }
+        const args_joined = try std.mem.join(a, ", ", args_buf.items);
+        const callee_expr = try emitExpr(self, c.callee);
+        if (args_joined.len == 0) {
+            return std.fmt.allocPrint(a, "(try ({s})(ctx))", .{callee_expr});
+        }
+        return std.fmt.allocPrint(a, "(try ({s})(ctx, {s}))", .{ callee_expr, args_joined });
     }
-    return std.fmt.allocPrint(a, "(try {s}(ctx, {s}))", .{ zig_fn, args_joined });
+
+    return self.failAt(node, "native backend cannot resolve function '{s}' (function values must be called directly)", .{callee});
 }
 
 fn emitExtendedAsm(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) ![]const u8 {
@@ -1179,6 +1211,7 @@ pub fn emitValueCoercedMode(self: *Emitter, node: *ast_mod.Node, target: ValType
     {
         return code;
     }
+    if (target.kind == .func and src.kind == .func) return code;
     if (target.kind == .int and src.kind == .int) {
         if (src.isU64() and target.isI64()) return std.fmt.allocPrint(a, "@as(i64, @bitCast({s}))", .{code});
         if (src.isI64() and target.isU64()) return std.fmt.allocPrint(a, "@as(u64, @bitCast({s}))", .{code});
