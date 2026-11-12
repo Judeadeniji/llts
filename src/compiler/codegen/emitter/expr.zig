@@ -342,12 +342,10 @@ pub fn emitCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) any
                 if (at.kind == .pointer) {
                     object = try std.fmt.allocPrint(a, "({s}).*", .{object});
                 }
-                const info = (try self.structInfoForValType(arg, at)) orelse {
+                _ = (try self.structInfoForValType(arg, at)) orelse {
                     return self.failAt(arg, "native backend cannot resolve struct type '{s}'", .{at.display});
                 };
-                try args_buf.append(a, try std.fmt.allocPrint(a, "rt.print.Struct{{ .bytes = &lls_bytes_{s}({s}) }}", .{
-                    info.zig_name, object,
-                }));
+                try args_buf.append(a, object);
                 continue;
             }
             // Pointers are not printable values — require an explicit `@as(T, ptr)`
@@ -355,9 +353,6 @@ pub fn emitCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) any
             if (at.kind == .pointer) {
                 const pointee = if (at.payload) |p| p.display else "T";
                 return self.failAt(arg, "cannot print pointer type '{s}'; use @as({s}, ...) to load the pointee", .{ at.display, pointee });
-            }
-            if (containsStruct(at)) {
-                return self.failAt(arg, "native backend cannot print aggregates containing structs yet; print fields individually", .{});
             }
             if (at.kind == .null_value) {
                 try args_buf.append(a, std.fmt.allocPrint(a, "@as(?u8, {s})", .{try emitExpr(self, arg)}) catch unreachable);

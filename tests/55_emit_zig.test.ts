@@ -991,11 +991,15 @@ pub @func main() {
   }
 }, 60_000);
 
-test("prints structs as LLTS packed bytes", () => {
-  expectParity(`
+test("prints structs like Node.js / Bun objects", () => {
+  const emitted = emitZig(`
 @struct Point { x: int; y: int; }
 @struct Tiny { a: byte; b: byte; }
 @struct Mixed { a: byte; b: bool; f: f64; n: int; }
+@struct Empty {}
+@struct Inner { x: int; }
+@struct Outer { inner: Inner; y: int; }
+@struct Person { name: string; items: [3]int; }
 
 pub @func main() {
     $p = Point { x: 1, y: 2 };
@@ -1006,8 +1010,62 @@ pub @func main() {
     print(t);
     $m = Mixed { a: 7, b: true, f: 1.5, n: 2 };
     print(m);
+    $e = Empty {};
+    print(e);
+    $out = Outer { inner: Inner { x: 10 }, y: 20 };
+    print(out);
+    $person = Person { name: "alice", items: [1, 2, 3] };
+    print(person);
+    print("Label:", p);
 }
 `);
+  try {
+    const emit = runCli(["emit-zig", emitted.sourcePath, "-o", emitted.outputPath]);
+    expect(emit.stderr + emit.stdout).toBe("");
+    const native = runEmitted(emitted.outputPath);
+    expect(native.exitCode).toBe(0);
+
+    const expected =
+      [
+        "Point {",
+        "  x: 1,",
+        "  y: 2,",
+        "}",
+        "Point {",
+        "  x: 1,",
+        "  y: 2,",
+        "}",
+        "Tiny {",
+        "  a: 65,",
+        "  b: 66,",
+        "}",
+        "Mixed {",
+        "  a: 7,",
+        "  b: true,",
+        "  f: 1.5,",
+        "  n: 2,",
+        "}",
+        "Empty {}",
+        "Outer {",
+        "  inner: Inner {",
+        "    x: 10,",
+        "  },",
+        "  y: 20,",
+        "}",
+        "Person {",
+        '  name: "alice",',
+        "  items: [ 1, 2, 3 ],",
+        "}",
+        "Label: Point {",
+        "  x: 1,",
+        "  y: 2,",
+        "}",
+      ].join("\n") + "\n";
+
+    expect(native.stdout).toBe(expected);
+  } finally {
+    emitted.cleanup();
+  }
 }, 60_000);
 
 test("@as(string, [104, 105]) coerces integer-literal arrays to bytes", () => {

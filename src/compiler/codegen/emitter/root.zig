@@ -92,10 +92,12 @@ pub const StructField = struct {
 
 pub const StructType = struct {
     key: []const u8,
+    name: []const u8 = "",
     zig_name: []const u8,
     size: usize,
     fields: []StructField = &.{},
     field_index: std.StringHashMap(usize),
+    is_tuple: bool = false,
 };
 
 pub const MemberTarget = struct {
@@ -285,11 +287,24 @@ pub const Emitter = struct {
 
         const a = self.arena.allocator();
         const info = try a.create(StructType);
+        const is_tuple = clean.len > 0 and clean[0] == '[' and std.mem.indexOfScalar(u8, clean, ',') != null;
+        const base_name = if (std.mem.lastIndexOf(u8, def.name, "::")) |idx|
+            def.name[idx + 2 ..]
+        else if (std.mem.lastIndexOfScalar(u8, def.name, '.')) |idx|
+            def.name[idx + 1 ..]
+        else
+            def.name;
+        const struct_name = if (base_name.len > 0 and (base_name[0] == '{' or base_name[0] == '['))
+            ""
+        else
+            base_name;
         info.* = .{
             .key = def.name,
+            .name = struct_name,
             .zig_name = try std.fmt.allocPrint(a, "lls_t_{s}", .{try self.mangle(def.name)}),
             .size = @intCast(def.size),
             .field_index = std.StringHashMap(usize).init(a),
+            .is_tuple = is_tuple,
         };
         try self.struct_by_key.put(def.name, info);
         try self.struct_types.append(a, info);
@@ -361,12 +376,32 @@ pub const Emitter = struct {
             for (info.fields) |field| {
                 try self.writer.print("    {s}: {s},\n", .{ field.zig_name, field.vt.zig });
             }
+            if (info.is_tuple) {
+                try self.writer.writeAll("    pub const is_tuple = true;\n");
+            }
+            try self.writer.print("    pub const lls_struct_name = \"{s}\";\n", .{info.name});
+            try self.writer.writeAll("    pub const lls_field_names = [_][]const u8{\n");
+            for (info.fields) |field| {
+                try self.writer.print("        \"{s}\",\n", .{field.name});
+            }
+            try self.writer.writeAll("    };\n");
+            try self.writer.print("\n    pub fn to_bytes(self: @This()) [{d}]u8 {{\n", .{info.size});
+            try self.writer.print("        return lls_bytes_{s}(self);\n", .{info.zig_name});
+            try self.writer.writeAll("    }\n");
             try self.writer.writeAll("};\n\n");
 
             var has_scalar = false;
             for (info.fields) |field| {
                 if (field.vt.width != null and
                     (field.vt.kind == .int or field.vt.kind == .bool or field.vt.kind == .float))
+                {
+                    has_scalar = true;
+                }
+                if (field.vt.kind == .struct_) {
+                    has_scalar = true;
+                }
+                if (field.vt.kind == .array and field.vt.elem != null and
+                    (field.vt.elem.?.kind == .int or field.vt.elem.?.kind == .bool or field.vt.elem.?.kind == .float or field.vt.elem.?.kind == .struct_))
                 {
                     has_scalar = true;
                 }
@@ -384,6 +419,26 @@ pub const Emitter = struct {
                         try self.writer.print("    @memcpy(out[{d}..][0..{d}], std.mem.asBytes(&v.{s}));\n", .{
                             field.offset, w.size(), field.zig_name,
                         });
+                    }
+                } else if (field.vt.kind == .struct_) {
+                    const inner_info = self.struct_by_key.get(field.vt.clean) orelse self.struct_by_key.get(field.vt.display);
+                    if (inner_info) |ii| {
+                        try self.writer.print("    const lls_nested_{s} = lls_bytes_{s}(v.{s});\n", .{ field.zig_name, ii.zig_name, field.zig_name });
+                        try self.writer.print("    @memcpy(out[{d}..][0..{d}], &lls_nested_{s});\n", .{ field.offset, ii.size, field.zig_name });
+                    }
+                } else if (field.vt.kind == .array and field.vt.elem != null) {
+                    if (field.vt.elem.?.kind == .int or field.vt.elem.?.kind == .bool or field.vt.elem.?.kind == .float) {
+                        try self.writer.print("    @memcpy(out[{d}..][0..@sizeOf(@TypeOf(v.{s}))], std.mem.asBytes(&v.{s}));\n", .{
+                            field.offset, field.zig_name, field.zig_name,
+                        });
+                    } else if (field.vt.elem.?.kind == .struct_) {
+                        const elem_info = self.struct_by_key.get(field.vt.elem.?.clean) orelse self.struct_by_key.get(field.vt.elem.?.display);
+                        if (elem_info) |ei| {
+                            try self.writer.print("    for (v.{s}, 0..) |elem, idx| {{\n", .{field.zig_name});
+                            try self.writer.print("        const lls_elem_bytes = lls_bytes_{s}(elem);\n", .{ei.zig_name});
+                            try self.writer.print("        @memcpy(out[{d} + idx * {d}..][0..{d}], &lls_elem_bytes);\n", .{ field.offset, ei.size, ei.size });
+                            try self.writer.writeAll("    }\n");
+                        }
                     }
                 }
             }
