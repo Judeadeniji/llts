@@ -1212,4 +1212,58 @@ pub @func main() {
 `);
 }, 60_000);
 
+test("emits variadic and rest parameters with slice packing and method calls", () => {
+  expectParity(`
+@func sum(...args: []int): int {
+    $total = 0;
+    @for (args) |v| {
+        total = total + v;
+    }
+    return total;
+}
+
+@func join(prefix: string, ...rest: []string): string {
+    $out = prefix;
+    @for (rest) |s| {
+        out = @concat(0, @concat(0, out, " "), s);
+    }
+    return out;
+}
+
+@struct Accumulator {
+    base: int;
+    @func add(self: *Accumulator, ...values: []int): int {
+        @for (values) |v| {
+            self.base = self.base + v;
+        }
+        return self.base;
+    }
+}
+
+@func inspect(...items: []int): int {
+    @if (len(items) == 0) {
+        return 0;
+    }
+    return items[0] + items[len(items) - 1];
+}
+
+pub @func main() {
+    print(sum(10, 20, 30));
+    print(sum());
+    print(sum(42));
+
+    print(join("start", "one", "two", "three"));
+    print(join("alone"));
+
+    $acc = Accumulator { base: 100 };
+    print(acc.add(10, 20, 30));
+    print(acc.add());
+
+    print(inspect(1, 2, 3, 4, 5));
+    print(inspect());
+}
+`);
+}, 60_000);
+
+
 

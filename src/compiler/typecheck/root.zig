@@ -1026,8 +1026,14 @@ fn methodSelfIsPointerLike(state: *state_mod.CompilerState, method_name: []const
 }
 
 fn fnParamTypes(state: *state_mod.CompilerState, ta: ir.TypeAlloc, func_name: []const u8, out_params: *std.ArrayList(ir.Type), out_rest: *?ir.Type, out_variadic: *bool) !bool {
-    const def = state.functions.get(func_name) orelse return false;
+    const def = state.functions.getPtr(func_name) orelse return false;
     if (def.node.* != .function_decl) return false;
+    if (def.param_irs) |pirs| {
+        for (pirs) |pt| try out_params.append(ta.allocator, pt);
+        out_rest.* = def.rest_ir;
+        out_variadic.* = def.is_variadic;
+        return true;
+    }
     const f = &def.node.function_decl;
     const plist = switch (f.params.*) {
         .params => |p| p.params,
@@ -1071,16 +1077,15 @@ fn fnParamTypes(state: *state_mod.CompilerState, ta: ir.TypeAlloc, func_name: []
         }
 
         if (is_variadic and i == plist.len - 1) {
-            if (t == .array) {
-                out_rest.* = t;
-            } else {
-                const elem = if (t == .unknown) ir.TUnknown else t;
-                out_rest.* = try ta.arrayType(elem, null, false);
-            }
+            const elem = if (t == .array) t.array.elem.* else (if (t == .unknown) ir.TUnknown else t);
+            out_rest.* = try ta.arrayType(elem, null, true);
             continue;
         }
         try out_params.append(ta.allocator, t);
     }
+    def.is_variadic = is_variadic;
+    def.rest_ir = out_rest.*;
+    def.param_irs = try ta.allocator.dupe(ir.Type, out_params.items);
     return true;
 }
 
@@ -2244,6 +2249,9 @@ fn inferCall(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, call_
                 if (!variadic and rest == null and any_annotated and c.args.len != expected_user) {
                     return compiler_errors.compileFailFmt(state, "Function '{s}' expected {d} arguments, got {d}", .{ name.?, expected_user, c.args.len });
                 }
+                if ((variadic or rest != null) and any_annotated and c.args.len < expected_user) {
+                    return compiler_errors.compileFailFmt(state, "Function '{s}' expected at least {d} arguments, got {d}", .{ name.?, expected_user, c.args.len });
+                }
                 if (named_count > 0) {
                     const recv_ty = try inferExpr(state, env, ta, m.receiver);
                     try requireMethodReceiver(state, recv_ty, params.items[0], name.?, m.receiver);
@@ -2257,11 +2265,21 @@ fn inferCall(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, call_
                     try requireAssignFrom(state, at, params.items[i + 1], ctx, c.args[i]);
                 }
                 while (i < c.args.len) : (i += 1) {
-                    _ = try inferExpr(state, env, ta, c.args[i]);
+                    const at = try inferExpr(state, env, ta, c.args[i]);
+                    if (rest) |r| {
+                        if (r == .array and r.array.elem.* != .unknown) {
+                            var ctx_buf: [96]u8 = undefined;
+                            const ctx = std.fmt.bufPrint(&ctx_buf, "argument {d} of '{s}'", .{ i + 1, name.? }) catch "argument";
+                            try requireAssignFrom(state, at, r.array.elem.*, ctx, c.args[i]);
+                        }
+                    }
                 }
             } else {
                 if (!variadic and rest == null and any_annotated and c.args.len != named_count) {
                     return compiler_errors.compileFailFmt(state, "Function '{s}' expected {d} arguments, got {d}", .{ name.?, named_count, c.args.len });
+                }
+                if ((variadic or rest != null) and any_annotated and c.args.len < named_count) {
+                    return compiler_errors.compileFailFmt(state, "Function '{s}' expected at least {d} arguments, got {d}", .{ name.?, named_count, c.args.len });
                 }
                 const ncheck = @min(c.args.len, named_count);
                 var i: usize = 0;
@@ -2272,7 +2290,14 @@ fn inferCall(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, call_
                     try requireAssignFrom(state, at, params.items[i], ctx, c.args[i]);
                 }
                 while (i < c.args.len) : (i += 1) {
-                    _ = try inferExpr(state, env, ta, c.args[i]);
+                    const at = try inferExpr(state, env, ta, c.args[i]);
+                    if (rest) |r| {
+                        if (r == .array and r.array.elem.* != .unknown) {
+                            var ctx_buf: [96]u8 = undefined;
+                            const ctx = std.fmt.bufPrint(&ctx_buf, "argument {d} of '{s}'", .{ i + 1, name.? }) catch "argument";
+                            try requireAssignFrom(state, at, r.array.elem.*, ctx, c.args[i]);
+                        }
+                    }
                 }
             }
         } else {
@@ -3364,6 +3389,9 @@ fn checkFunction(
         .params => |p| p.is_variadic,
         else => false,
     };
+    var params_buf: std.ArrayList(ir.Type) = .empty;
+    defer params_buf.deinit(ta.allocator);
+    var rest_ty: ?ir.Type = null;
     for (plist, 0..) |pnode, i| {
         var t: ir.Type = ir.TUnknown;
         if (pnode.type_annotation) |ann| {
@@ -3396,11 +3424,22 @@ fn checkFunction(
             return compiler_errors.compileFailFmt(state, "Rest parameter must be the last parameter", .{});
         }
 
-        if (is_variadic and i == plist.len - 1 and t != .array) {
-            const elem = if (t == .unknown) ir.TUnknown else t;
-            t = try ta.arrayType(elem, null, false);
+        if (is_variadic and i == plist.len - 1) {
+            const elem = if (t == .array) t.array.elem.* else (if (t == .unknown) ir.TUnknown else t);
+            t = try ta.arrayType(elem, null, true);
+            rest_ty = t;
+            try env.define(pnode.name, t);
+            continue;
         }
+        try params_buf.append(ta.allocator, t);
         try env.define(pnode.name, t);
+    }
+    if (state.functions.getPtr(f.name)) |def_ptr| {
+        def_ptr.is_variadic = is_variadic;
+        def_ptr.rest_ir = rest_ty;
+        if (def_ptr.param_irs == null) {
+            def_ptr.param_irs = try ta.allocator.dupe(ir.Type, params_buf.items);
+        }
     }
 
     // Full CFG-based flow analysis: compute per-statement narrowing

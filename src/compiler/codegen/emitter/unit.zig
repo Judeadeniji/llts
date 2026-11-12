@@ -122,9 +122,6 @@ pub fn emitFunction(self: *Emitter, name: []const u8, def: state_mod.FunctionDef
         .params => |p| p.params,
         else => return self.failAt(f.params, "native backend cannot emit this parameter list", .{}),
     };
-    if (f.params.params.is_variadic) {
-        return self.failAt(f.params, "native backend does not support variadic functions yet", .{});
-    }
 
     try prepareFunction(self, f, params, self.methodStructFor(name));
     const ret = try functionReturnType(self, name, def);
@@ -302,7 +299,22 @@ pub fn prepareFunction(
 
     var base = std.StringHashMap(*Binding).init(a);
     for (params, 0..) |*p, i| {
-        if (p.is_rest) return self.failAt(f.params, "native backend does not support rest parameters yet", .{});
+        var ir_type: ?ir.Type = null;
+        if (p.type_annotation) |ann| {
+            ir_type = from_ast.typeFromAst(ann, self.state, self.state.typeAlloc()) catch null;
+        } else if (i == 0 and method_struct != null and std.mem.eql(u8, p.name, "self")) {
+            const struct_ty: ir.Type = .{ .struct_ = method_struct.? };
+            ir_type = try self.state.typeAlloc().ptrType(struct_ty);
+        }
+        if (p.is_rest) {
+            const def_lookup = self.state.functions.get(f.name);
+            if (def_lookup != null and def_lookup.?.rest_ir != null) {
+                ir_type = def_lookup.?.rest_ir;
+            } else if (ir_type) |irt| {
+                const elem = if (irt == .array) irt.array.elem.* else irt;
+                ir_type = try self.state.typeAlloc().arrayType(elem, null, true);
+            }
+        }
         var display = if (p.type_annotation) |ann|
             (try from_ast.typeAstToDisplay(ann, self.state)) orelse "unknown"
         else
@@ -314,12 +326,8 @@ pub fn prepareFunction(
         {
             display = try std.fmt.allocPrint(a, "*{s}", .{method_struct.?});
         }
-        var ir_type: ?ir.Type = null;
-        if (p.type_annotation) |ann| {
-            ir_type = from_ast.typeFromAst(ann, self.state, self.state.typeAlloc()) catch null;
-        } else if (i == 0 and method_struct != null and std.mem.eql(u8, p.name, "self")) {
-            const struct_ty: ir.Type = .{ .struct_ = method_struct.? };
-            ir_type = try self.state.typeAlloc().ptrType(struct_ty);
+        if (p.is_rest and ir_type != null) {
+            display = try ir.displayTypeQualifiedAlloc(a, ir_type.?);
         }
         const vt = try self.valTypeFor(f.params, ir_type, display);
         try self.requireValueType(f.params, vt);

@@ -69,6 +69,9 @@ pub const FunctionDef = struct {
     is_recursive: bool = false,
     forward_jumps: std.ArrayList(usize) = .empty,
     source_index: u16 = 0,
+    param_irs: ?[]const ir.Type = null,
+    rest_ir: ?ir.Type = null,
+    is_variadic: bool = false,
 };
 
 pub const GenericCall = struct {

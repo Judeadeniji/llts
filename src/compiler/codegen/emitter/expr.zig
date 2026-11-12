@@ -78,6 +78,12 @@ fn emitPipe(self: *Emitter, b: *const ast_mod.Binary) ![]const u8 {
 
 fn calleeParamValType(self: *Emitter, func_name: []const u8, arg_idx: usize) ?ValType {
     const def = self.state.functions.get(func_name) orelse return null;
+    if (def.param_irs) |pirs| {
+        if (arg_idx < pirs.len) {
+            return self.valTypeOfIR(def.node, pirs[arg_idx]) catch null;
+        }
+        return null;
+    }
     if (def.node.* != .function_decl) return null;
     const f = &def.node.function_decl;
     const params = switch (f.params.*) {
@@ -90,6 +96,97 @@ fn calleeParamValType(self: *Emitter, func_name: []const u8, arg_idx: usize) ?Va
     const ta = self.state.typeAlloc();
     const tir = from_ast.typeFromAst(p_ann, self.state, ta) catch return null;
     return self.valTypeFromIR(p_ann, tir) catch null;
+}
+
+fn emitCallArguments(
+    self: *Emitter,
+    node: *ast_mod.Node,
+    func_name: []const u8,
+    args: []*ast_mod.Node,
+    param_offset: usize,
+    args_buf: *std.ArrayList([]const u8),
+) !void {
+    const a = self.arena.allocator();
+    const def = self.state.functions.get(func_name);
+    const is_variadic = if (def) |d| d.is_variadic else false;
+    const rest_ir = if (def) |d| d.rest_ir else null;
+    const named_param_count: usize = if (def) |d|
+        (if (d.param_irs) |pirs| (if (pirs.len > param_offset) pirs.len - param_offset else 0) else 0)
+    else blk: {
+        if (def == null or def.?.node.* != .function_decl) break :blk args.len;
+        const f = &def.?.node.function_decl;
+        const plist = switch (f.params.*) {
+            .params => |p| p.params,
+            else => break :blk args.len,
+        };
+        const total = if (is_variadic and plist.len > 0) plist.len - 1 else plist.len;
+        break :blk if (total > param_offset) total - param_offset else 0;
+    };
+
+    if (!is_variadic) {
+        for (args, 0..) |arg, i| {
+            const param_vt = calleeParamValType(self, func_name, i + param_offset);
+            if (param_vt) |pt| {
+                try args_buf.append(a, try emitValueCoerced(self, arg, pt));
+            } else {
+                try args_buf.append(a, try emitExpr(self, arg));
+            }
+        }
+        return;
+    }
+
+    // Variadic call: emit named arguments first
+    var i: usize = 0;
+    while (i < named_param_count and i < args.len) : (i += 1) {
+        const param_vt = calleeParamValType(self, func_name, i + param_offset);
+        if (param_vt) |pt| {
+            try args_buf.append(a, try emitValueCoerced(self, args[i], pt));
+        } else {
+            try args_buf.append(a, try emitExpr(self, args[i]));
+        }
+    }
+
+    // Trailing arguments: pack into stack slice &[_]T{ ... }
+    var rest_elem_vt: ?ValType = null;
+    if (rest_ir) |rir| {
+        if (rir == .array) {
+            rest_elem_vt = try self.valTypeOfIR(node, rir.array.elem.*);
+        }
+    }
+    if (rest_elem_vt == null and def != null and def.?.node.* == .function_decl) {
+        const f = &def.?.node.function_decl;
+        const plist = switch (f.params.*) {
+            .params => |p| p.params,
+            else => &[_]ast_mod.Param{},
+        };
+        if (plist.len > 0 and plist[plist.len - 1].is_rest) {
+            const last_p = plist[plist.len - 1];
+            if (last_p.type_annotation) |ann| {
+                const ta = self.state.typeAlloc();
+                const tir = from_ast.typeFromAst(ann, self.state, ta) catch null;
+                if (tir) |t| {
+                    const elem = if (t == .array) t.array.elem.* else t;
+                    rest_elem_vt = try self.valTypeOfIR(node, elem);
+                }
+            }
+        }
+    }
+
+    const elem_vt = rest_elem_vt orelse {
+        return self.failAt(node, "native backend cannot determine rest parameter element type for '{s}'", .{func_name});
+    };
+
+    var rest_items: std.ArrayList([]const u8) = .empty;
+    while (i < args.len) : (i += 1) {
+        const val_code = try emitValueCoerced(self, args[i], elem_vt);
+        try rest_items.append(a, val_code);
+    }
+
+    const rest_slice = try std.fmt.allocPrint(a, "&[_]{s}{{{s}}}", .{
+        elem_vt.zig,
+        try std.mem.join(a, ", ", rest_items.items),
+    });
+    try args_buf.append(a, rest_slice);
 }
 
 pub fn emitCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) anyerror![]const u8 {
@@ -308,14 +405,7 @@ pub fn emitCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) any
 
     var args_buf: std.ArrayList([]const u8) = .empty;
     const r_args = self.runtimeArgs(node, c);
-    for (r_args, 0..) |arg, i| {
-        const param_vt = calleeParamValType(self, name, i);
-        if (param_vt) |pt| {
-            try args_buf.append(a, try emitValueCoerced(self, arg, pt));
-        } else {
-            try args_buf.append(a, try emitExpr(self, arg));
-        }
-    }
+    try emitCallArguments(self, node, name, r_args, 0, &args_buf);
     const args_joined = try std.mem.join(a, ", ", args_buf.items);
     const zig_fn = try self.fnName(name);
     if (args_joined.len == 0) {
@@ -381,14 +471,7 @@ fn emitModuleCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) !
     }
     var args_buf: std.ArrayList([]const u8) = .empty;
     const r_args = self.runtimeArgs(node, c);
-    for (r_args, 0..) |arg, i| {
-        const param_vt = calleeParamValType(self, name, i);
-        if (param_vt) |pt| {
-            try args_buf.append(a, try emitValueCoerced(self, arg, pt));
-        } else {
-            try args_buf.append(a, try emitExpr(self, arg));
-        }
-    }
+    try emitCallArguments(self, node, name, r_args, 0, &args_buf);
     const zig_fn = try self.fnName(name);
     if (args_buf.items.len == 0) {
         return try std.fmt.allocPrint(a, "(try {s}(ctx))", .{zig_fn});
@@ -434,15 +517,8 @@ fn emitMethodCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) !
         },
     }
     const r_args = self.runtimeArgs(node, c);
-    for (r_args, 0..) |arg, i| {
-        const param_idx = if (target.mode == .none) i else i + 1;
-        const param_vt = calleeParamValType(self, target.key, param_idx);
-        if (param_vt) |pt| {
-            try args_buf.append(a, try emitValueCoerced(self, arg, pt));
-        } else {
-            try args_buf.append(a, try emitExpr(self, arg));
-        }
-    }
+    const param_offset: usize = if (target.mode == .none) 0 else 1;
+    try emitCallArguments(self, node, target.key, r_args, param_offset, &args_buf);
     const zig_fn = try self.fnName(target.key);
     if (args_buf.items.len == 0) {
         return try std.fmt.allocPrint(a, "(try {s}(ctx))", .{zig_fn});
