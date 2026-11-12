@@ -38,4 +38,8 @@ The compiler front end (scanner → parser → typecheck → analysis) is the si
 * If the emitter needs a fact the compiler has not stored, add it to `CompilerState` and record it during typecheck/analysis. Do not add a parallel implementation in the emitter.
 * The emitter may only translate recorded facts into Zig and reject shapes it cannot lower. A lowering rejection must never replace, relax, or disagree with a compiler decision.
 * If compiler output is wrong or incomplete, fix the compiler. Never compensate in the emitter.
-* Any duplicated analysis in the emitter is a bug and must be removed.
+## 6. Strict & Native-First Invariants
+
+* **Strict Mode:** All new code, refactors, and test cases MUST be fully typed (parameter/field annotations). Unannotated code is rejected.
+* **Native Backend:** The native pipeline is the primary compilation target. All toolchain changes must be verified against native emission (`llts emit-zig`).
+

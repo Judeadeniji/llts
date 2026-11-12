@@ -1,23 +1,20 @@
 # LLTS
 
-**LLTS is a small systems language with a compact type system, Zig-inspired explicit memory, and a hand-written compiler with bytecode and native backends.**
+**LLTS is a strictly-typed systems programming language with a compact type system, Zig-inspired explicit memory, and a native compiler generating standalone machine binaries.**
 
-LLTS is a name, not an acronym, and it is not TypeScript — just as LLVM is not a VM. Its type notation borrows a few ideas — structural object types, unions, and optional `?T` — but the syntax, compiler, VM, and native backend are its own.
+LLTS is a name, not an acronym, and it is not TypeScript — just as LLVM is not a VM. Its type notation borrows a few ideas — structural object types, unions, and optional `?T` — but the syntax, compiler, native backend, and memory model are its own.
 
-> **Status:** experimental and pre-1.0. The language, bytecode format, and tooling interfaces may change without notice. Not production software.
+> **Status:** experimental and pre-1.0. The language, toolchain, and interfaces may change without notice. Not production software.
 
 ## Highlights
 
-- **Gradual, checked types.** Untyped code runs; annotated code is checked. Strict mode (`--strict`) enforces sound null and union narrowing and is on by default for native compilation.
+- **Strict, Sound Types.** All code requires explicit parameter and field type annotations. Strict mode enforces sound null and union narrowing.
 - **Honest numeric widths.** `i8`–`i64`, `u8`–`u64`, `u1`/`bool`, `f32`, `f64`, with packed struct layout and explicit `@as` conversions.
-- **Explicit memory.** Frame-local aggregates, compile-time escape checks, and
-  `defer`/`errdefer`. Native allocation is intentionally outside the core
-  language and will be supplied by the standard library. No tracing garbage
-  collector.
+- **Explicit memory.** Frame-local aggregates, compile-time escape analysis, and `defer`/`errdefer`. Memory safety is enforced by strict **Scoped Downward Borrowing & Lexical Exclusivity**. No tracing garbage collector.
 - **Type-level metaprogramming.** `@typeOf`, `@sizeOf`, types as compile-time values, and type functions such as `@func Opt(T: type): type { return ?T; }`.
 - **Real abstractions.** First-class functions, structs with methods, enums, tagged unions, typed error sets, modules with `pub` visibility, and pipes (`|>`).
-- **Two backends.** A bytecode compiler with a stack VM, and a native pipeline that emits Zig and builds a standalone binary with the Zig compiler.
-- **Tooling.** `llts` CLI, `llts-lsp`, bytecode dumps, a tree-sitter grammar, and editor integrations.
+- **Native compilation.** A native pipeline that lowers to Zig and builds a standalone binary with the Zig compiler.
+- **Tooling.** `llts` CLI, `llts-lsp`, a tree-sitter grammar, and editor integrations.
 
 ## A taste of LLTS
 
@@ -75,7 +72,6 @@ Comprehensive guides and specifications are available in the [`docs/`](./docs) d
 Requirements:
 
 - Zig **0.15.2** or newer
-- Bun (only for the JavaScript test runner)
 
 ```bash
 zig build
@@ -83,7 +79,7 @@ zig build
 
 This produces:
 
-- `zig-out/bin/llts` — compiler, VM, and native driver
+- `zig-out/bin/llts` — compiler and native driver
 - `zig-out/bin/llts-lsp` — language server
 
 A Debug build is useful while working on the compiler. For everyday use:
@@ -97,26 +93,24 @@ zig build release
 ## Usage
 
 ```bash
-# Run a source file on the bytecode VM
-zig-out/bin/llts run examples/methods.lls
-
-# Compile to bytecode, then run it
-zig-out/bin/llts build examples/methods.lls -o methods.llb
-zig-out/bin/llts run methods.llb
+# Compile and run a source file natively
+llts run examples/methods.lls
 
 # Compile to a native binary
-zig-out/bin/llts build examples/methods.lls --native -o methods
+llts build examples/methods.lls -o methods
 
 # Inspect the generated Zig
-zig-out/bin/llts emit-zig examples/methods.lls -o methods.zig
-
-# Dump bytecode
-zig-out/bin/llts dump examples/methods.lls
+llts emit-zig examples/methods.lls -o methods.zig
 ```
 
-Native builds accept `--target`, `--optimize`, and `--emit bin|asm|llvm-ir|llvm-bc|h|docs|implib`. `--strict` enables the sound type system; it is implied by `--native` and `emit-zig`. Run `llts <command> --help` for the full flag set.
+Native builds enforce sound typing by default. Run `llts <command> --help` for the full flag set.
 
-Native compilation also supports embedding target-specific assembly via `@asm` — see the [**Inline Assembly Guide**](./docs/inline-assembly.md) for constraints, operands, clobbers, and verified examples.
+### Legacy: Bytecode VM
+The bytecode VM is deprecated. To run via the legacy VM:
+
+```bash
+llts run --vm examples/methods.lls
+```
 
 ## Project layout
 
@@ -126,36 +120,28 @@ Native compilation also supports embedding target-specific assembly via `@asm` �
 | `src/scanner/` | Hand-written lexer |
 | `src/parser/` | Recursive-descent parser and type syntax |
 | `src/ast/` | Syntax tree |
-| `src/compiler/` | Typecheck, escape analysis, layout, bytecode, and Zig emission |
-| `src/bytecode/` | Instruction set and `.llb` container |
-| `src/vm/` | Stack VM and builtins |
+| `src/compiler/` | Typecheck, escape analysis, layout, and Zig emission |
 | `src/runtime/` | Support code linked into native binaries |
 | `src/lsp/` | Language server |
 | `examples/` | Sample programs |
-| `tests/` | Zig integration tests and the Bun language suite |
+| `tests/` | Zig integration tests |
 | `tree-sitter-llts/` | Tree-sitter grammar |
 | `editors/` | Editor integrations |
 | `TODO.MD` | Feature status and roadmap |
 
-The bytecode pipeline is scanner → parser → AST → typecheck → bytecode → VM. The native pipeline shares the front end, then emits Zig that drives the runtime and invokes the Zig compiler.
+The native pipeline shares the front end, then emits Zig that drives the runtime and invokes the Zig compiler.
 
 ## Testing
 
 ```bash
 # Zig unit, integration, LSP, and runtime tests
 zig build test
-
-# Language conformance suite (requires a built binary)
-bun test tests/
 ```
-
-The Bun suite is mid-migration. Suites that still import the removed `std/` tree are expected to fail until they are ported; the Zig test step is the current green baseline.
 
 ## Status and limitations
 
-- No bundled standard library. The former `std/` tree and the self-hosted compiler have been removed from this repository; the core language and toolchain are the focus.
-- Some examples and language tests still reference `std/` and are being migrated.
+- No bundled standard library.
 - Generics are currently limited to free type functions; generic struct declarations and type-parameterized methods are not yet supported.
-- The native backend is under active development. VM behavior is the reference; parity coverage lives in `tests/55_emit_zig.test.ts` and `tests/57.*_native_*.test.ts`.
+- The bytecode VM is deprecated.
 
 See [`TODO.MD`](./TODO.MD) for the detailed capability list and roadmap.
