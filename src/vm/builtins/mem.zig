@@ -681,6 +681,16 @@ fn arenaArrayPushFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
 }
 
 var arena_array_push_native: NativeFunction = undefined;
+var unwrap_null_native: NativeFunction = undefined;
+
+/// `x.?` — the runtime half of optional unwrapping. Returns the value unchanged
+/// when it is present and faults when it is `null`, so an unwrap on an absent
+/// optional fails at the point of the unwrap rather than silently continuing.
+fn unwrapNullFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
+    const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
+    if (args[0] == .null) return fail(vm, "unwrap", "Attempted to unwrap null");
+    return args[0];
+}
 
 pub fn register(vm: *VMState) !void {
     alloc_native = .{ .name = "__alloc", .func = allocFn, .arity = 1 };
@@ -700,6 +710,7 @@ pub fn register(vm: *VMState) !void {
     clone_array_native = .{ .name = "__cloneArray", .func = cloneArrayFn, .arity = 1 };
     freeze_native = .{ .name = "__freeze", .func = freezeFn, .arity = 1 };
     arena_array_push_native = .{ .name = "__arena_array_push", .func = arenaArrayPushFn, .arity = 3 };
+    unwrap_null_native = .{ .name = "__unwrapNull", .func = unwrapNullFn, .arity = 1 };
 
     try vm.defineGlobal("__alloc", .{ .native = &alloc_native });
     try vm.defineGlobal("__allocImmortal", .{ .native = &alloc_immortal_native });
@@ -718,4 +729,5 @@ pub fn register(vm: *VMState) !void {
     try vm.defineGlobal("__cloneArray", .{ .native = &clone_array_native });
     try vm.defineGlobal("__freeze", .{ .native = &freeze_native });
     try vm.defineGlobal("__arena_array_push", .{ .native = &arena_array_push_native });
+    try vm.defineGlobal("__unwrapNull", .{ .native = &unwrap_null_native });
 }

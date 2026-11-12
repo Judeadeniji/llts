@@ -25,6 +25,21 @@ const state_mod = @import("../state.zig");
 ///   state.for_capture_facts   : *const ast.Node (for_expr)   → [2]BindingFacts
 ///   state.if_capture_facts    : *const ast.Node (if_expr)    → BindingFacts
 pub fn analyze(state: *state_mod.CompilerState, doc: *ast.Document) !void {
+    // Escape facts need a fixpoint: whether `&x` escapes at a call site depends
+    // on whether the callee retains that parameter, which depends on its own
+    // call sites. The walk is idempotent (it only ever ORs flags in), so repeat
+    // it until nothing new is learned. Bounded by the number of pointer params
+    // in the program; the cap is a safety net, not the expected trip count.
+    var round: usize = 0;
+    while (round < 8) : (round += 1) {
+        const before = state.addr_taken_decls.count() + state.addr_taken_params.count() + state.escaping_params.count();
+        try walkProgram(state, doc);
+        const after = state.addr_taken_decls.count() + state.addr_taken_params.count() + state.escaping_params.count();
+        if (after == before) break;
+    }
+}
+
+fn walkProgram(state: *state_mod.CompilerState, doc: *ast.Document) !void {
     // 1. Analyze every registered function (includes methods, module functions, generic instances)
     var it = state.functions.valueIterator();
     while (it.next()) |def| {
@@ -59,11 +74,15 @@ fn analyzeTopLevelStatements(state: *state_mod.CompilerState, stmts: []*ast.Node
 fn analyzeFunction(state: *state_mod.CompilerState, f: ast.FunctionDecl) !void {
     var ctx = Ctx.init(state);
     defer ctx.deinit();
+    ctx.in_function = true;
 
     try ctx.pushScope();
     if (f.params.* == .params) {
         for (f.params.params.params) |*p| {
-            try state.param_facts.put(p, .{});
+            // `getOrPut`: `analyze` walks the program several times to reach the
+            // escape fixpoint, and a plain `put` would wipe the flags recorded by
+            // the earlier rounds.
+            _ = try state.param_facts.getOrPut(p);
             try ctx.putParam(p.name, p);
         }
     }
@@ -91,6 +110,9 @@ const Scope = std.StringHashMap(ScopeEntry);
 const Ctx = struct {
     state: *state_mod.CompilerState,
     scopes: std.ArrayList(Scope) = .empty,
+    /// Escape facts only matter for function bodies: module-level storage is
+    /// allocated immortal already.
+    in_function: bool = false,
 
     fn init(state: *state_mod.CompilerState) Ctx {
         return .{
@@ -227,15 +249,28 @@ const Ctx = struct {
         }
     }
 
-    /// Record that the place rooted at `node` is address-taken (`&place`).
+    fn lookup(ctx: *Ctx, name: []const u8) ?ScopeEntry {
+        var i = ctx.scopes.items.len;
+        while (i > 0) {
+            i -= 1;
+            if (ctx.scopes.items[i].get(name)) |entry| return entry;
+        }
+        return null;
+    }
+
+    /// Record that `&place` hands out a pointer that outlives this frame.
     ///
-    /// Consumers rely on this: the bytecode backend allocates such a local's
-    /// aggregate literal below the immortal floor, and the native emitter boxes
-    /// it in immortal storage, so a pointer stored into a field or returned from
-    /// the function cannot dangle once the frame is rewound. Keyed by the
-    /// declaration's initializer node — the shape both backends see.
-    fn markAddrTaken(ctx: *Ctx, node: *ast.Node) anyerror!void {
-        var root = node;
+    /// Consumers rely on this: the bytecode backend allocates the binding's
+    /// storage below the immortal floor, and the native emitter boxes it in
+    /// immortal heap, so a pointer stored into a field (or returned) cannot
+    /// dangle once the frame is rewound. Keyed the way each consumer sees the
+    /// binding: locals by their initializer node, parameters by the `ast.Param`.
+    ///
+    /// `&obj.field` counts: the pointer points into `obj`, so `obj` itself has
+    /// to outlive the frame.
+    fn markAddrTaken(ctx: *Ctx, place: *ast.Node) anyerror!void {
+        if (!ctx.in_function) return; // globals already live forever
+        var root = place;
         while (true) {
             switch (root.*) {
                 .member => |m| root = m.object,
@@ -245,18 +280,69 @@ const Ctx = struct {
             }
         }
         if (root.primary.kind != .identifier and root.primary.kind != .register) return;
-        const name = root.primary.name;
-        var i = ctx.scopes.items.len;
-        while (i > 0) {
-            i -= 1;
-            if (ctx.scopes.items[i].get(name)) |entry| {
-                switch (entry) {
-                    .decl => |decl_node| try ctx.state.addr_taken_decls.put(decl_node.declaration.value, {}),
-                    else => {},
-                }
-                return;
+        const entry = ctx.lookup(root.primary.name) orelse return;
+        switch (entry) {
+            .decl => |decl_node| try ctx.state.addr_taken_decls.put(decl_node.declaration.value, {}),
+            .param => |p| try ctx.state.addr_taken_params.put(p, {}),
+            // Loop/if captures are re-bound per iteration by the backends; a
+            // `&capture` is only reachable from inside that iteration.
+            .for_cap, .if_cap => {},
+        }
+    }
+
+    /// Note that `expr` is stored somewhere that may outlive the frame. Only
+    /// then does an address-taken local need immortal storage: a pointer that is
+    /// read, compared, or passed to a callee that does not keep it dies with the
+    /// frame and can stay on the stack.
+    fn noteEscape(ctx: *Ctx, expr: *ast.Node) anyerror!void {
+        var inner = expr;
+        while (true) {
+            switch (inner.*) {
+                .comptime_expr => |c| inner = c.expr,
+                .try_expr => |t| inner = t.expression,
+                .unwrap_expr => |u| inner = u.expression,
+                // `@as(T, ptr)` / `@constCast(ptr)` are value-preserving.
+                .call => |c| {
+                    if (c.args.len == 0 or c.callee.* != .primary) break;
+                    const name = c.callee.primary.name;
+                    if (std.mem.eql(u8, name, "@as") and c.args.len == 2) {
+                        inner = c.args[1];
+                    } else if (std.mem.eql(u8, name, "@constCast") or std.mem.eql(u8, name, "@alignCast")) {
+                        inner = c.args[0];
+                    } else break;
+                },
+                else => break,
             }
         }
+        switch (inner.*) {
+            .unary => |u| if (std.mem.eql(u8, u.operator, "&")) try ctx.markAddrTaken(u.arg),
+            .primary => |p| {
+                if (p.kind != .identifier and p.kind != .register) return;
+                // A parameter holds a pointer value; handing it on means this
+                // function keeps a pointer the caller gave it.
+                if (ctx.lookup(p.name)) |entry| switch (entry) {
+                    .param => |param| try ctx.state.escaping_params.put(param, {}),
+                    else => {},
+                };
+            },
+            else => {},
+        }
+    }
+
+    /// Does the callee keep the pointer passed at `index`? Unknown callees
+    /// (builtins, externs, generic instances, variadics) are assumed to keep it.
+    fn argEscapes(ctx: *Ctx, c: ast.Call, index: usize) bool {
+        const target = ctx.state.call_targets.get(c.callee) orelse return true;
+        if (target.generic_instance != null) return true;
+        const def = ctx.state.functions.getPtr(target.key) orelse return true;
+        if (def.is_variadic or def.node.* != .function_decl) return true;
+        const f = &def.node.function_decl;
+        if (f.params.* != .params) return true;
+        const params = f.params.params.params;
+        // A method's receiver occupies params[0] and is not in `args`.
+        const offset: usize = if (target.receiver_mode == .none) 0 else 1;
+        if (params.len != c.args.len + offset) return true;
+        return ctx.state.escaping_params.contains(&params[index + offset]);
     }
 
     fn walkPlaceRootAssigned(ctx: *Ctx, node: *ast.Node) anyerror!void {
@@ -313,7 +399,8 @@ const Ctx = struct {
             },
             .unary => |u| {
                 if (std.mem.eql(u8, u.operator, "&")) {
-                    try ctx.markAddrTaken(u.arg);
+                    // Merely taking an address does not escape the frame; the
+                    // escape positions are the ones that call `noteEscape`.
                     try ctx.walkPlaceRootAssigned(u.arg);
                 } else {
                     try ctx.walkExpr(u.arg);
@@ -322,6 +409,16 @@ const Ctx = struct {
             .assignment => |asn| {
                 try ctx.walkAssignTarget(asn.left);
                 try ctx.walkExpr(asn.right);
+                // `obj.field = &x` / `arr[i] = &x` publish the pointer into
+                // storage that outlives the frame. Assigning to a name that is
+                // not local to this body (a module global) escapes for the same
+                // reason.
+                const stores_into_place = switch (asn.left.*) {
+                    .member, .index => true,
+                    .primary => |p| (p.kind == .identifier or p.kind == .register) and ctx.lookup(p.name) == null,
+                    else => false,
+                };
+                if (stores_into_place) try ctx.noteEscape(asn.right);
             },
             .call => |c| {
                 if (c.inline_asm) |spec| {
@@ -342,7 +439,12 @@ const Ctx = struct {
                         return;
                     }
                 }
-                for (c.args) |arg| try ctx.walkExpr(arg);
+                for (c.args, 0..) |arg, ai| {
+                    try ctx.walkExpr(arg);
+                    // A callee that keeps the pointer (or one we cannot see
+                    // into) extends the pointee's lifetime past this frame.
+                    if (ctx.argEscapes(c, ai)) try ctx.noteEscape(arg);
+                }
                 if (c.callee.* == .member) {
                     const m = &c.callee.member;
                     if (m.property.* == .primary) {
@@ -372,7 +474,10 @@ const Ctx = struct {
                 if (ix.end) |v| try ctx.walkExpr(v);
             },
             .array_literal => |al| {
-                for (al.elements) |e| try ctx.walkExpr(e);
+                for (al.elements) |e| {
+                    try ctx.walkExpr(e);
+                    try ctx.noteEscape(e);
+                }
             },
             .try_expr => |t| try ctx.walkExpr(t.expression),
             .unwrap_expr => |u| try ctx.walkExpr(u.expression),
@@ -381,7 +486,12 @@ const Ctx = struct {
             },
             .struct_init => |si| {
                 if (si.type_expr) |te| try ctx.walkExpr(te);
-                for (si.fields) |field| try ctx.walkExpr(field.value);
+                for (si.fields) |field| {
+                    try ctx.walkExpr(field.value);
+                    // The aggregate may be stored or returned; a pointer in one
+                    // of its fields then outlives this frame.
+                    try ctx.noteEscape(field.value);
+                }
             },
             .comptime_expr => |ce| try ctx.walkExpr(ce.expr),
             .block, .return_expr, .defer_stmt, .break_expr, .continue_expr,
@@ -395,7 +505,8 @@ const Ctx = struct {
             .declaration => |d| {
                 try ctx.walkExpr(d.value);
                 // Insert *after* walking initializer to match runtime scoping.
-                try ctx.state.binding_facts.put(node, .{});
+                // `getOrPut`: repeated fixpoint rounds must not clear flags.
+                _ = try ctx.state.binding_facts.getOrPut(node);
                 try ctx.putDecl(d.name, node);
             },
             .block => |b| {
@@ -404,7 +515,10 @@ const Ctx = struct {
                 ctx.popScope();
             },
             .return_expr => |r| {
-                if (r.return_value) |v| try ctx.walkExpr(v);
+                if (r.return_value) |v| {
+                    try ctx.walkExpr(v);
+                    try ctx.noteEscape(v);
+                }
             },
             .defer_stmt => |d| try ctx.walkStmt(d.body),
             .break_expr => |b| {

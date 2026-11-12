@@ -1267,7 +1267,15 @@ pub fn inferExpr(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, n
         if (fr.stmtEnv(node)) |f| env.flow = f;
     }
     const result = try inferExprInner(state, env, ta, node);
-    try recordExprType(state, node, result);
+    // Inside a flow-narrowed region a binding's type is the narrowed one, but
+    // `recordExprType` is first-write-wins and the node may already carry the
+    // declared type from an earlier inference. Overwrite so codegen sees `*T`
+    // where the checker proved `*T` (and not the declared `?*T`).
+    if (env.flow != null and node.* == .primary) {
+        try recordExprTypeForced(state, node, result);
+    } else {
+        try recordExprType(state, node, result);
+    }
     return result;
 }
 

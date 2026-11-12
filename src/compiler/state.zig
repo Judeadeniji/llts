@@ -359,6 +359,14 @@ pub const CompilerState = struct {
     /// aggregate literal immortal, and the native emitter boxes the local in
     /// immortal heap instead of the Zig stack.
     addr_taken_decls: std.AutoHashMap(*const ast.Node, void),
+    /// Parameters whose own storage (`&param`) escapes the function. The native
+    /// backend copies parameters into locals, so those copies need the same
+    /// immortal boxing as address-taken locals.
+    addr_taken_params: std.AutoHashMap(*const ast.Param, void),
+    /// Parameters through which a function keeps a pointer it was given. A
+    /// caller only has to keep the pointee alive (box its local) when the callee
+    /// appears here; the set is closed transitively by `binding_facts`.
+    escaping_params: std.AutoHashMap(*const ast.Param, void),
     /// Last AST location seen while compiling — used when a CompileError has no explicit loc.
     diag_path: []const u8 = "",
     diag_line: u32 = 0,
@@ -394,6 +402,8 @@ pub fn create(allocator: std.mem.Allocator) !CompilerState {
     var state: CompilerState = .{
         .allocator = allocator,
         .addr_taken_decls = std.AutoHashMap(*const ast.Node, void).init(allocator),
+        .addr_taken_params = std.AutoHashMap(*const ast.Param, void).init(allocator),
+        .escaping_params = std.AutoHashMap(*const ast.Param, void).init(allocator),
         .chunk = chunk_mod.Chunk.init(allocator),
         .comptime_max_loop_iterations = max_iters,
         .functions = std.StringHashMap(FunctionDef).init(allocator),
@@ -598,6 +608,8 @@ pub fn deinit(self: *CompilerState) void {
     if (self.last_error_message.len > 0) self.allocator.free(self.last_error_message);
     if (self.last_error_path.len > 0) self.allocator.free(self.last_error_path);
     self.addr_taken_decls.deinit();
+    self.addr_taken_params.deinit();
+    self.escaping_params.deinit();
 }
 
 pub fn currentChunk(state: *CompilerState) *chunk_mod.Chunk {

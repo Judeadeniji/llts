@@ -636,6 +636,15 @@ pub fn emitExpr(self: *Emitter, node: *ast_mod.Node) anyerror![]const u8 {
                     if (self.recordedType(node)) |rec_t| {
                         const rec_peeled = ir.peelDefined(rec_t);
                         if (rec_peeled != .union_) {
+                            // A flow-narrowed optional (`x != null` guards this
+                            // use) is not a user union: the variable still holds
+                            // a Zig optional, so unwrap the payload. Trapping on
+                            // null matches what the VM does.
+                            if (ir.optionalPayload(bind_peeled)) |payload| {
+                                if (ir.isSubtype(rec_peeled, ir.peelDefined(payload))) {
+                                    return std.fmt.allocPrint(self.arena.allocator(), "({s} orelse unreachable)", .{resolved.zig_name});
+                                }
+                            }
                             const uinfo = try self.ensureUnionType(node, resolved.display);
                             for (uinfo.variants) |v| {
                                 if (ir.typeEquals(rec_peeled, ir.peelDefined(v.arm_ir)) or ir.isSubtype(rec_peeled, v.arm_ir)) {
@@ -1609,8 +1618,12 @@ pub fn emitStructLiteral(self: *Emitter, node: *ast_mod.Node, si: *const ast_mod
 pub fn emitOptionalUnwrap(self: *Emitter, node: *ast_mod.Node, u: *const ast_mod.UnwrapExpr) ![]const u8 {
     _ = node;
     const vt = try self.valueType(u.expression);
-    if (vt.kind != .optional) return emitExpr(self, u.expression);
-    return std.fmt.allocPrint(self.arena.allocator(), "({s} orelse return rt.io.fail(\"Attempted to unwrap null\"))", .{
+    // `?T` normally classifies as `.optional`; a display spelling that starts
+    // with `?` covers the shapes that keep a union classification.
+    const is_optional = vt.kind == .optional or
+        (vt.display.len > 0 and vt.display[0] == '?');
+    if (!is_optional) return emitExpr(self, u.expression);
+    return std.fmt.allocPrint(self.arena.allocator(), "({s} orelse return rt.io.failMsg(\"Attempted to unwrap null\"))", .{
         try emitExpr(self, u.expression),
     });
 }

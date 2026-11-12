@@ -1172,6 +1172,16 @@ pub fn resolveType(state: *state_mod.CompilerState, node: *ast.Node) ?[]const u8
             }
             break :blk type_name;
         },
+        // `x.?` — the payload type, so a member access through the unwrapped
+        // value resolves instead of falling back to a dynamic property read.
+        .unwrap_expr => |u| blk: {
+            const inner = resolveType(state, u.expression) orelse break :blk null;
+            const payload = unwrapOptionalDisplay(inner);
+            // The VM represents pointers as their handle, so `x.?.field` reads
+            // the struct behind the pointer.
+            const trimmed = std.mem.trimLeft(u8, payload, "* \t");
+            break :blk if (trimmed.len > 0) trimmed else payload;
+        },
         .member => |m| blk: {
             if (m.property.* != .primary) break :blk null;
             if (resolveEnumName(state, m.object)) |ename| {

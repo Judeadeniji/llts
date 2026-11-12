@@ -32,6 +32,7 @@ pub fn compileExpression(state: *CompilerState, node: *ast.Node) anyerror!void {
         .array_literal => |*a| try aggregate.compileArray(state, a),
         .struct_init => |*s| try aggregate.compileStructInit(state, node, s),
         .try_expr => |*t| try aggregate.compileTry(state, t),
+        .unwrap_expr => |*u| try compileUnwrap(state, u),
         .error_expr => |*e| try aggregate.compileError(state, e),
         .if_expr => |*i| try control.compileIfValue(state, i),
         .switch_expr => |*s| try control.compileSwitchValue(state, s),
@@ -39,6 +40,15 @@ pub fn compileExpression(state: *CompilerState, node: *ast.Node) anyerror!void {
         .comptime_expr => |*ce| try compileComptime(state, ce),
         else => {},
     }
+}
+
+/// `x.?` — optional unwrap. The value is passed through `__unwrapNull`, which
+/// faults when it is absent; typechecking has already rejected unwrapping a
+/// non-optional value.
+fn compileUnwrap(state: *CompilerState, u: *const ast.UnwrapExpr) !void {
+    try emit.emitNameGet(state, .OP_GET_GLOBAL, "__unwrapNull");
+    try compileExpression(state, u.expression);
+    try emit.emitCall(state, 1);
 }
 
 fn compileComptime(state: *CompilerState, ce: *const ast.ComptimeExpr) !void {
