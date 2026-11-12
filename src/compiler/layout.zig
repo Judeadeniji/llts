@@ -219,3 +219,57 @@ pub fn fieldKindForStruct(state: *state_mod.CompilerState, sd: state_mod.StructD
     const ty = sd.types.get(field) orelse "i64";
     return fieldKind(state, ty);
 }
+
+pub const UnionLayout = struct {
+    size: i32,
+    alignment: i32,
+    tag_offset: ?i32 = null,
+    discrim_field: ?[]const u8 = null,
+    enum_name: ?[]const u8 = null,
+};
+
+pub fn layoutUnion(state: *state_mod.CompilerState, union_t: ir.Type, display: []const u8) !UnionLayout {
+    var flat = std.ArrayList(ir.Type).empty;
+    defer flat.deinit(state.allocator);
+    switch (union_t) {
+        .union_ => |arms| {
+            for (arms) |a| {
+                switch (ir.peelDefined(a)) {
+                    .union_ => |inner| try flat.appendSlice(state.allocator, inner),
+                    else => try flat.append(state.allocator, a),
+                }
+            }
+        },
+        else => try flat.append(state.allocator, union_t),
+    }
+
+    var max_size: i32 = 0;
+    var max_align: i32 = 1;
+    for (flat.items) |arm| {
+        const sz = (try sizeOfType(state, arm)) orelse 8;
+        if (sz > max_size) max_size = sz;
+        const al: i32 = 8;
+        if (al > max_align) max_align = al;
+    }
+
+    var discrim_field: ?[]const u8 = null;
+    var enum_name: ?[]const u8 = null;
+    var tag_offset: ?i32 = null;
+
+    if (from_ast.discrimVariantMap(state, state.allocator, display) catch null) |dinfo| {
+        var info = dinfo;
+        defer info.map.deinit();
+        discrim_field = "kind";
+        enum_name = info.enum_name;
+        tag_offset = 0;
+    }
+
+    return .{
+        .size = max_size,
+        .alignment = max_align,
+        .tag_offset = tag_offset,
+        .discrim_field = discrim_field,
+        .enum_name = enum_name,
+    };
+}
+

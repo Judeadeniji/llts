@@ -838,6 +838,63 @@ pub fn ensureShapeLayoutFromDisplayAs(
     });
 }
 
+pub fn lookupUnion(state: *state_mod.CompilerState, display: []const u8) ?state_mod.UnionDef {
+    if (state.unions.get(display)) |ud| return ud;
+    const peeled = peelTypedefDisplay(state, display);
+    if (!std.mem.eql(u8, peeled, display)) {
+        if (state.unions.get(peeled)) |ud| return ud;
+    }
+    ensureUnionLayoutFromDisplay(state, display) catch return null;
+    return state.unions.get(display) orelse state.unions.get(peeled);
+}
+
+pub fn ensureUnionLayoutFromDisplay(state: *state_mod.CompilerState, display: []const u8) FromAstError!void {
+    if (state.unions.contains(display)) return;
+    const peeled = peelTypedefDisplay(state, display);
+    if (state.unions.contains(peeled)) return;
+
+    const ta = state.typeAlloc();
+    const t = parseDisplayType(state, ta, peeled, null) catch return;
+    if (t != .union_) return;
+
+    var flat = std.ArrayList(ir.Type).empty;
+    defer flat.deinit(ta.allocator);
+    for (t.union_) |arm| {
+        switch (ir.peelDefined(arm)) {
+            .union_ => |inner| try flat.appendSlice(ta.allocator, inner),
+            else => try flat.append(ta.allocator, arm),
+        }
+    }
+    if (flat.items.len < 2) return;
+
+    var arm_names = std.ArrayList([]const u8).empty;
+    var arm_irs = std.ArrayList(ir.Type).empty;
+    for (flat.items) |arm| {
+        const arm_disp = (try ir.displayTypeQualifiedAlloc(ta.allocator, arm));
+        try arm_names.append(ta.allocator, arm_disp);
+        try arm_irs.append(ta.allocator, arm);
+    }
+
+    const ulayout = layout.layoutUnion(state, t, peeled) catch return;
+    const key_owned = try ta.allocator.dupe(u8, display);
+
+    const udef: state_mod.UnionDef = .{
+        .name = key_owned,
+        .size = ulayout.size,
+        .alignment = ulayout.alignment,
+        .tag_offset = ulayout.tag_offset,
+        .discrim_field = ulayout.discrim_field,
+        .enum_name = ulayout.enum_name,
+        .arm_names = try arm_names.toOwnedSlice(ta.allocator),
+        .arm_irs = try arm_irs.toOwnedSlice(ta.allocator),
+    };
+    try state.unions.put(key_owned, udef);
+    if (!std.mem.eql(u8, key_owned, peeled)) {
+        const peeled_owned = try ta.allocator.dupe(u8, peeled);
+        try state.unions.put(peeled_owned, udef);
+    }
+}
+
 /// Split a top-level `A | B | C` display (no nested parens needed for simple struct unions).
 pub fn splitUnionDisplay(allocator: std.mem.Allocator, display: []const u8) ![][]const u8 {
     var parts: std.ArrayList([]const u8) = .empty;

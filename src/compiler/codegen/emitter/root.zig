@@ -41,6 +41,7 @@ pub const ValKind = enum {
     void,
     other,
     struct_,
+    union_,
     array,
     slice,
     optional,
@@ -147,6 +148,22 @@ pub const ParamInfo = struct {
     kind: ValKind,
 };
 
+pub const UnionVariant = struct {
+    name: []const u8,
+    zig_name: []const u8,
+    vt: ValType,
+    arm_ir: ir.Type,
+};
+
+pub const UnionType = struct {
+    key: []const u8,
+    zig_name: []const u8,
+    size: i32,
+    discrim_field: ?[]const u8 = null,
+    enum_name: ?[]const u8 = null,
+    variants: []UnionVariant,
+};
+
 pub const BreakTarget = struct {
     /// LLTS label, if the value expression was labeled.
     label: ?[]const u8,
@@ -197,6 +214,8 @@ pub const Emitter = struct {
     globals: std.StringHashMap(*Global),
     struct_types: std.ArrayList(*StructType) = .empty,
     struct_by_key: std.StringHashMap(*StructType),
+    union_types: std.ArrayList(*UnionType) = .empty,
+    union_by_key: std.StringHashMap(*UnionType),
     scopes: std.ArrayList(std.StringHashMap(*Binding)) = .empty,
     defer_scopes: std.ArrayList(std.ArrayList(DeferEntry)) = .empty,
     infos: std.AutoHashMap(*ast_mod.Node, *Binding),
@@ -371,9 +390,77 @@ pub const Emitter = struct {
         }
     }
 
+    pub fn ensureUnionType(self: *Emitter, node: *ast_mod.Node, display: []const u8) anyerror!*UnionType {
+        const clean = std.mem.trim(u8, display, " \t");
+        const udef = from_ast.lookupUnion(self.state, clean) orelse {
+            return self.failAt(node, "native backend cannot resolve union type '{s}'", .{clean});
+        };
+        if (self.union_by_key.get(udef.name)) |info| return info;
+
+        const a = self.arena.allocator();
+        const info = try a.create(UnionType);
+        info.* = .{
+            .key = udef.name,
+            .zig_name = try std.fmt.allocPrint(a, "lls_u_{s}", .{try self.mangle(udef.name)}),
+            .size = udef.size,
+            .discrim_field = udef.discrim_field,
+            .enum_name = udef.enum_name,
+            .variants = &.{},
+        };
+        try self.union_by_key.put(udef.name, info);
+        try self.union_types.append(a, info);
+
+        var variants = std.ArrayList(UnionVariant).empty;
+        for (udef.arm_names, udef.arm_irs, 0..) |arm_name, arm_ir, i| {
+            const vt = try self.valTypeFor(node, arm_ir, arm_name);
+            const vname = cleanVariantName(a, arm_name, i);
+            try variants.append(a, .{
+                .name = arm_name,
+                .zig_name = vname,
+                .vt = vt,
+                .arm_ir = arm_ir,
+            });
+        }
+        info.variants = try variants.toOwnedSlice(a);
+        return info;
+    }
+
+    fn cleanVariantName(a: std.mem.Allocator, name: []const u8, idx: usize) []const u8 {
+        var valid = true;
+        for (name) |c| {
+            if (!std.ascii.isAlphanumeric(c) and c != '_') {
+                valid = false;
+                break;
+            }
+        }
+        if (valid and name.len > 0 and !std.ascii.isDigit(name[0])) return name;
+        return std.fmt.allocPrint(a, "v{d}", .{idx}) catch "v";
+    }
+
+    pub fn emitUnionTypeDecls(self: *Emitter) !void {
+        var i: usize = 0;
+        while (i < self.union_types.items.len) : (i += 1) {
+            const info = self.union_types.items[i];
+            try self.writer.print("const {s} = union(enum) {{\n", .{info.zig_name});
+            for (info.variants) |v| {
+                try self.writer.print("    {s}: {s},\n", .{ v.zig_name, v.vt.zig });
+            }
+            if (info.discrim_field) |df| {
+                try self.writer.print("\n    pub fn get_{s}(self: @This()) i64 {{\n", .{df});
+                try self.writer.writeAll("        return switch (self) {\n");
+                for (info.variants) |v| {
+                    try self.writer.print("            .{s} => |val| val.f0,\n", .{v.zig_name});
+                }
+                try self.writer.writeAll("        };\n    }\n");
+            }
+            try self.writer.writeAll("};\n\n");
+        }
+    }
+
     pub fn deinit(self: *Emitter) void {
         self.globals.deinit();
         self.struct_by_key.deinit();
+        self.union_by_key.deinit();
         self.infos.deinit();
         self.arena.deinit();
     }
@@ -558,42 +645,56 @@ pub const Emitter = struct {
                         if (success == null) success = arm else extra_success = true;
                     },
                 };
-                if (extra_success or success == null) return null;
-                // Gradual `unknown | error`: no success value is known yet, so
-                // at runtime the value is a bare error.
-                if (has_error and ir.isUnknown(success.?)) {
+                if (!extra_success and success != null) {
+                    // Gradual `unknown | error`: no success value is known yet, so
+                    // at runtime the value is a bare error.
+                    if (has_error and ir.isUnknown(success.?)) {
+                        vt.kind = .error_value;
+                        vt.clean = "error";
+                        vt.zig = "rt.err.Error";
+                        vt.may_error = true;
+                        return vt;
+                    }
+                    const raw_inner = (try self.valTypeFromIR(node, success.?)) orelse return null;
+                    const inner: ValType = if (has_null and has_error) blk: {
+                        const raw_p = try a.create(ValType);
+                        raw_p.* = raw_inner;
+                        break :blk .{
+                            .display = try std.fmt.allocPrint(a, "?{s}", .{raw_inner.display}),
+                            .clean = raw_inner.clean,
+                            .kind = .optional,
+                            .payload = raw_p,
+                            .zig = try std.fmt.allocPrint(a, "?{s}", .{raw_inner.zig}),
+                        };
+                    } else raw_inner;
+                    const inner_p = try a.create(ValType);
+                    inner_p.* = inner;
+                    if (has_error) {
+                        vt = inner;
+                        vt.display = display;
+                        vt.clean = try ir.displayTypeQualifiedAlloc(a, success.?);
+                        vt.may_error = true;
+                        vt.success = inner_p;
+                        vt.zig = try std.fmt.allocPrint(a, "rt.err.Result({s})", .{inner.zig});
+                    } else {
+                        vt.kind = .optional;
+                        vt.payload = inner_p;
+                        vt.zig = try std.fmt.allocPrint(a, "?{s}", .{inner.zig});
+                    }
+                    return vt;
+                }
+                if (success == null and has_error and !has_null) {
                     vt.kind = .error_value;
                     vt.clean = "error";
                     vt.zig = "rt.err.Error";
                     vt.may_error = true;
                     return vt;
                 }
-                const raw_inner = (try self.valTypeFromIR(node, success.?)) orelse return null;
-                const inner: ValType = if (has_null and has_error) blk: {
-                    const raw_p = try a.create(ValType);
-                    raw_p.* = raw_inner;
-                    break :blk .{
-                        .display = try std.fmt.allocPrint(a, "?{s}", .{raw_inner.display}),
-                        .clean = raw_inner.clean,
-                        .kind = .optional,
-                        .payload = raw_p,
-                        .zig = try std.fmt.allocPrint(a, "?{s}", .{raw_inner.zig}),
-                    };
-                } else raw_inner;
-                const inner_p = try a.create(ValType);
-                inner_p.* = inner;
-                if (has_error) {
-                    vt = inner;
-                    vt.display = display;
-                    vt.clean = try ir.displayTypeQualifiedAlloc(a, success.?);
-                    vt.may_error = true;
-                    vt.success = inner_p;
-                    vt.zig = try std.fmt.allocPrint(a, "rt.err.Result({s})", .{inner.zig});
-                } else {
-                    vt.kind = .optional;
-                    vt.payload = inner_p;
-                    vt.zig = try std.fmt.allocPrint(a, "?{s}", .{inner.zig});
-                }
+                const uinfo = try self.ensureUnionType(node, display);
+                vt.kind = .union_;
+                vt.clean = display;
+                vt.zig = uinfo.zig_name;
+                if (has_error) vt.may_error = true;
             },
             else => return null,
         }
@@ -623,6 +724,7 @@ pub const Emitter = struct {
         try self.emitTraceSiteTable();
         try unit_mod.emitEntry(self);
         try self.emitStructTypeDecls();
+        try self.emitUnionTypeDecls();
     }
 
     pub fn addTraceSite(self: *Emitter, func_name: []const u8, file: []const u8, line: u32, column: u32) !u32 {
@@ -781,6 +883,7 @@ pub const Emitter = struct {
             .state = state,
             .globals = std.StringHashMap(*Global).init(allocator),
             .struct_by_key = std.StringHashMap(*StructType).init(allocator),
+            .union_by_key = std.StringHashMap(*UnionType).init(allocator),
             .infos = std.AutoHashMap(*ast_mod.Node, *Binding).init(allocator),
         };
     }

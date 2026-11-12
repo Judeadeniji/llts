@@ -112,6 +112,17 @@ pub const EnumDef = struct {
     }
 };
 
+pub const UnionDef = struct {
+    name: []const u8,
+    size: i32,
+    alignment: i32,
+    tag_offset: ?i32 = null,
+    discrim_field: ?[]const u8 = null,
+    enum_name: ?[]const u8 = null,
+    arm_names: [][]const u8,
+    arm_irs: []ir.Type,
+};
+
 /// How to lower `@nameOf(x)` after typecheck.
 pub const NameOfPlan = union(enum) {
     /// Known arm spelling (enum/error literal).
@@ -211,6 +222,7 @@ pub const CompilerState = struct {
     stack_depth: u32 = 0,
     functions: std.StringHashMap(FunctionDef),
     structs: std.StringHashMap(StructDef),
+    unions: std.StringHashMap(UnionDef),
     enums: std.StringHashMap(EnumDef),
     error_sets: std.StringHashMap(ErrorSetDef),
     typedefs: std.StringHashMap(TypeDef),
@@ -338,6 +350,12 @@ pub const CompilerState = struct {
     last_emitted_column: i32 = -1,
     /// When true, bare struct/array literals use immortal heap (globals / return of literals).
     alloc_immortal: bool = false,
+    /// Initializer node of every local declaration whose address is taken by
+    /// `&name` in its function body (computed by `binding_facts`). The storage
+    /// must outlive the frame: the bytecode backend allocates such a local's
+    /// aggregate literal immortal, and the native emitter boxes the local in
+    /// immortal heap instead of the Zig stack.
+    addr_taken_decls: std.AutoHashMap(*const ast.Node, void),
     /// Last AST location seen while compiling — used when a CompileError has no explicit loc.
     diag_path: []const u8 = "",
     diag_line: u32 = 0,
@@ -372,10 +390,12 @@ pub fn create(allocator: std.mem.Allocator) !CompilerState {
 
     var state: CompilerState = .{
         .allocator = allocator,
+        .addr_taken_decls = std.AutoHashMap(*const ast.Node, void).init(allocator),
         .chunk = chunk_mod.Chunk.init(allocator),
         .comptime_max_loop_iterations = max_iters,
         .functions = std.StringHashMap(FunctionDef).init(allocator),
         .structs = std.StringHashMap(StructDef).init(allocator),
+        .unions = std.StringHashMap(UnionDef).init(allocator),
         .enums = std.StringHashMap(EnumDef).init(allocator),
         .error_sets = std.StringHashMap(ErrorSetDef).init(allocator),
         .typedefs = std.StringHashMap(TypeDef).init(allocator),
@@ -515,6 +535,7 @@ pub fn deinit(self: *CompilerState) void {
         e.value_ptr.field_irs.deinit(self.allocator);
     }
     self.structs.deinit();
+    self.unions.deinit();
     var eit = self.enums.iterator();
     while (eit.next()) |e| {
         e.value_ptr.variants.deinit();
@@ -573,6 +594,7 @@ pub fn deinit(self: *CompilerState) void {
     self.import_from.deinit();
     if (self.last_error_message.len > 0) self.allocator.free(self.last_error_message);
     if (self.last_error_path.len > 0) self.allocator.free(self.last_error_path);
+    self.addr_taken_decls.deinit();
 }
 
 pub fn currentChunk(state: *CompilerState) *chunk_mod.Chunk {

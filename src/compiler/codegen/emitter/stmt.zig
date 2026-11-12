@@ -879,6 +879,35 @@ pub fn emitLocalDeclaration(self: *Emitter, node: *ast_mod.Node, d: *const ast_m
     else
         try expr_mod.emitExpr(self, d.value);
 
+    if (self.state.addr_taken_decls.contains(d.value)) {
+        // The compiler recorded `&name` somewhere in this body, so the storage
+        // must outlive the frame: the pointer may be stored into a field or
+        // returned, and a Zig stack slot dies with the function. Box the value
+        // in immortal heap and bind the name to the box pointer, so every later
+        // use of the name (reads, writes, `&name`) goes through `name.*`.
+        const cell = try std.fmt.allocPrint(a, "lls_box_{s}", .{info.zig_name});
+        const ptr = try std.fmt.allocPrint(a, "lls_cell_{s}", .{info.zig_name});
+        try self.writeIndent();
+        try self.writer.print("const {s}: *{s} = blk: {{\n", .{ info.zig_name, vt.zig });
+        try self.writeIndent();
+        try self.writer.print("    const {s} = try ctx.allocImmortal(@sizeOf({s}), @alignOf({s}));\n", .{ cell, vt.zig, vt.zig });
+        try self.writeIndent();
+        try self.writer.print("    const {s}: *{s} = @ptrCast(@alignCast({s}.ptr));\n", .{ ptr, vt.zig, cell });
+        try self.writeIndent();
+        try self.writer.print("    {s}.* = {s};\n", .{ ptr, init_code });
+        try self.writeIndent();
+        try self.writer.print("    break :blk {s};\n", .{ptr});
+        try self.writeIndent();
+        try self.writer.writeAll("};\n");
+        if (!info.read) {
+            try self.writeIndent();
+            try self.writer.print("_ = &{s};\n", .{info.zig_name});
+        }
+        info.zig_name = try std.fmt.allocPrint(a, "{s}.*", .{info.zig_name});
+        try self.scopes.items[self.scopes.items.len - 1].put(d.name, info);
+        return;
+    }
+
     // Index stores into `[]byte` / string views don't reassign the slice header,
     // so Zig wants `const` (same as `.slice` / `.pointer`). Use `var` only when
     // the binding is actually reassigned.
@@ -1029,7 +1058,7 @@ pub fn emitStmt(self: *Emitter, node: *ast_mod.Node) anyerror!void {
     }
 }
 
-pub fn emitSwitchChain(self: *Emitter, sw: *const ast_mod.Switch, scrut: []const u8, scrut_t: ValType, first: bool) !void {
+pub fn emitSwitchChain(self: *Emitter, sw: *const ast_mod.Switch, scrut: []const u8, scrut_t: ValType, first: bool, is_value: bool) !void {
     var wrote_any = false;
     var else_prong: ?ast_mod.SwitchProng = null;
     for (sw.prongs) |prong| {
@@ -1065,6 +1094,20 @@ pub fn emitSwitchChain(self: *Emitter, sw: *const ast_mod.Switch, scrut: []const
         try self.writeIndent();
         try self.writer.writeAll("}\n");
         return;
+    } else if (is_value) {
+        if (wrote_any) {
+            try self.writer.writeAll(" else {\n");
+        } else {
+            if (first) try self.writeIndent();
+            try self.writer.writeAll("{\n");
+        }
+        self.indent += 1;
+        try self.writeIndent();
+        try self.writer.writeAll("unreachable;\n");
+        self.indent -= 1;
+        try self.writeIndent();
+        try self.writer.writeAll("}\n");
+        return;
     }
     if (wrote_any) try self.writer.writeAll("\n");
 }
@@ -1094,7 +1137,7 @@ pub fn emitSwitchStmt(self: *Emitter, node: *ast_mod.Node, sw: *const ast_mod.Sw
         if (wraps) "var" else "const", scrut_name, vt.zig, scrut_code,
     });
     if (!wraps) {
-        try emitSwitchChain(self, sw, scrut_name, vt, true);
+        try emitSwitchChain(self, sw, scrut_name, vt, true, false);
         return;
     }
     const loop_label = try std.fmt.allocPrint(a, "lls_sw_loop_{d}", .{id});
@@ -1109,7 +1152,7 @@ pub fn emitSwitchStmt(self: *Emitter, node: *ast_mod.Node, sw: *const ast_mod.Sw
     try self.writeIndent();
     try self.writer.print("{s}: while (true) {{\n", .{loop_label});
     self.indent += 1;
-    try emitSwitchChain(self, sw, scrut_name, vt, true);
+    try emitSwitchChain(self, sw, scrut_name, vt, true, false);
     try self.writeIndent();
     try self.writer.writeAll("break;\n");
     self.indent -= 1;
@@ -1152,13 +1195,6 @@ pub fn emitBlockValue(self: *Emitter, node: *ast_mod.Node, b: *const ast_mod.Blo
 }
 
 pub fn emitSwitchValue(self: *Emitter, node: *ast_mod.Node, sw: *const ast_mod.Switch) ![]const u8 {
-    var has_else = false;
-    for (sw.prongs) |prong| {
-        if (prong.is_else) has_else = true;
-    }
-    if (!has_else) {
-        return self.failAt(node, "value-producing @switch requires @else", .{});
-    }
     const a = self.arena.allocator();
     const vt = try switchScrutineeType(self, node, sw);
     const result_t = try self.valueType(node);
@@ -1201,14 +1237,14 @@ pub fn emitSwitchValue(self: *Emitter, node: *ast_mod.Node, sw: *const ast_mod.S
         try self.writeIndent();
         try self.writer.print("{s}: while (true) {{\n", .{loop_label});
         self.indent += 1;
-        try emitSwitchChain(self, sw, scrut_name, vt, true);
+        try emitSwitchChain(self, sw, scrut_name, vt, true, true);
         try self.writeIndent();
         try self.writer.writeAll("break;\n");
         self.indent -= 1;
         try self.writeIndent();
         try self.writer.writeAll("}\n");
     } else {
-        try emitSwitchChain(self, sw, scrut_name, vt, true);
+        try emitSwitchChain(self, sw, scrut_name, vt, true, true);
     }
     self.indent -= 1;
     try self.writeIndent();

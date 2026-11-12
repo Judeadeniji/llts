@@ -3142,8 +3142,13 @@ fn checkStmt(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node:
                     }
                 }
                 if (!contextually_typed) try requireAssignAt(state, value_type, annot, ctx, d.loc, d.value);
-                // Contextual typing: initializer / uses see the annotation width for codegen.
-                try recordExprTypeForced(state, d.value, annot);
+                // Contextual typing: initializer / uses see the annotation width for codegen,
+                // but when the target is a union, preserve the concrete evaluated type of the RHS.
+                if (ir.peelDefined(annot) == .union_) {
+                    try recordExprTypeForced(state, d.value, value_type);
+                } else {
+                    try recordExprTypeForced(state, d.value, annot);
+                }
                 try env.define(d.name, annot);
                 if (persist_global) {
                     const disp = try ownDisplayQualified(state, annot);

@@ -3,6 +3,7 @@ const ast_mod = @import("../../../ast/root.zig");
 const state_mod = @import("../../state.zig");
 const path_mod = @import("../../expr/path.zig");
 const from_ast = @import("../../typecheck/from_ast.zig");
+const ir = @import("../../typecheck/ir.zig");
 const widths = @import("../../widths.zig");
 const intrinsics_mod = @import("../../intrinsics.zig");
 const root_mod = @import("root.zig");
@@ -553,6 +554,22 @@ pub fn emitExpr(self: *Emitter, node: *ast_mod.Node) anyerror![]const u8 {
                 return self.failAt(node, "native backend (Phase 2) does not support '{s}' operands", .{@tagName(p.kind)});
             }
             const resolved = try self.lookupBinding(node, p.name);
+            if (resolved.ir_type) |bind_ir| {
+                const bind_peeled = ir.peelDefined(bind_ir);
+                if (bind_peeled == .union_) {
+                    if (self.recordedType(node)) |rec_t| {
+                        const rec_peeled = ir.peelDefined(rec_t);
+                        if (rec_peeled != .union_) {
+                            const uinfo = try self.ensureUnionType(node, resolved.display);
+                            for (uinfo.variants) |v| {
+                                if (ir.typeEquals(rec_peeled, ir.peelDefined(v.arm_ir)) or ir.isSubtype(rec_peeled, v.arm_ir)) {
+                                    return std.fmt.allocPrint(self.arena.allocator(), "({s}.{s})", .{ resolved.zig_name, v.zig_name });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             return resolved.zig_name;
         },
         .binary => |b| return emitBinary(self, node, &b),
@@ -1001,6 +1018,27 @@ pub fn emitValueCoercedMode(self: *Emitter, node: *ast_mod.Node, target: ValType
     if (src.may_error) {
         return self.failAt(node, "error-union value must be handled with '?' first", .{});
     }
+    if (target.kind == .union_) {
+        if (src.kind == .union_ and std.mem.eql(u8, src.zig, target.zig)) {
+            return emitExpr(self, node);
+        }
+        const uinfo = try self.ensureUnionType(node, target.display);
+        for (uinfo.variants) |v| {
+            if (std.mem.eql(u8, src.zig, v.vt.zig) or std.mem.eql(u8, src.clean, v.vt.clean) or std.mem.eql(u8, src.display, v.vt.display)) {
+                const inner = try emitValueCoercedMode(self, node, v.vt, force);
+                return std.fmt.allocPrint(a, "{s}{{ .{s} = {s} }}", .{ target.zig, v.zig_name, inner });
+            }
+        }
+        if (self.recordedType(node)) |src_ir| {
+            for (uinfo.variants) |v| {
+                if (ir.isSubtype(src_ir, v.arm_ir)) {
+                    const inner = try emitValueCoercedMode(self, node, v.vt, force);
+                    return std.fmt.allocPrint(a, "{s}{{ .{s} = {s} }}", .{ target.zig, v.zig_name, inner });
+                }
+            }
+        }
+        return self.failAt(node, "cannot coerce '{s}' to union '{s}'", .{ src.display, target.display });
+    }
     if (node.* == .array_literal and target.kind == .array) {
         return emitArrayLiteral(self, node, &node.array_literal, target);
     }
@@ -1214,6 +1252,16 @@ pub fn emitMember(self: *Emitter, node: *ast_mod.Node, m: *const ast_mod.Member)
                 try std.fmt.allocPrint(a, "rt.err.expectError({s})", .{object_code});
             if (std.mem.eql(u8, prop, "message")) {
                 return std.fmt.allocPrint(a, "({s}).message", .{err_code});
+            }
+        }
+        if (obj_t.kind == .union_) {
+            const prop = m.property.primary.name;
+            const uinfo = try self.ensureUnionType(m.object, obj_t.display);
+            if (uinfo.discrim_field) |df| {
+                if (std.mem.eql(u8, prop, df)) {
+                    const object_code = try emitExpr(self, m.object);
+                    return std.fmt.allocPrint(a, "({s}).get_{s}()", .{ object_code, df });
+                }
             }
         }
     }

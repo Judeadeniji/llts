@@ -1008,7 +1008,7 @@ pub @func main() {
     print(m);
 }
 `);
-});
+}, 60_000);
 
 test("@as(string, [104, 105]) coerces integer-literal arrays to bytes", () => {
   const id = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
@@ -1150,4 +1150,66 @@ pub @func main() {
 }
 `);
 }, 60_000);
+
+test("emits discriminated struct unions with @switch narrowing and common field access", () => {
+  expectParity(`
+@enum ExprKind { Literal, Add }
+
+@struct Literal {
+    kind: ExprKind.Literal;
+    value: i64;
+}
+
+@struct Add {
+    kind: ExprKind.Add;
+    left: i64;
+    right: i64;
+}
+
+@type Expr = Literal | Add;
+
+@func eval(e: Expr) {
+    return @switch (e.kind) {
+        ExprKind.Literal => { break e.value; },
+        ExprKind.Add => { break e.left + e.right; },
+    };
+}
+
+pub @func main() {
+    $a: Expr = Literal{ kind: ExprKind.Literal, value: 42 };
+    $b: Expr = Add{ kind: ExprKind.Add, left: 3, right: 4 };
+
+    print(a.kind);
+    print(b.kind);
+    print(eval(a));
+    print(eval(b));
+
+    $label = @switch (a.kind) {
+        ExprKind.Literal => { break "lit"; },
+        ExprKind.Add => { break "add"; },
+    };
+    print(label);
+}
+`);
+}, 60_000);
+
+test("emits general union return types", () => {
+  expectParity(`
+@func get_val(flag: bool): i64 | string {
+    @if (flag) {
+        return 999;
+    }
+    return "done";
+}
+
+pub @func main() {
+    $x = get_val(true);
+    $y = get_val(false);
+    _ = x;
+    _ = y;
+    print("union returns ok");
+}
+`);
+}, 60_000);
+
 

@@ -55,8 +55,12 @@ pub fn compileDeclaration(state: *CompilerState, decl: *const ast.Declaration) !
 
     const is_module_export = std.mem.indexOf(u8, decl.name, "::") != null;
     // Module / top-level values outlive any frame — allocate literals immortally.
+    // Also promote any local whose address is taken (`&x`) anywhere in the enclosing
+    // function body: a handle stored into a field/returned must outlive the frame
+    // rewind, so we allocate it below the immortal floor rather than in the frame.
     const prev_immortal = state.alloc_immortal;
-    if (state.scope_depth == 0 or is_module_export) state.alloc_immortal = true;
+    const addr_taken = state.addr_taken_decls.contains(decl.value);
+    if (state.scope_depth == 0 or is_module_export or addr_taken) state.alloc_immortal = true;
     defer state.alloc_immortal = prev_immortal;
 
     if (comptime_value) |cval| {
@@ -142,6 +146,13 @@ pub fn compileDeclaration(state: *CompilerState, decl: *const ast.Declaration) !
             .is_const = decl.is_const,
             .alloc_region = if (cloned) .frame else escape.regionOfRhs(state, decl.value),
         });
+        // If this local's address is taken anywhere in the enclosing function
+        // body, mark it `.pass` so that reads of `x` keep resolving to the
+        // immortal shell (the `&x` itself is type-level for aggregate handles,
+        // but `return &x` / field stores must not dangle).
+        if (addr_taken) {
+            escape.markLocalRegion(state, decl.name, .pass);
+        }
         if (decl.is_const) {
             const slot: u8 = @intCast(state.locals.items.len - 1);
             try emit.emitOp(state, .OP_MARK_CONST);
@@ -502,6 +513,10 @@ pub fn compileTypeDecl(state: *CompilerState, td: *const ast.TypeDecl) !void {
                 try from_ast.ensureShapeLayoutFromDisplayAs(state, disp, td.name);
             }
         }
+    }
+    if (std.mem.indexOf(u8, disp, " | ") != null) {
+        try from_ast.ensureUnionLayoutFromDisplay(state, td.name);
+        try from_ast.ensureUnionLayoutFromDisplay(state, disp);
     }
 }
 

@@ -358,7 +358,7 @@ pub fn zeroValue(self: *Emitter, t: ValType) ![]const u8 {
         .bool => "false",
         .string => "\"\"",
         .optional, .null_value => "null",
-        .struct_, .array, .slice, .pointer => "undefined",
+        .struct_, .union_, .array, .slice, .pointer => "undefined",
         .error_value => "undefined",
         else => if (t.may_error)
             "undefined"
