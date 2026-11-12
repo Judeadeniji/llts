@@ -107,6 +107,28 @@ export function runSource(source: string): RunResult {
   }
 }
 
+const FIXTURES_DIR = path.join(import.meta.dir, "fixtures");
+
+/**
+ * Compile and run inline source next to the shared fixture modules in
+ * `tests/fixtures`, so snippets can `@import("./mem.lls")` and friends. The
+ * removed `std/` library used to provide these; tests must not need it.
+ */
+export function runSourceWithFixtures(source: string): RunResult {
+  requireBinary();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "llts_fixtures_"));
+  try {
+    for (const name of fs.readdirSync(FIXTURES_DIR)) {
+      fs.copyFileSync(path.join(FIXTURES_DIR, name), path.join(dir, name));
+    }
+    const entry = path.join(dir, "main.lls");
+    fs.writeFileSync(entry, ensureMain(source), "utf-8");
+    return runNativeFile(entry);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 /** Compile and run inline source exactly as written (no injected `main`). */
 export function runSourceAsWritten(source: string): RunResult {
   requireBinary();

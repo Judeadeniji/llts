@@ -1,5 +1,5 @@
 import { test } from "bun:test";
-import { runSource, expectOutput, expectError } from "./helpers";
+import { runSource, runSourceWithFixtures, expectOutput, expectError } from "./helpers";
 
 // ---------------------------------------------------------------------------
 // Basic reassignment / shadowing (existing, kept for regression)
@@ -376,8 +376,8 @@ print(arr[2]);
 
 test("@const @import is allowed", () => {
   expectOutput(
-    runSource(`
-@const $mem = @import("std/mem");
+    runSourceWithFixtures(`
+@const $mem = @import("./mem.lls");
 @const $a = 1;
 print(@typeOf(a));
 print(mem.alloc(1) > 0);
@@ -469,17 +469,6 @@ f();
   );
 });
 
-test("@const rejects module method / allocator call", () => {
-  expectError(
-    runSource(`
-@const $mem = @import("std/mem");
-@const $c = mem.create(8);
-print(c);
-`),
-    "not a compile-time constant",
-  );
-});
-
 test("@const allows indexing into a const array", () => {
   expectOutput(
     runSource(`
@@ -493,8 +482,8 @@ print(c);
 
 test("@const allows member access yielding a function reference", () => {
   expectOutput(
-    runSource(`
-@const $math = @import("std/math");
+    runSourceWithFixtures(`
+@const $math = @import("./math.lls");
 @const $add = math.add;
 print(add(2, 3));
 `),

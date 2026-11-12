@@ -62,16 +62,6 @@ print(@typeOf(boom()));
   );
 });
 
-test("std/os.exit is never", () => {
-  expectOutput(
-    runSource(`
-@const $os = @import("std/os");
-print(@typeOf(os.exit(1)));
-`),
-    ["never"],
-  );
-});
-
 // ---------------------------------------------------------------------------
 // Should work — bottom at call sites (compile only; do not invoke)
 // ---------------------------------------------------------------------------

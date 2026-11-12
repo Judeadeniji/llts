@@ -1,13 +1,11 @@
 import { test } from "bun:test";
-import { runSource, expectOutput } from "./helpers";
+import { runSource, runSourceWithFixtures, expectOutput } from "./helpers";
 
 test("errdefer runs on error exit; defer always", () => {
   expectOutput(
-    runSource(`
-@const $list = @import("std/list");
-@const $mem = @import("std/mem");
-$arena = mem.create(0);
-$state = list.create(arena);
+    runSourceWithFixtures(`
+@const $list = @import("./list.lls");
+$state = list.create(0);
 
 @func f(fail) {
     defer list.push(state, 1);
@@ -36,9 +34,8 @@ pub @func main() {
 
 test("errdefer LIFO with defer on success path", () => {
   expectOutput(
-    runSource(`
-@const $list = @import("std/list");
-@const $mem = @import("std/mem");
+    runSourceWithFixtures(`
+@const $list = @import("./list.lls");
 
 @func okFn(l) {
     defer list.push(l, 1);
@@ -49,8 +46,7 @@ test("errdefer LIFO with defer on success path", () => {
 }
 
 pub @func main() {
-    $arena = mem.create(0);
-    $l = list.create(arena);
+    $l = list.create(0);
     okFn(l);
     print(list.len(l));
     print(list.get(l, 0));
@@ -63,9 +59,8 @@ pub @func main() {
 
 test("errdefer LIFO with defer on error path", () => {
   expectOutput(
-    runSource(`
-@const $list = @import("std/list");
-@const $mem = @import("std/mem");
+    runSourceWithFixtures(`
+@const $list = @import("./list.lls");
 
 @func failFn(l) {
     defer list.push(l, 1);
@@ -76,8 +71,7 @@ test("errdefer LIFO with defer on error path", () => {
 }
 
 pub @func main() {
-    $arena = mem.create(0);
-    $l = list.create(arena);
+    $l = list.create(0);
     $err = failFn(l);
     print(@isError(err));
     print(list.len(l));
@@ -93,11 +87,9 @@ pub @func main() {
 
 test("errdefer with try operator unwinding", () => {
   expectOutput(
-    runSource(`
-@const $list = @import("std/list");
-@const $mem = @import("std/mem");
-$arena = mem.create(0);
-$state = list.create(arena);
+    runSourceWithFixtures(`
+@const $list = @import("./list.lls");
+$state = list.create(0);
 
 @func throws() {
     return error("Crash");
@@ -157,11 +149,9 @@ pub @func main() {
 
 test("nested block errdefer runs on ? unwind", () => {
   expectOutput(
-    runSource(`
-@const $list = @import("std/list");
-@const $mem = @import("std/mem");
-$arena = mem.create(0);
-$state = list.create(arena);
+    runSourceWithFixtures(`
+@const $list = @import("./list.lls");
+$state = list.create(0);
 
 @func throws() {
     return error("inner");
@@ -193,11 +183,9 @@ pub @func main() {
 
 test("return non-error after local error does not run errdefer", () => {
   expectOutput(
-    runSource(`
-@const $list = @import("std/list");
-@const $mem = @import("std/mem");
-$arena = mem.create(0);
-$state = list.create(arena);
+    runSourceWithFixtures(`
+@const $list = @import("./list.lls");
+$state = list.create(0);
 
 @func f() {
     defer list.push(state, 1);

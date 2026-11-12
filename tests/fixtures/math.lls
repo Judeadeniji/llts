@@ -1,0 +1,6 @@
+# Stand-in for the removed std/math module: one exported function so tests can
+# take a function reference out of a module.
+
+pub @func add(a: int, b: int): int {
+    return a + b;
+}

@@ -4,22 +4,16 @@ import { expectOutput, runSource } from "./helpers";
 test("@if optional unwrap keeps struct field access", () => {
   expectOutput(
     runSource(`
-@const $list = @import("std/list");
-@const $mem = @import("std/mem");
 @struct Tok {
     kind: i64;
     value: string;
 }
-@func prev(l): ?Tok {
-    @if (list.len(l) == 0) { return null; }
-    $t: Tok = list.get(l, 0);
+@func first(): ?Tok {
+    $t = Tok { kind: 7, value: "hi" };
     return t;
 }
 pub @func main() {
-    $a = mem.create(0);
-    $l = list.create(a);
-    list.push(l, Tok { kind: 7, value: "hi" });
-    @if (prev(l)) |t| {
+    @if (first()) |t| {
         print(t.kind);
         print(t.value);
     }

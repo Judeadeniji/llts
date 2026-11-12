@@ -8,22 +8,22 @@
  * After the fix: OP_SET_PROPERTY writes the value to the JS object directly.
  */
 import { test } from "bun:test";
-import { expectOutput, expectError, runSource } from "./helpers";
+import { expectOutput, expectError, runSource, runSourceWithFixtures } from "./helpers";
 
-test("rejects mutating imported module namespace", () => {
-  const result = runSource(`
-@const $std = @import("std/index");
-$obj = std.fmt;
+test("rejects mutating a module namespace reached through an alias", () => {
+  const result = runSourceWithFixtures(`
+@const $mod = @import("./mod.lls");
+$obj = mod.fmt;
 obj.x = 42;
 print(obj.x);
 `);
-  expectError(result, "Cannot assign field 'x' on non-struct target");
+  expectError(result, "Cannot assign to member 'x' of imported module");
 });
 
 test("rejects direct assignment to imported module property", () => {
-  const result = runSource(`
-@const $std = @import("std/index");
-std.fmt.x = 42;
+  const result = runSourceWithFixtures(`
+@const $mod = @import("./mod.lls");
+mod.fmt.x = 42;
 `);
   expectError(result, "Cannot assign to member 'x' of imported module");
 });

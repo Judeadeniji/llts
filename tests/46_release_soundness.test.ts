@@ -57,11 +57,6 @@ const staticCases: Array<{ file: string; needle: string; strict: boolean }> = [
     strict: false,
   },
   {
-    file: "arena_local_escape.lls",
-    needle: "escapes its arena region",
-    strict: false,
-  },
-  {
     file: "const_overflow.lls",
     needle: "Integer overflow in constant expression",
     strict: false,

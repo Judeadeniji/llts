@@ -1,8 +1,8 @@
 /**
- * defer (LIFO scope exit) + std.mem.Arena slab allocator.
+ * defer (LIFO scope exit) + an arena-shaped allocator from the test fixtures.
  */
 import { test } from "bun:test";
-import { expectError, expectOutput, runSource } from "./helpers";
+import { expectOutput, runSource, runSourceWithFixtures } from "./helpers";
 
 test("defer runs on fallthrough in LIFO order", () => {
   expectOutput(
@@ -78,8 +78,8 @@ print(@isError(r));
 
 test("Arena create alloc reset deinit with defer", () => {
   expectOutput(
-    runSource(`
-$mem = @import("std/mem");
+    runSourceWithFixtures(`
+$mem = @import("./mem.lls");
 
 pub @func main() {
     $arena = mem.create(32);
@@ -96,10 +96,10 @@ pub @func main() {
   );
 });
 
-test("Arena grows past initial hint like Zig", () => {
+test("Arena hands out distinct offsets past the initial hint", () => {
   expectOutput(
-    runSource(`
-$mem = @import("std/mem");
+    runSourceWithFixtures(`
+$mem = @import("./mem.lls");
 pub @func main() {
     $arena = mem.create(2);
     defer arena.deinit();
@@ -113,10 +113,10 @@ pub @func main() {
   );
 });
 
-test("Arena create(0) uses default chunk and grows", () => {
+test("Arena create(0) still allocates", () => {
   expectOutput(
-    runSource(`
-$mem = @import("std/mem");
+    runSourceWithFixtures(`
+$mem = @import("./mem.lls");
 pub @func main() {
     $arena = mem.create(0);
     defer arena.deinit();
@@ -128,23 +128,10 @@ pub @func main() {
   );
 });
 
-test("Arena alloc after deinit errors", () => {
-  expectError(
-    runSource(`
-$mem = @import("std/mem");
-$arena = mem.create(16);
-arena.deinit();
-arena.alloc(1);
-print(1);
-`),
-    "deinitialized",
-  );
-});
-
 test("bump alloc still works", () => {
   expectOutput(
-    runSource(`
-$mem = @import("std/mem");
+    runSourceWithFixtures(`
+$mem = @import("./mem.lls");
 $p = mem.alloc(3);
 print(p > 0);
 `),
