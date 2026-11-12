@@ -227,6 +227,38 @@ const Ctx = struct {
         }
     }
 
+    /// Record that the place rooted at `node` is address-taken (`&place`).
+    ///
+    /// Consumers rely on this: the bytecode backend allocates such a local's
+    /// aggregate literal below the immortal floor, and the native emitter boxes
+    /// it in immortal storage, so a pointer stored into a field or returned from
+    /// the function cannot dangle once the frame is rewound. Keyed by the
+    /// declaration's initializer node — the shape both backends see.
+    fn markAddrTaken(ctx: *Ctx, node: *ast.Node) anyerror!void {
+        var root = node;
+        while (true) {
+            switch (root.*) {
+                .member => |m| root = m.object,
+                .index => |ix| root = ix.object,
+                .primary => break,
+                else => return,
+            }
+        }
+        if (root.primary.kind != .identifier and root.primary.kind != .register) return;
+        const name = root.primary.name;
+        var i = ctx.scopes.items.len;
+        while (i > 0) {
+            i -= 1;
+            if (ctx.scopes.items[i].get(name)) |entry| {
+                switch (entry) {
+                    .decl => |decl_node| try ctx.state.addr_taken_decls.put(decl_node.declaration.value, {}),
+                    else => {},
+                }
+                return;
+            }
+        }
+    }
+
     fn walkPlaceRootAssigned(ctx: *Ctx, node: *ast.Node) anyerror!void {
         switch (node.*) {
             .primary => |p| {
@@ -281,6 +313,7 @@ const Ctx = struct {
             },
             .unary => |u| {
                 if (std.mem.eql(u8, u.operator, "&")) {
+                    try ctx.markAddrTaken(u.arg);
                     try ctx.walkPlaceRootAssigned(u.arg);
                 } else {
                     try ctx.walkExpr(u.arg);
