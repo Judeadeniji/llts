@@ -527,6 +527,60 @@ test "pipeline native execution: named type and shape alias convert both ways" {
     try helpers.expectNativeStdout(allocator, src, "1 1\n");
 }
 
+test "pipeline native execution: concurrent native builds do not share a staged unit" {
+    const allocator = std.testing.allocator;
+    const count = 8;
+    var paths: [count][]u8 = undefined;
+    var children: [count]std.process.Child = undefined;
+    var spawned: usize = 0;
+    defer for (children[0..spawned]) |*child| {
+        _ = child.wait() catch {};
+    };
+    defer for (paths[0..spawned]) |path| {
+        std.fs.deleteFileAbsolute(path) catch {};
+        allocator.free(path);
+    };
+
+    // Write every source first, then start the builds back to back: each build
+    // stages its emitted Zig in the working directory, so overlapping builds are
+    // what makes a shared staged name observable.
+    for (0..count) |i| {
+        const path = try std.fmt.allocPrint(allocator, "/tmp/llts_parallel_{d}_{x}.lls", .{ i, std.crypto.random.int(u32) });
+        paths[i] = path;
+        const source = try std.fmt.allocPrint(allocator, "pub @func main() {{\n    print({d});\n}}\n", .{i + 1});
+        defer allocator.free(source);
+        const f = try std.fs.createFileAbsolute(path, .{});
+        defer f.close();
+        try f.writeAll(source);
+    }
+    for (0..count) |i| {
+        children[i] = std.process.Child.init(&.{ "zig-out/bin/llts", "run", "--native", paths[i] }, allocator);
+        children[i].stdout_behavior = .Pipe;
+        children[i].stderr_behavior = .Pipe;
+        try children[i].spawn();
+        spawned += 1;
+    }
+
+    for (0..count) |i| {
+        const stdout = try children[i].stdout.?.readToEndAlloc(allocator, 4096);
+        defer allocator.free(stdout);
+        const stderr = try children[i].stderr.?.readToEndAlloc(allocator, 64 * 1024);
+        defer allocator.free(stderr);
+        const term = try children[i].wait();
+        const code: u8 = switch (term) {
+            .Exited => |c| @intCast(c),
+            else => 1,
+        };
+        if (code != 0) {
+            std.debug.print("Concurrent native run {d} failed with code {d}:\n{s}\n", .{ i, code, stderr });
+            return error.ConcurrentNativeRunFailed;
+        }
+        var expected_buf: [8]u8 = undefined;
+        const expected = try std.fmt.bufPrint(&expected_buf, "{d}\n", .{i + 1});
+        try std.testing.expectEqualStrings(expected, stdout);
+    }
+}
+
 test "pipeline native execution: closure called through a struct field" {
     const allocator = std.testing.allocator;
     const src =
