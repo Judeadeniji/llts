@@ -123,3 +123,22 @@ test "typecheck: closure with mutated capture" {
     try std.testing.expectEqualStrings("counter", info.captures[0].name);
     try std.testing.expectEqual(true, info.captures[0].is_mutated);
 }
+
+test "typecheck: method with a type parameter before 'self' is rejected, not a crash" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\@type Fn = @func(int): int;
+        \\@struct Runner {
+        \\    tag: int;
+        \\
+        \\    @func apply(F: type, self, f: F, x: int): int {
+        \\        return f(x);
+        \\    }
+        \\}
+        \\pub @func main() {
+        \\    $r: Runner = { tag: 0 };
+        \\    print(r.apply(Fn, @func(v: int): int { return v; }, 14));
+        \\}
+    ;
+    try helpers.expectCompileFail(allocator, src);
+}

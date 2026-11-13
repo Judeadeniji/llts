@@ -187,6 +187,17 @@ fn bindCopyInner(state: *CompilerState, template: *ast.Node, name: []const u8, q
         }
         const key = try std.fmt.allocPrint(state.allocator, "{s}::{s}", .{ prefix, p.name });
         try state.owned.append(state.allocator, key);
+        // A method whose type parameter is declared before its receiver leaves
+        // the receiver holding the caller's first type argument, so fewer type
+        // arguments were collected than the template declares. Report it rather
+        // than indexing past the end of the list.
+        if (ai >= qualified_args.len) {
+            return compile_errors.compileFailFmt(
+                state,
+                "Generic function '{s}' is missing a type argument for parameter '{s}' (a method's 'self' must lead its parameter list)",
+                .{ template.function_decl.name, p.name },
+            );
+        }
         const underlying = qualified_args[ai];
         ai += 1;
         try state.typedefs.put(key, .{
