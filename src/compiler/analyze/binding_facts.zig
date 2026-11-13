@@ -38,6 +38,8 @@ pub fn analyze(state: *state_mod.CompilerState, doc: *ast.Document) !void {
         if (after == before) break;
     }
 
+    try recordClosureParams(state);
+
     // Synchronize closure captures with addr_taken facts: any capture that is mutated
     // must have its declaration in addr_taken_decls (boxed in immortal heap cell), and any
     // capture whose declaration is addr_taken must capture by pointer (is_mutated = true).
@@ -66,6 +68,79 @@ pub fn analyze(state: *state_mod.CompilerState, doc: *ast.Document) !void {
             }
         }
     }
+}
+
+/// Record instance parameters that every call site fills with the same closure
+/// literal. Such a parameter can never hold a different closure at runtime, so
+/// the emitter may call that closure's trampoline directly instead of going
+/// through the fat pointer's indirect call.
+fn recordClosureParams(state: *state_mod.CompilerState) !void {
+    var sites = std.StringHashMap(std.ArrayList(*ast.Node)).init(state.allocator);
+    defer {
+        var lit = sites.valueIterator();
+        while (lit.next()) |list| list.deinit(state.allocator);
+        sites.deinit();
+    }
+    var git = state.generic_calls.iterator();
+    while (git.next()) |entry| {
+        const gop = try sites.getOrPut(entry.value_ptr.instance);
+        if (!gop.found_existing) gop.value_ptr.* = .empty;
+        try gop.value_ptr.append(state.allocator, entry.key_ptr.*);
+    }
+
+    var sit = sites.iterator();
+    while (sit.next()) |entry| {
+        const def = state.functions.get(entry.key_ptr.*) orelse continue;
+        if (def.node.* != .function_decl) continue;
+        const f = &def.node.function_decl;
+        if (f.params.* != .params) continue;
+        const params = f.params.params.params;
+        for (params, 0..) |*param, pi| {
+            // Storing the parameter would let it be called as something else
+            // later; only a parameter that never leaves the instance is safe.
+            if (state.escaping_params.contains(param)) continue;
+            // Reassigning the parameter inside the body breaks the "always this
+            // closure" claim just as surely as storing it does.
+            if (state.param_facts.get(param)) |facts| {
+                if (facts.assigned or facts.reassigned) continue;
+            }
+            var found: ?u32 = null;
+            var agreed = true;
+            for (entry.value_ptr.items) |call_node| {
+                const gc = state.generic_calls.get(call_node) orelse {
+                    agreed = false;
+                    break;
+                };
+                // A method's receiver leads the instance's parameters but is not
+                // among the call's value arguments.
+                const offset: usize = if (gc.receiver) 1 else 0;
+                const value_args = @min(gc.value_args, call_node.call.args.len);
+                const lead = call_node.call.args.len - value_args;
+                if (pi < offset or pi - offset >= value_args) {
+                    agreed = false;
+                    break;
+                }
+                const cid = closureIdOf(state, call_node.call.args[lead + pi - offset]) orelse {
+                    agreed = false;
+                    break;
+                };
+                if (found) |prev| {
+                    if (prev != cid) {
+                        agreed = false;
+                        break;
+                    }
+                } else found = cid;
+            }
+            if (agreed) if (found) |cid| try state.closure_params.put(param, cid);
+        }
+    }
+}
+
+/// Id of the closure an expression denotes, when it is written as a literal.
+fn closureIdOf(state: *state_mod.CompilerState, node: *ast.Node) ?u32 {
+    if (node.* != .function_decl) return null;
+    const info = state.closures.get(node) orelse return null;
+    return info.id;
 }
 
 fn walkProgram(state: *state_mod.CompilerState, doc: *ast.Document) !void {
@@ -430,21 +505,28 @@ const Ctx = struct {
     }
 
     /// Does the callee keep the pointer passed at `index`? Unknown callees
-    /// (builtins, externs, generic instances, variadics) are assumed to keep it.
-    fn argEscapes(ctx: *Ctx, c: ast.Call, index: usize) bool {
+    /// (builtins, externs, variadics) are assumed to keep it.
+    fn argEscapes(ctx: *Ctx, call_node: *ast.Node, c: ast.Call, index: usize) bool {
         const target = ctx.state.call_targets.get(c.callee) orelse return true;
-        // A generic instance shares the template's parameter nodes, so the
-        // template's escape facts apply just as well to the specialised call:
-        // `apply(T, f, x)` that merely calls `f` does not keep it.
         const def = ctx.state.functions.getPtr(target.key) orelse return true;
         if (def.is_variadic or def.node.* != .function_decl) return true;
         const f = &def.node.function_decl;
         if (f.params.* != .params) return true;
         const params = f.params.params.params;
+        // A generic call leads with compile-time type arguments that bind no
+        // value slot; the instance's copy of the template has already dropped
+        // its own type parameters, so align on the value arguments.
+        const lead: usize = if (ctx.state.generic_calls.get(call_node)) |gc|
+            c.args.len - @min(gc.value_args, c.args.len)
+        else
+            0;
+        // A type argument is compile-time: it cannot outlive the frame.
+        if (index < lead) return false;
         // A method's receiver occupies params[0] and is not in `args`.
         const offset: usize = if (target.receiver_mode == .none) 0 else 1;
-        if (params.len != c.args.len + offset) return true;
-        return ctx.state.escaping_params.contains(&params[index + offset]);
+        const slot = index - lead + offset;
+        if (slot >= params.len) return true;
+        return ctx.state.escaping_params.contains(&params[slot]);
     }
 
     fn walkPlaceRootAssigned(ctx: *Ctx, node: *ast.Node) anyerror!void {
@@ -545,7 +627,7 @@ const Ctx = struct {
                     try ctx.walkExpr(arg);
                     // A callee that keeps the pointer (or one we cannot see
                     // into) extends the pointee's lifetime past this frame.
-                    if (ctx.argEscapes(c, ai)) try ctx.noteEscape(arg);
+                    if (ctx.argEscapes(node, c, ai)) try ctx.noteEscape(arg);
                 }
                 if (c.callee.* == .member) {
                     const m = &c.callee.member;

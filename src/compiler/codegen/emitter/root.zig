@@ -127,6 +127,10 @@ pub const Binding = struct {
     fn_key: ?[]const u8 = null,
     /// Module namespace value — no runtime representation.
     module_path: ?[]const u8 = null,
+    /// This parameter is always handed the same closure (a generic instance
+    /// specialised on a closure argument); its calls go straight to the
+    /// closure's trampoline instead of through the fat pointer.
+    closure_id: ?u32 = null,
 };
 
 pub const Global = struct {

@@ -397,6 +397,10 @@ pub const CompilerState = struct {
     /// caller only has to keep the pointee alive (box its local) when the callee
     /// appears here; the set is closed transitively by `binding_facts`.
     escaping_params: std.AutoHashMap(*const ast.Param, void),
+    /// Instance parameters that every call site fills with the same closure
+    /// literal, mapped to that closure's id. Recorded by the analysis pass so
+    /// the emitter can call the trampoline directly instead of the fat pointer.
+    closure_params: std.AutoHashMap(*const ast.Param, u32),
     /// Last AST location seen while compiling — used when a CompileError has no explicit loc.
     diag_path: []const u8 = "",
     diag_line: u32 = 0,
@@ -434,6 +438,7 @@ pub fn create(allocator: std.mem.Allocator) !CompilerState {
         .addr_taken_decls = std.AutoHashMap(*const ast.Node, void).init(allocator),
         .addr_taken_params = std.AutoHashMap(*const ast.Param, void).init(allocator),
         .escaping_params = std.AutoHashMap(*const ast.Param, void).init(allocator),
+        .closure_params = std.AutoHashMap(*const ast.Param, u32).init(allocator),
         .chunk = chunk_mod.Chunk.init(allocator),
         .comptime_max_loop_iterations = max_iters,
         .functions = std.StringHashMap(FunctionDef).init(allocator),
@@ -654,6 +659,7 @@ pub fn deinit(self: *CompilerState) void {
     self.addr_taken_decls.deinit();
     self.addr_taken_params.deinit();
     self.escaping_params.deinit();
+    self.closure_params.deinit();
 }
 
 pub fn currentChunk(state: *CompilerState) *chunk_mod.Chunk {

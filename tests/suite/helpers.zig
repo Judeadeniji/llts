@@ -90,6 +90,17 @@ pub fn expectEmitContains(allocator: std.mem.Allocator, source: []const u8, need
     }
 }
 
+/// Assert that the emitted Zig code does not contain the given needle.
+pub fn expectEmitOmits(allocator: std.mem.Allocator, source: []const u8, needle: []const u8) !void {
+    const emitted = try emitZigString(allocator, source, true);
+    defer allocator.free(emitted);
+
+    if (std.mem.indexOf(u8, emitted, needle)) |at| {
+        std.debug.print("Expected emitted Zig to omit '{s}', found at byte {d}:\n{s}\n", .{ needle, at, emitted });
+        return error.EmittedCodeUnexpected;
+    }
+}
+
 /// End-to-end execution of LLTS code through the native backend.
 pub fn runNativeSource(allocator: std.mem.Allocator, source: []const u8) !struct { stdout: []u8, stderr: []u8, code: u8 } {
     var prng = std.Random.DefaultPrng.init(@intCast(std.time.milliTimestamp()));

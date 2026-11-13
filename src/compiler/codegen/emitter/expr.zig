@@ -315,7 +315,11 @@ pub fn emitCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) any
 
     // A closure literal may be called on the spot (`(@func (x: int) { … })(1)`);
     // its target is registered by the binding analysis like any other closure.
-    if (c.callee.* != .primary and c.callee.* != .call and c.callee.* != .function_decl) {
+    // A function-valued field (`counter.increment()`) is not a method, so it
+    // falls through to the function-value call path below.
+    if (c.callee.* != .primary and c.callee.* != .call and
+        c.callee.* != .function_decl and c.callee.* != .member)
+    {
         return self.failAt(node, "native backend (Phase 2) only supports direct function calls", .{});
     }
     // A `.call` callee is a devirtualized function call (`f()()`), recorded in
@@ -488,6 +492,21 @@ pub fn emitCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) any
         }
         const args_joined = try std.mem.join(a, ", ", args_buf.items);
         const callee_expr = try emitExpr(self, c.callee);
+        // A parameter that always receives the same closure calls that
+        // closure's trampoline directly; the environment still arrives as the
+        // value the caller built, so no indirect call is needed.
+        if (c.callee.* == .primary and (c.callee.primary.kind == .identifier or c.callee.primary.kind == .register)) {
+            const b = self.lookupBindingOptional(c.callee.primary.name);
+            if (b != null and b.?.closure_id != null) {
+                self.counter += 1;
+                const cid = self.counter;
+                const tramp = try std.fmt.allocPrint(a, "lls_closure_fn_{d}", .{b.?.closure_id.?});
+                if (args_joined.len == 0) {
+                    return std.fmt.allocPrint(a, "blk: {{ const lls_f_{d} = {s}; break :blk (try {s}(ctx, lls_f_{d}.env)); }}", .{ cid, callee_expr, tramp, cid });
+                }
+                return std.fmt.allocPrint(a, "blk: {{ const lls_f_{d} = {s}; break :blk (try {s}(ctx, lls_f_{d}.env, {s})); }}", .{ cid, callee_expr, tramp, cid, args_joined });
+            }
+        }
         self.counter += 1;
         const cid = self.counter;
         if (args_joined.len == 0) {

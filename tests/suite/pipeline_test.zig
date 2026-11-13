@@ -148,6 +148,76 @@ test "pipeline native execution: locally devirtualized closure call" {
     try helpers.expectNativeStdout(allocator, src, "40\n100\n");
 }
 
+test "emitter: non-escaping closure keeps its environment on the stack" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\pub @func main() {
+        \\    $factor: int = 4;
+        \\    $quad = @func(x: int): int {
+        \\        return x * factor;
+        \\    };
+        \\    print(quad(10));
+        \\}
+    ;
+    try helpers.expectEmitContains(allocator, src, "lls_env_stack_");
+    try helpers.expectEmitOmits(allocator, src, "allocImmortal(");
+}
+
+test "emitter: generic instance calls its bound closure trampoline directly" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\@type Fn = @func(int): int;
+        \\@func apply(F: type, f: F, x: int): int {
+        \\    return f(x);
+        \\}
+        \\pub @func main() {
+        \\    $factor: int = 4;
+        \\    print(apply(Fn, @func(v: int): int {
+        \\        return v * factor;
+        \\    }, 5));
+        \\}
+    ;
+    try helpers.expectEmitContains(allocator, src, "lls_closure_fn_");
+    try helpers.expectEmitOmits(allocator, src, ".call(ctx");
+}
+
+test "pipeline native execution: generic higher-order function with a closure" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\@type Fn = @func(int): int;
+        \\@func apply(F: type, f: F, x: int): int {
+        \\    return f(x);
+        \\}
+        \\pub @func main() {
+        \\    $factor: int = 4;
+        \\    print(apply(Fn, @func(v: int): int {
+        \\        return v * factor;
+        \\    }, 5));
+        \\}
+    ;
+    try helpers.expectNativeStdout(allocator, src, "20\n");
+}
+
+test "pipeline native execution: generic function returning its closure parameter" {
+    const allocator = std.testing.allocator;
+    // The parameter outlives the instance's frame, so this must keep the heap
+    // environment the stack-allocation path would have handed back.
+    const src =
+        \\@type Fn = @func(int): int;
+        \\@func keep(F: type, f: F): F {
+        \\    return f;
+        \\}
+        \\pub @func main() {
+        \\    $factor: int = 2;
+        \\    $doubled = keep(Fn, @func(v: int): int {
+        \\        return v * factor;
+        \\    });
+        \\    print(doubled(21));
+        \\}
+    ;
+    try helpers.expectNativeStdout(allocator, src, "42\n");
+}
+
 test "pipeline native execution: immediate closure IIFE" {
     const allocator = std.testing.allocator;
     const src =
@@ -159,4 +229,35 @@ test "pipeline native execution: immediate closure IIFE" {
         \\}
     ;
     try helpers.expectNativeStdout(allocator, src, "42\n");
+}
+
+test "pipeline native execution: closure called through a struct field" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\@type Counter = {
+        \\    increment: @func(): int;
+        \\    value: @func(): int;
+        \\};
+        \\@func makeCounter(): Counter {
+        \\    $count: int = 0;
+        \\    return Counter {
+        \\        increment: @func(): int {
+        \\            count = count + 1;
+        \\            return count;
+        \\        },
+        \\        value: @func(): int {
+        \\            return count;
+        \\        },
+        \\    };
+        \\}
+        \\pub @func main() {
+        \\    $a = makeCounter();
+        \\    print(a.increment());
+        \\    print(a.increment());
+        \\    print(a.value());
+        \\    $b = makeCounter();
+        \\    print(b.value());
+        \\}
+    ;
+    try helpers.expectNativeStdout(allocator, src, "1\n2\n2\n0\n");
 }

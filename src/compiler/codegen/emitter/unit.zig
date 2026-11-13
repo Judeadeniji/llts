@@ -555,6 +555,7 @@ pub fn prepareFunction(
             .display = display,
             .ir_type = ir_type,
             .is_param = true,
+            .closure_id = self.state.closure_params.get(p),
         };
         // Initialize mutation/read flags from the compiler-recorded facts.
         if (self.state.param_facts.get(p)) |facts| {
