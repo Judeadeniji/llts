@@ -334,6 +334,81 @@ test "pipeline native execution: immediate closure IIFE" {
     try helpers.expectNativeStdout(allocator, src, "42\n");
 }
 
+test "emitter: closure held in a struct field is called directly" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\@type Counter = {
+        \\    increment: @func(): int;
+        \\};
+        \\pub @func main() {
+        \\    $count: int = 0;
+        \\    $a: Counter = Counter {
+        \\        increment: @func(): int {
+        \\            count = count + 1;
+        \\            return count;
+        \\        },
+        \\    };
+        \\    print(a.increment());
+        \\}
+    ;
+    try helpers.expectEmitOmits(allocator, src, ".call(ctx");
+}
+
+test "pipeline native execution: struct fields through two locals keep their own closures" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\@type Counter = {
+        \\    next: @func(): int;
+        \\};
+        \\pub @func main() {
+        \\    $n: int = 0;
+        \\    $a: Counter = Counter {
+        \\        next: @func(): int {
+        \\            n = n + 1;
+        \\            return n;
+        \\        },
+        \\    };
+        \\    print(a.next());
+        \\    print(a.next());
+        \\    $m: int = 10;
+        \\    $b: Counter = Counter {
+        \\        next: @func(): int {
+        \\            m = m + 5;
+        \\            return m;
+        \\        },
+        \\    };
+        \\    print(b.next());
+        \\}
+    ;
+    try helpers.expectNativeStdout(allocator, src, "1\n2\n15\n");
+}
+
+test "emitter: field of an address-taken struct stays indirect" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\@type Counter = {
+        \\    next: @func(): int;
+        \\};
+        \\@func bump(c: *Counter): int {
+        \\    return c.next();
+        \\}
+        \\pub @func main() {
+        \\    $n: int = 0;
+        \\    $a: Counter = Counter {
+        \\        next: @func(): int {
+        \\            n = n + 1;
+        \\            return n;
+        \\        },
+        \\    };
+        \\    print(a.next());
+        \\    print(bump(&a));
+        \\}
+    ;
+    // `&a` lets `bump` overwrite the field, so neither call may assume a target.
+    try helpers.expectEmitContains(allocator, src, ".call(ctx");
+    try helpers.expectNativeStdout(allocator, src, "1\n2\n");
+}
+
 test "pipeline native execution: closure called through a struct field" {
     const allocator = std.testing.allocator;
     const src =

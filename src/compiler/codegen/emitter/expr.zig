@@ -492,6 +492,21 @@ pub fn emitCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) any
         }
         const args_joined = try std.mem.join(a, ", ", args_buf.items);
         const callee_expr = try emitExpr(self, c.callee);
+        // A field that always holds the same closure calls that closure's
+        // trampoline directly; the environment still arrives in the field, so
+        // no indirect call is needed.
+        if (c.callee.* == .member) {
+            if (self.state.closure_member_ids.get(c.callee)) |ref| {
+                self.counter += 1;
+                const cid = self.counter;
+                const tramp = try std.fmt.allocPrint(a, "lls_closure_fn_{d}", .{ref.id});
+                if (args_joined.len == 0) {
+                    return std.fmt.allocPrint(a, "blk: {{ const lls_f_{d} = {s}; break :blk (try {s}(ctx, lls_f_{d}.env)); }}", .{ cid, callee_expr, tramp, cid });
+                }
+                return std.fmt.allocPrint(a, "blk: {{ const lls_f_{d} = {s}; break :blk (try {s}(ctx, lls_f_{d}.env, {s})); }}", .{ cid, callee_expr, tramp, cid, args_joined });
+            }
+        }
+
         // A parameter that always receives the same closure calls that
         // closure's trampoline directly; the environment still arrives as the
         // value the caller built, so no indirect call is needed.

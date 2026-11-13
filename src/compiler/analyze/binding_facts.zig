@@ -39,6 +39,7 @@ pub fn analyze(state: *state_mod.CompilerState, doc: *ast.Document) !void {
     }
 
     try recordClosureParams(state);
+    pruneMemberClosures(state);
 
     // Synchronize closure captures with addr_taken facts: any capture that is mutated
     // must have its declaration in addr_taken_decls (boxed in immortal heap cell), and any
@@ -68,6 +69,22 @@ pub fn analyze(state: *state_mod.CompilerState, doc: *ast.Document) !void {
             }
         }
     }
+}
+
+/// Drop field-closure facts whose aggregate is mutated anywhere: a field write,
+/// a pointer receiver, or `&obj`. Escape facts settle only after the fixpoint,
+/// so the entries are re-checked here once all rounds are done.
+fn pruneMemberClosures(state: *state_mod.CompilerState) void {
+    var stale: std.ArrayList(*ast.Node) = .empty;
+    defer stale.deinit(state.allocator);
+    var it = state.closure_member_ids.iterator();
+    while (it.next()) |entry| {
+        const facts = state.binding_facts.get(entry.value_ptr.decl_node) orelse state_mod.BindingFacts{};
+        if (facts.assigned or facts.reassigned) {
+            stale.append(state.allocator, entry.key_ptr.*) catch return;
+        }
+    }
+    for (stale.items) |key| _ = state.closure_member_ids.remove(key);
 }
 
 /// Record instance parameters that every call site fills with the same closure
@@ -449,6 +466,62 @@ const Ctx = struct {
         });
     }
 
+    /// Remember that `obj.field` always reads the same closure literal, when
+    /// `obj` is a local built from a struct literal that initializes the field
+    /// with that closure. A later field write or `&obj` marks the local
+    /// `assigned`, and `pruneMemberClosures` drops the entry then.
+    fn recordMemberClosure(ctx: *Ctx, node: *ast.Node, m: ast.Member) !void {
+        if (m.object.* != .primary) return;
+        const obj = m.object.primary;
+        if (obj.kind != .identifier and obj.kind != .register) return;
+        const entry = ctx.lookup(obj.name) orelse return;
+        const decl_node = switch (entry) {
+            .decl => |d| d,
+            else => return,
+        };
+        if (decl_node.* != .declaration) return;
+        const value = decl_node.declaration.value;
+        if (value.* != .struct_init) return;
+        const prop = m.property.primary.name;
+        for (value.struct_init.fields) |field| {
+            if (!std.mem.eql(u8, field.name, prop)) continue;
+            const ref = ctx.closureRefOf(field.value) orelse return;
+            try ctx.state.closure_member_ids.put(node, .{
+                .decl_node = decl_node,
+                .closure_node = ref.closure_node,
+                .id = ref.id,
+            });
+            return;
+        }
+    }
+
+    /// The closure an expression denotes: a closure literal, or a local bound to
+    /// one that is never reassigned.
+    fn closureRefOf(ctx: *Ctx, expr: *ast.Node) ?state_mod.ClosureValueRef {
+        if (expr.* == .function_decl) {
+            const info = ctx.state.closures.get(expr) orelse return null;
+            return .{ .decl_node = expr, .closure_node = expr, .id = info.id };
+        }
+        if (expr.* != .primary) return null;
+        const p = expr.primary;
+        if (p.kind != .identifier and p.kind != .register) return null;
+        const cdecl = ctx.closure_decls.get(p.name) orelse return null;
+        // A shadowing declaration of the same name is a different closure.
+        const entry = ctx.lookup(p.name) orelse return null;
+        switch (entry) {
+            .decl => |decl_node| if (decl_node != cdecl.decl_node) return null,
+            else => return null,
+        }
+        if (ctx.state.binding_facts.get(cdecl.decl_node)) |facts| {
+            if (facts.reassigned) return null;
+        }
+        return .{
+            .decl_node = cdecl.decl_node,
+            .closure_node = cdecl.closure_node,
+            .id = cdecl.closure_id,
+        };
+    }
+
     /// Record that `&place` hands out a pointer that outlives this frame.
     ///
     /// Consumers rely on this: the bytecode backend allocates the binding's
@@ -673,6 +746,9 @@ const Ctx = struct {
                         }
                     }
                     try ctx.walkExpr(m.object);
+                    // The callee is a field of func type: it skips the generic
+                    // member walk, so record its closure here.
+                    if (m.property.* == .primary) try ctx.recordMemberClosure(c.callee, m.*);
                 } else {
                     if (c.callee.* == .function_decl) {
                         if (ctx.state.closures.get(c.callee)) |info| {
@@ -696,6 +772,8 @@ const Ctx = struct {
                 try ctx.walkExpr(m.object);
                 if (m.property.* != .primary) {
                     try ctx.walkExpr(m.property);
+                } else {
+                    try ctx.recordMemberClosure(node, m);
                 }
             },
             .index => |ix| {
