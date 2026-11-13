@@ -85,6 +85,72 @@ pub @func main() {
 }
 ```
 
+### 1.6 Closures: Anonymous Functions with Captures
+
+An `@func(...)` expression is a closure literal. It can be assigned to a binding, returned from a function, stored in a struct, or called immediately:
+
+```llts
+pub @func main() {
+    $factor: int = 4;
+    $quad = @func(x: int): int {
+        return x * factor;
+    };
+    print(quad(10)); # 40
+    print(quad(25)); # 100
+}
+```
+
+#### Capture Rules
+
+- A closure captures the bindings and parameters of its enclosing function lexically. Captured values are copied into the closure's environment when the closure is created.
+- A capture the closure assigns to is promoted to a **shared cell**. The enclosing binding and every closure capturing it read and write the same storage, so mutations are visible on both sides:
+
+```llts
+pub @func main() {
+    $counter: int = 0;
+    $inc = @func(): int {
+        counter = counter + 1;
+        return counter;
+    };
+    print(inc()); # 1
+    print(inc()); # 2
+    print(counter); # 2
+}
+```
+
+#### Escape Classification
+
+The compiler classifies each closure by how its value is used. This drives native lowering (see [§7.1](#71-native-backend-support-for-first-class-functions)):
+
+| Kind | Condition | Native environment |
+|---|---|---|
+| **Non-escaping** | The closure value is only used for direct calls in the frame where it was created. | Stack local, seeded at the declaration. |
+| **Escaping** | The closure is returned, stored in a struct/array or module-level binding, or passed to a function that may retain it. | Immortal heap cell, valid past the frame. |
+
+```llts
+# Escaping: the returned closure outlives makeAdder's frame.
+@func makeAdder(base: int): @func(int): int {
+    return @func(v: int): int {
+        return base + v;
+    };
+}
+
+pub @func main() {
+    $add10 = makeAdder(10);
+    print(add10(5));  # 15
+    print(add10(20)); # 30
+}
+```
+
+#### Immediate Invocation
+
+A closure literal can be called in place, without a binding:
+
+```llts
+$res = (@func(x: int): int { return x * 3; })(14);
+print(res); # 42
+```
+
 ---
 
 ## 2. The Pipe Operator (`|>`)
@@ -347,3 +413,6 @@ In the native backend (`emit-zig`), first-class function values are handled as f
 - **Static Devirtualization:** When a function alias (e.g. `$pick = lib.mul`) or a function returning a function (`getAdder()(1, 2)`) is called, the compiler statically resolves the call target and emits a direct call to the mangled function (`lls_fn_...`).
 - **Function Pointer Signatures:** Functions returning or taking `@func(...)` types lower to concrete Zig function pointer types (`*const fn(*rt.Context, ...) anyerror!Ret`).
 - **Runtime Materialization Restriction:** Function values cannot be passed directly to generic runtime formatting positions like `print(...)`; attempting to do so is rejected at compile time with `cannot materialize function value at runtime`.
+- **Closure Environments:** A closure's captures live in a generated `lls_env_<id>` struct. A closure that never escapes gets a stack local (`lls_env_stack_<id>`) seeded where the closure is created, so building it is a stack write with no heap allocation. A closure that escapes — returned, stored into an aggregate or a module-level binding, or handed to a function that may keep it — gets an immortal cell (`ctx.allocImmortal`) so its environment outlives the declaring frame.
+- **Devirtualized Closure Calls:** When a closure is bound to a local declaration that is never read as a value or reassigned, and the closure does not escape, the compiler records the closure id at each direct call site and emits a direct call to the mangled closure function (`lls_closure_fn_<id>`), skipping the function-pointer indirection. Reading or reassigning the binding disables devirtualization for that closure (the indirect call goes through the fat pointer).
+- **Immediate Invocation:** A closure literal in call position — `(@func(x: int): int { … })(14)` — is supported. The native emitter seeds its stack environment at the call site, immediately before the call.

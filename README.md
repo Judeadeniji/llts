@@ -12,7 +12,7 @@ LLTS is a name, not an acronym, and it is not TypeScript — just as LLVM is not
 - **Honest numeric widths.** `i8`–`i64`, `u8`–`u64`, `u1`/`bool`, `f32`, `f64`, with packed struct layout and explicit `@as` conversions.
 - **Explicit memory.** Frame-local aggregates, compile-time escape analysis, and `defer`/`errdefer`. Memory safety is enforced by strict **Scoped Downward Borrowing & Lexical Exclusivity**. No tracing garbage collector.
 - **Type-level metaprogramming.** `@typeOf`, `@sizeOf`, types as compile-time values, and type functions such as `@func Opt(T: type): type { return ?T; }`.
-- **Real abstractions.** First-class functions, structs with methods, enums, tagged unions, typed error sets, modules with `pub` visibility, and pipes (`|>`).
+- **Real abstractions.** First-class functions and closures, structs with methods, enums, tagged unions, typed error sets, modules with `pub` visibility, and pipes (`|>`).
 - **Native compilation.** A native pipeline that lowers to Zig and builds a standalone binary with the Zig compiler.
 - **Tooling.** `llts` CLI, `llts-lsp`, a tree-sitter grammar, and editor integrations.
 
@@ -56,7 +56,7 @@ Comprehensive guides and specifications are available in the [`docs/`](./docs) d
 - [**Type Soundness, Flow Analysis & Discriminated Unions**](./docs/type-soundness-and-flow.md) — Strict mode invariants, truthiness coercion prohibition, flow-sensitive narrowing, branch joins, and discriminated unions with kind matching.
 - [**Control Flow**](./docs/control-flow.md) — Value-producing `@if`, pattern matching `@switch`, labeled continue, `@for` loops, and labeled blocks.
 - [**Functions & Methods**](./docs/functions.md) — Function declarations (`@func`), entry point (`pub @func main`), variadics (`...args`), struct methods (`self` vs `self: *T`), first-class functions, and pipes (`|>`).
-- [**Functional Programming & The Pipe Operator**](./docs/functional-and-pipes.md) — First-class function types (`@func(...)`), higher-order functions, the pipe operator (`|>`), chaining semantics, precedence, and zero-cost backend lowering.
+- [**Functional Programming & The Pipe Operator**](./docs/functional-and-pipes.md) — First-class function types (`@func(...)`), higher-order functions, closures and captures, the pipe operator (`|>`), chaining semantics, precedence, and zero-cost backend lowering.
 - [**Error Handling**](./docs/error-handling.md) — Closed error sets (`@error`), dynamic errors, error unions (`T ! E`), try propagation (`?`), unwrap (`.?`), and cleanup with `errdefer`.
 - [**Memory Model & Safety**](./docs/memory-and-safety.md) — Frame-local region stack allocation, compile-time escape analysis, auto-cloning scalar structs, and LIFO cleanups (`defer`/`errdefer`).
 - [**Pointers & Memory Mechanics**](./docs/pointers-and-memory.md) — Aggregate-only capability pointers (`*T`, `?*T`), automatic dereferencing (`ptr.field`), address-of restrictions, aliasing, and escape analysis.

@@ -147,6 +147,7 @@ Tracked lowering differences and remaining parity gaps between bytecode VM and n
 - [x] **`@switch` on non-primitives (strings, structured types)** — lowered string switches, byte slices (`[]u8`), and byte arrays (`[N]u8`) to `rt.arith.eqStr` branch chains.
 - [x] **Rest / variadic parameters (`...rest: []T`)** — lowered rest parameters to Zig slice views (`[]const T`), recording `param_irs`, `rest_ir`, and `is_variadic` in `CompilerState`, enforcing minimum arity and type checking trailing arguments, and packing trailing call arguments into stack slices (`&[_]T{ ... }`). Tests: `tests/55_emit_zig.test.ts`.
 - [x] **Materialization of first-class function values** — devirtualized calls where static target is known via tracked aliases (`$pick = lib.mul`) and function returns (`getAdder()()`); supported machine function pointer types (`*const fn(*rt.Context, ...) anyerror!Ret`) where passed/returned; rejected runtime materialization of functions into `print(...)`. Tests: `tests/55_emit_zig.test.ts`.
+- [x] **Closure environments and devirtualization** — non-escaping closures get a stack-allocated `lls_env_<id>` seeded at their declaration and direct calls through `lls_closure_fn_<id>`; escaping closures get immortal environments; immediate invocation of a closure literal is supported. Commits: `d3c2bf8`, `98f2629`. Tests: `tests/suite/pipeline_test.zig`.
 - [ ] **Standard library modules for native (`std/*`)** — deferred: no standard library in llts-zig for now. Examples importing `std/*` (23 of 39) require stdlib modules when designed.
 - [x] **Printing pointers and nested aggregates** — struct values, struct pointers, nested struct fields, and aggregates containing structs are printed as Node.js/Bun-compatible objects with struct name prefix and field indentation; pointer values to structs are dereferenced and formatted recursively; arrays containing structs format each element as an object. Tests: `tests/55_emit_zig.test.ts`.
 - [ ] **Standalone library compilation mode** — compiling modules without `pub @func main()` fails with `native backend requires a pub @func main() entry point` (`examples/import_test_lib.lls`). Solution: support library/module emission mode in `emit-zig`.
@@ -157,6 +158,7 @@ Discrepancies where current documentation in `docs/` differs from compiler capab
 
 #### Backend Parity & Limitations Discrepancies
 - [x] **First-class function values** — documented native backend handling and runtime materialization limitations in `docs/functional-and-pipes.md`.
+- [x] **Closures & capture** — documented closure literals, capture-by-value rules, shared-cell promotion for mutated captures, escape classification, stack-allocated non-escaping environments, devirtualized closure calls, and immediate invocation in `docs/functional-and-pipes.md` §1.6 and §7.1, with a summary in `docs/functions.md` §6.
 - [x] **String `@switch` prongs** — string switch prongs are lowered to branch chains calling `rt.arith.eqStr`; matches `docs/control-flow.md`.
 - [x] **Variadic / rest parameters** — implemented in native backend; lowered to slice views (`[]const T`) with trailing call arguments packed into stack arrays. Matches `docs/functions.md`.
 - [x] **Heterogeneous tuples** — implemented in native backend; supports dot access, index access, mutation, and function argument coercion. Matches `docs/sequences.md`.
@@ -260,7 +262,7 @@ Forcing function: keep writing the self-hosted compiler. Whatever that parser ca
 #### Abstraction without generics
 
 - [x] **Function types** — e.g. `$f: @func(i64): i64`. First-class functions exist; their types do not. (Also listed under `@type` ship order.)
-- [ ] **Nested / capturing functions** — nested `@func` is not supported; closures do not capture. Decide yes (with region rules) or no.
+- [x] **Nested / capturing functions** — done (`d3c2bf8`, `98f2629`): anonymous `@func(...)` closures capture enclosing bindings; mutated captures are promoted to shared cells; escaping closures get immortal environments while non-escaping ones use stack environments and devirtualized direct calls, including immediate invocation. Documented in `docs/functional-and-pipes.md` §1.6 and §7.1.
 - [ ] **Allocator / Reader / Writer without generics** — either small interfaces/vtables, or stay concrete (`mem.Arena` + `[]T` only).
 - [x] **`std/list` / `std/map` / `std/buffer` arena-backed** — require `Arena` (or immortal escape hatch); element storage in arena bump; free via `reset`/`deinit`.
 

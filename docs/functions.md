@@ -190,6 +190,10 @@ pub @func main() {
 
 > **Backend Note:** First-class function values and function pointers are fully supported on the Bytecode VM backend.
 
+### Anonymous Functions (Closures)
+
+An `@func(...)` expression is an anonymous function that may capture bindings from the scope where it is written. Captures are taken by value; a capture the closure mutates is promoted to a shared cell so writes are visible in the enclosing function. Closures whose values never leave the declaring frame are stack-allocated in the native backend, while escaping closures (returned or stored) get immortal environments. See [Closures & Capture](functional-and-pipes.md#16-closures-anonymous-functions-with-captures) for the full rules.
+
 ---
 
 ## 7. The Pipe Operator (`|>`)
