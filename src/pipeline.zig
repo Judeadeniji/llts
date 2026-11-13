@@ -191,6 +191,62 @@ pub fn emitZigCode(
     });
 }
 
+/// Directory for zig's local cache when compiling a native unit.
+///
+/// The project's own `.zig-cache` holds every `zig build` artifact and grows
+/// into gigabytes; measured on this repo, a cache miss there costs roughly
+/// three times a miss in a small dedicated cache. Native runs are almost
+/// always misses (each program's text is different, so zig re-analyzes the
+/// runtime every time), which makes that gap the dominant per-run cost.
+/// Keeping the two caches apart stops native builds from feeding the project
+/// cache. The default lives on the system temp filesystem (`TMPDIR`, else
+/// `/tmp`), which measured ~1.5x faster than a cache under `$HOME` for the same
+/// work; `LLTS_NATIVE_CACHE_DIR` relocates it, and `XDG_CACHE_HOME`/`HOME` pick
+/// a persistent location when no temp directory exists.
+fn resolveNativeCacheDir(allocator: std.mem.Allocator) !?[]u8 {
+    const dir = blk: {
+        if (try nonEmptyEnv(allocator, "LLTS_NATIVE_CACHE_DIR")) |dir| break :blk dir;
+        if (try nonEmptyEnv(allocator, "TMPDIR")) |base| {
+            defer allocator.free(base);
+            break :blk try std.fs.path.join(allocator, &.{ base, "llts-native-cache" });
+        }
+        if (std.fs.accessAbsolute("/tmp", .{})) |_| {
+            break :blk try std.fs.path.join(allocator, &.{ "/tmp", "llts-native-cache" });
+        } else |_| {}
+        if (try nonEmptyEnv(allocator, "XDG_CACHE_HOME")) |base| {
+            defer allocator.free(base);
+            break :blk try std.fs.path.join(allocator, &.{ base, "llts", "native" });
+        }
+        if (try nonEmptyEnv(allocator, "HOME")) |home| {
+            defer allocator.free(home);
+            break :blk try std.fs.path.join(allocator, &.{ home, ".cache", "llts", "native" });
+        }
+        return null;
+    };
+    errdefer allocator.free(dir);
+    std.fs.cwd().makePath(dir) catch {};
+    return dir;
+}
+
+/// Read an environment variable, treating unset and empty alike (`TMPDIR=` must
+/// not turn the cache path into a relative directory inside the cwd).
+fn nonEmptyEnv(allocator: std.mem.Allocator, name: []const u8) !?[]u8 {
+    const value = std.process.getEnvVarOwned(allocator, name) catch return null;
+    if (value.len == 0) {
+        allocator.free(value);
+        return null;
+    }
+    return value;
+}
+
+/// Whether the caller already chose a cache directory through `zig_args`.
+fn zigArgsSetCacheDir(zig_args: []const []const u8) bool {
+    for (zig_args) |arg| {
+        if (std.mem.eql(u8, arg, "--cache-dir") or std.mem.startsWith(u8, arg, "--cache-dir=")) return true;
+    }
+    return false;
+}
+
 /// Compile an LLTS source file to a native binary by emitting runtime Zig and
 /// invoking `zig build-exe`.
 ///
@@ -243,6 +299,12 @@ pub fn compileNativeBinary(
 
     try args.append(allocator, options.zig_bin);
     try args.append(allocator, "build-exe");
+    const native_cache_dir = if (zigArgsSetCacheDir(options.zig_args)) null else try resolveNativeCacheDir(allocator);
+    defer if (native_cache_dir) |dir| allocator.free(dir);
+    if (native_cache_dir) |dir| {
+        try args.append(allocator, "--cache-dir");
+        try args.append(allocator, dir);
+    }
     if (options.target) |target| {
         try args.append(allocator, "-target");
         try args.append(allocator, target);
@@ -331,6 +393,12 @@ pub fn runNativeBinary(
 
     try args.append(allocator, options.zig_bin);
     try args.append(allocator, "run");
+    const native_cache_dir = if (zigArgsSetCacheDir(options.zig_args)) null else try resolveNativeCacheDir(allocator);
+    defer if (native_cache_dir) |dir| allocator.free(dir);
+    if (native_cache_dir) |dir| {
+        try args.append(allocator, "--cache-dir");
+        try args.append(allocator, dir);
+    }
     if (options.target) |target| {
         try args.append(allocator, "-target");
         try args.append(allocator, target);
