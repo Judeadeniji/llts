@@ -283,11 +283,7 @@ pub fn compileNativeBinary(
         },
     }
 
-    const tmp_name = try std.fmt.allocPrint(
-        allocator,
-        ".llts_native_{d}.zig",
-        .{std.time.milliTimestamp()},
-    );
+    const tmp_name = try stagedNativeName(allocator);
     defer allocator.free(tmp_name);
     try std.fs.cwd().writeFile(.{ .sub_path = tmp_name, .data = out.items });
     defer std.fs.cwd().deleteFile(tmp_name) catch {};
@@ -379,11 +375,7 @@ pub fn runNativeBinary(
 
     try emitZigCode(allocator, path, source, out.writer(allocator), options);
 
-    const tmp_name = try std.fmt.allocPrint(
-        allocator,
-        ".llts_native_{d}.zig",
-        .{std.time.milliTimestamp()},
-    );
+    const tmp_name = try stagedNativeName(allocator);
     defer allocator.free(tmp_name);
     try std.fs.cwd().writeFile(.{ .sub_path = tmp_name, .data = out.items });
     defer std.fs.cwd().deleteFile(tmp_name) catch {};
@@ -489,6 +481,13 @@ const ZigDiagnostic = struct {
     line: u32,
     message: []const u8,
 };
+
+/// Path of the staged Zig unit handed to `zig`. It is written to the working
+/// directory, so the name must be unique per invocation: a name shared between
+/// concurrent native builds lets one compile (or find deleted) another's unit.
+fn stagedNativeName(allocator: std.mem.Allocator) ![]const u8 {
+    return std.fmt.allocPrint(allocator, ".llts_native_{x}.zig", .{std.crypto.random.int(u64)});
+}
 
 /// Parse the first `path:line:col: error: …` line that names the staged file.
 fn firstZigDiagnostic(stderr: []const u8, tmp_name: []const u8) ?ZigDiagnostic {
