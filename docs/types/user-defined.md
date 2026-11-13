@@ -151,13 +151,23 @@ $acc = AccountId(42);
 ```
 
 ### Nominal Shapes
-`@type` can also bind anonymous structural shapes into nominal types:
+`@type` can also bind an anonymous structural shape into a named type:
 
 ```lls
 @type Vector3 = { x: f64; y: f64; z: f64; };
 
 $v: Vector3 = Vector3 { x: 1.0, y: 2.0, z: 3.0 };
 ```
+
+The name is nominal — `Vector3` and another named shape with the same fields
+are different types — but the underlying shape still participates in structural
+assignability with anonymous shapes. A named shape can be passed where an
+anonymous shape is expected, and an anonymous shape literal can initialize a
+named shape. The native backend currently requires the exact emitted layout
+type, so named-shape ↔ anonymous-shape conversions may typecheck and run on the
+VM while being rejected by `--native`. See
+[Structs vs. Shapes](structs-vs-shapes.md) for the full rules and compatibility
+matrix.
 
 ---
 

@@ -76,4 +76,4 @@ Dive deeper into specific areas of the LLTS type system:
 | **Shift Count Bounds** | Shift amounts (`<<`, `>>`) must fall strictly within `0..63`. Negative or $\ge 64$ shift counts trigger runtime errors. |
 | **Non-Value Union Arms Rejected** | Neither `void` nor `never` can appear in unions or optionals (`?void` and `T \| never` are compile errors). |
 | **Frame-Local Aggregate Safety** | Aggregates allocate on the stack frame. Taking references that outlive the frame is rejected at compile time. |
-| **Exact Field Matching on Shapes** | Anonymous shapes require field name, count, and type agreement for assignability. |
+| **Shape Field Matching** | Anonymous shapes are structural: every target field must be present in the source with a subtype-compatible type. Extra source fields are allowed and field order is ignored for assignability. `@struct` values are never assignable to shapes. |

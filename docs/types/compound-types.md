@@ -141,7 +141,7 @@ $b = Node { value: 2, next: &a };
 
 ## 5. Anonymous Structural Shapes (`{ field: T; ... }`)
 
-Shapes provide structural record typing. Unlike `@struct`, shapes do not require a declared name and compare strictly by field names and types.
+Shapes provide structural record typing. Unlike `@struct`, shapes do not require a declared name, and they are compared structurally rather than nominally.
 
 ### Syntax
 ```lls
@@ -155,12 +155,23 @@ $p: Point = Point { x: 10.0, y: 20.0 };
 print(p.x, p.y);
 ```
 
+The `@type` form above is a **named shape**: it has a nominal name, but its
+underlying shape still participates in structural assignability with anonymous
+shapes. An anonymous shape is written directly in type position:
+
+```lls
+$point: { x: f64; y: f64; } = { x: 10.0, y: 20.0 };
+```
+
 ### Structural Compatibility
-Functions can accept structural shapes as parameters. Any `@type` or shape with matching field names and compatible types can be passed:
+Functions can accept structural shapes as parameters. A source shape is
+assignable to a target shape when every target field is present in the source
+with a compatible type; extra source fields are allowed, and field order is not
+part of assignability. Field types must be subtype-compatible, so a `u8` field
+is not assignable to an `i64` field.
 
 ```lls
 @type Point2D = { x: f64; y: f64; };
-@type Vector2D = { x: f64; y: f64; };
 
 # Function takes an anonymous structural shape
 @func display_x(obj: { x: f64; }) {
@@ -168,8 +179,20 @@ Functions can accept structural shapes as parameters. Any `@type` or shape with 
 }
 
 $pt = Point2D { x: 3.14, y: 0.0 };
-display_x(pt); # Valid: pt has field 'x: f64'
+display_x(pt); # Valid: pt's underlying shape has field 'x: f64'
 ```
+
+A `@struct` value is **not** structurally compatible with a shape, even when
+its fields match. Structs are nominal. Two different named shapes are also
+nominal and not assignable to each other; `@as` may be accepted by the
+typechecker when their underlying shapes are compatible.
+
+> The typechecker accepts structural shape rules that the native backend does
+> not yet lower: a named shape passed to an anonymous-shape parameter, a shape
+> with extra source fields, or a shape with a different field order may typecheck
+> and run on the VM but be rejected by `--native`. See
+> [Structs vs. Shapes](structs-vs-shapes.md) for the full compatibility matrix
+> and backend limits.
 
 ### Shape Intersection (`&`)
 Shapes can be intersected using the `&` operator to merge fields into a single combined type:
