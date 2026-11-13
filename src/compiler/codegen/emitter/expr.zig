@@ -432,10 +432,12 @@ pub fn emitCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) any
         }
         const args_joined = try std.mem.join(a, ", ", args_buf.items);
         const callee_expr = try emitExpr(self, c.callee);
+        self.counter += 1;
+        const cid = self.counter;
         if (args_joined.len == 0) {
-            return std.fmt.allocPrint(a, "(try ({s})(ctx))", .{callee_expr});
+            return std.fmt.allocPrint(a, "blk: {{ const lls_f_{d} = {s}; break :blk (try lls_f_{d}.call(ctx, lls_f_{d}.env)); }}", .{ cid, callee_expr, cid, cid });
         }
-        return std.fmt.allocPrint(a, "(try ({s})(ctx, {s}))", .{ callee_expr, args_joined });
+        return std.fmt.allocPrint(a, "blk: {{ const lls_f_{d} = {s}; break :blk (try lls_f_{d}.call(ctx, lls_f_{d}.env, {s})); }}", .{ cid, callee_expr, cid, cid, args_joined });
     }
 
     return self.failAt(node, "native backend cannot resolve function '{s}' (function values must be called directly)", .{callee});
@@ -682,6 +684,17 @@ pub fn emitExpr(self: *Emitter, node: *ast_mod.Node) anyerror![]const u8 {
                     }
                 }
             }
+            if (self.state.functions.contains(p.name) or self.state.fn_aliases.get(p.name) != null) {
+                if (self.recordedType(node)) |rec_ir| {
+                    if (ir.peelDefined(rec_ir) == .func) {
+                        const fn_name = if (self.state.functions.contains(p.name)) p.name else self.state.fn_aliases.get(p.name).?;
+                        try self.trampolines_needed.put(fn_name, {});
+                        const vt = try self.valueType(node);
+                        const zname = try self.fnName(fn_name);
+                        return std.fmt.allocPrint(self.arena.allocator(), "{s}{{ .env = null, .call = lls_trampoline_{s} }}", .{ vt.zig, zname });
+                    }
+                }
+            }
             return resolved.zig_name;
         },
         .binary => |b| return emitBinary(self, node, &b),
@@ -704,7 +717,37 @@ pub fn emitExpr(self: *Emitter, node: *ast_mod.Node) anyerror![]const u8 {
         .if_expr => |i| return stmt_mod.emitIfValue(self, node, &i),
         .switch_expr => |sw| return stmt_mod.emitSwitchValue(self, node, &sw),
         .block => |b| return stmt_mod.emitBlockValue(self, node, &b),
-        .declaration, .return_expr, .for_expr, .break_expr, .continue_expr, .defer_stmt, .function_decl, .struct_decl, .enum_decl, .error_decl, .type_decl, .extern_decl => {
+        .function_decl => {
+            const a = self.arena.allocator();
+            const info = self.state.closures.get(node) orelse {
+                return self.failAt(node, "internal: closure metadata not found", .{});
+            };
+            const vt = try self.valueType(node);
+            if (info.captures.len == 0) {
+                return std.fmt.allocPrint(a, "{s}{{ .env = null, .call = lls_closure_fn_{d} }}", .{ vt.zig, info.id });
+            }
+            var fields_buf: std.ArrayList([]const u8) = .empty;
+            for (info.captures) |cap| {
+                const resolved = try self.lookupBinding(node, cap.name);
+                if (cap.is_mutated) {
+                    const field_code = try std.fmt.allocPrint(a, ".{s} = @constCast(&({s}))", .{ cap.name, resolved.zig_name });
+                    try fields_buf.append(a, field_code);
+                } else {
+                    const field_code = try std.fmt.allocPrint(a, ".{s} = {s}", .{ cap.name, resolved.zig_name });
+                    try fields_buf.append(a, field_code);
+                }
+            }
+            const fields_joined = try std.mem.join(a, ", ", fields_buf.items);
+            return std.fmt.allocPrint(a,
+                \\blk: {{
+                \\    const lls_env_cell_{d} = try ctx.allocImmortal(@sizeOf(lls_env_{d}), @alignOf(lls_env_{d}));
+                \\    const lls_env_ptr_{d}: *lls_env_{d} = @ptrCast(@alignCast(lls_env_cell_{d}.ptr));
+                \\    lls_env_ptr_{d}.* = .{{ {s} }};
+                \\    break :blk {s}{{ .env = @ptrCast(lls_env_ptr_{d}), .call = lls_closure_fn_{d} }};
+                \\}}
+            , .{ info.id, info.id, info.id, info.id, info.id, info.id, info.id, fields_joined, vt.zig, info.id, info.id });
+        },
+        .declaration, .return_expr, .for_expr, .break_expr, .continue_expr, .defer_stmt, .struct_decl, .enum_decl, .error_decl, .type_decl, .extern_decl => {
             return self.failAt(node, "native backend (Phase 2) does not support {s} in expression position", .{@tagName(node.*)});
         },
         else => {
@@ -1129,6 +1172,23 @@ pub fn emitValueCoercedMode(self: *Emitter, node: *ast_mod.Node, target: ValType
     }
     if (src.may_error) {
         return self.failAt(node, "error-union value must be handled with '?' first", .{});
+    }
+    if (target.kind == .func) {
+        if (node.* == .primary and (node.primary.kind == .identifier or node.primary.kind == .register)) {
+            const raw_name = node.primary.name;
+            const target_fn: ?[]const u8 = if (self.state.functions.contains(raw_name))
+                raw_name
+            else if (self.state.fn_aliases.get(raw_name)) |aliased|
+                aliased
+            else
+                null;
+            if (target_fn) |fn_name| {
+                try self.trampolines_needed.put(fn_name, {});
+                const zig_fn = try self.fnName(fn_name);
+                return std.fmt.allocPrint(a, "{s}{{ .env = null, .call = lls_trampoline_{s} }}", .{ target.zig, zig_fn });
+            }
+        }
+        return emitExpr(self, node);
     }
     if (target.kind == .union_) {
         if (src.kind == .union_ and std.mem.eql(u8, src.zig, target.zig)) {

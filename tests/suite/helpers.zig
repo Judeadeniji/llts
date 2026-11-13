@@ -19,16 +19,28 @@ pub fn parseSource(allocator: std.mem.Allocator, source: []const u8) !ast.Docume
     return parser.parse(allocator, scan_res.tokens.items, "test.lls", source, null);
 }
 
-/// Run compiler frontend analysis (typecheck, reachability, binding facts).
-/// Caller must call `state.chunk.deinit(); compiler.state_mod.deinit(&state);`.
-pub fn analyzeSource(allocator: std.mem.Allocator, source: []const u8, strict: bool) !compiler.state_mod.CompilerState {
-    var doc = try parseSource(allocator, source);
-    defer doc.deinit();
+pub const Analyzed = struct {
+    doc: ast.Document,
+    state: compiler.state_mod.CompilerState,
 
-    return compiler.analyze(allocator, &doc, .{
+    pub fn deinit(self: *Analyzed) void {
+        self.state.chunk.deinit();
+        compiler.state_mod.deinit(&self.state);
+        self.doc.deinit();
+    }
+};
+
+/// Run compiler frontend analysis (typecheck, reachability, binding facts).
+/// Caller must call `analyzed.deinit()`.
+pub fn analyzeSource(allocator: std.mem.Allocator, source: []const u8, strict: bool) !Analyzed {
+    var doc = try parseSource(allocator, source);
+    errdefer doc.deinit();
+
+    const state = try compiler.analyze(allocator, &doc, .{
         .debug = true,
         .strict = strict,
     });
+    return .{ .doc = doc, .state = state };
 }
 
 /// Verify that analyzing this source produces a compiler / typecheck error.

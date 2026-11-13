@@ -37,6 +37,27 @@ pub fn analyze(state: *state_mod.CompilerState, doc: *ast.Document) !void {
         const after = state.addr_taken_decls.count() + state.addr_taken_params.count() + state.escaping_params.count();
         if (after == before) break;
     }
+
+    // Synchronize closure captures with addr_taken facts: any capture that is mutated
+    // must have its declaration in addr_taken_decls (boxed in immortal heap cell), and any
+    // capture whose declaration is addr_taken must capture by pointer (is_mutated = true).
+    var cit = state.closures.valueIterator();
+    while (cit.next()) |info| {
+        for (info.captures) |*cap| {
+            var bit = state.binding_facts.keyIterator();
+            while (bit.next()) |decl_node| {
+                if (decl_node.*.* == .declaration) {
+                    if (std.mem.eql(u8, decl_node.*.declaration.name, cap.name)) {
+                        if (cap.is_mutated) {
+                            try state.addr_taken_decls.put(decl_node.*.declaration.value, {});
+                        } else if (state.addr_taken_decls.contains(decl_node.*.declaration.value)) {
+                            cap.is_mutated = true;
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 fn walkProgram(state: *state_mod.CompilerState, doc: *ast.Document) !void {
@@ -113,6 +134,7 @@ const Ctx = struct {
     /// Escape facts only matter for function bodies: module-level storage is
     /// allocated immortal already.
     in_function: bool = false,
+    closure_base_depth: ?usize = null,
 
     fn init(state: *state_mod.CompilerState) Ctx {
         return .{
@@ -189,6 +211,15 @@ const Ctx = struct {
             i -= 1;
             const scope = &ctx.scopes.items[i];
             if (scope.get(name)) |entry| {
+                if (ctx.closure_base_depth) |base| {
+                    if (i < base) {
+                        switch (entry) {
+                            .decl => |node| ctx.state.addr_taken_decls.put(node.declaration.value, {}) catch {},
+                            .param => |p| ctx.state.addr_taken_params.put(p, {}) catch {},
+                            else => {},
+                        }
+                    }
+                }
                 switch (entry) {
                     .decl => |node| {
                         if (ctx.state.binding_facts.getPtr(node)) |f| f.assigned = true;
@@ -216,6 +247,15 @@ const Ctx = struct {
             i -= 1;
             const scope = &ctx.scopes.items[i];
             if (scope.get(name)) |entry| {
+                if (ctx.closure_base_depth) |base| {
+                    if (i < base) {
+                        switch (entry) {
+                            .decl => |node| ctx.state.addr_taken_decls.put(node.declaration.value, {}) catch {},
+                            .param => |p| ctx.state.addr_taken_params.put(p, {}) catch {},
+                            else => {},
+                        }
+                    }
+                }
                 switch (entry) {
                     .decl => |node| {
                         if (ctx.state.binding_facts.getPtr(node)) |f| {
@@ -496,6 +536,20 @@ const Ctx = struct {
             .comptime_expr => |ce| try ctx.walkExpr(ce.expr),
             .block, .return_expr, .defer_stmt, .break_expr, .continue_expr,
             .if_expr, .for_expr, .switch_expr => try ctx.walkStmt(node),
+            .function_decl => |f| {
+                const prev_closure_depth = ctx.closure_base_depth;
+                ctx.closure_base_depth = ctx.scopes.items.len;
+                defer ctx.closure_base_depth = prev_closure_depth;
+                try ctx.pushScope();
+                defer ctx.popScope();
+                if (f.params.* == .params) {
+                    for (f.params.params.params) |*p| {
+                        _ = try ctx.state.param_facts.getOrPut(p);
+                        try ctx.putParam(p.name, p);
+                    }
+                }
+                try ctx.walkStmt(f.body);
+            },
             else => {},
         }
     }
@@ -565,7 +619,8 @@ const Ctx = struct {
                     try ctx.walkStmt(prong.body);
                 }
             },
-            .function_decl, .struct_decl, .enum_decl,
+            .function_decl => try ctx.walkExpr(node),
+            .struct_decl, .enum_decl,
             .error_decl, .type_decl, .extern_decl => {},
             else => try ctx.walkExpr(node),
         }

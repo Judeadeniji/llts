@@ -103,6 +103,33 @@ test "parser: control flow (@if, @switch, @for)" {
     try std.testing.expect(body[2].* == .for_expr);
 }
 
+test "parser: anonymous @func expression and nested @func" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\pub @func main() {
+        \\    $f = @func(x: int): int { return x + 1; };
+        \\    @func inner(y: int): int { return y * 2; }
+        \\}
+    ;
+    var doc = try helpers.parseSource(allocator, src);
+    defer doc.deinit();
+
+    try std.testing.expectEqual(@as(usize, 1), doc.statements.len);
+    const body = doc.statements[0].function_decl.body.block.statements;
+    try std.testing.expectEqual(@as(usize, 2), body.len);
+
+    // 1. $f = @func(x: int): int { ... }
+    try std.testing.expect(body[0].* == .declaration);
+    const decl_val = body[0].declaration.value;
+    try std.testing.expect(decl_val.* == .function_decl);
+    try std.testing.expectEqualStrings("", decl_val.function_decl.name);
+    try std.testing.expect(decl_val.function_decl.return_type != null);
+
+    // 2. @func inner(y: int): int { ... }
+    try std.testing.expect(body[1].* == .function_decl);
+    try std.testing.expectEqualStrings("inner", body[1].function_decl.name);
+}
+
 test "parser: syntax error produces failure" {
     const allocator = std.testing.allocator;
     const invalid_src = "pub @func main( {"; // unclosed paren

@@ -227,6 +227,7 @@ pub const Emitter = struct {
     loop_targets: std.ArrayList(LoopTarget) = .empty,
     switch_targets: std.ArrayList(SwitchContinueTarget) = .empty,
     trace_sites: std.ArrayList(TraceSite) = .empty,
+    trampolines_needed: std.StringHashMap(void),
     current_trace_func: ?[]const u8 = null,
     current_trace_file: []const u8 = "",
     cur_ret: ValType = undefined,
@@ -518,6 +519,7 @@ pub const Emitter = struct {
         self.struct_by_key.deinit();
         self.union_by_key.deinit();
         self.infos.deinit();
+        self.trampolines_needed.deinit();
         self.arena.deinit();
     }
 
@@ -614,12 +616,13 @@ pub const Emitter = struct {
                 const ret_vt = (try self.valTypeFromIR(node, f.ret.*)) orelse return null;
                 var param_zigs: std.ArrayList([]const u8) = .empty;
                 try param_zigs.append(a, "*rt.Context");
+                try param_zigs.append(a, "?*anyopaque");
                 for (f.params) |p| {
                     const p_vt = (try self.valTypeFromIR(node, p)) orelse return null;
                     try param_zigs.append(a, p_vt.zig);
                 }
                 const params_joined = try std.mem.join(a, ", ", param_zigs.items);
-                vt.zig = try std.fmt.allocPrint(a, "*const fn({s}) anyerror!{s}", .{
+                vt.zig = try std.fmt.allocPrint(a, "rt.Closure(*const fn({s}) anyerror!{s})", .{
                     params_joined,
                     ret_vt.zig,
                 });
@@ -791,7 +794,9 @@ pub const Emitter = struct {
         try self.writer.writeAll(");\n\n");
 
         try unit_mod.emitGlobalDecls(self);
+        try unit_mod.emitClosures(self);
         try unit_mod.emitFunctions(self);
+        try unit_mod.emitTrampolines(self);
         try unit_mod.emitTopLevel(self);
         try self.emitTraceSiteTable();
         try unit_mod.emitEntry(self);
@@ -957,6 +962,7 @@ pub const Emitter = struct {
             .struct_by_key = std.StringHashMap(*StructType).init(allocator),
             .union_by_key = std.StringHashMap(*UnionType).init(allocator),
             .infos = std.AutoHashMap(*ast_mod.Node, *Binding).init(allocator),
+            .trampolines_needed = std.StringHashMap(void).init(allocator),
         };
     }
 

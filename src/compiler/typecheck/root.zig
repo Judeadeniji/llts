@@ -257,6 +257,26 @@ pub const Env = struct {
         return self.lookupGlobal(name);
     }
 
+    /// Lookup in outer local scopes up to `max_depth` (used to detect closure free variables).
+    pub fn lookupBelow(self: *const Env, name: []const u8, max_depth: usize) ?ir.Type {
+        var i = @min(self.locals.items.len, max_depth);
+        while (i > 0) {
+            i -= 1;
+            if (self.locals.items[i].get(name)) |t| return t;
+        }
+        return null;
+    }
+
+    /// Lookup in scopes at or above `min_depth` (used to detect in-closure locals/params).
+    pub fn lookupAtOrAbove(self: *const Env, name: []const u8, min_depth: usize) ?ir.Type {
+        var i = self.locals.items.len;
+        while (i > min_depth) {
+            i -= 1;
+            if (self.locals.items[i].get(name)) |t| return t;
+        }
+        return null;
+    }
+
     /// `globals` may record a module global as unknown (untyped in
     /// `global_types`); a statically known `decl_globals` entry wins then.
     fn lookupGlobal(self: *Env, name: []const u8) ?ir.Type {
@@ -1354,6 +1374,7 @@ fn inferExprInner(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, 
         .for_expr => |f| try inferForExprType(state, env, ta, node, f),
         .break_expr => |br| try inferBreakExprType(state, env, ta, br),
         .comptime_expr => |ce| try inferComptimeExprType(state, env, ta, ce),
+        .function_decl => |*f| try inferFunctionDeclExpr(state, env, ta, node, f),
         else => ir.TUnknown,
     };
 }
@@ -2017,6 +2038,267 @@ fn typeIdentical(a: ir.Type, b: ir.Type) bool {
 fn rejectTypeValue(state: *state_mod.CompilerState, t: ir.Type, what: []const u8) TypecheckError!void {
     if (t != .type_) return;
     return compiler_errors.compileFailFmt(state, "Cannot use a 'type' value as {s}; types exist only at compile time (name a type with '@alias')", .{what});
+}
+
+const FreeVarScanner = struct {
+    env: *const Env,
+    base_depth: usize,
+    local_names: std.StringHashMap(void),
+    captures: *std.ArrayList(state_mod.ClosureCapture),
+    ta: ir.TypeAlloc,
+
+    fn scan(self: *FreeVarScanner, node: *ast.Node) TypecheckError!void {
+        switch (node.*) {
+            .primary => |p| {
+                if (p.kind == .identifier or p.kind == .register) {
+                    try self.checkRef(p.name, false);
+                }
+            },
+            .declaration => |d| {
+                try self.scan(d.value);
+                try self.local_names.put(d.name, {});
+            },
+            .assignment => |a| {
+                if (scope.placeRoot(a.left)) |root_name| {
+                    try self.checkRef(root_name, true);
+                }
+                try self.scan(a.left);
+                try self.scan(a.right);
+            },
+            .unary => |u| {
+                if (std.mem.eql(u8, u.operator, "&")) {
+                    if (scope.placeRoot(u.arg)) |root_name| {
+                        try self.checkRef(root_name, true);
+                    }
+                }
+                try self.scan(u.arg);
+            },
+            .binary => |b| {
+                try self.scan(b.left);
+                try self.scan(b.right);
+            },
+            .call => |c| {
+                try self.scan(c.callee);
+                for (c.args) |arg| try self.scan(arg);
+            },
+            .member => |m| {
+                try self.scan(m.object);
+                if (m.property.* != .primary) try self.scan(m.property);
+            },
+            .index => |ix| {
+                try self.scan(ix.object);
+                if (ix.index) |i| try self.scan(i);
+                if (ix.end) |e| try self.scan(e);
+            },
+            .array_literal => |al| {
+                for (al.elements) |el| try self.scan(el);
+            },
+            .struct_init => |si| {
+                if (si.type_expr) |te| try self.scan(te);
+                for (si.fields) |f| try self.scan(f.value);
+            },
+            .block => |b| {
+                for (b.statements) |s| try self.scan(s);
+            },
+            .if_expr => |ife| {
+                try self.scan(ife.condition);
+                if (ife.pipe_value) |pv| {
+                    if (pv.* == .primary) try self.local_names.put(pv.primary.name, {});
+                }
+                try self.scan(ife.body);
+                if (ife.else_body) |eb| try self.scan(eb);
+            },
+            .for_expr => |fe| {
+                try self.scan(fe.expr);
+                for (fe.captures) |cap| {
+                    try self.local_names.put(cap.name, {});
+                }
+                try self.scan(fe.body);
+            },
+            .switch_expr => |swe| {
+                try self.scan(swe.condition);
+                for (swe.prongs) |prong| {
+                    try self.scan(prong.body);
+                }
+            },
+            .return_expr => |r| {
+                if (r.return_value) |rv| try self.scan(rv);
+            },
+            .break_expr => |br| {
+                if (br.value) |bv| try self.scan(bv);
+            },
+            .continue_expr => |c| {
+                if (c.value) |cv| try self.scan(cv);
+            },
+            .defer_stmt => |d| try self.scan(d.body),
+            .try_expr => |t| try self.scan(t.expression),
+            .unwrap_expr => |u| try self.scan(u.expression),
+            .error_expr => |e| {
+                for (e.args) |a| try self.scan(a);
+            },
+            .comptime_expr => |ce| try self.scan(ce.expr),
+            .function_decl => |f_inner| {
+                try self.scan(f_inner.body);
+            },
+            else => {},
+        }
+    }
+
+    fn checkRef(self: *FreeVarScanner, name: []const u8, is_mutation: bool) TypecheckError!void {
+        if (self.local_names.contains(name)) return;
+        if (self.env.lookupBelow(name, self.base_depth)) |t| {
+            for (self.captures.items) |*existing| {
+                if (std.mem.eql(u8, existing.name, name)) {
+                    if (is_mutation) existing.is_mutated = true;
+                    return;
+                }
+            }
+            try self.captures.append(self.ta.allocator, .{
+                .name = name,
+                .ir_type = t,
+                .is_mutated = is_mutation,
+            });
+        }
+    }
+};
+
+fn collectFreeVariables(
+    env: *const Env,
+    base_depth: usize,
+    body: *ast.Node,
+    params: []const ast.Param,
+    captures: *std.ArrayList(state_mod.ClosureCapture),
+    ta: ir.TypeAlloc,
+) TypecheckError!void {
+    var scanner = FreeVarScanner{
+        .env = env,
+        .base_depth = base_depth,
+        .local_names = std.StringHashMap(void).init(ta.allocator),
+        .captures = captures,
+        .ta = ta,
+    };
+    defer scanner.local_names.deinit();
+
+    for (params) |p| {
+        try scanner.local_names.put(p.name, {});
+    }
+
+    try scanner.scan(body);
+}
+
+fn inferFunctionDeclExpr(
+    state: *state_mod.CompilerState,
+    env: *Env,
+    ta: ir.TypeAlloc,
+    node: *ast.Node,
+    f: *ast.FunctionDecl,
+) TypecheckError!ir.Type {
+    const plist = switch (f.params.*) {
+        .params => |p| p.params,
+        else => &[_]ast.Param{},
+    };
+    const is_variadic = switch (f.params.*) {
+        .params => |p| p.is_variadic,
+        else => false,
+    };
+
+    var params_buf: std.ArrayList(ir.Type) = .empty;
+    defer params_buf.deinit(ta.allocator);
+    for (plist, 0..) |pnode, i| {
+        var t: ir.Type = ir.TUnknown;
+        if (pnode.type_annotation) |ann| {
+            t = try from_ast.typeFromAst(ann, state, ta);
+        } else if (state.strict) {
+            return compiler_errors.compileFailFmt(
+                state,
+                "Parameter '{s}' of closure must have an explicit type annotation in strict mode",
+                .{pnode.name},
+            );
+        }
+        if (is_variadic and i == plist.len - 1) {
+            const elem = if (t == .array) t.array.elem.* else (if (t == .unknown) ir.TUnknown else t);
+            t = try ta.arrayType(elem, null, true);
+        }
+        try params_buf.append(ta.allocator, t);
+    }
+
+    const annotated_ret: ?ir.Type = if (f.return_type) |rt|
+        try from_ast.typeFromAst(rt, state, ta)
+    else
+        null;
+
+    const base_depth = env.locals.items.len;
+
+    var captures_list = std.ArrayList(state_mod.ClosureCapture).empty;
+    defer captures_list.deinit(ta.allocator);
+
+    try collectFreeVariables(env, base_depth, f.body, plist, &captures_list, ta);
+
+    try env.pushScope();
+    defer env.popScope();
+
+    for (plist, 0..) |pnode, i| {
+        try env.define(pnode.name, params_buf.items[i]);
+    }
+
+    const prev_in_func = env.in_function;
+    const prev_annotated = env.annotated_return;
+    const prev_expected = env.expected_return;
+    env.in_function = true;
+    env.annotated_return = annotated_ret;
+    env.expected_return = annotated_ret;
+    defer {
+        env.in_function = prev_in_func;
+        env.annotated_return = prev_annotated;
+        env.expected_return = prev_expected;
+    }
+
+    var inferred_ret: ir.Type = ir.TVoid;
+    var has_return = false;
+    const block = switch (f.body.*) {
+        .block => |b| b,
+        else => return compiler_errors.compileFailFmt(state, "Function body must be a block", .{}),
+    };
+
+    for (block.statements) |s| {
+        if (try checkStmt(state, env, ta, s)) |stmt_ret| {
+            if (s.* == .return_expr) {
+                has_return = true;
+                inferred_ret = stmt_ret;
+            }
+        }
+    }
+
+    const final_ret: ir.Type = if (annotated_ret) |ar|
+        ar
+    else if (has_return)
+        inferred_ret
+    else
+        ir.TVoid;
+
+    const closure_id = state.closure_counter;
+    state.closure_counter += 1;
+    const closure_name = if (f.name.len > 0)
+        try std.fmt.allocPrint(ta.allocator, "{s}_{d}", .{ f.name, closure_id })
+    else
+        try std.fmt.allocPrint(ta.allocator, "__closure_{d}", .{closure_id});
+
+    const captures_duped = try ta.allocator.dupe(state_mod.ClosureCapture, captures_list.items);
+    const params_duped = try ta.allocator.dupe(ir.Type, params_buf.items);
+
+    const info = state_mod.ClosureInfo{
+        .id = closure_id,
+        .name = closure_name,
+        .captures = captures_duped,
+        .ret_ir = final_ret,
+        .param_irs = params_duped,
+        .node = node,
+    };
+    try state.closures.put(node, info);
+
+    const func_type = try ta.funcType(params_duped, final_ret, is_variadic);
+    try recordExprType(state, node, func_type);
+    return func_type;
 }
 
 /// Fill in a hoisted local typedef whose RHS contains type-returning calls.
@@ -3374,7 +3656,14 @@ fn checkStmt(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node:
             if (state.local_type_decls.contains(td)) try resolveLocalTypeDecl(state, env, ta, td);
             return null;
         },
-        .function_decl, .struct_decl, .enum_decl, .error_decl, .extern_decl => return null,
+        .struct_decl, .enum_decl, .error_decl, .extern_decl => return null,
+        .function_decl => |*f| {
+            const fn_ty = try inferFunctionDeclExpr(state, env, ta, node, f);
+            if (f.name.len > 0) {
+                try env.define(f.name, fn_ty);
+            }
+            return null;
+        },
         .block => return try inferExpr(state, env, ta, node),
         else => {
             const t = try inferExpr(state, env, ta, node);

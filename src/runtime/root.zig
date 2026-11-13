@@ -56,6 +56,14 @@ pub const fail = io_mod.fail;
 pub const failMsg = io_mod.failMsg;
 pub const exitProcess = io_mod.exitProcess;
 
+/// First-class function and dynamic closure representation (16-byte fat pointer).
+pub fn Closure(comptime CallFn: type) type {
+    return struct {
+        env: ?*anyopaque,
+        call: CallFn,
+    };
+}
+
 test {
     // Keep the whole runtime tree compiling (and its tests discovered).
     std.testing.refAllDecls(@This());

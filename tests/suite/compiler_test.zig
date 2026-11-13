@@ -10,13 +10,10 @@ test "compiler: reachability marks only called functions reachable" {
         \\    print(used());
         \\}
     ;
-    var state = try helpers.analyzeSource(allocator, src, true);
-    defer {
-        state.chunk.deinit();
-        helpers.compiler.state_mod.deinit(&state);
-    }
+    var analyzed = try helpers.analyzeSource(allocator, src, true);
+    defer analyzed.deinit();
 
-    const reach = state.reachability orelse return error.MissingReachability;
+    const reach = analyzed.state.reachability orelse return error.MissingReachability;
     try std.testing.expect(reach.isFunctionReachable("main"));
     try std.testing.expect(reach.isFunctionReachable("used"));
     try std.testing.expect(!reach.isFunctionReachable("unused"));
@@ -33,11 +30,8 @@ test "compiler: binding facts track read, assigned, and reassigned" {
         \\    _ = y;
         \\}
     ;
-    var state = try helpers.analyzeSource(allocator, src, true);
-    defer {
-        state.chunk.deinit();
-        helpers.compiler.state_mod.deinit(&state);
-    }
+    var analyzed = try helpers.analyzeSource(allocator, src, true);
+    defer analyzed.deinit();
 
-    try std.testing.expect(state.binding_facts.count() > 0);
+    try std.testing.expect(analyzed.state.binding_facts.count() > 0);
 }

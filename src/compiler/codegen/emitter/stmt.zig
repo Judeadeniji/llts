@@ -844,9 +844,6 @@ pub fn emitLocalDeclaration(self: *Emitter, node: *ast_mod.Node, d: *const ast_m
             if (d.value.* == .primary and (d.value.primary.kind == .identifier or d.value.primary.kind == .register)) {
                 if (self.state.functions.contains(d.value.primary.name)) break :blk_fn d.value.primary.name;
             }
-            if (self.state.type_ir_of_results.get(d.value)) |t| {
-                if (ir.peelDefined(t) == .func) break :blk_fn d.name;
-            }
             break :blk_fn null;
         };
         const module_path = if (fn_key == null) self.resolveModuleValue(d.value) else null;

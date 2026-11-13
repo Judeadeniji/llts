@@ -12,11 +12,8 @@ test "typecheck: basic type annotations and inference" {
         \\    print(a, b, c, d);
         \\}
     ;
-    var state = try helpers.analyzeSource(allocator, src, true);
-    defer {
-        state.chunk.deinit();
-        helpers.compiler.state_mod.deinit(&state);
-    }
+    var analyzed = try helpers.analyzeSource(allocator, src, true);
+    defer analyzed.deinit();
 }
 
 test "typecheck: rejects assigning null to non-optional pointer" {
@@ -81,4 +78,48 @@ test "typecheck: nominal @type prevents cross-assignment without @as" {
         \\}
     ;
     try helpers.expectCompileFail(allocator, src);
+}
+
+test "typecheck: closure type inference and capture tracking" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\pub @func main() {
+        \\    $multiplier: int = 10;
+        \\    $f = @func(x: int): int {
+        \\        return x * multiplier;
+        \\    };
+        \\    print(f(5));
+        \\}
+    ;
+    var analyzed = try helpers.analyzeSource(allocator, src, true);
+    defer analyzed.deinit();
+
+    try std.testing.expectEqual(@as(usize, 1), analyzed.state.closures.count());
+    var it = analyzed.state.closures.valueIterator();
+    const info = it.next().?;
+    try std.testing.expectEqual(@as(usize, 1), info.captures.len);
+    try std.testing.expectEqualStrings("multiplier", info.captures[0].name);
+    try std.testing.expectEqual(false, info.captures[0].is_mutated);
+}
+
+test "typecheck: closure with mutated capture" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\pub @func main() {
+        \\    $counter: int = 0;
+        \\    $inc = @func() {
+        \\        counter = counter + 1;
+        \\    };
+        \\    inc();
+        \\}
+    ;
+    var analyzed = try helpers.analyzeSource(allocator, src, true);
+    defer analyzed.deinit();
+
+    try std.testing.expectEqual(@as(usize, 1), analyzed.state.closures.count());
+    var it = analyzed.state.closures.valueIterator();
+    const info = it.next().?;
+    try std.testing.expectEqual(@as(usize, 1), info.captures.len);
+    try std.testing.expectEqualStrings("counter", info.captures[0].name);
+    try std.testing.expectEqual(true, info.captures[0].is_mutated);
 }

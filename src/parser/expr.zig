@@ -4,6 +4,7 @@ const ast = @import("../ast/root.zig");
 const precedence = @import("../shared/precedence.zig");
 const types = @import("types.zig");
 const control = @import("control.zig");
+const decl = @import("decl.zig");
 
 const Parser = ctx.Parser;
 const ParseError = ctx.ParseError;
@@ -587,6 +588,10 @@ pub fn parsePrimary(self: *Parser) ParseError!*Node {
             if (std.mem.eql(u8, token.value, "for")) {
                 _ = self.advance();
                 return control.parseForExpression(self);
+            }
+            if (std.mem.eql(u8, token.value, "func")) {
+                _ = self.advance();
+                return decl.parseCompilerFunc(self);
             }
             if (std.mem.eql(u8, token.value, "comptime")) {
                 const comptime_tok = token;

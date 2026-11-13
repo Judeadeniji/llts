@@ -65,3 +65,70 @@ test "pipeline native execution: structs formatted as Node.js objects" {
     ;
     try helpers.expectNativeStdout(allocator, src, expected);
 }
+
+test "pipeline native execution: downward closure passed as argument" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\@func apply(x: int, f: @func(int): int): int {
+        \\    return f(x);
+        \\}
+        \\pub @func main() {
+        \\    $multiplier: int = 10;
+        \\    $res = apply(5, @func(v: int): int {
+        \\        return v * multiplier;
+        \\    });
+        \\    print(res);
+        \\}
+    ;
+    try helpers.expectNativeStdout(allocator, src, "50\n");
+}
+
+test "pipeline native execution: returning closure from function (escaping / currying)" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\@func makeAdder(base: int): @func(int): int {
+        \\    return @func(v: int): int {
+        \\        return base + v;
+        \\    };
+        \\}
+        \\pub @func main() {
+        \\    $add10 = makeAdder(10);
+        \\    print(add10(5));
+        \\    print(add10(20));
+        \\}
+    ;
+    try helpers.expectNativeStdout(allocator, src, "15\n30\n");
+}
+
+test "pipeline native execution: closure with shared mutable state" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\pub @func main() {
+        \\    $counter: int = 0;
+        \\    $inc = @func(): int {
+        \\        counter = counter + 1;
+        \\        return counter;
+        \\    };
+        \\    print(inc());
+        \\    print(inc());
+        \\    print(counter);
+        \\}
+    ;
+    try helpers.expectNativeStdout(allocator, src, "1\n2\n2\n");
+}
+
+test "pipeline native execution: top-level function passed to @func argument" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\@func double(x: int): int {
+        \\    return x * 2;
+        \\}
+        \\@func apply(x: int, f: @func(int): int): int {
+        \\    return f(x);
+        \\}
+        \\pub @func main() {
+        \\    print(apply(21, double));
+        \\}
+    ;
+    try helpers.expectNativeStdout(allocator, src, "42\n");
+}

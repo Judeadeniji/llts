@@ -12,6 +12,7 @@ const errors_mod = @import("errors.zig");
 const Parser = ctx.Parser;
 const ParseError = ctx.ParseError;
 const Node = ast.Node;
+const Location = ast.Location;
 
 pub fn parseDeclaration(self: *Parser, is_const: bool) ParseError!*Node {
     const register = try self.consume(
@@ -93,17 +94,25 @@ fn parseTypeDecl(self: *Parser, distinct: bool) ParseError!*Node {
 }
 
 pub fn parseCompilerFunc(self: *Parser) ParseError!*Node {
-    const name = self.advance() orelse return error.ParseFailed;
-    if (name.type != .identifier) {
-        return self.failTok(name, "Invalid function name '{s}'", .{name.value});
+    var fn_name: []const u8 = "";
+    var name_loc = if (self.previous()) |tok| self.locOf(tok) else Location{ .path = self.path };
+    if (self.checkDelim("(")) {
+        _ = self.advance();
+    } else {
+        const name = self.advance() orelse return error.ParseFailed;
+        if (name.type != .identifier) {
+            return self.failTok(name, "Invalid function name '{s}'", .{name.value});
+        }
+        fn_name = try self.dupe(name.value);
+        name_loc = self.locOf(name);
+        _ = try self.consume(.delimiter, "Expected '(' after function name", "(");
     }
 
-    _ = try self.consume(.delimiter, "Expected '(' after function name", "(");
     const parsed = try parseParamsList(self);
     const params_node = try self.create(.{ .params = .{
         .params = parsed.elements,
         .is_variadic = parsed.is_variadic,
-        .loc = self.locOf(name),
+        .loc = name_loc,
     } });
 
     var return_type: ?*Node = null;
@@ -117,11 +126,11 @@ pub fn parseCompilerFunc(self: *Parser) ParseError!*Node {
     defer self.in_type_fn = saved_in_type_fn;
     const body = try control.parseBlock(self);
     return self.create(.{ .function_decl = .{
-        .name = try self.dupe(name.value),
+        .name = fn_name,
         .params = params_node,
         .body = body,
         .return_type = return_type,
-        .loc = self.locOf(name),
+        .loc = name_loc,
     } });
 }
 
@@ -172,4 +181,3 @@ pub fn parseParamsList(self: *Parser) ParseError!ParamsResult {
         .is_variadic = is_variadic,
     };
 }
-

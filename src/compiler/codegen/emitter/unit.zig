@@ -25,9 +25,6 @@ pub fn collectGlobals(self: *Emitter) !void {
             if (d.value.* == .primary and (d.value.primary.kind == .identifier or d.value.primary.kind == .register)) {
                 if (self.state.functions.contains(d.value.primary.name)) break :blk d.value.primary.name;
             }
-            if (self.state.type_ir_of_results.get(d.value)) |t| {
-                if (ir.peelDefined(t) == .func) break :blk d.name;
-            }
             break :blk null;
         };
         const module_path = if (fn_key == null) self.resolveModuleValue(d.value) else null;
@@ -210,6 +207,202 @@ pub fn emitFunctions(self: *Emitter) !void {
     }
 }
 
+pub fn emitClosures(self: *Emitter) !void {
+    const a = self.arena.allocator();
+
+    // 1. Sort closure ids so output is deterministic
+    var closure_ids: std.ArrayList(u32) = .empty;
+    var it = self.state.closures.valueIterator();
+    while (it.next()) |info| {
+        try closure_ids.append(a, info.id);
+    }
+    std.mem.sort(u32, closure_ids.items, {}, struct {
+        fn lessThan(_: void, lhs: u32, rhs: u32) bool {
+            return lhs < rhs;
+        }
+    }.lessThan);
+
+    // 2. Emit environment structs
+    for (closure_ids.items) |id| {
+        var info_opt: ?state_mod.ClosureInfo = null;
+        var cit = self.state.closures.valueIterator();
+        while (cit.next()) |info| {
+            if (info.id == id) {
+                info_opt = info.*;
+                break;
+            }
+        }
+        const info = info_opt orelse continue;
+        if (info.captures.len == 0) continue;
+
+        try self.writer.print("const lls_env_{d} = struct {{\n", .{info.id});
+        self.indent += 1;
+        for (info.captures) |cap| {
+            const cap_vt = (try self.valTypeOfIR(info.node, cap.ir_type));
+            try self.writeIndent();
+            if (cap.is_mutated) {
+                try self.writer.print("{s}: *{s},\n", .{ cap.name, cap_vt.zig });
+            } else {
+                try self.writer.print("{s}: {s},\n", .{ cap.name, cap_vt.zig });
+            }
+        }
+        self.indent -= 1;
+        try self.writeIndent();
+        try self.writer.writeAll("};\n\n");
+    }
+
+    // 3. Emit closure execution functions
+    for (closure_ids.items) |id| {
+        var info_opt: ?state_mod.ClosureInfo = null;
+        var cit = self.state.closures.valueIterator();
+        while (cit.next()) |info| {
+            if (info.id == id) {
+                info_opt = info.*;
+                break;
+            }
+        }
+        const info = info_opt orelse continue;
+        try emitSingleClosure(self, info);
+    }
+}
+
+fn emitSingleClosure(self: *Emitter, info: state_mod.ClosureInfo) !void {
+    const a = self.arena.allocator();
+    const f = &info.node.function_decl;
+    const params = switch (f.params.*) {
+        .params => |p| p.params,
+        else => return self.failAt(f.params, "native backend cannot emit closure parameter list", .{}),
+    };
+
+    try prepareFunction(self, f, params, null);
+    const ret = try self.valTypeOfIR(info.node, info.ret_ir);
+    self.cur_ret = ret;
+
+    try self.writer.print("fn lls_closure_fn_{d}(ctx: *rt.Context, env_raw: ?*anyopaque", .{info.id});
+    for (self.params.items) |p| {
+        try self.writer.print(", {s}: {s}", .{ p.arg_name, p.zig });
+    }
+    try self.writer.print(") anyerror!{s} {{\n", .{ret.zig});
+    self.indent = 1;
+
+    const file = if (f.loc.path.len > 0) f.loc.path else self.doc.path;
+    self.current_trace_func = info.name;
+    self.current_trace_file = file;
+    const entry_site = try self.addTraceSite(info.name, file, 0, 0);
+    try self.writeIndent();
+    try self.writer.print("const _mark = try ctx.enterFunction({d});\n", .{entry_site});
+    try self.writeIndent();
+    try self.writer.writeAll("defer ctx.leaveFunction(_mark);\n");
+
+    // Unpack environment into scope
+    if (info.captures.len > 0) {
+        try self.writeIndent();
+        try self.writer.print("const env: *lls_env_{d} = @ptrCast(@alignCast(env_raw.?));\n", .{info.id});
+        for (info.captures) |cap| {
+            const cap_vt = try self.valTypeOfIR(info.node, cap.ir_type);
+            const b = try a.create(Binding);
+            b.* = .{
+                .name = cap.name,
+                .zig_name = if (cap.is_mutated)
+                    try std.fmt.allocPrint(a, "env.{s}.*", .{cap.name})
+                else
+                    try std.fmt.allocPrint(a, "env.{s}", .{cap.name}),
+                .display = cap_vt.display,
+                .ir_type = cap.ir_type,
+                .read = true,
+                .assigned = cap.is_mutated,
+                .reassigned = cap.is_mutated,
+            };
+            try self.scopes.items[0].put(cap.name, b);
+        }
+    }
+
+    // Parameters: copy mutable ones into locals; silence unread ones.
+    for (self.params.items) |p| {
+        const b = self.scopes.items[0].get(p.name).?;
+        const needs_var = b.reassigned or (b.assigned and p.kind != .pointer and p.kind != .slice);
+        if (needs_var) {
+            b.zig_name = try self.localName(p.name);
+            try self.writeIndent();
+            try self.writer.print("var {s}: {s} = {s};\n", .{ b.zig_name, p.zig, p.arg_name });
+            if (!b.read) {
+                try self.writeIndent();
+                try self.writer.print("_ = &{s};\n", .{b.zig_name});
+            }
+        } else if (!b.read) {
+            try self.writeIndent();
+            try self.writer.print("_ = {s};\n", .{p.arg_name});
+        }
+    }
+
+    const block = switch (f.body.*) {
+        .block => |b| b,
+        else => return self.failAt(f.body, "native backend expects a block body", .{}),
+    };
+    self.pushScope();
+    try stmt_mod.emitStatements(self, block.statements);
+    try self.emitDeferredAtScopeEnd(block.statements);
+    const terminates = block.statements.len > 0 and (self.state.terminates.get(block.statements[block.statements.len - 1]) orelse false);
+    if (!terminates and ret.may_error) {
+        if (ret.kind == .error_value) {
+            self.popScope();
+            return self.failAt(f.body, "function returning '{s}' must return an error value", .{ret.display});
+        }
+        const success = ret.success orelse {
+            self.popScope();
+            return self.failAt(f.body, "native backend cannot determine the success type of '{s}'", .{ret.display});
+        };
+        try self.writeIndent();
+        if (success.kind == .void) {
+            try self.writer.writeAll("return .{ .ok = {} };\n");
+        } else {
+            try self.writer.print("return .{{ .ok = {s} }};\n", .{try zeroValue(self, success.*)});
+        }
+    }
+    self.popScope();
+
+    try self.writer.writeAll("}\n\n");
+}
+
+pub fn emitTrampolines(self: *Emitter) !void {
+    const a = self.arena.allocator();
+    var it = self.trampolines_needed.keyIterator();
+    while (it.next()) |fn_name_ptr| {
+        const fn_name = fn_name_ptr.*;
+        const def = self.state.functions.get(fn_name) orelse continue;
+        if (def.node.* != .function_decl) continue;
+        const f = &def.node.function_decl;
+        const params = switch (f.params.*) {
+            .params => |p| p.params,
+            else => continue,
+        };
+        const ret = try functionReturnType(self, fn_name, def);
+        const zig_fn = try self.fnName(fn_name);
+
+        try self.writer.print("fn lls_trampoline_{s}(ctx: *rt.Context, _: ?*anyopaque", .{zig_fn});
+        var arg_names: std.ArrayList([]const u8) = .empty;
+        for (params, 0..) |p, i| {
+            var p_vt: ?ValType = null;
+            if (p.type_annotation) |ann| {
+                const p_ir = from_ast.typeFromAst(ann, self.state, self.state.typeAlloc()) catch null;
+                if (p_ir) |pir| p_vt = try self.valTypeOfIR(def.node, pir);
+            }
+            const p_zig = if (p_vt) |pv| pv.zig else "i64";
+            const arg_name = try std.fmt.allocPrint(a, "arg_{d}", .{i});
+            try arg_names.append(a, arg_name);
+            try self.writer.print(", {s}: {s}", .{ arg_name, p_zig });
+        }
+        try self.writer.print(") anyerror!{s} {{\n", .{ret.zig});
+        const joined_args = try std.mem.join(a, ", ", arg_names.items);
+        if (joined_args.len == 0) {
+            try self.writer.print("    return try {s}(ctx);\n", .{zig_fn});
+        } else {
+            try self.writer.print("    return try {s}(ctx, {s});\n", .{ zig_fn, joined_args });
+        }
+        try self.writer.writeAll("}\n\n");
+    }
+}
+
 pub fn emitGlobalDecls(self: *Emitter) !void {
     const a = self.arena.allocator();
     var names: std.ArrayList([]const u8) = .empty;
@@ -366,7 +559,7 @@ pub fn zeroValue(self: *Emitter, t: ValType) ![]const u8 {
         .bool => "false",
         .string => "\"\"",
         .optional, .null_value => "null",
-        .struct_, .union_, .array, .slice, .pointer => "undefined",
+        .struct_, .union_, .array, .slice, .pointer, .func => "undefined",
         .error_value => "undefined",
         else => if (t.may_error)
             "undefined"

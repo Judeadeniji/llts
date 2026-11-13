@@ -213,6 +213,21 @@ pub const ImportFrame = struct {
     import_path: []const u8,
 };
 
+pub const ClosureCapture = struct {
+    name: []const u8,
+    ir_type: ir.Type,
+    is_mutated: bool = false,
+};
+
+pub const ClosureInfo = struct {
+    id: u32,
+    name: []const u8,
+    captures: []ClosureCapture,
+    ret_ir: ir.Type,
+    param_irs: []ir.Type,
+    node: *ast.Node,
+};
+
 pub const CompilerState = struct {
     allocator: std.mem.Allocator,
     chunk: chunk_mod.Chunk,
@@ -354,6 +369,9 @@ pub const CompilerState = struct {
     /// Reachability analysis computed during `compiler.analyze`:
     /// maps reachable function and global names from main and top-level entry points.
     reachability: ?reachability.Result = null,
+    /// Registered closures and their captured free variables.
+    closures: std.AutoHashMap(*ast.Node, ClosureInfo),
+    closure_counter: u32 = 0,
     last_emitted_line: i32 = -1,
     last_emitted_column: i32 = -1,
     /// When true, bare struct/array literals use immortal heap (globals / return of literals).
@@ -454,6 +472,7 @@ pub fn create(allocator: std.mem.Allocator) !CompilerState {
         .if_capture_facts = std.AutoHashMap(*const ast.Node, BindingFacts).init(allocator),
         .terminates = std.AutoHashMap(*ast.Node, bool).init(allocator),
         .proven_arithmetic = std.AutoHashMap(*ast.Node, void).init(allocator),
+        .closures = std.AutoHashMap(*ast.Node, ClosureInfo).init(allocator),
         .import_from = std.StringHashMap(ImportFrame).init(allocator),
     };
     try state.native_globals.put("print", {});
@@ -616,6 +635,7 @@ pub fn deinit(self: *CompilerState) void {
     self.import_from.deinit();
     if (self.last_error_message.len > 0) self.allocator.free(self.last_error_message);
     if (self.last_error_path.len > 0) self.allocator.free(self.last_error_path);
+    self.closures.deinit();
     self.addr_taken_decls.deinit();
     self.addr_taken_params.deinit();
     self.escaping_params.deinit();
