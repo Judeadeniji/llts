@@ -55,6 +55,7 @@ pub const CallTarget = struct {
     key: []const u8,
     receiver_mode: ReceiverModeKind = .none,
     generic_instance: ?[]const u8 = null,
+    closure_id: ?u32 = null,
 };
 
 pub const FunctionDef = struct {
@@ -73,6 +74,7 @@ pub const FunctionDef = struct {
     rest_ir: ?ir.Type = null,
     is_variadic: bool = false,
     return_fn_target: ?[]const u8 = null,
+    closure_ids: std.ArrayList(u32) = .empty,
 };
 
 pub const GenericCall = struct {
@@ -226,6 +228,9 @@ pub const ClosureInfo = struct {
     ret_ir: ir.Type,
     param_irs: []ir.Type,
     node: *ast.Node,
+    escapes: bool = false,
+    enclosing_fn: ?[]const u8 = null,
+    child_closure_ids: std.ArrayList(u32) = .empty,
 };
 
 pub const CompilerState = struct {
@@ -372,6 +377,8 @@ pub const CompilerState = struct {
     /// Registered closures and their captured free variables.
     closures: std.AutoHashMap(*ast.Node, ClosureInfo),
     closure_counter: u32 = 0,
+    top_level_closure_ids: std.ArrayList(u32) = .empty,
+    devirtualized_closures: std.AutoHashMap(*ast.Node, u32),
     last_emitted_line: i32 = -1,
     last_emitted_column: i32 = -1,
     /// When true, bare struct/array literals use immortal heap (globals / return of literals).
@@ -473,6 +480,7 @@ pub fn create(allocator: std.mem.Allocator) !CompilerState {
         .terminates = std.AutoHashMap(*ast.Node, bool).init(allocator),
         .proven_arithmetic = std.AutoHashMap(*ast.Node, void).init(allocator),
         .closures = std.AutoHashMap(*ast.Node, ClosureInfo).init(allocator),
+        .devirtualized_closures = std.AutoHashMap(*ast.Node, u32).init(allocator),
         .import_from = std.StringHashMap(ImportFrame).init(allocator),
     };
     try state.native_globals.put("print", {});
@@ -565,6 +573,7 @@ pub fn deinit(self: *CompilerState) void {
     while (fit.next()) |e| {
         e.value_ptr.calls.deinit();
         e.value_ptr.forward_jumps.deinit(self.allocator);
+        e.value_ptr.closure_ids.deinit(self.allocator);
     }
     self.functions.deinit();
     var sit = self.structs.iterator();
@@ -635,7 +644,13 @@ pub fn deinit(self: *CompilerState) void {
     self.import_from.deinit();
     if (self.last_error_message.len > 0) self.allocator.free(self.last_error_message);
     if (self.last_error_path.len > 0) self.allocator.free(self.last_error_path);
+    var cit = self.closures.valueIterator();
+    while (cit.next()) |c| {
+        c.child_closure_ids.deinit(self.allocator);
+    }
     self.closures.deinit();
+    self.top_level_closure_ids.deinit(self.allocator);
+    self.devirtualized_closures.deinit();
     self.addr_taken_decls.deinit();
     self.addr_taken_params.deinit();
     self.escaping_params.deinit();

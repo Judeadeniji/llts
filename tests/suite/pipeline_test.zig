@@ -132,3 +132,31 @@ test "pipeline native execution: top-level function passed to @func argument" {
     ;
     try helpers.expectNativeStdout(allocator, src, "42\n");
 }
+
+test "pipeline native execution: locally devirtualized closure call" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\pub @func main() {
+        \\    $factor: int = 4;
+        \\    $quad = @func(x: int): int {
+        \\        return x * factor;
+        \\    };
+        \\    print(quad(10));
+        \\    print(quad(25));
+        \\}
+    ;
+    try helpers.expectNativeStdout(allocator, src, "40\n100\n");
+}
+
+test "pipeline native execution: immediate closure IIFE" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\pub @func main() {
+        \\    $res = (@func(x: int): int {
+        \\        return x * 3;
+        \\    })(14);
+        \\    print(res);
+        \\}
+    ;
+    try helpers.expectNativeStdout(allocator, src, "42\n");
+}

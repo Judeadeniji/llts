@@ -868,6 +868,28 @@ pub fn emitLocalDeclaration(self: *Emitter, node: *ast_mod.Node, d: *const ast_m
         try self.scopes.items[self.scopes.items.len - 1].put(d.name, info);
         return;
     }
+    if (self.state.devirtualized_closures.get(node) orelse self.state.devirtualized_closures.get(d.value)) |cid| {
+        if (self.state.closures.get(d.value)) |cinfo| {
+            if (cinfo.captures.len > 0) {
+                var fields_buf: std.ArrayList([]const u8) = .empty;
+                for (cinfo.captures) |cap| {
+                    const resolved = try self.lookupBinding(d.value, cap.name);
+                    if (cap.is_mutated) {
+                        const field_code = try std.fmt.allocPrint(a, ".{s} = @constCast(&({s}))", .{ cap.name, resolved.zig_name });
+                        try fields_buf.append(a, field_code);
+                    } else {
+                        const field_code = try std.fmt.allocPrint(a, ".{s} = {s}", .{ cap.name, resolved.zig_name });
+                        try fields_buf.append(a, field_code);
+                    }
+                }
+                const fields_joined = try std.mem.join(a, ", ", fields_buf.items);
+                try self.writeIndent();
+                try self.writer.print("lls_env_stack_{d} = .{{ {s} }};\n", .{ cid, fields_joined });
+            }
+        }
+        try self.scopes.items[self.scopes.items.len - 1].put(d.name, info);
+        return;
+    }
     const vt = try self.valTypeFor(node, info.ir_type, info.display);
     try self.requireValueType(node, vt);
     if (info.zig_name.len == 0) info.zig_name = try self.localName(d.name);

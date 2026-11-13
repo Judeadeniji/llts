@@ -43,6 +43,9 @@ pub fn analyze(state: *state_mod.CompilerState, doc: *ast.Document) !void {
     // capture whose declaration is addr_taken must capture by pointer (is_mutated = true).
     var cit = state.closures.valueIterator();
     while (cit.next()) |info| {
+        if (info.enclosing_fn == null) {
+            info.escapes = true;
+        }
         for (info.captures) |*cap| {
             var bit = state.binding_facts.keyIterator();
             while (bit.next()) |decl_node| {
@@ -52,6 +55,11 @@ pub fn analyze(state: *state_mod.CompilerState, doc: *ast.Document) !void {
                             try state.addr_taken_decls.put(decl_node.*.declaration.value, {});
                         } else if (state.addr_taken_decls.contains(decl_node.*.declaration.value)) {
                             cap.is_mutated = true;
+                        }
+                        if (info.escapes) {
+                            if (state.closures.getPtr(decl_node.*.declaration.value)) |cap_info| {
+                                cap_info.escapes = true;
+                            }
                         }
                     }
                 }
@@ -87,6 +95,7 @@ fn analyzeTopLevelStatements(state: *state_mod.CompilerState, stmts: []*ast.Node
             else => try ctx.walkStmt(s),
         }
     }
+    try ctx.finalizeClosureDevirtualization();
     ctx.popScope();
 }
 
@@ -109,6 +118,7 @@ fn analyzeFunction(state: *state_mod.CompilerState, f: ast.FunctionDecl) !void {
     }
 
     try ctx.walkStmt(f.body);
+    try ctx.finalizeClosureDevirtualization();
     ctx.popScope();
 }
 
@@ -128,9 +138,18 @@ const ScopeEntry = union(enum) {
 
 const Scope = std.StringHashMap(ScopeEntry);
 
+const ClosureDeclTracker = struct {
+    decl_node: *ast.Node,
+    closure_node: *ast.Node,
+    closure_id: u32,
+    call_sites: std.ArrayList(*ast.Node) = .empty,
+    value_read: bool = false,
+};
+
 const Ctx = struct {
     state: *state_mod.CompilerState,
     scopes: std.ArrayList(Scope) = .empty,
+    closure_decls: std.StringHashMap(ClosureDeclTracker),
     /// Escape facts only matter for function bodies: module-level storage is
     /// allocated immortal already.
     in_function: bool = false,
@@ -140,12 +159,16 @@ const Ctx = struct {
         return .{
             .state = state,
             .scopes = .empty,
+            .closure_decls = std.StringHashMap(ClosureDeclTracker).init(state.allocator),
         };
     }
 
     fn deinit(ctx: *Ctx) void {
         for (ctx.scopes.items) |*s| s.deinit();
         ctx.scopes.deinit(ctx.state.allocator);
+        var cdit = ctx.closure_decls.valueIterator();
+        while (cdit.next()) |cd| cd.call_sites.deinit(ctx.state.allocator);
+        ctx.closure_decls.deinit();
     }
 
     fn pushScope(ctx: *Ctx) !void {
@@ -178,7 +201,32 @@ const Ctx = struct {
         try scope.put(name, .{ .if_cap = if_node });
     }
 
+    fn finalizeClosureDevirtualization(ctx: *Ctx) !void {
+        var cdit = ctx.closure_decls.iterator();
+        while (cdit.next()) |entry| {
+            const cdecl = entry.value_ptr;
+            const bfacts = ctx.state.binding_facts.get(cdecl.decl_node) orelse state_mod.BindingFacts{};
+            if (!cdecl.value_read and !bfacts.reassigned) {
+                if (ctx.state.closures.get(cdecl.closure_node)) |cinfo| {
+                    if (!cinfo.escapes) {
+                        try ctx.state.devirtualized_closures.put(cdecl.decl_node, cdecl.closure_id);
+                        try ctx.state.devirtualized_closures.put(cdecl.closure_node, cdecl.closure_id);
+                        for (cdecl.call_sites.items) |cs| {
+                            try ctx.state.call_targets.put(cs, .{ .key = cinfo.name, .closure_id = cdecl.closure_id });
+                            if (cs.* == .call) {
+                                try ctx.state.call_targets.put(cs.call.callee, .{ .key = cinfo.name, .closure_id = cdecl.closure_id });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     fn markRead(ctx: *Ctx, name: []const u8) void {
+        if (ctx.closure_decls.getPtr(name)) |cdecl| {
+            cdecl.value_read = true;
+        }
         var i = ctx.scopes.items.len;
         while (i > 0) {
             i -= 1;
@@ -355,6 +403,11 @@ const Ctx = struct {
             }
         }
         switch (inner.*) {
+            .function_decl => {
+                if (ctx.state.closures.getPtr(inner)) |info| {
+                    info.escapes = true;
+                }
+            },
             .unary => |u| if (std.mem.eql(u8, u.operator, "&")) try ctx.markAddrTaken(u.arg),
             .primary => |p| {
                 if (p.kind != .identifier and p.kind != .register) return;
@@ -362,6 +415,13 @@ const Ctx = struct {
                 // function keeps a pointer the caller gave it.
                 if (ctx.lookup(p.name)) |entry| switch (entry) {
                     .param => |param| try ctx.state.escaping_params.put(param, {}),
+                    .decl => |decl_node| {
+                        if (decl_node.* == .declaration) {
+                            if (ctx.state.closures.getPtr(decl_node.declaration.value)) |info| {
+                                info.escapes = true;
+                            }
+                        }
+                    },
                     else => {},
                 };
             },
@@ -373,7 +433,9 @@ const Ctx = struct {
     /// (builtins, externs, generic instances, variadics) are assumed to keep it.
     fn argEscapes(ctx: *Ctx, c: ast.Call, index: usize) bool {
         const target = ctx.state.call_targets.get(c.callee) orelse return true;
-        if (target.generic_instance != null) return true;
+        // A generic instance shares the template's parameter nodes, so the
+        // template's escape facts apply just as well to the specialised call:
+        // `apply(T, f, x)` that merely calls `f` does not keep it.
         const def = ctx.state.functions.getPtr(target.key) orelse return true;
         if (def.is_variadic or def.node.* != .function_decl) return true;
         const f = &def.node.function_decl;
@@ -499,7 +561,22 @@ const Ctx = struct {
                     }
                     try ctx.walkExpr(m.object);
                 } else {
-                    try ctx.walkExpr(c.callee);
+                    if (c.callee.* == .function_decl) {
+                        if (ctx.state.closures.get(c.callee)) |info| {
+                            try ctx.state.call_targets.put(node, .{ .key = info.name, .closure_id = info.id });
+                            try ctx.state.call_targets.put(c.callee, .{ .key = info.name, .closure_id = info.id });
+                        }
+                        try ctx.walkExpr(c.callee);
+                    } else if (c.callee.* == .primary and (c.callee.primary.kind == .identifier or c.callee.primary.kind == .register)) {
+                        const pname = c.callee.primary.name;
+                        if (ctx.closure_decls.getPtr(pname)) |cdecl| {
+                            try cdecl.call_sites.append(ctx.state.allocator, node);
+                        } else {
+                            try ctx.walkExpr(c.callee);
+                        }
+                    } else {
+                        try ctx.walkExpr(c.callee);
+                    }
                 }
             },
             .member => |m| {
@@ -562,6 +639,16 @@ const Ctx = struct {
                 // `getOrPut`: repeated fixpoint rounds must not clear flags.
                 _ = try ctx.state.binding_facts.getOrPut(node);
                 try ctx.putDecl(d.name, node);
+                if (d.value.* == .function_decl) {
+                    if (ctx.state.closures.get(d.value)) |info| {
+                        try ctx.closure_decls.put(d.name, .{
+                            .decl_node = node,
+                            .closure_node = d.value,
+                            .closure_id = info.id,
+                            .call_sites = .empty,
+                        });
+                    }
+                }
             },
             .block => |b| {
                 try ctx.pushScope();

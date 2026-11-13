@@ -140,6 +140,7 @@ pub fn emitFunction(self: *Emitter, name: []const u8, def: state_mod.FunctionDef
     try self.writer.print("const _mark = try ctx.enterFunction({d});\n", .{entry_site});
     try self.writeIndent();
     try self.writer.writeAll("defer ctx.leaveFunction(_mark);\n");
+    try emitClosureEnvLocals(self, def.closure_ids.items);
 
     // Parameters: copy mutable ones into locals; silence unread ones.
     for (self.params.items) |p| {
@@ -266,6 +267,19 @@ pub fn emitClosures(self: *Emitter) !void {
     }
 }
 
+fn emitClosureEnvLocals(self: *Emitter, closure_ids: []const u32) !void {
+    for (closure_ids) |cid| {
+        var cit = self.state.closures.valueIterator();
+        while (cit.next()) |cinfo| {
+            if (cinfo.id == cid and !cinfo.escapes and cinfo.captures.len > 0) {
+                try self.writeIndent();
+                try self.writer.print("var lls_env_stack_{d}: lls_env_{d} = undefined;\n", .{ cid, cid });
+                break;
+            }
+        }
+    }
+}
+
 fn emitSingleClosure(self: *Emitter, info: state_mod.ClosureInfo) !void {
     const a = self.arena.allocator();
     const f = &info.node.function_decl;
@@ -293,6 +307,15 @@ fn emitSingleClosure(self: *Emitter, info: state_mod.ClosureInfo) !void {
     try self.writer.print("const _mark = try ctx.enterFunction({d});\n", .{entry_site});
     try self.writeIndent();
     try self.writer.writeAll("defer ctx.leaveFunction(_mark);\n");
+    try emitClosureEnvLocals(self, info.child_closure_ids.items);
+
+    // The context is always consumed by the frame bookkeeping above; the
+    // environment is not, so a capture-free closure would leave `env_raw`
+    // unused in the emitted Zig.
+    if (info.captures.len == 0) {
+        try self.writeIndent();
+        try self.writer.writeAll("_ = &env_raw;\n");
+    }
 
     // Unpack environment into scope
     if (info.captures.len > 0) {
@@ -431,6 +454,7 @@ pub fn emitTopLevel(self: *Emitter) !void {
     self.indent = 1;
     try self.writeIndent();
     try self.writer.writeAll("ctx.setSite(0);\n");
+    try emitClosureEnvLocals(self, self.state.top_level_closure_ids.items);
     self.pushScope();
     for (self.doc.statements) |s| {
         if (s.* == .function_decl or s.* == .struct_decl or s.* == .enum_decl or

@@ -313,7 +313,9 @@ pub fn emitCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) any
         if (try emitMethodCall(self, node, c)) |code| return code;
     }
 
-    if (c.callee.* != .primary and c.callee.* != .call) {
+    // A closure literal may be called on the spot (`(@func (x: int) { … })(1)`);
+    // its target is registered by the binding analysis like any other closure.
+    if (c.callee.* != .primary and c.callee.* != .call and c.callee.* != .function_decl) {
         return self.failAt(node, "native backend (Phase 2) only supports direct function calls", .{});
     }
     // A `.call` callee is a devirtualized function call (`f()()`), recorded in
@@ -380,6 +382,60 @@ pub fn emitCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) any
             return self.failAt(node, "len of '{s}' is not supported in Phase 3", .{at.display});
         }
         return std.fmt.allocPrint(a, "@as(i64, @intCast(({s}).len))", .{operand});
+    }
+
+    const closure_target = if (self.state.call_targets.get(node)) |t|
+        t.closure_id
+    else if (self.state.call_targets.get(c.callee)) |t|
+        t.closure_id
+    else
+        null;
+
+    if (closure_target) |cid| {
+        var cinfo_opt: ?state_mod.ClosureInfo = null;
+        var cit = self.state.closures.valueIterator();
+        while (cit.next()) |cinfo| {
+            if (cinfo.id == cid) {
+                cinfo_opt = cinfo.*;
+                break;
+            }
+        }
+        if (cinfo_opt) |cinfo| {
+            var args_buf: std.ArrayList([]const u8) = .empty;
+            const r_args = self.runtimeArgs(node, c);
+            for (r_args) |arg| {
+                try args_buf.append(a, try emitExpr(self, arg));
+            }
+            const args_joined = try std.mem.join(a, ", ", args_buf.items);
+            if (cinfo.captures.len == 0) {
+                return if (args_joined.len == 0)
+                    try std.fmt.allocPrint(a, "(try lls_closure_fn_{d}(ctx, @as(?*anyopaque, null)))", .{cid})
+                else
+                    try std.fmt.allocPrint(a, "(try lls_closure_fn_{d}(ctx, @as(?*anyopaque, null), {s}))", .{ cid, args_joined });
+            }
+
+            // A closure declared in a statement seeds its stack environment when
+            // the declaration runs; one created and called in a single expression
+            // (an immediately invoked closure) has no declaration to do that, so
+            // seed it here, right before the call.
+            var fields_buf: std.ArrayList([]const u8) = .empty;
+            for (cinfo.captures) |cap| {
+                const resolved = try self.lookupBinding(node, cap.name);
+                const field_code = if (cap.is_mutated)
+                    try std.fmt.allocPrint(a, ".{s} = @constCast(&({s}))", .{ cap.name, resolved.zig_name })
+                else
+                    try std.fmt.allocPrint(a, ".{s} = {s}", .{ cap.name, resolved.zig_name });
+                try fields_buf.append(a, field_code);
+            }
+            const fields_joined = try std.mem.join(a, ", ", fields_buf.items);
+            const seeded_call = if (args_joined.len == 0)
+                try std.fmt.allocPrint(a, "(try lls_closure_fn_{d}(ctx, @as(?*anyopaque, @ptrCast(&lls_env_stack_{d}))))", .{ cid, cid })
+            else
+                try std.fmt.allocPrint(a, "(try lls_closure_fn_{d}(ctx, @as(?*anyopaque, @ptrCast(&lls_env_stack_{d})), {s}))", .{ cid, cid, args_joined });
+            self.counter += 1;
+            const label = try std.fmt.allocPrint(a, "lls_closure_call_{d}", .{self.counter});
+            return try std.fmt.allocPrint(a, "{s}: {{ lls_env_stack_{d} = .{{ {s} }}; break :{s} {s}; }}", .{ label, cid, fields_joined, label, seeded_call });
+        }
     }
 
     var target_name: ?[]const u8 = null;
@@ -738,14 +794,23 @@ pub fn emitExpr(self: *Emitter, node: *ast_mod.Node) anyerror![]const u8 {
                 }
             }
             const fields_joined = try std.mem.join(a, ", ", fields_buf.items);
-            return std.fmt.allocPrint(a,
-                \\blk: {{
-                \\    const lls_env_cell_{d} = try ctx.allocImmortal(@sizeOf(lls_env_{d}), @alignOf(lls_env_{d}));
-                \\    const lls_env_ptr_{d}: *lls_env_{d} = @ptrCast(@alignCast(lls_env_cell_{d}.ptr));
-                \\    lls_env_ptr_{d}.* = .{{ {s} }};
-                \\    break :blk {s}{{ .env = @ptrCast(lls_env_ptr_{d}), .call = lls_closure_fn_{d} }};
-                \\}}
-            , .{ info.id, info.id, info.id, info.id, info.id, info.id, info.id, fields_joined, vt.zig, info.id, info.id });
+            if (!info.escapes) {
+                return std.fmt.allocPrint(a,
+                    \\blk: {{
+                    \\    lls_env_stack_{d} = .{{ {s} }};
+                    \\    break :blk {s}{{ .env = @ptrCast(&lls_env_stack_{d}), .call = lls_closure_fn_{d} }};
+                    \\}}
+                , .{ info.id, fields_joined, vt.zig, info.id, info.id });
+            } else {
+                return std.fmt.allocPrint(a,
+                    \\blk: {{
+                    \\    const lls_env_cell_{d} = try ctx.allocImmortal(@sizeOf(lls_env_{d}), @alignOf(lls_env_{d}));
+                    \\    const lls_env_ptr_{d}: *lls_env_{d} = @ptrCast(@alignCast(lls_env_cell_{d}.ptr));
+                    \\    lls_env_ptr_{d}.* = .{{ {s} }};
+                    \\    break :blk {s}{{ .env = @ptrCast(lls_env_ptr_{d}), .call = lls_closure_fn_{d} }};
+                    \\}}
+                , .{ info.id, info.id, info.id, info.id, info.id, info.id, info.id, fields_joined, vt.zig, info.id, info.id });
+            }
         },
         .declaration, .return_expr, .for_expr, .break_expr, .continue_expr, .defer_stmt, .struct_decl, .enum_decl, .error_decl, .type_decl, .extern_decl => {
             return self.failAt(node, "native backend (Phase 2) does not support {s} in expression position", .{@tagName(node.*)});

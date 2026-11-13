@@ -69,6 +69,8 @@ pub const Env = struct {
     /// Shared across function envs, never copied: the set is fixed before any
     /// function is checked, so re-seeding it per function was pure overhead.
     top_consts: ?*const std.StringHashMap(void) = null,
+    current_fn: ?[]const u8 = null,
+    current_closure: ?u32 = null,
     allocator: std.mem.Allocator,
 
     fn init(allocator: std.mem.Allocator) Env {
@@ -2241,16 +2243,22 @@ fn inferFunctionDeclExpr(
         try env.define(pnode.name, params_buf.items[i]);
     }
 
+    const closure_id = state.closure_counter;
+    state.closure_counter += 1;
+
     const prev_in_func = env.in_function;
     const prev_annotated = env.annotated_return;
     const prev_expected = env.expected_return;
+    const prev_closure = env.current_closure;
     env.in_function = true;
     env.annotated_return = annotated_ret;
     env.expected_return = annotated_ret;
+    env.current_closure = closure_id;
     defer {
         env.in_function = prev_in_func;
         env.annotated_return = prev_annotated;
         env.expected_return = prev_expected;
+        env.current_closure = prev_closure;
     }
 
     var inferred_ret: ir.Type = ir.TVoid;
@@ -2276,8 +2284,6 @@ fn inferFunctionDeclExpr(
     else
         ir.TVoid;
 
-    const closure_id = state.closure_counter;
-    state.closure_counter += 1;
     const closure_name = if (f.name.len > 0)
         try std.fmt.allocPrint(ta.allocator, "{s}_{d}", .{ f.name, closure_id })
     else
@@ -2293,8 +2299,26 @@ fn inferFunctionDeclExpr(
         .ret_ir = final_ret,
         .param_irs = params_duped,
         .node = node,
+        .escapes = false,
+        .enclosing_fn = env.current_fn,
     };
     try state.closures.put(node, info);
+
+    if (prev_closure) |parent_cid| {
+        var it = state.closures.valueIterator();
+        while (it.next()) |parent_info| {
+            if (parent_info.id == parent_cid) {
+                try parent_info.child_closure_ids.append(state.allocator, closure_id);
+                break;
+            }
+        }
+    } else if (env.current_fn) |fn_name| {
+        if (state.functions.getPtr(fn_name)) |def| {
+            try def.closure_ids.append(state.allocator, closure_id);
+        }
+    } else {
+        try state.top_level_closure_ids.append(state.allocator, closure_id);
+    }
 
     const func_type = try ta.funcType(params_duped, final_ret, is_variadic);
     try recordExprType(state, node, func_type);
@@ -3704,6 +3728,7 @@ fn checkFunction(
     // cost ~2 hash inserts per (function × module-level name) and dominated
     // compile time on any unit that imports the stdlib.
     env.top_consts = top_consts;
+    env.current_fn = f.name;
 
     const annotated: ?ir.Type = if (f.return_type) |rt| try from_ast.typeFromAst(rt, state, ta) else null;
     if (annotated) |a| {
