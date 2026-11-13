@@ -31,6 +31,12 @@ Welcome to the documentation for LLTS — a small systems language with a compac
   - [Compound & Structural Types](types/compound-types.md) (`[N]T`, `[]T`, `[A, B]`, `*T`, anonymous shapes)
   - [Algebraic Types & Flow Narrowing](types/algebraic-types.md) (`?T`, `A | B`, `A & B`, flow typing, unwrap operators)
   - [User-Defined Types](types/user-defined.md) (`@struct`, `@enum`, `@error`, `@type`, `@alias`)
+  - [Structs vs. Shapes](types/structs-vs-shapes.md) (nominal `@struct` records vs structural shapes: identity, assignability, methods, layout, and backend status)
+
+- [**Structs vs. Shapes**](types/structs-vs-shapes.md)
+  A dedicated comparison of nominal `@struct` records and structural shapes,
+  including type identity, assignability rules, method support, layout, function
+  fields, and current VM/native backend differences.
 
 - [**Type Soundness, Flow Analysis & Discriminated Unions**](type-soundness-and-flow.md)  
   Strict mode invariants (`--strict`), truthiness coercion prohibition, flow-sensitive type narrowing, branch join semantics, partial union access rules, discriminated unions with kind matching, and literal singleton types (`const <lit>`).

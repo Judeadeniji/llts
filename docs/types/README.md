@@ -62,6 +62,9 @@ Dive deeper into specific areas of the LLTS type system:
 4. [**User-Defined Types**](user-defined.md)  
    Covers nominal structs (`@struct`), method receiver semantics (`self` vs `self: *T`), enumerations (`@enum`), closed error sets (`@error`), distinct nominal types (`@type`), and transparent aliases (`@alias`).
 
+5. [**Structs vs. Shapes**](structs-vs-shapes.md)
+   Compares nominal `@struct` records with structural shapes (`{ ... }` and `@type Name = { ... }`): type identity, assignability, methods, layout and copying, pointers, function-typed fields, and current VM/native backend limits.
+
 ---
 
 ## Type System Rules & Invariants
