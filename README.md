@@ -112,6 +112,18 @@ The bytecode VM is deprecated. To run via the legacy VM:
 llts run --vm examples/methods.lls
 ```
 
+Native code may embed target-specific, side-effecting assembly with
+`@asm("template")`. The template must be a string literal; the bytecode backend
+rejects this native-only intrinsic. Use a fenced multiline string for
+multi-instruction templates:
+
+````lls
+@asm(```
+    nop
+    nop
+```);
+````
+
 ## Project layout
 
 | Path | Contents |
