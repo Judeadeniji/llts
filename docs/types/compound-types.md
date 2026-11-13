@@ -190,7 +190,7 @@ typechecker when their underlying shapes are compatible.
 > The typechecker accepts structural shape rules that the native backend does
 > not yet lower: a named shape passed to an anonymous-shape parameter, a shape
 > with extra source fields, or a shape with a different field order may typecheck
-> and run on the VM but be rejected by `--native`. See
+> and run on the VM (`--vm`) but be rejected by the native backend (the default). See
 > [Structs vs. Shapes](structs-vs-shapes.md) for the full compatibility matrix
 > and backend limits.
 

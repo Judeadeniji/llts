@@ -7,19 +7,29 @@ const pipeline = @import("pipeline.zig");
 pub fn execute(ctx: zli.CommandContext) !void {
     common.setLogLevel(ctx);
     const release = ctx.flag("release", bool);
-    const flag_native = ctx.flag("native", bool);
+    const flag_vm = ctx.flag("vm", bool);
     const flag_emit_bin = ctx.flag("emit-bin", bool);
     const flag_emit_zig = ctx.flag("emit-zig", bool);
     const flag_emit_asm = ctx.flag("emit-asm", bool);
+    const flag_emit_bytecode = ctx.flag("emit-bytecode", bool);
     const emit_kind = ctx.flag("emit", []const u8);
-    _ = ctx.flag("emit-bytecode", bool);
 
-    const is_native = flag_native or flag_emit_bin or flag_emit_asm or emit_kind.len > 0;
+    const native_requested = flag_emit_bin or flag_emit_asm or emit_kind.len > 0;
+    const vm_requested = flag_vm or flag_emit_bytecode;
+    if (vm_requested and native_requested) {
+        common.failExit("`--vm`/`--emit-bytecode` cannot be combined with native emit flags", .{});
+    }
+
+    // Native is the default output; `--vm` (or `--emit-bytecode`) selects the
+    // bytecode backend instead. `--emit-zig` is its own native-emitter mode.
+    const use_vm = vm_requested;
     const is_emit_zig = flag_emit_zig;
+    if (use_vm and is_emit_zig) {
+        common.failExit("`--vm` cannot be combined with --emit-zig", .{});
+    }
 
-    // Native targets and Zig emission require strict mode by default.
-    const strict_default = is_native or is_emit_zig;
-    const strict = ctx.flag("strict", bool) or strict_default;
+    // Strict typing is on by default; pass `--strict false` to opt out.
+    const strict = ctx.flag("strict", bool);
 
     const file = ctx.getArg("file").?;
     const out_val = ctx.flag("output", []const u8);
@@ -36,7 +46,7 @@ pub fn execute(ctx: zli.CommandContext) !void {
         return;
     }
 
-    if (is_native) {
+    if (!use_vm) {
         const out_path = if (out_val.len > 0) out_val else "out";
         const zig_bin = try common.getZigBin(ctx.allocator, ctx);
         defer ctx.allocator.free(zig_bin);

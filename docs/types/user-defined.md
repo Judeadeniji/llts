@@ -165,7 +165,7 @@ assignability with anonymous shapes. A named shape can be passed where an
 anonymous shape is expected, and an anonymous shape literal can initialize a
 named shape. The native backend currently requires the exact emitted layout
 type, so named-shape ↔ anonymous-shape conversions may typecheck and run on the
-VM while being rejected by `--native`. See
+VM (`--vm`) while being rejected by the native backend (the default). See
 [Structs vs. Shapes](structs-vs-shapes.md) for the full rules and compatibility
 matrix.
 

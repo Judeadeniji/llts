@@ -2042,13 +2042,18 @@ fn inferAssignmentExpr(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAl
         const i = try inferExpr(state, env, ta, start_node);
         if (!ir.involvesUnknown(i)) try requireAssign(state, i, ir.TInt, "index");
         if (obj_t == .array) {
+            // Record the element type on the index node so editor features
+            // (hover) and codegen can resolve the assignment target.
+            try recordExprType(state, a.left, obj_t.array.elem.*);
             try requireAssignFrom(state, val, obj_t.array.elem.*, "assignment to index", a.right);
         } else if (obj_t == .tuple) {
             if (try constIntIndex(start_node)) |ci| {
                 if (ci < 0 or ci >= obj_t.tuple.len) {
                     return compiler_errors.compileFailFmt(state, "Tuple index {d} out of range (len {d})", .{ ci, obj_t.tuple.len });
                 }
-                try requireAssignFrom(state, val, obj_t.tuple[@intCast(ci)], "assignment to tuple index", a.right);
+                const elem_t = obj_t.tuple[@intCast(ci)];
+                try recordExprType(state, a.left, elem_t);
+                try requireAssignFrom(state, val, elem_t, "assignment to tuple index", a.right);
             }
         }
     }

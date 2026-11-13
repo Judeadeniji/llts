@@ -39,7 +39,7 @@ This compiles two binaries in `zig-out/bin/`:
 
 | Binary | Description |
 | :--- | :--- |
-| `zig-out/bin/llts` | The compiler CLI, bytecode VM, and native driver |
+| `zig-out/bin/llts` | The compiler CLI, native driver, and bytecode VM |
 | `zig-out/bin/llts-lsp` | The Language Server Protocol (LSP) daemon |
 
 ### Fast Everyday Builds (`release`)
@@ -85,9 +85,9 @@ In LLTS:
 - `pub` marks symbols visible as the module entry point.
 - `print(...)` is a built-in function that prints to standard output with a trailing newline.
 
-### Option A: Run on the Bytecode VM
+### Option A: Run Natively (Default)
 
-The bytecode VM offers near-instant startup for rapid iteration:
+LLTS lowers your code to optimized Zig and invokes the Zig compiler to produce a standalone machine-code binary:
 
 ```bash
 llts run hello.lls
@@ -98,32 +98,32 @@ Output:
 Hello, World!
 ```
 
-You can also precompile to a bytecode container (`.llb`) and execute it:
-
-```bash
-# Compile to bytecode
-llts build hello.lls -o hello.llb
-
-# Run the bytecode
-llts run hello.llb
-```
-
-### Option B: Compile to a Standalone Native Executable
-
-LLTS features a native backend that lowers your code to optimized Zig and invokes the Zig compiler to produce a standalone machine-code binary:
+You can also compile a standalone binary first:
 
 ```bash
 # Compile to a native binary
-llts build hello.lls --native -o hello
+llts build hello.lls -o hello
 
 # Run the binary directly
 ./hello
 ```
 
-Alternatively, compile and run natively in a single step:
+### Option B: Run on the Bytecode VM
+
+The bytecode VM is available with `--vm` for rapid iteration and tooling:
 
 ```bash
-llts run hello.lls --native
+llts run --vm hello.lls
+```
+
+You can also precompile to a bytecode container (`.llb`) and execute it:
+
+```bash
+# Compile to bytecode
+llts build --vm hello.lls -o hello.llb
+
+# Run the bytecode (bytecode always uses the VM)
+llts run hello.llb
 ```
 
 ---
@@ -152,24 +152,24 @@ LLTS provides two execution pipelines that share the same front end (scanner, pa
    └───────────────┘         └───────────────┘
 ```
 
-1. **Bytecode Compiler & Stack VM**
-   - Ideal for rapid testing and development.
-   - Inspect bytecode instructions with:
-     ```bash
-     llts dump hello.lls
-     ```
-
-2. **Native Backend (`--native`)**
+1. **Native Backend (Default)**
    - Compiles down to optimized machine code with zero VM overhead.
-   - Strictly enforces sound type safety (`--strict` is enabled automatically).
+   - Strictly enforces sound type safety (`--strict` is on by default; pass `--strict false` to opt out).
    - Supports hardware-level intrinsics such as inline assembly (`@asm`).
    - Accepts native build flags:
      ```bash
-     llts build hello.lls --native -O ReleaseFast --target x86_64-linux -o hello
+     llts build hello.lls -O ReleaseFast --target x86_64-linux -o hello
      ```
    - Inspect the generated Zig code with:
      ```bash
      llts emit-zig hello.lls -o hello.zig
+     ```
+
+2. **Bytecode Compiler & Stack VM (`--vm`)**
+   - Available for rapid testing, tooling, and `.llb` containers.
+   - Inspect bytecode instructions with:
+     ```bash
+     llts dump hello.lls
      ```
 
 ---

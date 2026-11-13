@@ -466,7 +466,7 @@ pub fn emitTopLevel(self: *Emitter) !void {
             const d = &s.declaration;
             if (root_mod.isImportDecl(d)) continue;
             const g = self.globals.get(d.name) orelse {
-                return self.failAt(s, "native backend (Phase 2) does not support this top-level declaration", .{});
+                return self.failAt(s, "native backend does not support this top-level declaration", .{});
             };
             if (g.fn_key != null or g.module_path != null) continue;
             try stmt_mod.emitLineMarker(self, s);
@@ -496,7 +496,7 @@ pub fn functionReturnType(self: *Emitter, name: []const u8, def: state_mod.Funct
         return self.failAt(def.node, "native backend does not support the return type of '{s}'", .{name});
     }
     if (t.kind == .other) {
-        return self.failAt(def.node, "native backend (Phase 2) does not support return type '{s}'", .{display});
+        return self.failAt(def.node, "native backend does not support return type '{s}'", .{display});
     }
     return t;
 }

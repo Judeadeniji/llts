@@ -55,7 +55,7 @@ pub fn emitBinary(self: *Emitter, node: *ast_mod.Node, b: *const ast_mod.Binary)
     }
     if (lt.kind == .int and rt.kind == .int) return emitIntBinary(self, node, b, lt);
     if (lt.kind == .float or rt.kind == .float) return emitFloatBinary(self, node, b, lt, rt);
-    return self.failAt(node, "native backend (Phase 2) does not support '{s}' on '{s}' and '{s}'", .{
+    return self.failAt(node, "native backend does not support '{s}' on '{s}' and '{s}'", .{
         op, lt.display, rt.display,
     });
 }
@@ -272,7 +272,7 @@ pub fn emitCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) any
             if (c.args.len != 2) return self.failAt(node, "@as expects 2 arguments", .{});
             const target = try self.valueType(node);
             if (target.kind == .other or target.kind == .void) {
-                return self.failAt(node, "native backend (Phase 2) does not support @as to '{s}'", .{target.display});
+                return self.failAt(node, "native backend does not support @as to '{s}'", .{target.display});
             }
             return emitStrongCoercion(self, c.args[1], target);
         }
@@ -300,11 +300,11 @@ pub fn emitCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) any
             if (c.args.len != 1) return self.failAt(node, "len expects 1 argument", .{});
             const at = try self.valueType(c.args[0]);
             if (at.kind != .string and at.kind != .slice and at.kind != .array) {
-                return self.failAt(node, "len of '{s}' is not supported in Phase 3", .{at.display});
+                return self.failAt(node, "native backend cannot take the length of '{s}'", .{at.display});
             }
             return std.fmt.allocPrint(a, "@as(i64, @intCast(({s}).len))", .{try emitExpr(self, c.args[0])});
         }
-        return self.failAt(node, "native backend (Phase 2) does not support intrinsic '{s}'", .{intrinsic});
+        return self.failAt(node, "native backend does not support intrinsic '{s}'", .{intrinsic});
     }
 
     if (c.callee.* == .member) {
@@ -322,7 +322,7 @@ pub fn emitCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) any
         c.callee.* != .function_decl and c.callee.* != .member and
         c.callee.* != .index)
     {
-        return self.failAt(node, "native backend (Phase 2) only supports direct function calls", .{});
+        return self.failAt(node, "native backend only supports direct function calls", .{});
     }
     // A `.call` callee is a devirtualized function call (`f()()`), recorded in
     // `state.call_targets`; it has no builtin name.
@@ -385,7 +385,7 @@ pub fn emitCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) any
             return self.failAt(c.args[0], "error-union len argument must be handled with '?' first", .{});
         }
         if (at.kind != .string and at.kind != .slice and at.kind != .array) {
-            return self.failAt(node, "len of '{s}' is not supported in Phase 3", .{at.display});
+            return self.failAt(node, "native backend cannot take the length of '{s}'", .{at.display});
         }
         return std.fmt.allocPrint(a, "@as(i64, @intCast(({s}).len))", .{operand});
     }
@@ -757,7 +757,7 @@ pub fn emitExpr(self: *Emitter, node: *ast_mod.Node) anyerror![]const u8 {
         .literal => |lit| return emitLiteral(self, node, lit),
         .primary => |p| {
             if (p.kind != .identifier and p.kind != .register) {
-                return self.failAt(node, "native backend (Phase 2) does not support '{s}' operands", .{@tagName(p.kind)});
+                return self.failAt(node, "native backend does not support '{s}' operands", .{@tagName(p.kind)});
             }
             const resolved = try self.lookupBinding(node, p.name);
             if (resolved.ir_type) |bind_ir| {
@@ -858,10 +858,10 @@ pub fn emitExpr(self: *Emitter, node: *ast_mod.Node) anyerror![]const u8 {
             }
         },
         .declaration, .return_expr, .for_expr, .break_expr, .continue_expr, .defer_stmt, .struct_decl, .enum_decl, .error_decl, .type_decl, .extern_decl => {
-            return self.failAt(node, "native backend (Phase 2) does not support {s} in expression position", .{@tagName(node.*)});
+            return self.failAt(node, "native backend does not support {s} in expression position", .{@tagName(node.*)});
         },
         else => {
-            return self.failAt(node, "native backend (Phase 2) does not support {s} yet", .{@tagName(node.*)});
+            return self.failAt(node, "native backend does not support {s} here", .{@tagName(node.*)});
         },
     }
 }
@@ -1001,7 +1001,7 @@ pub fn emitFloatBinary(self: *Emitter, node: *ast_mod.Node, b: *const ast_mod.Bi
         const base = if (std.mem.eql(u8, op, "/")) "div" else "mod";
         return std.fmt.allocPrint(a, "(try rt.arith.{s}{s}({s}, {s}))", .{ base, suffix, l, r });
     }
-    return self.failAt(node, "native backend (Phase 2) does not support '{s}' on floats", .{op});
+    return self.failAt(node, "native backend does not support '{s}' on floats", .{op});
 }
 
 pub fn emitI64Operand(self: *Emitter, node: *ast_mod.Node) ![]const u8 {
@@ -1026,6 +1026,60 @@ pub fn isShiftOp(op: []const u8) bool {
 }
 
 /// Map a bitwise compound assignment operator to its binary form (`&=` → `&`).
+pub const CompoundOp = struct {
+    /// Binary operator to apply (`+`, `&`, …).
+    op: []const u8,
+    bitwise: bool,
+};
+
+/// Resolve an assignment operator (`+=`, `&=`, …) to the binary operation it
+/// applies. Null covers plain `=`.
+pub fn compoundOp(assign_op: []const u8) ?CompoundOp {
+    // Bitwise and shift compounds have a dedicated lowering that evaluates the
+    // lvalue once; route them through `emitCompoundBitwiseValue`.
+    if (compoundBitwiseOp(assign_op)) |op| return .{ .op = op, .bitwise = true };
+    // Arithmetic compounds reuse the ordinary binary expression path.
+    if (std.mem.eql(u8, assign_op, "+=")) return .{ .op = "+", .bitwise = false };
+    if (std.mem.eql(u8, assign_op, "-=")) return .{ .op = "-", .bitwise = false };
+    if (std.mem.eql(u8, assign_op, "*=")) return .{ .op = "*", .bitwise = false };
+    if (std.mem.eql(u8, assign_op, "/=")) return .{ .op = "/", .bitwise = false };
+    if (std.mem.eql(u8, assign_op, "%=")) return .{ .op = "%", .bitwise = false };
+    // `^=` is power assignment because `^` is the power operator; `~=` is the
+    // bitwise-XOR compound. Logical compounds keep `&&`/`||` short-circuiting
+    // through the regular binary lowering.
+    if (std.mem.eql(u8, assign_op, "^=")) return .{ .op = "^", .bitwise = false };
+    if (std.mem.eql(u8, assign_op, "&&=")) return .{ .op = "&&", .bitwise = false };
+    if (std.mem.eql(u8, assign_op, "||=")) return .{ .op = "||", .bitwise = false };
+    return null;
+}
+
+/// Lower `lhs op= rhs` into a value expression with the destination's storage
+/// type. Arithmetic compounds reuse `emitBinary`, so they keep the checked
+/// overflow, width narrowing, and error behaviour of `lhs op rhs`.
+pub fn emitCompoundValue(
+    self: *Emitter,
+    node: *ast_mod.Node,
+    left: *ast_mod.Node,
+    right: *ast_mod.Node,
+    compound: CompoundOp,
+    vt: ValType,
+) ![]const u8 {
+    if (compound.bitwise) return emitCompoundBitwiseValue(self, left, right, compound.op, vt);
+    // Synthesize the equivalent `lhs op rhs` node and reuse `emitBinary` so
+    // arithmetic, power, and short-circuiting logical compounds share the
+    // exact semantics and diagnostics of their expression forms. The loc comes
+    // from the assignment so errors point at the compound statement.
+    const a = self.arena.allocator();
+    const synthetic = try a.create(ast_mod.Node);
+    synthetic.* = .{ .binary = .{
+        .left = left,
+        .operator = compound.op,
+        .right = right,
+        .loc = node.loc(),
+    } };
+    return emitBinary(self, synthetic, &synthetic.binary);
+}
+
 pub fn compoundBitwiseOp(op: []const u8) ?[]const u8 {
     if (std.mem.eql(u8, op, "&=")) return "&";
     if (std.mem.eql(u8, op, "|=")) return "|";
@@ -1142,7 +1196,7 @@ pub fn emitIntBinary(self: *Emitter, node: *ast_mod.Node, b: *const ast_mod.Bina
         else
             try std.fmt.allocPrint(a, "(try rt.arith.narrow(.{s}, {s}))", .{ @tagName(cw), call });
     } else {
-        return self.failAt(node, "native backend (Phase 2) does not support operator '{s}'", .{op});
+        return self.failAt(node, "native backend does not support operator '{s}'", .{op});
     }
 
     const call = checked_call orelse plain_call.?;

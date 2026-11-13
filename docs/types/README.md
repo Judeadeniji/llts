@@ -10,7 +10,7 @@ LLTS features a sound, explicit, and compact type system designed for systems pr
    Every numeric type declares its exact bit-width and signedness (`i8`–`i64`, `u1`–`u64`, `f32`, `f64`). Implicit promotions and silent truncations do not exist; width conversions require explicit `@as(Target, value)` casts.
 
 2. **Gradual at the Boundary, Sound at the Core**  
-   Untyped code can execute on the bytecode VM for rapid experimentation, but strict mode (`--strict`, enabled by default for native builds) enforces sound type checking, mandatory signatures, and strict null/union safety.
+   Untyped code can execute on the bytecode VM for rapid experimentation, but strict mode (`--strict`, on by default) enforces sound type checking, mandatory signatures, and strict null/union safety.
 
 3. **Structural and Nominal Coexistence**  
    - **Structural:** Tuples (`[A, B]`), slices (`[]T`), anonymous shapes (`{ x: i64; y: i64; }`), and function types (`@func(T): R`) match by their shape and composition.

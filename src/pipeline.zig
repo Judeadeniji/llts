@@ -277,7 +277,7 @@ pub fn compileNativeBinary(
     switch (options.emit_mode) {
         .bin, .asm_code, .llvm_ir, .llvm_bc, .c_header, .docs, .implib => {},
         .zig_source => {
-            std.debug.print("error: `build --native` cannot output Zig source; use `llts emit-zig`\n", .{});
+            std.debug.print("error: native compilation cannot output Zig source; use `llts emit-zig`\n", .{});
             diag.markEmitted();
             return error.UnsupportedEmitMode;
         },

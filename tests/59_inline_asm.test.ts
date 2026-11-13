@@ -63,7 +63,6 @@ ${assembly.instructions}
       const build = runCli([
         "build",
         sourcePath,
-        "--native",
         "-o",
         binaryPath,
       ]);
@@ -90,7 +89,7 @@ pub @func main() {
 }
 `,
     (sourcePath) => {
-      const result = runCli(["run", "--native", sourcePath]);
+      const result = runCli(["run", sourcePath]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain(
         "@asm expects a string literal template",
@@ -107,7 +106,7 @@ pub @func main() {
 }
 `,
     (sourcePath) => {
-      const result = runCli(["run", sourcePath]);
+      const result = runCli(["run", "--vm", sourcePath]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain(
         "@asm is only supported by the native backend",

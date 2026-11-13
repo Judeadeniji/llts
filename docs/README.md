@@ -69,7 +69,7 @@ Welcome to the documentation for LLTS — a small systems language with a compac
   Multi-file project architecture, relative module resolution via `@import`, the `pub` visibility modifier, imported types/methods, circular dependency detection, and diagnostic import stacks.
 
 - [**Tooling & CLI Reference**](tooling-and-cli.md)  
-  Complete manual for the `llts` command-line tool (`run`, `build`, `emit-zig`, `dump`), compiler flags (`--native`, `--strict`, `-O`, `--target`, `--emit`), the `llts-lsp` language server, and the `tree-sitter-llts` grammar.
+  Complete manual for the `llts` command-line tool (`run`, `build`, `emit-zig`, `dump`), compiler flags (`--vm`, `--strict`, `-O`, `--target`, `--emit`), the `llts-lsp` language server, and the `tree-sitter-llts` grammar.
 
 - [**Language Reference**](language-reference.md)  
   Core language guide covering declarations, control flow, operators, types, frame-local memory semantics, typed error handling, and modules.

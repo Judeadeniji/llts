@@ -118,7 +118,6 @@ pub fn runNativeSource(allocator: std.mem.Allocator, source: []const u8) !struct
     var child = std.process.Child.init(&.{
         "zig-out/bin/llts",
         "run",
-        "--native",
         tmp_path,
     }, allocator);
     child.stdout_behavior = .Pipe;

@@ -38,7 +38,7 @@ test "print arithmetic" {
 test "function main" {
     const allocator = std.testing.allocator;
     const src =
-        \\@func add(a, b) {
+        \\@func add(a: i64, b: i64) {
         \\  return a + b;
         \\}
         \\pub @func main() {
@@ -72,6 +72,7 @@ test "compile and run bytecode file" {
     var compile_child = std.process.Child.init(&.{
         "zig-out/bin/llts",
         "build",
+        "--vm",
         "-o",
         llb_path,
         src_path,
@@ -91,6 +92,7 @@ test "compile and run bytecode file" {
     var run_child = std.process.Child.init(&.{
         "zig-out/bin/llts",
         "run",
+        "--vm",
         llb_path,
     }, allocator);
     run_child.stdout_behavior = .Pipe;
@@ -179,6 +181,9 @@ test "eval flag with args" {
     const allocator = std.testing.allocator;
     var child = std.process.Child.init(&.{
         "zig-out/bin/llts",
+        "--vm",
+        "--strict",
+        "false",
         "-e",
         "print(__args()[1])",
         "hello_from_arg",
@@ -199,12 +204,11 @@ test "eval flag with args" {
     try std.testing.expect(std.mem.indexOf(u8, stdout, "hello_from_arg") != null);
 }
 
-test "eval flag native" {
+test "eval flag native default" {
     const allocator = std.testing.allocator;
     var child = std.process.Child.init(&.{
         "zig-out/bin/llts",
         "run",
-        "--native",
         "-e",
         "pub @func main() { print(999); }",
     }, allocator);
@@ -222,6 +226,53 @@ test "eval flag native" {
     };
     try std.testing.expectEqual(@as(u8, 0), code);
     try std.testing.expect(std.mem.indexOf(u8, stdout, "999") != null);
+}
+
+test "strict mode is enabled by default" {
+    const allocator = std.testing.allocator;
+    var child = std.process.Child.init(&.{
+        "zig-out/bin/llts",
+        "run",
+        "-e",
+        "@func add(a, b) { return a + b; } pub @func main() { print(add(1, 2)); }",
+    }, allocator);
+    child.stdout_behavior = .Pipe;
+    child.stderr_behavior = .Pipe;
+    try child.spawn();
+    const stdout = try child.stdout.?.readToEndAlloc(allocator, 1024 * 1024);
+    defer allocator.free(stdout);
+    const stderr = try child.stderr.?.readToEndAlloc(allocator, 1024 * 1024);
+    defer allocator.free(stderr);
+    const term = try child.wait();
+    try std.testing.expect(term != .Exited or term.Exited != 0);
+    try std.testing.expect(std.mem.indexOf(u8, stderr, "strict mode") != null);
+}
+
+test "strict false opts out of strict mode" {
+    const allocator = std.testing.allocator;
+    var child = std.process.Child.init(&.{
+        "zig-out/bin/llts",
+        "run",
+        "--vm",
+        "--strict",
+        "false",
+        "-e",
+        "@func add(a, b) { return a + b; } pub @func main() { print(add(1, 2)); }",
+    }, allocator);
+    child.stdout_behavior = .Pipe;
+    child.stderr_behavior = .Pipe;
+    try child.spawn();
+    const stdout = try child.stdout.?.readToEndAlloc(allocator, 1024 * 1024);
+    defer allocator.free(stdout);
+    const stderr = try child.stderr.?.readToEndAlloc(allocator, 1024 * 1024);
+    defer allocator.free(stderr);
+    const term = try child.wait();
+    const code: u8 = switch (term) {
+        .Exited => |c| @intCast(c),
+        else => 1,
+    };
+    try std.testing.expectEqual(@as(u8, 0), code);
+    try std.testing.expect(std.mem.indexOf(u8, stdout, "3") != null);
 }
 
 test "compiler authority: emitter contains no display-string type parser or AST re-evaluators" {

@@ -1,6 +1,6 @@
 # Type Soundness, Flow Analysis & Discriminated Unions
 
-LLTS features an advanced compile-time flow analysis engine (`src/compiler/typecheck/flow.zig`). In strict mode (`--strict`, enabled by default for `--native`), the typechecker enforces mathematical type soundness: eliminating null pointer exceptions, unhandled union states, and implicit type coercions at compile time.
+LLTS features an advanced compile-time flow analysis engine (`src/compiler/typecheck/flow.zig`). In strict mode (`--strict`, enabled by default), the typechecker enforces mathematical type soundness: eliminating null pointer exceptions, unhandled union states, and implicit type coercions at compile time.
 
 ---
 
@@ -20,7 +20,7 @@ LLTS balances rapid prototyping with systems-level safety through two operating 
 
 ## 2. Strict Mode Invariants
 
-When `--strict` is enabled (or when compiling natively via `llts run --native` or `llts build --native`), the compiler activates three non-negotiable invariants:
+When `--strict` is enabled (the default for `llts run` and `llts build`, including native compilation), the compiler activates three non-negotiable invariants:
 
 ### 2.1 Mandatory Function Parameter Annotations
 Functions cannot leave parameter types implicit:

@@ -180,9 +180,12 @@ Variables are updated using `=` or compound assignment operators:
 | `~=` | `a = a ~ b` |
 | `<<=` | `a = a << b` |
 | `>>=` | `a = a >> b` |
+| `^=` | `a = a ^ b` (power) |
+| `&&=` | `a = a && b` (short-circuit) |
+| `||=` | `a = a \|\| b` (short-circuit) |
 
 > [!NOTE]
-> Compound assignments are fully supported in the bytecode VM. In the current native backend (Phase 3), expand compound assignments to full assignment form (e.g. `count = count + 1`).
+> Compound assignments are supported by the bytecode VM and the native backend. Arithmetic compounds lower through the same checked arithmetic as their expanded forms (`a += b` behaves like `a = a + b`), and bitwise/shift compounds lower directly. The native backend also supports `^=` (power) and the short-circuiting `&&=` / `||=` through the equivalent binary operations.
 
 ---
 

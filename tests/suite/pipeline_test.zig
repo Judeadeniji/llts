@@ -527,6 +527,104 @@ test "pipeline native execution: named type and shape alias convert both ways" {
     try helpers.expectNativeStdout(allocator, src, "1 1\n");
 }
 
+test "pipeline native execution: arithmetic and bitwise compound assignments" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\pub @func main() {
+        \\    $x: i64 = 1;
+        \\    x += 2;
+        \\    x *= 3;
+        \\    x -= 1;
+        \\    x /= 2;
+        \\    x %= 3;
+        \\    x &= 7;
+        \\    x |= 8;
+        \\    x ~= 2;
+        \\    x <<= 1;
+        \\    x >>= 2;
+        \\    print(x);
+        \\}
+    ;
+    try helpers.expectNativeStdout(allocator, src, "5\n");
+}
+
+test "pipeline native execution: power and short-circuiting logical compound assignments" {
+    const allocator = std.testing.allocator;
+    // `^=` is power assignment in LLTS (`^` is the power operator), while
+    // `&&=` / `||=` must preserve the short-circuit semantics of their
+    // binary forms, so `tick()` must not run when the left side decides.
+    const src =
+        \\$calls: i64 = 0;
+        \\
+        \\@func tick(): bool {
+        \\    calls += 1;
+        \\    return true;
+        \\}
+        \\
+        \\pub @func main() {
+        \\    $x: i64 = 2;
+        \\    x ^= 5;
+        \\    print(x);
+        \\
+        \\    $f: bool = false;
+        \\    f &&= tick();
+        \\    print(calls);
+        \\    print(f);
+        \\
+        \\    $t: bool = true;
+        \\    t &&= tick();
+        \\    print(calls);
+        \\    print(t);
+        \\
+        \\    t ||= tick();
+        \\    print(calls);
+        \\
+        \\    f ||= tick();
+        \\    print(calls);
+        \\    print(f);
+        \\}
+    ;
+    try helpers.expectNativeStdout(allocator, src, "32\n0\nfalse\n1\ntrue\n1\n2\ntrue\n");
+}
+
+test "pipeline native execution: compound assignments through struct fields" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\@struct P {
+        \\    x: i64;
+        \\    y: f64;
+        \\}
+        \\pub @func main() {
+        \\    $p: P = P { x: 10, y: 1.5 };
+        \\    p.x += 5;
+        \\    p.x *= 2;
+        \\    p.x -= 4;
+        \\    p.x /= 3;
+        \\    p.x %= 5;
+        \\    p.y += 0.25;
+        \\    p.y *= 2.0;
+        \\    print(p.x);
+        \\    print(p.y);
+        \\}
+    ;
+    try helpers.expectNativeStdout(allocator, src, "3\n3.5\n");
+}
+
+test "pipeline native execution: compound assignments through array elements" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\pub @func main() {
+        \\    $a: [3]i64 = [1, 2, 3];
+        \\    $i: i64 = 0;
+        \\    a[1] += 10;
+        \\    a[2] *= 2;
+        \\    a[i] -= 1;
+        \\    print(a[0], a[1], a[2]);
+        \\}
+    ;
+    try helpers.expectNativeStdout(allocator, src, "0 12 6\n");
+}
+
 test "pipeline native execution: concurrent native builds do not share a staged unit" {
     const allocator = std.testing.allocator;
     const count = 8;
@@ -554,7 +652,7 @@ test "pipeline native execution: concurrent native builds do not share a staged 
         try f.writeAll(source);
     }
     for (0..count) |i| {
-        children[i] = std.process.Child.init(&.{ "zig-out/bin/llts", "run", "--native", paths[i] }, allocator);
+        children[i] = std.process.Child.init(&.{ "zig-out/bin/llts", "run", paths[i] }, allocator);
         children[i].stdout_behavior = .Pipe;
         children[i].stderr_behavior = .Pipe;
         try children[i].spawn();

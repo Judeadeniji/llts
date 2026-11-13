@@ -63,7 +63,7 @@ Comprehensive guides and specifications are available in the [`docs/`](./docs) d
 - [**Metaprogramming & Compile-Time**](./docs/metaprogramming.md) — Type introspection (`@typeOf`, `@sizeOf`, `@nameOf`), explicit casting (`@as`), generic type functions, monomorphization, and `@comptime`.
 - [**Compiler Intrinsics**](./docs/intrinsics.md) — Full specification for all builtins: `@import`, `@asm`, `@as`, `@typeOf`, `@sizeOf`, `@nameOf`, `@isError`, `@addrOf`, `@concat`, `@extern`, and `@new`.
 - [**Modules & Organization**](./docs/modules.md) — Multi-file projects, relative module resolution via `@import`, the `pub` visibility modifier, imported types/methods, circular dependency detection, and diagnostic import stacks.
-- [**Tooling & CLI Reference**](./docs/tooling-and-cli.md) — Complete manual for the `llts` command-line tool (`run`, `build`, `emit-zig`, `dump`), compiler flags (`--native`, `--strict`, `-O`, `--target`, `--emit`), the `llts-lsp` language server, and the `tree-sitter-llts` grammar.
+- [**Tooling & CLI Reference**](./docs/tooling-and-cli.md) — Complete manual for the `llts` command-line tool (`run`, `build`, `emit-zig`, `dump`), compiler flags (`--vm`, `--strict`, `-O`, `--target`, `--emit`), the `llts-lsp` language server, and the `tree-sitter-llts` grammar.
 - [**Inline Assembly Guide**](./docs/inline-assembly.md) — Reference for the `@asm` intrinsic in native compilation, including operand constraints, clobbers, register mapping, and verified Linux x86-64 examples.
 - [**Language Reference**](./docs/language-reference.md) — Core language guide covering declarations, control flow, operators, type system, memory semantics, error handling, and modules.
 

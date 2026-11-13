@@ -263,7 +263,7 @@ pub const Emitter = struct {
     pub fn valTypeOfIR(self: *Emitter, node: *ast_mod.Node, t: ir.Type) anyerror!ValType {
         if (try self.valTypeFromIR(node, t)) |vt| return vt;
         const d = try ir.displayTypeQualifiedAlloc(self.arena.allocator(), t);
-        return self.failAt(node, "native backend (Phase 2) does not support type '{s}'", .{d});
+        return self.failAt(node, "native backend does not support type '{s}'", .{d});
     }
 
     /// Compiler-recorded type of a declaration binding: its annotation when
@@ -1084,7 +1084,7 @@ pub const Emitter = struct {
 
     pub fn requireValueType(self: *Emitter, node: *ast_mod.Node, t: ValType) !void {
         if (t.kind == .other) {
-            return self.failAt(node, "native backend (Phase 2) does not support type '{s}'", .{t.display});
+            return self.failAt(node, "native backend does not support type '{s}'", .{t.display});
         }
         if (t.kind == .void and !t.may_error) {
             return self.failAt(node, "native backend cannot bind a void value", .{});
@@ -1107,6 +1107,17 @@ pub const Emitter = struct {
         if (isSizeOfCall(node)) return try self.valTypeOfIR(node, ir.TI64);
         if (self.recordedType(node)) |t| {
             if (try self.valTypeFromIR(node, t)) |vt| return vt;
+        }
+        // Assignment targets (an identifier on the left of `+=`, for example)
+        // carry no recorded expression type; their runtime type is the
+        // binding's storage type.
+        if (node.* == .primary and (node.primary.kind == .identifier or node.primary.kind == .register)) {
+            if (self.lookupBindingOptional(node.primary.name)) |b| {
+                if (b.ir_type != null) return try self.valTypeFor(node, b.ir_type, b.display);
+            }
+            if (self.globals.get(node.primary.name)) |g| {
+                if (g.ir_type != null) return try self.valTypeFor(node, g.ir_type, g.display);
+            }
         }
         // A call recorded while its callee was still unrefined (mutual
         // recursion, forward calls) keeps a stale `unknown`; re-resolve it

@@ -15,7 +15,7 @@ Usage:
 
 Commands:
   run        Run an LLTS source (.lls) or bytecode (.llb) file
-  build      Compile source to bytecode container or native binary
+  build      Compile source to a native binary (or bytecode with --vm)
   emit-zig   Emit generated runtime-driving Zig source
   dump       Disassemble bytecode into human-readable instructions
   version    Show compiler version
@@ -28,23 +28,23 @@ Commands:
 
 ### 1. `llts run`
 
-Runs a program directly. By default, it compiles and runs via the bytecode virtual machine. With `--native`, it compiles ahead-of-time to a temporary native binary, executes it with the provided arguments, and cleans up automatically.
+Runs a program directly. By default, it compiles ahead-of-time to a temporary native binary, executes it with the provided arguments, and cleans up automatically. Pass `--vm` to run on the bytecode virtual machine instead. Bytecode containers (`.llb`) always run on the VM.
 
 ```bash
-# Run using the bytecode VM
+# Compile and run as a native binary (default)
 llts run src/main.lls
 
 # Run with script arguments
 llts run src/main.lls arg1 arg2 42
 
-# Run an already compiled bytecode container
-llts run out.llb
-
-# Compile and run as a native binary
-llts run --native src/main.lls
-
 # Run natively with ReleaseFast optimizations
-llts run --native -O ReleaseFast src/main.lls
+llts run -O ReleaseFast src/main.lls
+
+# Run using the bytecode VM
+llts run --vm src/main.lls
+
+# Run an already compiled bytecode container (always uses the VM)
+llts run out.llb
 
 # Evaluate code directly without creating a file
 llts -e 'print("Hello, world!")'
@@ -54,45 +54,45 @@ llts run -e 'print(1 + 2)'
 > [!NOTE]
 > Positional arguments after the file name are forwarded directly to the script when executing via `llts run`.
 
+> [!NOTE]
+> Native is the primary backend. The bytecode VM remains available behind `--vm` (and for `.llb` containers) as a compatibility and tooling path while native stdlib and parity work completes.
+
 ---
 
 ### 2. `llts build`
 
 Compiles source code into a redistributable artifact.
 
-#### Compiling to Bytecode Container (`.llb`)
-By default, `llts build` produces a self-contained bytecode container (`out.llb`):
-
-```bash
-# Default output: out.llb
-llts build src/main.lls
-
-# Custom output path
-llts build src/main.lls -o build/app.llb
-
-# Strict typechecking during bytecode compilation
-llts build --strict src/main.lls -o build/app.llb
-```
-
-#### Compiling to Native Executable (`--native`)
-When `--native` is supplied, LLTS lowers the AST and typecheck IR to native Zig source, invokes the system Zig toolchain, and links a standalone machine code binary.
+#### Compiling to a Native Executable
+By default, `llts build` lowers the AST and typecheck IR to native Zig source, invokes the system Zig toolchain, and links a standalone machine code binary (`out`).
 
 ```bash
 # Compile to native binary (default output: ./out)
-llts build --native src/main.lls
+llts build src/main.lls
 
 # Specify output executable name
-llts build --native src/main.lls -o bin/app
+llts build src/main.lls -o bin/app
 
 # Production release build (ReleaseFast)
-llts build --native -O ReleaseFast src/main.lls -o bin/app
+llts build -O ReleaseFast src/main.lls -o bin/app
 
 # Cross-compiling for Linux ARM64
-llts build --native --target aarch64-linux src/main.lls -o bin/app-arm64
+llts build --target aarch64-linux src/main.lls -o bin/app-arm64
+```
+
+#### Compiling to a Bytecode Container (`.llb`)
+Pass `--vm` (or `--emit-bytecode`) to produce a self-contained bytecode container instead:
+
+```bash
+# Default bytecode output: out.llb
+llts build --vm src/main.lls
+
+# Custom output path
+llts build --vm src/main.lls -o build/app.llb
 ```
 
 > [!IMPORTANT]
-> The native backend enforces `--strict` typing mode by default. Parameter types and struct/union soundness must be explicit.
+> Strict typing is on by default for both backends. Parameter types and struct/union soundness must be explicit unless you pass `--strict false`.
 
 #### Native Build Cache
 
@@ -107,7 +107,7 @@ The cache directory is resolved in this order:
 | 3 | `/tmp/llts-native-cache` | No usable `TMPDIR`, but `/tmp` exists. |
 | 4 | `$XDG_CACHE_HOME/llts/native`, else `$HOME/.cache/llts/native` | No temp directory is available. |
 
-The directory is created on demand. An empty variable is treated as unset (`TMPDIR=` does not create a relative cache path). Passing an explicit cache through `llts run --native --zig-args "--cache-dir=..."` (or `LLTS_ZIG_ARGS`) overrides the default and disables this resolution.
+The directory is created on demand. An empty variable is treated as unset (`TMPDIR=` does not create a relative cache path). Passing an explicit cache through `llts run --zig-args "--cache-dir=..."` (or `LLTS_ZIG_ARGS`) overrides the default and disables this resolution.
 
 ---
 
@@ -178,14 +178,16 @@ main: addr=0003 arity=0 variadic=false source_index=0
 
 | Flag | Short | Environment Variable | Default | Description |
 |---|---|---|---|---|
-| `--native` | `-n` | — | `false` | Enable the native backend (compiles machine code via Zig; implies `--strict`). |
+| `--vm` | — | — | `false` | Use the bytecode VM instead of the native backend (native is the default). |
 | `--eval` | `-e` | — | `""` | Evaluate inline source code string directly. |
-| `--strict` | `-s` | — | `false` (VM)<br>`true` (Native) | Enforce sound typing (mandatory parameter types, strict null/union safety). |
+| `--strict` | `-s` | — | `true` | Enforce sound typing (mandatory parameter types, strict null/union safety). Pass `--strict false` to disable. |
 | `--optimize` | `-O` | — | `Debug` | Native optimization mode: `Debug`, `ReleaseFast`, `ReleaseSafe`, `ReleaseSmall`. |
 | `--release` | `-r` | — | `false` | Disables debug symbols; sets optimization mode to `ReleaseFast`. |
 | `--target` | — | — | Host target | Target triple for cross-compilation (e.g. `x86_64-linux`, `aarch64-macos`, `x86_64-windows`). |
-| `--emit` | — | — | `bin` | Target emission kind (implies `--native`). Options: `bin`, `asm`, `llvm-ir`, `llvm-bc`, `h`, `docs`, `implib`. |
-| `--output` | `-o` | — | `out.llb` / `out` | Destination path for compilation artifacts. |
+| `--emit` | — | — | `bin` | Native target emission kind. Options: `bin`, `asm`, `llvm-ir`, `llvm-bc`, `h`, `docs`, `implib`. |
+| `--emit-bytecode` | — | — | `false` | Produce a bytecode container (implies `--vm`). |
+| `--emit-zig` | — | — | `false` | Emit runtime-driving Zig source instead of compiling it. |
+| `--output` | `-o` | — | `out` / `out.llb` | Destination path for compilation artifacts (`out.llb` with `--vm`). |
 | `--zig-bin` | — | `LLTS_ZIG_BIN` | `zig` | Custom path or binary name for the host Zig compiler executable. |
 | `--zig-args` | — | `LLTS_ZIG_ARGS` | `""` | Extra flags passed directly to `zig build-exe` (e.g. `"-fstrip -flto"`). |
 | `--runtime-path` | — | — | `src/runtime/root.zig` | Path to the native runtime support library. |

@@ -74,7 +74,7 @@ pub @func main() {
 
 - The rest parameter must always appear as the final parameter.
 - At runtime, `args` behaves as a slice view whose element count can be inspected with `len(args)`.
-- **Backend Lowering:** The bytecode VM packs variadic arguments into dynamic arrays. The native backend (`--native` / `emit-zig`) lowers rest parameters to Zig slice views (`[]const T`), packing trailing call-site arguments into zero-overhead stack arrays (`&[_]T{ ... }`).
+- **Backend Lowering:** The bytecode VM packs variadic arguments into dynamic arrays. The native backend (the default, also used by `emit-zig`) lowers rest parameters to Zig slice views (`[]const T`), packing trailing call-site arguments into zero-overhead stack arrays (`&[_]T{ ... }`).
 
 ---
 

@@ -42,7 +42,7 @@ pub fn build(stdout: anytype, stdin: anytype, gpa: std.mem.Allocator) !*zli.Comm
 
     const run_cmd = try zli.Command.init(stdout, stdin, gpa, .{
         .name = "run",
-        .description = "Run an LLTS source or bytecode file (use --native to compile and run natively)",
+        .description = "Run an LLTS source file natively, or bytecode with the VM (use --vm for source files)",
     }, run.execute);
     try flags.addRunFlags(run_cmd);
     try run_cmd.addPositionalArg(.{
@@ -60,13 +60,13 @@ pub fn build(stdout: anytype, stdin: anytype, gpa: std.mem.Allocator) !*zli.Comm
 
     const build_sub = try zli.Command.init(stdout, stdin, gpa, .{
         .name = "build",
-        .description = "Compile an LLTS source file to bytecode or a native binary (--native)",
+        .description = "Compile an LLTS source file to a native binary (use --vm for bytecode)",
     }, build_cmd.execute);
     try flags.addCompileFlags(build_sub);
     try build_sub.addFlag(.{
         .name = "output",
         .shortcut = "o",
-        .description = "Output file path (default: out.llb; out when --native)",
+        .description = "Output file path (default: out; out.llb with --vm)",
         .type = .String,
         .default_value = .{ .String = "" },
     });

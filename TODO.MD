@@ -148,9 +148,10 @@ Tracked lowering differences and remaining parity gaps between bytecode VM and n
 - [x] **Rest / variadic parameters (`...rest: []T`)** — lowered rest parameters to Zig slice views (`[]const T`), recording `param_irs`, `rest_ir`, and `is_variadic` in `CompilerState`, enforcing minimum arity and type checking trailing arguments, and packing trailing call arguments into stack slices (`&[_]T{ ... }`). Tests: `tests/55_emit_zig.test.ts`.
 - [x] **Materialization of first-class function values** — devirtualized calls where static target is known via tracked aliases (`$pick = lib.mul`) and function returns (`getAdder()()`); supported machine function pointer types (`*const fn(*rt.Context, ...) anyerror!Ret`) where passed/returned; rejected runtime materialization of functions into `print(...)`. Tests: `tests/55_emit_zig.test.ts`.
 - [x] **Closure environments and devirtualization** — non-escaping closures get a stack-allocated `lls_env_<id>` seeded at their declaration and direct calls through `lls_closure_fn_<id>`; escaping closures get immortal environments; immediate invocation of a closure literal is supported. Commits: `d3c2bf8`, `98f2629`. Tests: `tests/suite/pipeline_test.zig`.
-- [ ] **Standard library modules for native (`std/*`)** — deferred: no standard library in llts-zig for now. Examples importing `std/*` (23 of 39) require stdlib modules when designed.
+- [ ] **Standard library modules for native (`std/*`)** — deferred: no standard library in llts-zig for now. The native backend will expose syscalls through extern declarations and build `std/*` on top of that foundation. Examples importing `std/*` (23 of 39) require stdlib modules when designed.
 - [x] **Printing pointers and nested aggregates** — struct values, struct pointers, nested struct fields, and aggregates containing structs are printed as Node.js/Bun-compatible objects with struct name prefix and field indentation; pointer values to structs are dereferenced and formatted recursively; arrays containing structs format each element as an object. Tests: `tests/55_emit_zig.test.ts`.
 - [ ] **Standalone library compilation mode** — compiling modules without `pub @func main()` fails with `native backend requires a pub @func main() entry point` (`examples/import_test_lib.lls`). Solution: support library/module emission mode in `emit-zig`.
+- [ ] **Retire the bytecode VM** — native is now the default with strict typing on by default; keep `--vm` and `.llb` execution working until the native syscall externs, stdlib, and the remaining parity gaps above land, then remove the VM and bytecode toolchain.
 
 ### Documentation Gaps
 
@@ -165,7 +166,7 @@ Discrepancies where current documentation in `docs/` differs from compiler capab
 - [x] **`@nameOf` on runtime enums** — implemented in `dbaf7be`; documentation in `docs/intrinsics.md` matches.
 - [x] **Union return types & general unions** — implemented in native backend; supports discriminated struct unions with `@switch` narrowing, common field access, variant coercion, and general union returns. Matches `docs/types/algebraic-types.md`.
 - [x] **Value-producing `@if` with captures** — implemented in `6f38a2a`; documentation in `docs/control-flow.md` matches.
-- [ ] **Backend compatibility matrix** — `docs/tooling-and-cli.md` and `docs/getting-started.md` mention `--native` but lack a feature compatibility matrix distinguishing VM-supported vs native-ready features.
+- [ ] **Backend compatibility matrix** — `docs/tooling-and-cli.md` and `docs/getting-started.md` explain the native default and `--vm`, but lack a feature compatibility matrix distinguishing VM-supported vs native-ready features.
 
 #### Undocumented Compiler Features
 - [ ] **Value parameters on type functions** — type functions can take integer value parameters evaluated at compile time (`@func Pick(T: type, n: i64): type { @if (n == 1) { return T; } return ?T; }`). Missing from `docs/metaprogramming.md`.

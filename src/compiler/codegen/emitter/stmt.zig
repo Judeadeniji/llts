@@ -12,15 +12,15 @@ const LoopTarget = root_mod.LoopTarget;
 const SwitchContinueTarget = root_mod.SwitchContinueTarget;
 
 pub fn emitAssignment(self: *Emitter, node: *ast_mod.Node, asn: *const ast_mod.Assignment) !void {
-    const bit_op = expr_mod.compoundBitwiseOp(asn.operator);
-    if (!std.mem.eql(u8, asn.operator, "=") and bit_op == null) {
-        return self.failAt(node, "native backend (Phase 3) does not support '{s}' yet", .{asn.operator});
+    const compound = expr_mod.compoundOp(asn.operator);
+    if (!std.mem.eql(u8, asn.operator, "=") and compound == null) {
+        return self.failAt(node, "native backend does not support compound assignment '{s}'", .{asn.operator});
     }
     if (asn.left.* == .primary and
         (asn.left.primary.kind == .identifier or asn.left.primary.kind == .register) and
         std.mem.eql(u8, asn.left.primary.name, "_"))
     {
-        if (bit_op != null) {
+        if (compound != null) {
             return self.failAt(node, "cannot use compound assignment with discard '_'", .{});
         }
         // `_ = expr;` evaluates for effect. Function values and module names
@@ -52,8 +52,8 @@ pub fn emitAssignment(self: *Emitter, node: *ast_mod.Node, asn: *const ast_mod.A
             const target = try self.lookupBinding(asn.left, p.name);
             const vt = try self.valTypeFor(node, target.ir_type, target.display);
             try self.requireValueType(node, vt);
-            const rhs = if (bit_op) |op|
-                try expr_mod.emitCompoundBitwiseValue(self, asn.left, asn.right, op, vt)
+            const rhs = if (compound) |c|
+                try expr_mod.emitCompoundValue(self, node, asn.left, asn.right, c, vt)
             else
                 try expr_mod.emitValueCoerced(self, asn.right, vt);
             try self.writeIndent();
@@ -65,15 +65,15 @@ pub fn emitAssignment(self: *Emitter, node: *ast_mod.Node, asn: *const ast_mod.A
             };
             const field = target.info.fields[target.index];
             try self.requireValueType(asn.left, field.vt);
-            const rhs = if (bit_op) |op|
-                try expr_mod.emitCompoundBitwiseValue(self, asn.left, asn.right, op, field.vt)
+            const rhs = if (compound) |c|
+                try expr_mod.emitCompoundValue(self, node, asn.left, asn.right, c, field.vt)
             else
                 try expr_mod.emitValueCoerced(self, asn.right, field.vt);
             const lvalue = try emitPlaceLvalue(self, asn.left);
             try self.writeIndent();
             try self.writer.print("{s} = {s};\n", .{ lvalue, rhs });
         },
-        .index => |*ix| try emitIndexAssignment(self, node, asn, ix, bit_op),
+        .index => |*ix| try emitIndexAssignment(self, node, asn, ix, compound),
         else => return self.failAt(asn.left, "native backend only supports assigning to names, fields, or array elements", .{}),
     }
 }
@@ -83,7 +83,7 @@ pub fn emitIndexAssignment(
     node: *ast_mod.Node,
     asn: *const ast_mod.Assignment,
     ix: *const ast_mod.Index,
-    bit_op: ?[]const u8,
+    compound: ?expr_mod.CompoundOp,
 ) !void {
     if (ix.is_slice) {
         return self.failAt(node, "Cannot assign to a slice view", .{});
@@ -114,8 +114,8 @@ pub fn emitIndexAssignment(
                 if (idx_str) |s| {
                     if (info.field_index.get(s)) |fidx| {
                         const field = info.fields[fidx];
-                        const rhs = if (bit_op) |op|
-                            try expr_mod.emitCompoundBitwiseValue(self, asn.left, asn.right, op, field.vt)
+                        const rhs = if (compound) |c|
+                            try expr_mod.emitCompoundValue(self, node, asn.left, asn.right, c, field.vt)
                         else
                             try expr_mod.emitValueCoerced(self, asn.right, field.vt);
                         try self.writeIndent();
@@ -139,8 +139,8 @@ pub fn emitIndexAssignment(
     const elem_t = obj_t.elem orelse {
         return self.failAt(node, "native backend cannot determine the element type of '{s}'", .{obj_t.display});
     };
-    const rhs = if (bit_op) |op|
-        try expr_mod.emitCompoundBitwiseValue(self, asn.left, asn.right, op, elem_t.*)
+    const rhs = if (compound) |c|
+        try expr_mod.emitCompoundValue(self, node, asn.left, asn.right, c, elem_t.*)
     else
         try expr_mod.emitValueCoerced(self, asn.right, elem_t.*);
     const index_code = try expr_mod.emitI64Operand(self, index_node);
@@ -436,7 +436,7 @@ pub fn emitEqualityCode(self: *Emitter, left: []const u8, lt: ValType, right_nod
         .float => return std.fmt.allocPrint(a, "rt.arith.eqF64({s}, {s})", .{
             try expr_mod.f64Code(self, left, lt), try expr_mod.emitF64Operand(self, right_node),
         }),
-        else => return self.failAt(right_node, "native backend (Phase 3) does not support @switch on '{s}' yet", .{lt.display}),
+        else => return self.failAt(right_node, "native backend does not support @switch on '{s}' yet", .{lt.display}),
     }
 }
 
@@ -1552,7 +1552,7 @@ pub fn switchScrutineeType(self: *Emitter, node: *ast_mod.Node, sw: *const ast_m
     if (vt.isByteSequence()) return vt;
     switch (vt.kind) {
         .int, .float, .bool, .string, .error_value => {},
-        else => return self.failAt(node, "native backend (Phase 3) does not support @switch on '{s}' yet", .{vt.display}),
+        else => return self.failAt(node, "native backend does not support @switch on '{s}' yet", .{vt.display}),
     }
     return vt;
 }
