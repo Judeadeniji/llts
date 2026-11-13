@@ -218,6 +218,109 @@ test "pipeline native execution: generic function returning its closure paramete
     try helpers.expectNativeStdout(allocator, src, "42\n");
 }
 
+test "emitter: closure passed through a variable is called directly" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\@type Fn = @func(int): int;
+        \\@func apply(F: type, f: F, x: int): int {
+        \\    return f(x);
+        \\}
+        \\pub @func main() {
+        \\    $factor: int = 4;
+        \\    $scale = @func(v: int): int {
+        \\        return v * factor;
+        \\    };
+        \\    print(apply(Fn, scale, 5));
+        \\}
+    ;
+    try helpers.expectEmitContains(allocator, src, "lls_closure_fn_");
+    try helpers.expectEmitOmits(allocator, src, ".call(ctx");
+}
+
+test "pipeline native execution: closure variable passed to a generic higher-order function" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\@type Fn = @func(int): int;
+        \\@func apply(F: type, f: F, x: int): int {
+        \\    return f(x);
+        \\}
+        \\pub @func main() {
+        \\    $factor: int = 4;
+        \\    $scale = @func(v: int): int {
+        \\        return v * factor;
+        \\    };
+        \\    print(apply(Fn, scale, 5));
+        \\}
+    ;
+    try helpers.expectNativeStdout(allocator, src, "20\n");
+}
+
+test "pipeline native execution: reassigned closure variable stays indirect" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\@type Fn = @func(int): int;
+        \\@func apply(F: type, f: F, x: int): int {
+        \\    return f(x);
+        \\}
+        \\pub @func main() {
+        \\    $f = @func(v: int): int {
+        \\        return v * 2;
+        \\    };
+        \\    print(apply(Fn, f, 5));
+        \\    f = @func(v: int): int {
+        \\        return v * 10;
+        \\    };
+        \\    print(apply(Fn, f, 5));
+        \\}
+    ;
+    try helpers.expectNativeStdout(allocator, src, "10\n50\n");
+}
+
+test "emitter: generic method calls its bound closure trampoline directly" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\@type Fn = @func(int): int;
+        \\@struct Runner {
+        \\    tag: int;
+        \\
+        \\    @func apply(self, F: type, f: F, x: int): int {
+        \\        return f(x);
+        \\    }
+        \\}
+        \\pub @func main() {
+        \\    $r: Runner = { tag: 0 };
+        \\    $factor: int = 4;
+        \\    print(r.apply(Fn, @func(v: int): int {
+        \\        return v * factor;
+        \\    }, 5));
+        \\}
+    ;
+    try helpers.expectEmitContains(allocator, src, "lls_closure_fn_");
+    try helpers.expectEmitOmits(allocator, src, ".call(ctx");
+}
+
+test "pipeline native execution: generic method higher-order function with a closure" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\@type Fn = @func(int): int;
+        \\@struct Runner {
+        \\    tag: int;
+        \\
+        \\    @func apply(self, F: type, f: F, x: int): int {
+        \\        return f(x);
+        \\    }
+        \\}
+        \\pub @func main() {
+        \\    $r: Runner = { tag: 0 };
+        \\    $factor: int = 4;
+        \\    print(r.apply(Fn, @func(v: int): int {
+        \\        return v * factor;
+        \\    }, 5));
+        \\}
+    ;
+    try helpers.expectNativeStdout(allocator, src, "20\n");
+}
+
 test "pipeline native execution: immediate closure IIFE" {
     const allocator = std.testing.allocator;
     const src =

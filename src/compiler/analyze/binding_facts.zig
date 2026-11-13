@@ -136,11 +136,21 @@ fn recordClosureParams(state: *state_mod.CompilerState) !void {
     }
 }
 
-/// Id of the closure an expression denotes, when it is written as a literal.
+/// Id of the closure an expression denotes: a closure literal, or a variable
+/// that always holds one. A variable counts only when it is never reassigned and
+/// its closure never escapes, so the value at the call cannot be anything else.
 fn closureIdOf(state: *state_mod.CompilerState, node: *ast.Node) ?u32 {
-    if (node.* != .function_decl) return null;
-    const info = state.closures.get(node) orelse return null;
-    return info.id;
+    if (node.* == .function_decl) {
+        const info = state.closures.get(node) orelse return null;
+        return info.id;
+    }
+    const ref = state.closure_value_ids.get(node) orelse return null;
+    if (state.binding_facts.get(ref.decl_node)) |facts| {
+        if (facts.reassigned) return null;
+    }
+    const info = state.closures.get(ref.closure_node) orelse return null;
+    if (info.escapes) return null;
+    return ref.id;
 }
 
 fn walkProgram(state: *state_mod.CompilerState, doc: *ast.Document) !void {
@@ -421,6 +431,24 @@ const Ctx = struct {
         return null;
     }
 
+    /// Remember that `node` names a local bound to a closure literal, so a
+    /// closure passed to a call through a variable can still be identified.
+    /// Whether the binding stayed put is re-checked when the fact is used.
+    fn recordClosureValue(ctx: *Ctx, node: *ast.Node, name: []const u8) !void {
+        const cdecl = ctx.closure_decls.get(name) orelse return;
+        const entry = ctx.lookup(name) orelse return;
+        switch (entry) {
+            // A shadowing declaration of the same name is a different closure.
+            .decl => |decl_node| if (decl_node != cdecl.decl_node) return,
+            else => return,
+        }
+        try ctx.state.closure_value_ids.put(node, .{
+            .decl_node = cdecl.decl_node,
+            .closure_node = cdecl.closure_node,
+            .id = cdecl.closure_id,
+        });
+    }
+
     /// Record that `&place` hands out a pointer that outlives this frame.
     ///
     /// Consumers rely on this: the bytecode backend allocates the binding's
@@ -562,7 +590,10 @@ const Ctx = struct {
     fn walkExpr(ctx: *Ctx, node: *ast.Node) anyerror!void {
         switch (node.*) {
             .primary => |p| {
-                if (p.kind == .identifier or p.kind == .register) ctx.markRead(p.name);
+                if (p.kind == .identifier or p.kind == .register) {
+                    ctx.markRead(p.name);
+                    try ctx.recordClosureValue(node, p.name);
+                }
             },
             .literal => {},
             .binary => |b| {

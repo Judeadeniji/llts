@@ -233,6 +233,15 @@ pub const ClosureInfo = struct {
     child_closure_ids: std.ArrayList(u32) = .empty,
 };
 
+/// A variable that holds a closure literal: the declaration it was bound at and
+/// the closure itself. Recorded per use, so the analysis can resolve a closure
+/// handed to a call through a variable.
+pub const ClosureValueRef = struct {
+    decl_node: *ast.Node,
+    closure_node: *ast.Node,
+    id: u32,
+};
+
 pub const CompilerState = struct {
     allocator: std.mem.Allocator,
     chunk: chunk_mod.Chunk,
@@ -401,6 +410,10 @@ pub const CompilerState = struct {
     /// literal, mapped to that closure's id. Recorded by the analysis pass so
     /// the emitter can call the trampoline directly instead of the fat pointer.
     closure_params: std.AutoHashMap(*const ast.Param, u32),
+    /// Expressions that name a local bound to a closure literal, mapped to that
+    /// declaration and closure. A parameter fed such a variable is as specific
+    /// as one fed the literal itself, as long as the binding stays put.
+    closure_value_ids: std.AutoHashMap(*ast.Node, ClosureValueRef),
     /// Last AST location seen while compiling — used when a CompileError has no explicit loc.
     diag_path: []const u8 = "",
     diag_line: u32 = 0,
@@ -439,6 +452,7 @@ pub fn create(allocator: std.mem.Allocator) !CompilerState {
         .addr_taken_params = std.AutoHashMap(*const ast.Param, void).init(allocator),
         .escaping_params = std.AutoHashMap(*const ast.Param, void).init(allocator),
         .closure_params = std.AutoHashMap(*const ast.Param, u32).init(allocator),
+        .closure_value_ids = std.AutoHashMap(*ast.Node, ClosureValueRef).init(allocator),
         .chunk = chunk_mod.Chunk.init(allocator),
         .comptime_max_loop_iterations = max_iters,
         .functions = std.StringHashMap(FunctionDef).init(allocator),
@@ -660,6 +674,7 @@ pub fn deinit(self: *CompilerState) void {
     self.addr_taken_params.deinit();
     self.escaping_params.deinit();
     self.closure_params.deinit();
+    self.closure_value_ids.deinit();
 }
 
 pub fn currentChunk(state: *CompilerState) *chunk_mod.Chunk {
