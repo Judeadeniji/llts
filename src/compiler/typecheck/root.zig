@@ -307,6 +307,206 @@ pub fn ownDisplayQualified(state: *state_mod.CompilerState, t: ir.Type) ![]const
     return s;
 }
 
+/// Render an expression back to LLTS source for use in a diagnostic
+/// suggestion. Returns null when any part of the expression has no faithful
+/// single-expression form (blocks, control flow, inline asm, type nodes, …),
+/// so the caller omits the suggestion rather than print code that would not
+/// compile.
+fn suggestionExpr(state: *state_mod.CompilerState, node: *ast.Node) !?[]const u8 {
+    var buf: std.ArrayList(u8) = .empty;
+    if (!(try appendExprSource(&buf, state.allocator, node))) {
+        buf.deinit(state.allocator);
+        return null;
+    }
+    const text = try buf.toOwnedSlice(state.allocator);
+    try state.owned.append(state.allocator, text);
+    return text;
+}
+
+/// Append `node` as LLTS source. Returns false (leaving the buffer in an
+/// unspecified state) when the node cannot be reproduced faithfully.
+fn appendExprSource(buf: *std.ArrayList(u8), alloc: std.mem.Allocator, node: *ast.Node) !bool {
+    switch (node.*) {
+        .primary => |p| switch (p.kind) {
+            .identifier => {
+                try buf.appendSlice(alloc, p.name);
+                return true;
+            },
+            else => return false,
+        },
+        .literal => |lit| switch (lit.literal_type) {
+            .number, .hex, .octal, .binary, .boolean, .null => {
+                try buf.appendSlice(alloc, lit.value);
+                return true;
+            },
+            .string => {
+                try buf.append(alloc, '"');
+                for (lit.value) |ch| switch (ch) {
+                    '\\' => try buf.appendSlice(alloc, "\\\\"),
+                    '"' => try buf.appendSlice(alloc, "\\\""),
+                    '\n' => try buf.appendSlice(alloc, "\\n"),
+                    '\r' => try buf.appendSlice(alloc, "\\r"),
+                    '\t' => try buf.appendSlice(alloc, "\\t"),
+                    '$' => try buf.appendSlice(alloc, "\\$"),
+                    else => try buf.append(alloc, ch),
+                };
+                try buf.append(alloc, '"');
+                return true;
+            },
+        },
+        .member => |m| {
+            if (!isAtomicExpr(m.object)) try buf.append(alloc, '(');
+            if (!(try appendExprSource(buf, alloc, m.object))) return false;
+            if (!isAtomicExpr(m.object)) try buf.append(alloc, ')');
+            switch (m.property.*) {
+                .primary => |p| if (p.kind == .identifier) {
+                    try buf.append(alloc, '.');
+                    try buf.appendSlice(alloc, p.name);
+                    return true;
+                },
+                .literal => |lit| if (lit.literal_type == .number) {
+                    try buf.append(alloc, '.');
+                    try buf.appendSlice(alloc, lit.value);
+                    return true;
+                },
+                else => {},
+            }
+            return false;
+        },
+        .index => |ix| {
+            if (!isAtomicExpr(ix.object)) try buf.append(alloc, '(');
+            if (!(try appendExprSource(buf, alloc, ix.object))) return false;
+            if (!isAtomicExpr(ix.object)) try buf.append(alloc, ')');
+            try buf.append(alloc, '[');
+            if (ix.is_slice) {
+                if (ix.index) |start| if (!(try appendExprSource(buf, alloc, start))) return false;
+                try buf.appendSlice(alloc, "..");
+                if (ix.end) |end| if (!(try appendExprSource(buf, alloc, end))) return false;
+            } else {
+                const idx = ix.index orelse return false;
+                if (!(try appendExprSource(buf, alloc, idx))) return false;
+            }
+            try buf.append(alloc, ']');
+            return true;
+        },
+        .call => |c| {
+            if (c.inline_asm != null) return false;
+            if (!(try appendExprSource(buf, alloc, c.callee))) return false;
+            try buf.append(alloc, '(');
+            for (c.args, 0..) |arg, i| {
+                if (i > 0) try buf.appendSlice(alloc, ", ");
+                if (!(try appendExprSource(buf, alloc, arg))) return false;
+            }
+            try buf.append(alloc, ')');
+            return true;
+        },
+        .unary => |u| {
+            try buf.appendSlice(alloc, u.operator);
+            if (!isAtomicExpr(u.arg)) try buf.append(alloc, '(');
+            if (!(try appendExprSource(buf, alloc, u.arg))) return false;
+            if (!isAtomicExpr(u.arg)) try buf.append(alloc, ')');
+            return true;
+        },
+        .binary => |b| {
+            try buf.append(alloc, '(');
+            if (!(try appendExprSource(buf, alloc, b.left))) return false;
+            try buf.append(alloc, ' ');
+            try buf.appendSlice(alloc, b.operator);
+            try buf.append(alloc, ' ');
+            if (!(try appendExprSource(buf, alloc, b.right))) return false;
+            try buf.append(alloc, ')');
+            return true;
+        },
+        .try_expr => |t| {
+            if (!isAtomicExpr(t.expression)) try buf.append(alloc, '(');
+            if (!(try appendExprSource(buf, alloc, t.expression))) return false;
+            if (!isAtomicExpr(t.expression)) try buf.append(alloc, ')');
+            try buf.append(alloc, '?');
+            return true;
+        },
+        .unwrap_expr => |u| {
+            if (!isAtomicExpr(u.expression)) try buf.append(alloc, '(');
+            if (!(try appendExprSource(buf, alloc, u.expression))) return false;
+            if (!isAtomicExpr(u.expression)) try buf.append(alloc, ')');
+            try buf.appendSlice(alloc, ".?");
+            return true;
+        },
+        .array_literal => |a| {
+            try buf.append(alloc, '[');
+            for (a.elements, 0..) |el, i| {
+                if (i > 0) try buf.appendSlice(alloc, ", ");
+                if (!(try appendExprSource(buf, alloc, el))) return false;
+            }
+            try buf.append(alloc, ']');
+            return true;
+        },
+        .struct_init => |si| {
+            if (si.type_expr) |te| {
+                if (!(try appendExprSource(buf, alloc, te))) return false;
+                try buf.append(alloc, ' ');
+            }
+            try buf.appendSlice(alloc, "{ ");
+            for (si.fields, 0..) |f, i| {
+                if (i > 0) try buf.appendSlice(alloc, ", ");
+                try buf.appendSlice(alloc, f.name);
+                try buf.appendSlice(alloc, ": ");
+                if (!(try appendExprSource(buf, alloc, f.value))) return false;
+            }
+            try buf.appendSlice(alloc, " }");
+            return true;
+        },
+        .error_expr => |e| {
+            try buf.appendSlice(alloc, "error(");
+            for (e.args, 0..) |arg, i| {
+                if (i > 0) try buf.appendSlice(alloc, ", ");
+                if (!(try appendExprSource(buf, alloc, arg))) return false;
+            }
+            try buf.append(alloc, ')');
+            return true;
+        },
+        .comptime_expr => |ce| {
+            if (ce.expr.* == .block) return false;
+            try buf.appendSlice(alloc, "@comptime ");
+            if (!(try appendExprSource(buf, alloc, ce.expr))) return false;
+            return true;
+        },
+        else => return false,
+    }
+}
+
+/// Whether `node` can be printed without parentheses around it.
+fn isAtomicExpr(node: *ast.Node) bool {
+    return switch (node.*) {
+        .primary, .literal, .member, .index, .call, .try_expr, .unwrap_expr, .array_literal, .struct_init, .error_expr => true,
+        else => false,
+    };
+}
+
+/// Whether `@as(target, value)` would be accepted by `checkAsCast`. A cast
+/// suggestion is only printed when the suggested code would compile; this
+/// mirrors the non-failing part of the cast rules (literal-array coercion is
+/// omitted, so those cases simply get no suggestion).
+fn asCastAllowed(src: ir.Type, target: ir.Type) bool {
+    const su = ir.peelDefined(src);
+    const tu = ir.peelDefined(target);
+    if (ir.involvesUnknown(su) or ir.involvesUnknown(tu)) return false;
+    const src_num = ir.isNumeric(su) or su == .enum_ or su == .enum_lit;
+    const dst_num = ir.isNumeric(tu) or tu == .enum_ or tu == .enum_lit;
+    if (src_num and dst_num) return true;
+    if (ir.typeEquals(su, tu) or ir.isSubtype(su, tu) or ir.isSubtype(tu, su)) return true;
+    if (su == .ptr) {
+        const pointee = ir.peelDefined(su.ptr.*);
+        if (ir.typeEquals(pointee, tu) or ir.isSubtype(pointee, tu) or ir.isSubtype(tu, pointee)) return true;
+        if (isStringLike(pointee) and isStringLike(tu)) return true;
+    }
+    return false;
+}
+
+fn isStringLike(t: ir.Type) bool {
+    const p = ir.peelDefined(t);
+    return p == .array and p.array.elem.* == .u8 and p.array.length == null;
+}
+
 pub fn requireAssign(state: *state_mod.CompilerState, got: ir.Type, expected: ir.Type, ctx: []const u8) TypecheckError!void {
     try requireAssignAt(state, got, expected, ctx, .{}, null);
 }
@@ -481,20 +681,41 @@ fn requireAssignAt(state: *state_mod.CompilerState, got: ir.Type, expected: ir.T
     }
     const g = try ownDisplay(state, got);
     const e = try ownDisplay(state, expected);
+    // Only suggest a cast when the value can be printed back as source and
+    // the cast would actually be accepted; `@as(T, <type>)` is not valid code,
+    // and a rejected cast is not a useful suggestion.
+    const suggestion = if (from) |n| (try suggestionExpr(state, n)) else null;
+    const cast_suggestion = blk: {
+        const value = suggestion orelse break :blk null;
+        break :blk if (asCastAllowed(got, expected)) value else null;
+    };
     if (loc.line > 0 or loc.path.len > 0) {
         const file_path = if (loc.path.len > 0) loc.path else state.chunk.file;
         const line = if (loc.line > 0) loc.line else 1;
         const col = if (loc.column > 0) loc.column else 1;
+        if (cast_suggestion) |value| {
+            return compiler_errors.compileFailAt(
+                state,
+                file_path,
+                line,
+                col,
+                "{s}: type '{s}' is not assignable to '{s}'; did you mean '@as({s}, {s})'?",
+                .{ ctx, g, e, e, value },
+            );
+        }
         return compiler_errors.compileFailAt(
             state,
             file_path,
             line,
             col,
-            "{s}: type '{s}' is not assignable to '{s}'; did you mean '@as({s}, {s})'?",
-            .{ ctx, g, e, e, g },
+            "{s}: type '{s}' is not assignable to '{s}'",
+            .{ ctx, g, e },
         );
     }
-    return compiler_errors.compileFailFmt(state, "{s}: type '{s}' is not assignable to '{s}'; did you mean '@as({s}, {s})'?", .{ ctx, g, e, e, g });
+    if (cast_suggestion) |value| {
+        return compiler_errors.compileFailFmt(state, "{s}: type '{s}' is not assignable to '{s}'; did you mean '@as({s}, {s})'?", .{ ctx, g, e, e, value });
+    }
+    return compiler_errors.compileFailFmt(state, "{s}: type '{s}' is not assignable to '{s}'", .{ ctx, g, e });
 }
 
 fn matchesValueLiteralToType(node: *ast.Node, expected: ir.Type) bool {
