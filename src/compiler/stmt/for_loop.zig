@@ -14,6 +14,12 @@ pub fn compileFor(state: *CompilerState, for_expr: *const ast.For) !void {
         .label = for_expr.label,
         .scope_depth = state.scope_depth,
     });
+    if (for_expr.label) |lab| {
+        try state.label_targets.append(state.allocator, .{
+            .name = lab,
+            .target = .{ .loop = state.loops.items.len - 1 },
+        });
+    }
 
     if (for_expr.expr.* == .binary and std.mem.eql(u8, for_expr.expr.binary.operator, "..")) {
         try compileRangeFor(state, for_expr);
@@ -23,6 +29,7 @@ pub fn compileFor(state: *CompilerState, for_expr: *const ast.For) !void {
         try compileIterFor(state, for_expr);
     }
 
+    if (for_expr.label != null) _ = state.label_targets.pop();
     try scope.endScope(state);
 }
 

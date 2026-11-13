@@ -239,6 +239,11 @@ pub fn parseContinueStatement(self: *Parser) ParseError!*Node {
         const lab = try self.consume(.identifier, "Expected label after ':' in continue statement", null);
         label = try self.dupe(lab.value);
     }
+    // Labeled switch continue: `continue :sw new_value;`.
+    var value: ?*Node = null;
+    if (!self.checkDelim(";")) {
+        value = try expr.parseExpression(self);
+    }
     _ = try self.consume(.delimiter, "Expected ';'", ";");
-    return self.create(.{ .continue_expr = .{ .label = label, .loc = self.locOf(keyword) } });
+    return self.create(.{ .continue_expr = .{ .label = label, .value = value, .loc = self.locOf(keyword) } });
 }

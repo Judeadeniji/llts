@@ -14,7 +14,7 @@
 //!
 //! The same context owns the LLTS shadow call stack used for trap
 //! diagnostics: emitted functions use `enterFunction` / `leaveFunction`
-//! around their body and `setLine` at statement boundaries (debug builds).
+//! around their body and `setSite` at statement boundaries (debug builds).
 //! That is what lets the runtime print `at fn (file:line:col)` traces instead
 //! of relying on Zig's panic or error-return traces.
 
@@ -46,12 +46,7 @@ pub const Context = struct {
     /// Watermark saved by `enterFrame`; only the frame buffer rewinds.
     pub const FrameMark = struct { frame_len: usize };
 
-    /// Paired with `enterFunction`; remembers whether a shadow frame was
-    /// actually pushed so `leaveFunction` never pops someone else's frame.
-    pub const FunctionMark = struct {
-        frame: FrameMark,
-        traced: bool = false,
-    };
+    pub const FunctionMark = FrameMark;
 
     pub fn init(opts: Options) error{OutOfMemory}!Context {
         const alloc = opts.allocator orelse std.heap.page_allocator;
@@ -86,39 +81,43 @@ pub const Context = struct {
 
     // --- Call frames --------------------------------------------------------
 
-    /// Prologue: watermark + shadow-stack push. Traps when the LLTS frame cap
-    /// is hit (the VM's `TooManyFrames`, one clear message).
-    pub fn enterFunction(self: *Context, func_name: []const u8, file: []const u8) error{RuntimeError}!FunctionMark {
+    pub fn setTraceSites(self: *Context, sites: []const trace.Site) void {
+        self.trace_stack.setSites(sites);
+    }
+
+    /// Prologue: watermark + compact shadow-stack site push. Traps when the
+    /// LLTS frame cap is hit (the VM's `TooManyFrames`, one clear message).
+    pub inline fn enterFunction(self: *Context, entry_site: u32) error{RuntimeError}!FunctionMark {
         const frame = self.enterFrame();
-        self.trace_stack.push(func_name, file) catch {
+        self.trace_stack.push(entry_site) catch {
             self.leaveFrame(frame);
             return io.fail("Maximum call stack depth exceeded ({d} frames)", .{trace.MAX_FRAMES});
         };
-        return .{ .frame = frame, .traced = true };
+        return frame;
     }
 
     /// Epilogue: mirror of `enterFunction`; safe on every exit path.
-    pub fn leaveFunction(self: *Context, mark: FunctionMark) void {
-        if (mark.traced) self.trace_stack.pop();
-        self.leaveFrame(mark.frame);
+    pub inline fn leaveFunction(self: *Context, mark: FunctionMark) void {
+        self.trace_stack.pop();
+        self.leaveFrame(mark);
     }
 
     /// `OP_LINE` equivalent: keep the innermost frame's location current.
     /// Release builds omit these calls, exactly like stripped `OP_LINE`s.
-    pub fn setLine(self: *Context, line: u32, column: u32) void {
-        self.trace_stack.setLoc(line, column);
+    pub fn setSite(self: *Context, site_id: u32) void {
+        self.trace_stack.setSite(site_id);
     }
 
     // --- Frame watermarks ---------------------------------------------------
 
     /// Save the current frame watermark before entering a new call frame.
-    pub fn enterFrame(self: *Context) FrameMark {
+    pub inline fn enterFrame(self: *Context) FrameMark {
         return .{ .frame_len = self.frame_len };
     }
 
     /// Rewind the frame bump pointer on function exit. The immortal buffer is
     /// append-only for the life of the program and is never touched here.
-    pub fn leaveFrame(self: *Context, mark: FrameMark) void {
+    pub inline fn leaveFrame(self: *Context, mark: FrameMark) void {
         self.frame_len = mark.frame_len;
     }
 

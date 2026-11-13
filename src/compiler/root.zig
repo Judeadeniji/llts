@@ -19,6 +19,8 @@ pub const from_ast = @import("typecheck/from_ast.zig");
 pub const ir = @import("typecheck/ir.zig");
 const compile_errors = @import("../errors/compile.zig");
 pub const unused = @import("unused.zig");
+const binding_facts = @import("analyze/binding_facts.zig");
+const range_facts = @import("analyze/range.zig");
 
 pub const CompileOptions = struct {
     debug: bool = true,
@@ -62,13 +64,17 @@ pub fn analyze(
     try registerModuleDecls(&state, doc);
 
     for (doc.statements) |s| {
+        if (s.* == .struct_decl and s.struct_decl.params.len > 0) continue; // instantiated on use
         if (s.* == .struct_decl or s.* == .enum_decl or s.* == .error_decl or s.* == .type_decl) try stmt.compileStatement(&state, s);
     }
     try local_types.hoist(&state, doc.statements);
 
     try typecheck.typecheck(&state, doc);
     try requireEntryMain(&state, doc);
+    state.reachability = try reachability.compute(&state, doc);
     unused.detectAndWarn(&state, doc);
+    try binding_facts.analyze(&state, doc);
+    try range_facts.analyze(&state, doc);
 
     return state;
 }
@@ -101,8 +107,10 @@ pub fn prepareForTypecheck(state: *state_mod.CompilerState, doc: *ast.Document) 
 }
 
 pub fn emitBytecode(state: *state_mod.CompilerState, doc: *ast.Document) !chunk_mod.Chunk {
-    var reach = try reachability.compute(state, doc);
-    defer reach.deinit();
+    if (state.reachability == null) {
+        state.reachability = try reachability.compute(state, doc);
+    }
+    const reach = &state.reachability.?;
 
     // Skip over function bodies to top-level. OP_JUMP is u16-relative, so chain
     // trampolines every ~60KiB when the function blob exceeds one hop.
@@ -233,7 +241,6 @@ fn requireEntryMain(state: *state_mod.CompilerState, doc: *ast.Document) !void {
         return compile_errors.compileFailAt(
             state,
             if (loc.path.len > 0) loc.path else doc.path,
-            sourceTextForPath(state, if (loc.path.len > 0) loc.path else doc.path),
             if (loc.line > 0) loc.line else 1,
             if (loc.column > 0) loc.column else 1,
             "Entry point 'main' must be pub",
@@ -245,7 +252,6 @@ fn requireEntryMain(state: *state_mod.CompilerState, doc: *ast.Document) !void {
         return compile_errors.compileFailAt(
             state,
             if (loc.path.len > 0) loc.path else doc.path,
-            sourceTextForPath(state, if (loc.path.len > 0) loc.path else doc.path),
             if (loc.line > 0) loc.line else 1,
             if (loc.column > 0) loc.column else 1,
             "'main' must take 0 arguments",
@@ -292,6 +298,11 @@ fn fnVariadic(node: *ast.Node) bool {
 fn registerStructNames(state: *state_mod.CompilerState, doc: *ast.Document) !void {
     for (doc.statements) |s| {
         if (s.* == .struct_decl) {
+            // `@struct Name(T: type)` is a template: registered, never laid out.
+            if (s.struct_decl.params.len > 0) {
+                try generics.registerStructTemplate(state, s);
+                continue;
+            }
             try state.structs.put(s.struct_decl.name, .{
                 .name = s.struct_decl.name,
                 .size = 0,
@@ -530,7 +541,7 @@ fn collectFuncs(state: *state_mod.CompilerState, node: *ast.Node, struct_name: ?
     switch (node.*) {
         .function_decl => |*fn_decl| {
             if (generics.isTemplate(fn_decl)) {
-                return generics.registerTemplate(state, node, struct_name != null);
+                return generics.registerTemplate(state, node, struct_name);
             }
             if (struct_name) |sn| {
                 if (std.mem.indexOf(u8, fn_decl.name, "::") == null) {
@@ -563,6 +574,8 @@ fn collectFuncs(state: *state_mod.CompilerState, node: *ast.Node, struct_name: ?
             });
         },
         .struct_decl => |s| {
+            // A generic struct's methods are registered per instance, not here.
+            if (s.params.len > 0) return;
             for (s.methods) |m| try collectFuncs(state, m, s.name);
         },
         .block => |b| for (b.statements) |s| try collectFuncs(state, s, null),
@@ -586,7 +599,9 @@ fn analyzeBody(
             has_return.* = true;
             if (return_type.* == null) {
                 if (r.return_value) |v| {
-                    if (v.* == .struct_init) return_type.* = types.resolveStructName(state, v.struct_init.type_expr);
+                    if (v.* == .struct_init) {
+                        if (v.struct_init.type_expr) |te| return_type.* = types.resolveStructName(state, te);
+                    }
                     // `@new(a, Foo{…}|Foo|[N]T)` — return type from value or type arg.
                     if (v.* == .call) {
                         const c = v.call;
@@ -594,10 +609,12 @@ fn analyzeBody(
                             const arg = c.args[1];
                             // `@new` of a struct yields `*T` (handle), not `T`.
                             if (arg.* == .struct_init) {
-                                if (types.resolveStructName(state, arg.struct_init.type_expr)) |sname| {
-                                    const ptr_ty = try std.fmt.allocPrint(state.allocator, "*{s}", .{sname});
-                                    try state.owned.append(state.allocator, ptr_ty);
-                                    return_type.* = ptr_ty;
+                                if (arg.struct_init.type_expr) |te| {
+                                    if (types.resolveStructName(state, te)) |sname| {
+                                        const ptr_ty = try std.fmt.allocPrint(state.allocator, "*{s}", .{sname});
+                                        try state.owned.append(state.allocator, ptr_ty);
+                                        return_type.* = ptr_ty;
+                                    }
                                 }
                             } else if (arg.* == .primary and arg.primary.kind == .identifier) {
                                 if (state.structs.contains(arg.primary.name)) {

@@ -1,6 +1,8 @@
 # Zig
 .zig-cache/
 zig-out/
+zig-pkg/
+.llts_native_*.zig
 
 # Bun / Node
 node_modules/
@@ -9,6 +11,7 @@ bun.lock
 # Local scratch / test artifacts
 *.txt
 !**/README.txt
+scratch/
 
 # Editor / OS
 .DS_Store
@@ -18,5 +21,4 @@ bun.lock
 
 # Progress / TODO tracking
 .todos*
-scraps
-scratch/
+self_hosted/

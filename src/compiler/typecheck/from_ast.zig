@@ -38,7 +38,7 @@ pub fn typeFromAst(node: ?*ast.Node, state: ?*state_mod.CompilerState, ta: ir.Ty
                 };
                 length = parsed_len;
             }
-            break :blk try ta.arrayType(elem, length);
+            break :blk try ta.arrayType(elem, length, a.is_const);
         },
         .tuple_type => |t| blk: {
             var elems: std.ArrayList(ir.Type) = .empty;
@@ -99,8 +99,8 @@ pub fn typeFromAst(node: ?*ast.Node, state: ?*state_mod.CompilerState, ta: ir.Ty
         // Type-returning expression (`@typeOf(x)`): typecheck resolved it in context.
         .call => blk: {
             const st = state orelse break :blk ir.TUnknown;
-            const disp = st.type_call_results.get(n) orelse break :blk ir.TUnknown;
-            break :blk try parseDisplayType(st, ta, disp, null);
+            if (st.type_call_ir_results.get(n)) |t| break :blk t;
+            break :blk ir.TUnknown;
         },
         else => ir.TUnknown,
     };
@@ -124,6 +124,8 @@ pub fn isTypeCall(state: ?*state_mod.CompilerState, node: *const ast.Node) bool 
         callee.primary.name
     else
         (expr_path.tryResolveStaticPath(st, callee) catch null) orelse return false;
+    // `Name(T)` — a generic struct instantiation is a type, not a value.
+    if (st.struct_templates.contains(name)) return true;
     const template = st.templates.get(name) orelse return false;
     const rt = template.function_decl.return_type orelse return false;
     return rt.* == .primary and std.mem.eql(u8, rt.primary.name, "type");
@@ -296,6 +298,17 @@ fn literalTypeFromAst(state: ?*state_mod.CompilerState, lit: ast.Literal) FromAs
     };
 }
 
+/// A generic struct used without arguments — name it with the arguments it
+/// needs so there is something concrete to lay out.
+fn missingTypeArgs(state: *state_mod.CompilerState, name: []const u8) FromAstError {
+    const bare = ir.cleanTypeName(name);
+    return compile_error.compileFailFmt(
+        state,
+        "Generic struct '{s}' needs type arguments, e.g. '{s}(T)'",
+        .{ bare, bare },
+    );
+}
+
 pub fn resolveNamedType(name: []const u8, state: ?*state_mod.CompilerState, ta: ir.TypeAlloc) FromAstError!ir.Type {
     const t = ir.namedType(name);
     if (t != .struct_) return t;
@@ -306,6 +319,7 @@ pub fn resolveNamedType(name: []const u8, state: ?*state_mod.CompilerState, ta: 
         if (st.error_sets.contains(name)) return .{ .error_set = name };
         if (st.enums.contains(name)) return .{ .enum_ = name };
         if (st.structs.contains(name)) return .{ .struct_ = name };
+        if (st.struct_templates.contains(name)) return missingTypeArgs(st, name);
         return compile_error.compileFailFmt(st, "Unknown type '{s}'", .{name});
     }
     return t;
@@ -338,9 +352,16 @@ fn resolveTypedef(
         return ir.TUnknown;
     }
 
-    const under = try parseDisplayType(state, ta, td.underlying, seen);
+    const under = td.ir orelse {
+        return compile_error.compileFailFmt(state, "Type '{s}' has no canonical type; its definition was not resolved", .{name});
+    };
     if (!td.distinct) return under;
     return try ta.definedType(td.name, under);
+}
+
+/// Resolve a named `@type` / `@alias` / generic parameter to canonical IR.
+pub fn resolveTypedefType(state: *state_mod.CompilerState, ta: ir.TypeAlloc, name: []const u8) FromAstError!ir.Type {
+    return resolveTypedef(state, ta, name, null);
 }
 
 /// Resolve a bare name to a `module::Name` table key by suffix match.
@@ -435,9 +456,33 @@ pub fn parseDisplayType(
     if (s.len > 0 and s[0] == '*') {
         return try ta.ptrType(try parseDisplayType(state, ta, s[1..], cycle));
     }
+    if (std.mem.startsWith(u8, s, "const ")) {
+        const inner_str = std.mem.trim(u8, s[6..], " \t");
+        const inner = try parseDisplayType(state, ta, inner_str, cycle);
+        if (inner == .array) {
+            var arr = inner.array;
+            arr.is_const = true;
+            return .{ .array = arr };
+        }
+    }
     if (s.len > 0 and s[0] == '[') {
         if (s.len >= 2 and s[1] == ']') {
-            return try ta.arrayType(try parseDisplayType(state, ta, s[2..], cycle), null);
+            var has_const = false;
+            var rest = std.mem.trim(u8, s[2..], " \t");
+            if (std.mem.startsWith(u8, rest, "const ")) {
+                has_const = true;
+                rest = std.mem.trim(u8, rest[6..], " \t");
+            }
+            var elem = try parseDisplayType(state, ta, rest, cycle);
+            var is_const = false;
+            if (has_const) {
+                if (elem == .array) {
+                    elem.array.is_const = true;
+                } else {
+                    is_const = true;
+                }
+            }
+            return try ta.arrayType(elem, null, is_const);
         }
         var depth: i32 = 0;
         var close: ?usize = null;
@@ -455,10 +500,24 @@ pub fn parseDisplayType(
         }
         const end = close orelse return error.CompileError;
         const interior = s[1..end];
-        const rest = std.mem.trim(u8, s[end + 1 ..], " \t");
+        var rest = std.mem.trim(u8, s[end + 1 ..], " \t");
         if (rest.len > 0) {
             const len = std.fmt.parseInt(usize, interior, 10) catch return error.CompileError;
-            return try ta.arrayType(try parseDisplayType(state, ta, rest, cycle), len);
+            var has_const = false;
+            if (std.mem.startsWith(u8, rest, "const ")) {
+                has_const = true;
+                rest = std.mem.trim(u8, rest[6..], " \t");
+            }
+            var elem = try parseDisplayType(state, ta, rest, cycle);
+            var is_const = false;
+            if (has_const) {
+                if (elem == .array) {
+                    elem.array.is_const = true;
+                } else {
+                    is_const = true;
+                }
+            }
+            return try ta.arrayType(elem, len, is_const);
         }
         const parts = try ir.splitTopLevel(ta.allocator, interior, ", ");
         defer ta.allocator.free(parts);
@@ -547,6 +606,7 @@ pub fn parseDisplayType(
         if (findErrorSetKey(st, s)) |k| return .{ .error_set = k };
         if (findEnumKey(st, s)) |k| return .{ .enum_ = k };
         if (findStructKey(st, s)) |k| return .{ .struct_ = k };
+        if (st.struct_templates.contains(s)) return missingTypeArgs(st, s);
         return compile_error.compileFailFmt(st, "Unknown type '{s}'", .{s});
     }
     return try ir.parseDisplayType(ta, s);
@@ -606,7 +666,23 @@ fn resolveImportedType(node: *ast.Node, state: ?*state_mod.CompilerState, ta: ir
     }
 
     const q = resolveStructName(st, node) orelse {
-        return compile_error.compileFailFmt(st, "Unknown type", .{});
+        const loc = node.loc();
+        const path = if (loc.path.len > 0) loc.path else st.chunk.file;
+        // Name the type the user actually wrote; resolution already failed, so
+        // this must come from the AST rather than a second type lookup.
+        const written = switch (node.*) {
+            .primary => |p| p.name,
+            .member => |m| if (m.property.* == .primary) m.property.primary.name else "<type expression>",
+            else => "<type expression>",
+        };
+        return compile_error.compileFailAt(
+            st,
+            path,
+            loc.line,
+            loc.column,
+            "Unknown type '{s}'",
+            .{written},
+        );
     };
     if (st.typedefs.contains(q)) {
         try checkStructInitExport(st, node, q);
@@ -675,7 +751,47 @@ pub fn lookupStruct(state: *state_mod.CompilerState, display: []const u8) ?state
         ensureShapeLayoutFromDisplay(state, peeled) catch return null;
         return state.structs.get(peeled);
     }
+    // Lazy-layout tuples `[T, U, …]`.
+    if (peeled.len > 0 and peeled[0] == '[' and std.mem.indexOfScalar(u8, peeled, ',') != null) {
+        ensureTupleLayoutFromDisplay(state, peeled) catch return null;
+        return state.structs.get(peeled);
+    }
     return null;
+}
+
+/// Parse a tuple display `[T, U, …]` and register packed layout under that key (idempotent).
+pub fn ensureTupleLayoutFromDisplay(state: *state_mod.CompilerState, display: []const u8) FromAstError!void {
+    if (state.structs.contains(display)) return;
+    if (display.len < 2 or display[0] != '[' or display[display.len - 1] != ']') return;
+
+    const ta = state.typeAlloc();
+    const t = try parseDisplayType(state, ta, display, null);
+    if (t != .tuple) return;
+
+    var type_map = std.StringHashMap([]const u8).init(state.allocator);
+    var field_irs: std.StringHashMapUnmanaged(ir.Type) = .{};
+    var field_list: std.ArrayList(layout.FieldSpec) = .empty;
+    defer field_list.deinit(state.allocator);
+
+    for (t.tuple, 0..) |elem_ir, i| {
+        const field_disp = try ir.displayTypeQualifiedAlloc(state.allocator, elem_ir);
+        try state.owned.append(state.allocator, field_disp);
+        const name_owned = try std.fmt.allocPrint(state.allocator, "{d}", .{i});
+        try state.owned.append(state.allocator, name_owned);
+        try type_map.put(name_owned, field_disp);
+        try field_irs.put(state.allocator, name_owned, elem_ir);
+        try field_list.append(state.allocator, .{ .name = name_owned, .type_name = field_disp });
+    }
+    const laid = try layout.layoutFields(state.allocator, field_list.items);
+    const key_owned = try state.allocator.dupe(u8, display);
+    try state.owned.append(state.allocator, key_owned);
+    try state.structs.put(key_owned, .{
+        .name = key_owned,
+        .size = laid.size,
+        .offsets = laid.offsets,
+        .types = type_map,
+        .field_irs = field_irs,
+    });
 }
 
 /// Parse a shape display and register packed layout under that key (idempotent).
@@ -692,13 +808,12 @@ pub fn ensureShapeLayoutFromDisplayAs(
     if (state.structs.contains(key)) return;
     if (display.len < 2 or display[0] != '{' or display[display.len - 1] != '}') return;
 
-    var arena = std.heap.ArenaAllocator.init(state.allocator);
-    defer arena.deinit();
-    const ta = ir.TypeAlloc{ .allocator = arena.allocator() };
+    const ta = state.typeAlloc();
     const t = try parseDisplayType(state, ta, display, null);
     if (t != .shape) return;
 
     var type_map = std.StringHashMap([]const u8).init(state.allocator);
+    var field_irs: std.StringHashMapUnmanaged(ir.Type) = .{};
     var field_list: std.ArrayList(layout.FieldSpec) = .empty;
     defer field_list.deinit(state.allocator);
 
@@ -708,6 +823,7 @@ pub fn ensureShapeLayoutFromDisplayAs(
         const name_owned = try state.allocator.dupe(u8, f.name);
         try state.owned.append(state.allocator, name_owned);
         try type_map.put(name_owned, field_disp);
+        try field_irs.put(state.allocator, name_owned, f.ty);
         try field_list.append(state.allocator, .{ .name = name_owned, .type_name = field_disp });
     }
     const laid = try layout.layoutFields(state.allocator, field_list.items);
@@ -718,7 +834,65 @@ pub fn ensureShapeLayoutFromDisplayAs(
         .size = laid.size,
         .offsets = laid.offsets,
         .types = type_map,
+        .field_irs = field_irs,
     });
+}
+
+pub fn lookupUnion(state: *state_mod.CompilerState, display: []const u8) ?state_mod.UnionDef {
+    if (state.unions.get(display)) |ud| return ud;
+    const peeled = peelTypedefDisplay(state, display);
+    if (!std.mem.eql(u8, peeled, display)) {
+        if (state.unions.get(peeled)) |ud| return ud;
+    }
+    ensureUnionLayoutFromDisplay(state, display) catch return null;
+    return state.unions.get(display) orelse state.unions.get(peeled);
+}
+
+pub fn ensureUnionLayoutFromDisplay(state: *state_mod.CompilerState, display: []const u8) FromAstError!void {
+    if (state.unions.contains(display)) return;
+    const peeled = peelTypedefDisplay(state, display);
+    if (state.unions.contains(peeled)) return;
+
+    const ta = state.typeAlloc();
+    const t = parseDisplayType(state, ta, peeled, null) catch return;
+    if (t != .union_) return;
+
+    var flat = std.ArrayList(ir.Type).empty;
+    defer flat.deinit(ta.allocator);
+    for (t.union_) |arm| {
+        switch (ir.peelDefined(arm)) {
+            .union_ => |inner| try flat.appendSlice(ta.allocator, inner),
+            else => try flat.append(ta.allocator, arm),
+        }
+    }
+    if (flat.items.len < 2) return;
+
+    var arm_names = std.ArrayList([]const u8).empty;
+    var arm_irs = std.ArrayList(ir.Type).empty;
+    for (flat.items) |arm| {
+        const arm_disp = (try ir.displayTypeQualifiedAlloc(ta.allocator, arm));
+        try arm_names.append(ta.allocator, arm_disp);
+        try arm_irs.append(ta.allocator, arm);
+    }
+
+    const ulayout = layout.layoutUnion(state, t, peeled) catch return;
+    const key_owned = try ta.allocator.dupe(u8, display);
+
+    const udef: state_mod.UnionDef = .{
+        .name = key_owned,
+        .size = ulayout.size,
+        .alignment = ulayout.alignment,
+        .tag_offset = ulayout.tag_offset,
+        .discrim_field = ulayout.discrim_field,
+        .enum_name = ulayout.enum_name,
+        .arm_names = try arm_names.toOwnedSlice(ta.allocator),
+        .arm_irs = try arm_irs.toOwnedSlice(ta.allocator),
+    };
+    try state.unions.put(key_owned, udef);
+    if (!std.mem.eql(u8, key_owned, peeled)) {
+        const peeled_owned = try ta.allocator.dupe(u8, peeled);
+        try state.unions.put(peeled_owned, udef);
+    }
 }
 
 /// Split a top-level `A | B | C` display (no nested parens needed for simple struct unions).
@@ -958,7 +1132,7 @@ pub fn resolveType(state: *state_mod.CompilerState, node: *ast.Node) ?[]const u8
     return switch (node.*) {
         .literal => |lit| switch (lit.literal_type) {
             .string => blk: {
-                const s = std.fmt.allocPrint(state.allocator, "[{d}]byte", .{lit.value.len}) catch break :blk "[]byte";
+                const s = std.fmt.allocPrint(state.allocator, "const [{d}]u8", .{lit.value.len}) catch break :blk "const []u8";
                 state.owned.append(state.allocator, s) catch {};
                 break :blk s;
             },
@@ -997,6 +1171,16 @@ pub fn resolveType(state: *state_mod.CompilerState, node: *ast.Node) ?[]const u8
                 }
             }
             break :blk type_name;
+        },
+        // `x.?` — the payload type, so a member access through the unwrapped
+        // value resolves instead of falling back to a dynamic property read.
+        .unwrap_expr => |u| blk: {
+            const inner = resolveType(state, u.expression) orelse break :blk null;
+            const payload = unwrapOptionalDisplay(inner);
+            // The VM represents pointers as their handle, so `x.?.field` reads
+            // the struct behind the pointer.
+            const trimmed = std.mem.trimLeft(u8, payload, "* \t");
+            break :blk if (trimmed.len > 0) trimmed else payload;
         },
         .member => |m| blk: {
             if (m.property.* != .primary) break :blk null;
@@ -1057,6 +1241,7 @@ pub fn resolveType(state: *state_mod.CompilerState, node: *ast.Node) ?[]const u8
         },
         .call => |c| blk: {
             if (isTypeCall(state, node)) break :blk "type";
+            if (c.callee.* == .primary and std.mem.eql(u8, c.callee.primary.name, "@sizeOf")) break :blk "i64";
             if (state.generic_calls.get(node)) |gc| {
                 if (state.functions.get(gc.instance)) |def| break :blk def.return_type;
             }
@@ -1125,8 +1310,11 @@ pub fn resolveType(state: *state_mod.CompilerState, node: *ast.Node) ?[]const u8
             const obj_raw = resolveType(state, idx.object) orelse break :blk null;
             const obj = unwrapOptionalDisplay(obj_raw);
             if (idx.is_slice) {
-                // Slice views are unsized `[]T` / `[]byte`.
-                if (std.mem.eql(u8, obj, "string") or std.mem.eql(u8, obj, "[]byte")) break :blk "[]byte";
+                // Slice views of strings/bytes.
+                if (std.mem.eql(u8, obj, "string") or std.mem.eql(u8, obj, "const []u8") or std.mem.eql(u8, obj, "[]const u8") or
+                    (std.mem.startsWith(u8, obj, "const [") and std.mem.endsWith(u8, obj, "]u8"))) break :blk "const []u8";
+                if (std.mem.eql(u8, obj, "[]byte") or std.mem.eql(u8, obj, "[]u8") or
+                    (std.mem.startsWith(u8, obj, "[") and (std.mem.endsWith(u8, obj, "]u8") or std.mem.endsWith(u8, obj, "]byte")))) break :blk "[]u8";
                 if (arrayElemDisplay(state.allocator, obj) catch null) |e| {
                     const s = std.fmt.allocPrint(state.allocator, "[]{s}", .{e}) catch break :blk null;
                     state.allocator.free(e);
@@ -1184,7 +1372,7 @@ pub fn resolveType(state: *state_mod.CompilerState, node: *ast.Node) ?[]const u8
             state.owned.append(state.allocator, out) catch {};
             break :blk out;
         },
-        .struct_init => |s| resolveStructName(state, s.type_expr),
+        .struct_init => |s| if (s.type_expr) |te| resolveStructName(state, te) else null,
         .unary => |u| blk: {
             if (std.mem.eql(u8, u.operator, "const")) {
                 break :blk resolveTypeLiteral(state, u.arg);
@@ -1261,8 +1449,11 @@ fn resolveTypeLiteral(state: *state_mod.CompilerState, node: *ast.Node) ?[]const
 
 pub fn isStringyType(t: ?[]const u8) bool {
     const s = t orelse return false;
-    if (std.mem.eql(u8, s, "string") or std.mem.eql(u8, s, "[]byte")) return true;
-    return std.mem.startsWith(u8, s, "[") and std.mem.endsWith(u8, s, "]byte");
+    if (std.mem.eql(u8, s, "string") or std.mem.eql(u8, s, "const []u8") or std.mem.eql(u8, s, "[]const u8") or
+        std.mem.eql(u8, s, "const []byte") or std.mem.eql(u8, s, "[]const byte")) return true;
+    if (std.mem.eql(u8, s, "[]byte") or std.mem.eql(u8, s, "[]u8")) return true;
+    if (std.mem.startsWith(u8, s, "const [") and (std.mem.endsWith(u8, s, "]u8") or std.mem.endsWith(u8, s, "]byte"))) return true;
+    return std.mem.startsWith(u8, s, "[") and (std.mem.endsWith(u8, s, "]byte") or std.mem.endsWith(u8, s, "]u8"));
 }
 
 /// If `node` names an enum type (`Tok` or `lib.Tok`), return the (possibly module-qualified) enum name.

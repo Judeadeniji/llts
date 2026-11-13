@@ -102,7 +102,7 @@ pub const SpanRef = struct {
     arena_gen: i32 = 0,
 };
 
-/// Tagged runtime value — numeric tags match Zig-like widths end-to-end.
+/// Tagged runtime value — numeric tags match the language's integer widths end-to-end.
 pub const Value = union(enum) {
     null,
     /// Unit result of a `void` function (distinct from optional `null`).

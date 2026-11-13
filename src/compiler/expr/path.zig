@@ -13,7 +13,7 @@ pub fn currentModulePath(state: *CompilerState) []const u8 {
     return state.chunk.file;
 }
 
-/// `global_types` key for an alias binding, scoped to the importing module when
+/// Global-binding key for an alias, scoped to the importing module when
 /// the code being compiled belongs to one (`$mod::alias`), else the bare key
 /// (`$alias`) used by root-document imports.
 pub fn moduleAliasMapKey(
@@ -24,7 +24,7 @@ pub fn moduleAliasMapKey(
     const mod = currentModulePath(state);
     if (std.mem.indexOfScalar(u8, mod, ':') == null and mod.len > 0 and state.chunk.file.len > 0 and !std.mem.eql(u8, mod, state.chunk.file)) {
         const scoped = std.fmt.bufPrint(buf, "${s}::{s}", .{ mod, alias }) catch return bareAliasKey(buf, alias);
-        if (state.global_types.contains(scoped)) return scoped;
+        if (state.global_type_irs.contains(scoped)) return scoped;
     }
     return bareAliasKey(buf, alias);
 }
@@ -33,14 +33,21 @@ fn bareAliasKey(buf: []u8, alias: []const u8) []const u8 {
     return std.fmt.bufPrint(buf, "${s}", .{alias}) catch "";
 }
 
-/// Alias → `module:…` value from `global_types`, preferring the scoped binding of
-/// the module being compiled over the bare (last-import-wins) binding.
-/// Nested modules bind aliases under bare keys too, so two modules may share one
-/// bare key; without scoping the last import silently wins.
+/// The `module:…` marker for a global binding, read from canonical IR.
+pub fn moduleBindingType(state: *CompilerState, key: []const u8) ?[]const u8 {
+    const t = state.global_type_irs.get(key) orelse return null;
+    if (t == .struct_ and std.mem.startsWith(u8, t.struct_, "module:")) return t.struct_;
+    return null;
+}
+
+/// Alias → `module:…` marker, preferring the scoped binding of the module being
+/// compiled over the bare (last-import-wins) binding. Nested modules bind
+/// aliases under bare keys too, so two modules may share one bare key; without
+/// scoping the last import silently wins.
 pub fn aliasModuleType(state: *CompilerState, alias: []const u8) ?[]const u8 {
     var buf: [512]u8 = undefined;
     const key = moduleAliasMapKey(state, &buf, alias);
-    return state.global_types.get(key);
+    return moduleBindingType(state, key);
 }
 
 /// Resolve `lib.Vector3` → `examples/import_test_lib::Vector3` via `$lib` → `module:…`.
@@ -108,13 +115,12 @@ pub fn tryResolveStaticPath(state: *CompilerState, node: *ast.Node) !?[]const u8
             const prop = m.property.primary.name;
             var buf: [512]u8 = undefined;
             const re_key = std.fmt.bufPrint(&buf, "${s}::{s}", .{ obj_path, prop }) catch return null;
-            if (state.global_types.get(re_key)) |re| {
-                if (std.mem.startsWith(u8, re, "module:")) return re["module:".len..];
-            }
+            if (moduleBindingType(state, re_key)) |re| return re["module:".len..];
             // `mod.value.field` — once `mod.value` is a typed binding (not a nested module),
             // further members are fields/methods, not static path segments.
-            if (state.global_types.get(obj_path)) |obj_ty| {
-                if (!std.mem.startsWith(u8, obj_ty, "module:")) return null;
+            if (state.global_type_irs.get(obj_path)) |obj_ty| {
+                const is_module = obj_ty == .struct_ and std.mem.startsWith(u8, obj_ty.struct_, "module:");
+                if (!is_module) return null;
             }
             const q = try std.fmt.allocPrint(state.allocator, "{s}::{s}", .{ obj_path, prop });
             try state.owned.append(state.allocator, q);

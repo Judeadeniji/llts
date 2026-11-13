@@ -130,7 +130,7 @@ pub fn formatType(allocator: std.mem.Allocator, node: *const ast.Node, is_const:
         .literal => |l| {
             return switch (l.literal_type) {
                 .number, .hex, .octal, .binary => if (is_const) std.fmt.allocPrint(allocator, "{s} (int)", .{l.value}) catch null else std.mem.Allocator.dupe(allocator, u8, "int") catch null,
-                .string => if (is_const) std.fmt.allocPrint(allocator, "\"{s}\" ([]byte)", .{l.value}) catch null else std.mem.Allocator.dupe(allocator, u8, "[]byte") catch null,
+                .string => if (is_const) std.fmt.allocPrint(allocator, "\"{s}\" (const []u8)", .{l.value}) catch null else std.mem.Allocator.dupe(allocator, u8, "const []u8") catch null,
                 .boolean => if (is_const) std.fmt.allocPrint(allocator, "{s} (bool)", .{l.value}) catch null else std.mem.Allocator.dupe(allocator, u8, "bool") catch null,
                 .@"null" => std.mem.Allocator.dupe(allocator, u8, "null") catch null,
             };
@@ -216,7 +216,7 @@ pub fn formatType(allocator: std.mem.Allocator, node: *const ast.Node, is_const:
                         const base = switch (val) {
                             .int => "int",
                             .boolean => "bool",
-                            .string => "[]byte",
+                            .string => "const []u8",
                         };
                         return std.fmt.allocPrint(allocator, "{s} ({s})", .{ val_str, base }) catch null;
                     }
@@ -404,7 +404,7 @@ pub fn findPrimaryAtLoc(node: *ast.Node, line: u32, col: u32) ?*ast.Node {
         .return_expr => |r| if (r.return_value) |v| return findPrimaryAtLoc(v, line, col) else return null,
         .defer_stmt => |d| return findPrimaryAtLoc(d.body, line, col),
         .struct_init => |si| {
-            if (findPrimaryAtLoc(si.type_expr, line, col)) |found| return found;
+            if (si.type_expr) |te| if (findPrimaryAtLoc(te, line, col)) |found| return found;
             for (si.fields) |f| {
                 if (findPrimaryAtLoc(f.value, line, col)) |found| return found;
             }

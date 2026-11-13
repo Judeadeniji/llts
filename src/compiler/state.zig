@@ -4,6 +4,8 @@ const ast = @import("../ast/root.zig");
 pub const const_eval = @import("const_eval.zig");
 pub const ConstValue = const_eval.ConstValue;
 const layout = @import("layout.zig");
+const ir = @import("typecheck/ir.zig");
+const reachability = @import("reachability.zig");
 
 pub const Local = struct {
     name: []const u8,
@@ -32,6 +34,30 @@ pub const AllocRegion = enum {
     pass,
 };
 
+/// Receiver passing mode for a recorded method call.
+pub const ReceiverModeKind = enum { none, pointer, value };
+
+/// Per-binding mutation/read facts recorded by the binding-facts analysis pass.
+/// Keyed by declaration node, parameter pointer, for-node, or if-node.
+pub const BindingFacts = struct {
+    /// The binding is read at least once (drives `_ = x;` suppression).
+    read: bool = false,
+    /// The binding's place root is written (through pointer/index/member);
+    /// drives `var` for struct/non-pointer locals and mutable param copies.
+    assigned: bool = false,
+    /// The binding is the direct LHS of an assignment (`x = …`); always
+    /// implies `assigned = true`.  Drives `var` for all types.
+    reassigned: bool = false,
+};
+
+/// A call target resolved by typecheck (see `CompilerState.call_targets`).
+pub const CallTarget = struct {
+    key: []const u8,
+    receiver_mode: ReceiverModeKind = .none,
+    generic_instance: ?[]const u8 = null,
+    closure_id: ?u32 = null,
+};
+
 pub const FunctionDef = struct {
     node: *ast.Node,
     address: ?u32 = null,
@@ -39,16 +65,28 @@ pub const FunctionDef = struct {
     has_return: bool = false,
     calls: std.StringHashMap(void),
     return_type: ?[]const u8 = null,
+    /// Canonical return type, dual-written while displays are migrated.
+    return_ir: ?ir.Type = null,
     is_recursive: bool = false,
     forward_jumps: std.ArrayList(usize) = .empty,
     source_index: u16 = 0,
+    param_irs: ?[]const ir.Type = null,
+    rest_ir: ?ir.Type = null,
+    is_variadic: bool = false,
+    return_fn_target: ?[]const u8 = null,
+    closure_ids: std.ArrayList(u32) = .empty,
 };
 
 pub const GenericCall = struct {
     instance: []const u8,
-    /// The template's `function_decl` node (its params mark which call
-    /// arguments are types and so are dropped at codegen).
+    /// The template's `function_decl` node.
     template: *ast.Node,
+    /// Number of trailing call arguments that are values; the leading ones are
+    /// type arguments (explicit or inferred) and are dropped at codegen.
+    value_args: usize,
+    /// `obj.method(…)`: the receiver is an implicit leading argument of the
+    /// instance, so the emitter passes `obj` before the value arguments.
+    receiver: bool = false,
 };
 
 pub const PendingInstance = struct {
@@ -63,6 +101,8 @@ pub const StructDef = struct {
     size: i32,
     offsets: std.StringHashMap(i32),
     types: std.StringHashMap([]const u8),
+    /// Canonical field types, dual-written while display types are migrated.
+    field_irs: std.StringHashMapUnmanaged(ir.Type) = .{},
 };
 
 pub const EnumDef = struct {
@@ -76,6 +116,17 @@ pub const EnumDef = struct {
     pub fn isString(self: *const EnumDef) bool {
         return self.string_values != null;
     }
+};
+
+pub const UnionDef = struct {
+    name: []const u8,
+    size: i32,
+    alignment: i32,
+    tag_offset: ?i32 = null,
+    discrim_field: ?[]const u8 = null,
+    enum_name: ?[]const u8 = null,
+    arm_names: [][]const u8,
+    arm_irs: []ir.Type,
 };
 
 /// How to lower `@nameOf(x)` after typecheck.
@@ -105,6 +156,8 @@ pub const TypeDef = struct {
     name: []const u8,
     /// Display string of the RHS (may name another typedef). Empty while `stub`.
     underlying: []const u8,
+    /// Canonical IR for the RHS, dual-written while displays are migrated.
+    ir: ?ir.Type = null,
     distinct: bool,
     /// Name reserved before RHS compile so field types may forward-ref it.
     stub: bool = false,
@@ -116,6 +169,28 @@ pub const LoopTracker = struct {
     label: ?[]const u8 = null,
     break_jumps: std.ArrayList(usize) = .empty,
     continue_jumps: std.ArrayList(usize) = .empty,
+};
+
+/// Labeled `@switch` compiled as a loop head: `continue :label value` stores
+/// `value` into the scrutinee slot and jumps back to dispatch.
+pub const SwitchTracker = struct {
+    /// Bytecode offset of the first prong comparison.
+    head: usize,
+    /// Scope depth of the switch's scrutinee local.
+    scope_depth: i32,
+    /// Local slot holding the scrutinee.
+    scrut_slot: u8,
+    label: []const u8,
+};
+
+/// One active labeled control-flow target. Loops and switches share a stack so
+/// a label used by both resolves innermost-first.
+pub const LabelTarget = struct {
+    name: []const u8,
+    target: union(enum) {
+        loop: usize,
+        switch_: usize,
+    },
 };
 
 /// Value-producing `@if` / `@switch` / labeled block — `break <value>` targets these.
@@ -140,6 +215,33 @@ pub const ImportFrame = struct {
     import_path: []const u8,
 };
 
+pub const ClosureCapture = struct {
+    name: []const u8,
+    ir_type: ir.Type,
+    is_mutated: bool = false,
+};
+
+pub const ClosureInfo = struct {
+    id: u32,
+    name: []const u8,
+    captures: []ClosureCapture,
+    ret_ir: ir.Type,
+    param_irs: []ir.Type,
+    node: *ast.Node,
+    escapes: bool = false,
+    enclosing_fn: ?[]const u8 = null,
+    child_closure_ids: std.ArrayList(u32) = .empty,
+};
+
+/// A variable that holds a closure literal: the declaration it was bound at and
+/// the closure itself. Recorded per use, so the analysis can resolve a closure
+/// handed to a call through a variable.
+pub const ClosureValueRef = struct {
+    decl_node: *ast.Node,
+    closure_node: *ast.Node,
+    id: u32,
+};
+
 pub const CompilerState = struct {
     allocator: std.mem.Allocator,
     chunk: chunk_mod.Chunk,
@@ -153,6 +255,7 @@ pub const CompilerState = struct {
     stack_depth: u32 = 0,
     functions: std.StringHashMap(FunctionDef),
     structs: std.StringHashMap(StructDef),
+    unions: std.StringHashMap(UnionDef),
     enums: std.StringHashMap(EnumDef),
     error_sets: std.StringHashMap(ErrorSetDef),
     typedefs: std.StringHashMap(TypeDef),
@@ -163,9 +266,15 @@ pub const CompilerState = struct {
     /// Functions with a `type` param or `: type` return (see `generics.zig`).
     /// Never typechecked or emitted; only their instances are.
     templates: std.StringHashMap(*ast.Node),
+    /// Generic struct declarations (`@struct Name(T: type)`), keyed by their
+    /// (possibly module-qualified) name. Never laid out or emitted; each
+    /// distinct argument list instantiates one entry of `structs`.
+    struct_templates: std.StringHashMap(*ast.Node),
     /// `template(qualified type args)` → type display (type functions) or
     /// instance function name (generic functions).
     instances: std.StringHashMap([]const u8),
+    /// Canonical IR for type-function results (keyed like `instances`).
+    instance_type_irs: std.StringHashMap(ir.Type),
     /// Generic function instances registered in `functions`.
     instance_fns: std.StringHashMap(void),
     /// Call to a generic function → its instance.
@@ -176,6 +285,12 @@ pub const CompilerState = struct {
     method_index: std.StringHashMap(std.ArrayList([]const u8)),
     /// Instances created during typecheck, checked before typecheck ends.
     pending_instances: std.ArrayList(PendingInstance) = .empty,
+    /// Methods of generic struct instances that exist but have not been called.
+    /// They are registered as functions so calls resolve, but are only
+    /// typechecked (and emitted) once something actually calls them — a method
+    /// that does not hold for every element type must not break unrelated uses
+    /// of the instance (`@sizeOf(Name(u8, 4))` must not typecheck `sum`).
+    instance_methods: std.StringHashMap(PendingInstance) = undefined,
     /// Instantiation nesting of the code being checked (0 = not in an instance).
     instance_depth: u32 = 0,
     /// Typecheck only functions reachable from `main` / exported top-level code.
@@ -188,11 +303,21 @@ pub const CompilerState = struct {
     instance_counter: u32 = 0,
     /// Owns the AST copies made for instances.
     generic_arena: std.heap.ArenaAllocator,
+    /// Owns type IR for the lifetime of the compile so typecheck/codegen can
+    /// share resolved types after analysis.
+    type_arena: std.heap.ArenaAllocator,
     loops: std.ArrayList(LoopTracker) = .empty,
     exprs: std.ArrayList(ExprTracker) = .empty,
+    /// Labeled `@switch` loop heads, innermost last.
+    switches: std.ArrayList(SwitchTracker) = .empty,
+    /// Labels of active loops and switches, innermost last.
+    label_targets: std.ArrayList(LabelTarget) = .empty,
     defer_stacks: std.AutoHashMap(i32, std.ArrayListUnmanaged(DeferEntry)),
     global_vars: std.StringHashMap(void),
     global_types: std.StringHashMap([]const u8),
+    /// Canonical types for module-level bindings, dual-written while display
+    /// strings are migrated out of typecheck/codegen.
+    global_type_irs: std.StringHashMap(ir.Type),
     global_consts: std.StringHashMap(void),
     ready_global_consts: std.StringHashMap(void),
     const_values: std.StringHashMap(const_eval.ConstValue),
@@ -208,10 +333,25 @@ pub const CompilerState = struct {
     /// Imported module ASTs (own their arenas). Freed in `deinit`.
     module_docs: std.ArrayList(*ast.Document) = .empty,
     type_of_results: std.AutoHashMap(*ast.Node, []const u8),
+    /// Canonical IR type for expression results, dual-written while display
+    /// strings are migrated out of the typechecker.
+    type_ir_of_results: std.AutoHashMap(*ast.Node, ir.Type),
+    /// Resolved call target recorded by typecheck, keyed by the callee node
+    /// (a `.primary` or `.member` node): function key plus, for methods, the
+    /// receiver passing mode. The native emitter consumes this instead of
+    /// re-resolving names, struct layout, and receiver shapes itself.
+    call_targets: std.AutoHashMap(*ast.Node, CallTarget),
+    /// Statically known function name aliases ($pick = lib.mul).
+    fn_aliases: std.StringHashMap([]const u8),
+    /// Call nodes whose return value is statically known to be a function name.
+    call_return_targets: std.AutoHashMap(*ast.Node, []const u8),
     /// Type-valued node (`@typeOf(x)`, or a type name used as a value) → qualified
     /// display of the type it denotes. Filled by typecheck; read by `typeFromAst`
     /// so type-returning expressions work in every type position.
     type_call_results: std.AutoHashMap(*ast.Node, []const u8),
+    /// Canonical IR type for type-valued nodes, dual-written while display
+    /// strings are migrated out of the typechecker.
+    type_call_ir_results: std.AutoHashMap(*ast.Node, ir.Type),
     /// `T == U` / `T != U` between types, folded at typecheck. Keyed by the
     /// binary's left operand node.
     type_eq_folds: std.AutoHashMap(*ast.Node, bool),
@@ -220,10 +360,69 @@ pub const CompilerState = struct {
     /// `@nameOf` lowering plan per call node (variant spelling as declared).
     name_of_plans: std.AutoHashMap(*ast.Node, NameOfPlan),
     for_is_cond: std.AutoHashMap(*const ast.For, void),
+    /// Mutation/read facts per local declaration, populated by the
+    /// binding-facts analysis pass and consumed by the native emitter.
+    binding_facts: std.AutoHashMap(*ast.Node, BindingFacts),
+    /// Mutation/read facts per function parameter (keyed by param struct ptr).
+    param_facts: std.AutoHashMap(*const ast.Param, BindingFacts),
+    /// Mutation/read facts for for-loop captures: for_expr Node → [2]BindingFacts
+    /// (index 0 = element capture, index 1 = index capture if present).
+    /// Keyed by *ast.Node (the .for_expr node) so the pointer is stable across
+    /// traversal (not a stack copy of the interior ast.For struct).
+    for_capture_facts: std.AutoHashMap(*const ast.Node, [2]BindingFacts),
+    /// Mutation/read facts for @if pipe-value captures: if_expr Node → BindingFacts.
+    /// Keyed by *ast.Node (the .if_expr node) for the same stability reason.
+    if_capture_facts: std.AutoHashMap(*const ast.Node, BindingFacts),
+    /// Control-flow termination per statement/expression node.
+    /// A node terminates (true) if control flow cannot fall through past it
+    /// (e.g. return, break, continue, call to never, or composite branch termination).
+    terminates: std.AutoHashMap(*ast.Node, bool),
+    /// Proven arithmetic operations: binary expression node → void.
+    /// Present when an operation (+, -, *) is statically proven not to overflow its target width.
+    proven_arithmetic: std.AutoHashMap(*ast.Node, void),
+    /// Reachability analysis computed during `compiler.analyze`:
+    /// maps reachable function and global names from main and top-level entry points.
+    reachability: ?reachability.Result = null,
+    /// Registered closures and their captured free variables.
+    closures: std.AutoHashMap(*ast.Node, ClosureInfo),
+    closure_counter: u32 = 0,
+    top_level_closure_ids: std.ArrayList(u32) = .empty,
+    devirtualized_closures: std.AutoHashMap(*ast.Node, u32),
     last_emitted_line: i32 = -1,
     last_emitted_column: i32 = -1,
     /// When true, bare struct/array literals use immortal heap (globals / return of literals).
     alloc_immortal: bool = false,
+    /// Initializer node of every local declaration whose address is taken by
+    /// `&name` in its function body (computed by `binding_facts`). The storage
+    /// must outlive the frame: the bytecode backend allocates such a local's
+    /// aggregate literal immortal, and the native emitter boxes the local in
+    /// immortal heap instead of the Zig stack.
+    addr_taken_decls: std.AutoHashMap(*const ast.Node, void),
+    /// Parameters whose own storage (`&param`) escapes the function. The native
+    /// backend copies parameters into locals, so those copies need the same
+    /// immortal boxing as address-taken locals.
+    addr_taken_params: std.AutoHashMap(*const ast.Param, void),
+    /// Parameters through which a function keeps a pointer it was given. A
+    /// caller only has to keep the pointee alive (box its local) when the callee
+    /// appears here; the set is closed transitively by `binding_facts`.
+    escaping_params: std.AutoHashMap(*const ast.Param, void),
+    /// Instance parameters that every call site fills with the same closure
+    /// literal, mapped to that closure's id. Recorded by the analysis pass so
+    /// the emitter can call the trampoline directly instead of the fat pointer.
+    closure_params: std.AutoHashMap(*const ast.Param, u32),
+    /// Expressions that name a local bound to a closure literal, mapped to that
+    /// declaration and closure. A parameter fed such a variable is as specific
+    /// as one fed the literal itself, as long as the binding stays put.
+    closure_value_ids: std.AutoHashMap(*ast.Node, ClosureValueRef),
+    /// Member expressions (`obj.field`) whose field always holds one closure
+    /// literal, mapped to that closure. `decl_node` is the local that owns the
+    /// aggregate; an entry survives only while that local is never mutated.
+    closure_member_ids: std.AutoHashMap(*ast.Node, ClosureValueRef),
+    /// Index expressions (`arr[0]`) whose element always holds one closure
+    /// literal, mapped to that closure. Keys are plain element reads of a local
+    /// array literal at a compile-time constant index; an entry survives only
+    /// while that local is never mutated.
+    closure_index_ids: std.AutoHashMap(*ast.Node, ClosureValueRef),
     /// Last AST location seen while compiling — used when a CompileError has no explicit loc.
     diag_path: []const u8 = "",
     diag_line: u32 = 0,
@@ -240,6 +439,11 @@ pub const CompilerState = struct {
     import_from: std.StringHashMap(ImportFrame),
     /// Max loop iterations allowed during constant evaluation.
     comptime_max_loop_iterations: usize = const_eval.DEFAULT_COMPTIME_MAX_LOOP_ITERATIONS,
+
+    /// Type IR allocator with compile-lifetime ownership.
+    pub fn typeAlloc(self: *CompilerState) ir.TypeAlloc {
+        return .{ .allocator = self.type_arena.allocator() };
+    }
 };
 
 pub fn create(allocator: std.mem.Allocator) !CompilerState {
@@ -253,34 +457,60 @@ pub fn create(allocator: std.mem.Allocator) !CompilerState {
 
     var state: CompilerState = .{
         .allocator = allocator,
+        .addr_taken_decls = std.AutoHashMap(*const ast.Node, void).init(allocator),
+        .addr_taken_params = std.AutoHashMap(*const ast.Param, void).init(allocator),
+        .escaping_params = std.AutoHashMap(*const ast.Param, void).init(allocator),
+        .closure_params = std.AutoHashMap(*const ast.Param, u32).init(allocator),
+        .closure_value_ids = std.AutoHashMap(*ast.Node, ClosureValueRef).init(allocator),
+        .closure_member_ids = std.AutoHashMap(*ast.Node, ClosureValueRef).init(allocator),
+        .closure_index_ids = std.AutoHashMap(*ast.Node, ClosureValueRef).init(allocator),
         .chunk = chunk_mod.Chunk.init(allocator),
         .comptime_max_loop_iterations = max_iters,
         .functions = std.StringHashMap(FunctionDef).init(allocator),
         .structs = std.StringHashMap(StructDef).init(allocator),
+        .unions = std.StringHashMap(UnionDef).init(allocator),
         .enums = std.StringHashMap(EnumDef).init(allocator),
         .error_sets = std.StringHashMap(ErrorSetDef).init(allocator),
         .typedefs = std.StringHashMap(TypeDef).init(allocator),
         .local_type_decls = std.AutoHashMap(*const ast.TypeDecl, void).init(allocator),
         .templates = std.StringHashMap(*ast.Node).init(allocator),
+        .struct_templates = std.StringHashMap(*ast.Node).init(allocator),
         .instances = std.StringHashMap([]const u8).init(allocator),
+        .instance_type_irs = std.StringHashMap(ir.Type).init(allocator),
         .instance_fns = std.StringHashMap(void).init(allocator),
         .generic_calls = std.AutoHashMap(*ast.Node, GenericCall).init(allocator),
+        .instance_methods = std.StringHashMap(PendingInstance).init(allocator),
         .method_index = std.StringHashMap(std.ArrayList([]const u8)).init(allocator),
         .generic_arena = std.heap.ArenaAllocator.init(allocator),
+        .type_arena = std.heap.ArenaAllocator.init(allocator),
         .defer_stacks = std.AutoHashMap(i32, std.ArrayListUnmanaged(DeferEntry)).init(allocator),
         .global_vars = std.StringHashMap(void).init(allocator),
         .global_types = std.StringHashMap([]const u8).init(allocator),
+        .global_type_irs = std.StringHashMap(ir.Type).init(allocator),
         .global_consts = std.StringHashMap(void).init(allocator),
         .ready_global_consts = std.StringHashMap(void).init(allocator),
         .const_values = std.StringHashMap(const_eval.ConstValue).init(allocator),
         .native_globals = std.StringHashMap(void).init(allocator),
         .global_slots = std.StringHashMap(u16).init(allocator),
         .type_of_results = std.AutoHashMap(*ast.Node, []const u8).init(allocator),
+        .type_ir_of_results = std.AutoHashMap(*ast.Node, ir.Type).init(allocator),
+        .call_targets = std.AutoHashMap(*ast.Node, CallTarget).init(allocator),
+        .fn_aliases = std.StringHashMap([]const u8).init(allocator),
+        .call_return_targets = std.AutoHashMap(*ast.Node, []const u8).init(allocator),
         .type_call_results = std.AutoHashMap(*ast.Node, []const u8).init(allocator),
+        .type_call_ir_results = std.AutoHashMap(*ast.Node, ir.Type).init(allocator),
         .type_eq_folds = std.AutoHashMap(*ast.Node, bool).init(allocator),
         .size_of_results = std.AutoHashMap(*ast.Node, i32).init(allocator),
         .name_of_plans = std.AutoHashMap(*ast.Node, NameOfPlan).init(allocator),
         .for_is_cond = std.AutoHashMap(*const ast.For, void).init(allocator),
+        .binding_facts = std.AutoHashMap(*ast.Node, BindingFacts).init(allocator),
+        .param_facts = std.AutoHashMap(*const ast.Param, BindingFacts).init(allocator),
+        .for_capture_facts = std.AutoHashMap(*const ast.Node, [2]BindingFacts).init(allocator),
+        .if_capture_facts = std.AutoHashMap(*const ast.Node, BindingFacts).init(allocator),
+        .terminates = std.AutoHashMap(*ast.Node, bool).init(allocator),
+        .proven_arithmetic = std.AutoHashMap(*ast.Node, void).init(allocator),
+        .closures = std.AutoHashMap(*ast.Node, ClosureInfo).init(allocator),
+        .devirtualized_closures = std.AutoHashMap(*ast.Node, u32).init(allocator),
         .import_from = std.StringHashMap(ImportFrame).init(allocator),
     };
     try state.native_globals.put("print", {});
@@ -308,14 +538,19 @@ pub fn create(allocator: std.mem.Allocator) !CompilerState {
 
 fn putStruct(state: *CompilerState, name: []const u8, fields: []const struct { []const u8, []const u8 }) !void {
     var types = std.StringHashMap([]const u8).init(state.allocator);
+    var field_irs: std.StringHashMapUnmanaged(ir.Type) = .{};
     var specs: std.ArrayList(layout.FieldSpec) = .empty;
     defer specs.deinit(state.allocator);
     for (fields) |f| {
-        try types.put(f[0], f[1]);
+        const t = ir.namedType(f[1]);
+        const disp = try ir.displayTypeQualifiedAlloc(state.allocator, t);
+        try state.owned.append(state.allocator, disp);
+        try types.put(f[0], disp);
+        try field_irs.put(state.allocator, f[0], t);
         try specs.append(state.allocator, .{ .name = f[0], .type_name = f[1] });
     }
     const laid = try layout.layoutFields(state.allocator, specs.items);
-    try state.structs.put(name, .{ .name = name, .size = laid.size, .offsets = laid.offsets, .types = types });
+    try state.structs.put(name, .{ .name = name, .size = laid.size, .offsets = laid.offsets, .types = types, .field_irs = field_irs });
 }
 
 /// Record a compile failure for later inspection (LSP/editors). The message
@@ -357,6 +592,8 @@ pub fn deinit(self: *CompilerState) void {
         ex.break_jumps.deinit(self.allocator);
     }
     self.exprs.deinit(self.allocator);
+    self.switches.deinit(self.allocator);
+    self.label_targets.deinit(self.allocator);
     var mit = self.method_index.iterator();
     while (mit.next()) |e| {
         e.value_ptr.deinit(self.allocator);
@@ -366,14 +603,17 @@ pub fn deinit(self: *CompilerState) void {
     while (fit.next()) |e| {
         e.value_ptr.calls.deinit();
         e.value_ptr.forward_jumps.deinit(self.allocator);
+        e.value_ptr.closure_ids.deinit(self.allocator);
     }
     self.functions.deinit();
     var sit = self.structs.iterator();
     while (sit.next()) |e| {
         e.value_ptr.offsets.deinit();
         e.value_ptr.types.deinit();
+        e.value_ptr.field_irs.deinit(self.allocator);
     }
     self.structs.deinit();
+    self.unions.deinit();
     var eit = self.enums.iterator();
     while (eit.next()) |e| {
         e.value_ptr.variants.deinit();
@@ -388,11 +628,15 @@ pub fn deinit(self: *CompilerState) void {
     self.typedefs.deinit();
     self.local_type_decls.deinit();
     self.templates.deinit();
+    self.struct_templates.deinit();
     self.instances.deinit();
+    self.instance_type_irs.deinit();
     self.instance_fns.deinit();
     self.generic_calls.deinit();
     self.pending_instances.deinit(self.allocator);
+    self.instance_methods.deinit();
     self.generic_arena.deinit();
+    self.type_arena.deinit();
     var dit = self.defer_stacks.iterator();
     while (dit.next()) |e| e.value_ptr.deinit(self.allocator);
     self.defer_stacks.deinit();
@@ -400,6 +644,7 @@ pub fn deinit(self: *CompilerState) void {
     self.inline_return_jumps.deinit(self.allocator);
     self.global_vars.deinit();
     self.global_types.deinit();
+    self.global_type_irs.deinit();
     self.global_consts.deinit();
     self.ready_global_consts.deinit();
     var cv_it = self.const_values.valueIterator();
@@ -408,15 +653,41 @@ pub fn deinit(self: *CompilerState) void {
     self.native_globals.deinit();
     self.global_slots.deinit();
     self.type_of_results.deinit();
+    self.type_ir_of_results.deinit();
+    self.call_targets.deinit();
+    self.fn_aliases.deinit();
+    self.call_return_targets.deinit();
     self.type_call_results.deinit();
+    self.type_call_ir_results.deinit();
     self.type_eq_folds.deinit();
     self.size_of_results.deinit();
     self.name_of_plans.deinit();
     self.for_is_cond.deinit();
+    self.binding_facts.deinit();
+    self.param_facts.deinit();
+    self.for_capture_facts.deinit();
+    self.if_capture_facts.deinit();
+    self.terminates.deinit();
+    self.proven_arithmetic.deinit();
+    if (self.reachability) |*r| r.deinit();
     self.import_stack.deinit(self.allocator);
     self.import_from.deinit();
     if (self.last_error_message.len > 0) self.allocator.free(self.last_error_message);
     if (self.last_error_path.len > 0) self.allocator.free(self.last_error_path);
+    var cit = self.closures.valueIterator();
+    while (cit.next()) |c| {
+        c.child_closure_ids.deinit(self.allocator);
+    }
+    self.closures.deinit();
+    self.top_level_closure_ids.deinit(self.allocator);
+    self.devirtualized_closures.deinit();
+    self.addr_taken_decls.deinit();
+    self.addr_taken_params.deinit();
+    self.escaping_params.deinit();
+    self.closure_params.deinit();
+    self.closure_value_ids.deinit();
+    self.closure_member_ids.deinit();
+    self.closure_index_ids.deinit();
 }
 
 pub fn currentChunk(state: *CompilerState) *chunk_mod.Chunk {

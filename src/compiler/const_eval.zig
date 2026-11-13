@@ -289,7 +289,7 @@ fn parseFloatWithUnderscores(raw: []const u8) !f64 {
 
 pub fn evalLiteral(lit: *const ast.Literal) !ConstValue {
     switch (lit.literal_type) {
-        .@"null" => return .null,
+        .null => return .null,
         .boolean => return .{ .bool = std.mem.eql(u8, lit.value, "true") },
         .string => return .{ .string = lit.value },
         .number => {
@@ -561,8 +561,8 @@ fn evalExprInner(state: *CompilerState, scope: ?*ComptimeScope, n: *ast.Node) an
         },
         .struct_init => |s| {
             var type_name: []const u8 = "Struct";
-            if (s.type_expr.* == .primary) {
-                type_name = s.type_expr.primary.name;
+            if (s.type_expr) |te| {
+                if (te.* == .primary) type_name = te.primary.name;
             }
             const cstruct = try state.allocator.create(ConstStruct);
             cstruct.* = ConstStruct.init(state.allocator, type_name);
@@ -1191,8 +1191,12 @@ fn emitStructValue(state: *CompilerState, s: *ConstStruct) anyerror!void {
     var it = s.fields.iterator();
     while (it.next()) |entry| {
         const offset = sd.offsets.get(entry.key_ptr.*) orelse continue;
-        const fty = sd.types.get(entry.key_ptr.*) orelse "int";
-        const kind: u8 = @intFromEnum(layout.fieldKind(state, fty));
+        // Field kind from canonical IR; display fallback only for legacy defs.
+        const fkind: layout.FieldKind = if (sd.field_irs.get(entry.key_ptr.*)) |fty|
+            layout.fieldKindFromType(fty)
+        else
+            layout.fieldKind(state, sd.types.get(entry.key_ptr.*) orelse "int");
+        const kind: u8 = @intFromEnum(fkind);
         try emit.emitOp(state, .OP_DUP);
         try emitConstValue(state, entry.value_ptr.*);
         try emit.emitStoreField(state, offset, kind);

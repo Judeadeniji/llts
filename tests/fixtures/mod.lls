@@ -1,0 +1,3 @@
+# Re-exports a submodule so `mod.fmt` is a module namespace value.
+
+pub @const $fmt = @import("./fmt.lls");

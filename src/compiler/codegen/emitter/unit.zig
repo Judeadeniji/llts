@@ -2,8 +2,8 @@ const std = @import("std");
 const ast_mod = @import("../../../ast/root.zig");
 const state_mod = @import("../../state.zig");
 const from_ast = @import("../../typecheck/from_ast.zig");
+const ir = @import("../../typecheck/ir.zig");
 const root_mod = @import("root.zig");
-const prescan_mod = @import("prescan.zig");
 const stmt_mod = @import("stmt.zig");
 const expr_mod = @import("expr.zig");
 const Emitter = root_mod.Emitter;
@@ -17,25 +17,32 @@ pub fn collectGlobals(self: *Emitter) !void {
         if (s.* != .declaration) continue;
         const d = &s.declaration;
         if (root_mod.isImportDecl(d)) continue;
-        if (self.reach) |*r| {
+        if (self.reach) |r| {
             if (!r.shouldEmitTopLevel(self.doc, s)) continue;
         }
         if (self.globals.contains(d.name)) continue;
-        const fn_key = self.resolveFunctionValue(d.value, 0) catch null;
+        const fn_key: ?[]const u8 = blk: {
+            if (d.value.* == .primary and (d.value.primary.kind == .identifier or d.value.primary.kind == .register)) {
+                if (self.state.functions.contains(d.value.primary.name)) break :blk d.value.primary.name;
+            }
+            break :blk null;
+        };
         const module_path = if (fn_key == null) self.resolveModuleValue(d.value) else null;
         const display = if (fn_key != null)
             "func"
         else if (module_path != null)
             "module"
-        else self.displayForDeclValue(d) catch |err| switch (err) {
-            error.CompileError => return error.CompileError,
-            else => return err,
-        };
+        else
+            self.displayForDeclValue(d) catch |err| switch (err) {
+                error.CompileError => return error.CompileError,
+                else => return err,
+            };
         const g = try a.create(Global);
         g.* = .{
             .name = d.name,
             .zig_name = try self.globalName(d.name),
             .display = display,
+            .ir_type = if (fn_key != null or module_path != null) null else self.declaredIRType(d),
             .node = s,
             .fn_key = fn_key,
             .module_path = module_path,
@@ -58,6 +65,7 @@ pub fn emitEntry(self: *Emitter) !void {
         \\        rt.io.writeStderr("Error: out of memory\n");
         \\        rt.exitProcess(1);
         \\    };
+        \\    ctx.setTraceSites(lls_trace_sites[0..]);
         \\    ctx.activate();
         \\    defer ctx.deinit();
         \\    _ = lls_top_level(&ctx) catch |err| lls_finish(err);
@@ -111,9 +119,6 @@ pub fn emitFunction(self: *Emitter, name: []const u8, def: state_mod.FunctionDef
         .params => |p| p.params,
         else => return self.failAt(f.params, "native backend cannot emit this parameter list", .{}),
     };
-    if (f.params.params.is_variadic) {
-        return self.failAt(f.params, "native backend does not support variadic functions yet", .{});
-    }
 
     try prepareFunction(self, f, params, self.methodStructFor(name));
     const ret = try functionReturnType(self, name, def);
@@ -128,13 +133,14 @@ pub fn emitFunction(self: *Emitter, name: []const u8, def: state_mod.FunctionDef
     self.indent = 1;
 
     const file = if (f.loc.path.len > 0) f.loc.path else self.doc.path;
+    self.current_trace_func = name;
+    self.current_trace_file = file;
+    const entry_site = try self.addTraceSite(name, file, 0, 0);
     try self.writeIndent();
-    try self.writer.print("const _mark = try ctx.enterFunction({s}, {s});\n", .{
-        try self.zigString(name),
-        try self.zigString(file),
-    });
+    try self.writer.print("const _mark = try ctx.enterFunction({d});\n", .{entry_site});
     try self.writeIndent();
     try self.writer.writeAll("defer ctx.leaveFunction(_mark);\n");
+    try emitClosureEnvLocals(self, def.closure_ids.items);
 
     // Parameters: copy mutable ones into locals; silence unread ones.
     for (self.params.items) |p| {
@@ -161,7 +167,7 @@ pub fn emitFunction(self: *Emitter, name: []const u8, def: state_mod.FunctionDef
     self.pushScope();
     try stmt_mod.emitStatements(self, block.statements);
     try self.emitDeferredAtScopeEnd(block.statements);
-    const terminates = block.statements.len > 0 and prescan_mod.stmtTerminates(self, block.statements[block.statements.len - 1]);
+    const terminates = block.statements.len > 0 and (self.state.terminates.get(block.statements[block.statements.len - 1]) orelse false);
     if (!terminates and ret.may_error) {
         if (ret.kind == .error_value) {
             self.popScope();
@@ -186,7 +192,7 @@ pub fn emitFunction(self: *Emitter, name: []const u8, def: state_mod.FunctionDef
 pub fn emitFunctions(self: *Emitter) !void {
     const a = self.arena.allocator();
     var names: std.ArrayList([]const u8) = .empty;
-    if (self.reach) |*r| {
+    if (self.reach) |r| {
         var it = r.functions.keyIterator();
         while (it.next()) |name| try names.append(a, name.*);
     }
@@ -198,10 +204,225 @@ pub fn emitFunctions(self: *Emitter) !void {
 
     for (names.items) |name| {
         const def = self.state.functions.get(name) orelse continue;
-        // Pure function factories are devirtualized into direct calls and have
-        // no emit-able body (their result is a function, not a value).
-        if (try self.functionReturnsFunction(name, 0) != null) continue;
         try emitFunction(self, name, def);
+    }
+}
+
+pub fn emitClosures(self: *Emitter) !void {
+    const a = self.arena.allocator();
+
+    // 1. Sort closure ids so output is deterministic
+    var closure_ids: std.ArrayList(u32) = .empty;
+    var it = self.state.closures.valueIterator();
+    while (it.next()) |info| {
+        try closure_ids.append(a, info.id);
+    }
+    std.mem.sort(u32, closure_ids.items, {}, struct {
+        fn lessThan(_: void, lhs: u32, rhs: u32) bool {
+            return lhs < rhs;
+        }
+    }.lessThan);
+
+    // 2. Emit environment structs
+    for (closure_ids.items) |id| {
+        var info_opt: ?state_mod.ClosureInfo = null;
+        var cit = self.state.closures.valueIterator();
+        while (cit.next()) |info| {
+            if (info.id == id) {
+                info_opt = info.*;
+                break;
+            }
+        }
+        const info = info_opt orelse continue;
+        if (info.captures.len == 0) continue;
+
+        try self.writer.print("const lls_env_{d} = struct {{\n", .{info.id});
+        self.indent += 1;
+        for (info.captures) |cap| {
+            const cap_vt = (try self.valTypeOfIR(info.node, cap.ir_type));
+            try self.writeIndent();
+            if (cap.is_mutated) {
+                try self.writer.print("{s}: *{s},\n", .{ cap.name, cap_vt.zig });
+            } else {
+                try self.writer.print("{s}: {s},\n", .{ cap.name, cap_vt.zig });
+            }
+        }
+        self.indent -= 1;
+        try self.writeIndent();
+        try self.writer.writeAll("};\n\n");
+    }
+
+    // 3. Emit closure execution functions
+    for (closure_ids.items) |id| {
+        var info_opt: ?state_mod.ClosureInfo = null;
+        var cit = self.state.closures.valueIterator();
+        while (cit.next()) |info| {
+            if (info.id == id) {
+                info_opt = info.*;
+                break;
+            }
+        }
+        const info = info_opt orelse continue;
+        try emitSingleClosure(self, info);
+    }
+}
+
+fn emitClosureEnvLocals(self: *Emitter, closure_ids: []const u32) !void {
+    for (closure_ids) |cid| {
+        var cit = self.state.closures.valueIterator();
+        while (cit.next()) |cinfo| {
+            if (cinfo.id == cid and !cinfo.escapes and cinfo.captures.len > 0) {
+                try self.writeIndent();
+                try self.writer.print("var lls_env_stack_{d}: lls_env_{d} = undefined;\n", .{ cid, cid });
+                break;
+            }
+        }
+    }
+}
+
+fn emitSingleClosure(self: *Emitter, info: state_mod.ClosureInfo) !void {
+    const a = self.arena.allocator();
+    const f = &info.node.function_decl;
+    const params = switch (f.params.*) {
+        .params => |p| p.params,
+        else => return self.failAt(f.params, "native backend cannot emit closure parameter list", .{}),
+    };
+
+    try prepareFunction(self, f, params, null);
+    const ret = try self.valTypeOfIR(info.node, info.ret_ir);
+    self.cur_ret = ret;
+
+    try self.writer.print("fn lls_closure_fn_{d}(ctx: *rt.Context, env_raw: ?*anyopaque", .{info.id});
+    for (self.params.items) |p| {
+        try self.writer.print(", {s}: {s}", .{ p.arg_name, p.zig });
+    }
+    try self.writer.print(") anyerror!{s} {{\n", .{ret.zig});
+    self.indent = 1;
+
+    const file = if (f.loc.path.len > 0) f.loc.path else self.doc.path;
+    self.current_trace_func = info.name;
+    self.current_trace_file = file;
+    const entry_site = try self.addTraceSite(info.name, file, 0, 0);
+    try self.writeIndent();
+    try self.writer.print("const _mark = try ctx.enterFunction({d});\n", .{entry_site});
+    try self.writeIndent();
+    try self.writer.writeAll("defer ctx.leaveFunction(_mark);\n");
+    try emitClosureEnvLocals(self, info.child_closure_ids.items);
+
+    // The context is always consumed by the frame bookkeeping above; the
+    // environment is not, so a capture-free closure would leave `env_raw`
+    // unused in the emitted Zig.
+    if (info.captures.len == 0) {
+        try self.writeIndent();
+        try self.writer.writeAll("_ = &env_raw;\n");
+    }
+
+    // Unpack environment into scope
+    if (info.captures.len > 0) {
+        try self.writeIndent();
+        try self.writer.print("const env: *lls_env_{d} = @ptrCast(@alignCast(env_raw.?));\n", .{info.id});
+        for (info.captures) |cap| {
+            const cap_vt = try self.valTypeOfIR(info.node, cap.ir_type);
+            const b = try a.create(Binding);
+            b.* = .{
+                .name = cap.name,
+                .zig_name = if (cap.is_mutated)
+                    try std.fmt.allocPrint(a, "env.{s}.*", .{cap.name})
+                else
+                    try std.fmt.allocPrint(a, "env.{s}", .{cap.name}),
+                .display = cap_vt.display,
+                .ir_type = cap.ir_type,
+                .read = true,
+                .assigned = cap.is_mutated,
+                .reassigned = cap.is_mutated,
+            };
+            try self.scopes.items[0].put(cap.name, b);
+        }
+    }
+
+    // Parameters: copy mutable ones into locals; silence unread ones.
+    for (self.params.items) |p| {
+        const b = self.scopes.items[0].get(p.name).?;
+        const needs_var = b.reassigned or (b.assigned and p.kind != .pointer and p.kind != .slice);
+        if (needs_var) {
+            b.zig_name = try self.localName(p.name);
+            try self.writeIndent();
+            try self.writer.print("var {s}: {s} = {s};\n", .{ b.zig_name, p.zig, p.arg_name });
+            if (!b.read) {
+                try self.writeIndent();
+                try self.writer.print("_ = &{s};\n", .{b.zig_name});
+            }
+        } else if (!b.read) {
+            try self.writeIndent();
+            try self.writer.print("_ = {s};\n", .{p.arg_name});
+        }
+    }
+
+    const block = switch (f.body.*) {
+        .block => |b| b,
+        else => return self.failAt(f.body, "native backend expects a block body", .{}),
+    };
+    self.pushScope();
+    try stmt_mod.emitStatements(self, block.statements);
+    try self.emitDeferredAtScopeEnd(block.statements);
+    const terminates = block.statements.len > 0 and (self.state.terminates.get(block.statements[block.statements.len - 1]) orelse false);
+    if (!terminates and ret.may_error) {
+        if (ret.kind == .error_value) {
+            self.popScope();
+            return self.failAt(f.body, "function returning '{s}' must return an error value", .{ret.display});
+        }
+        const success = ret.success orelse {
+            self.popScope();
+            return self.failAt(f.body, "native backend cannot determine the success type of '{s}'", .{ret.display});
+        };
+        try self.writeIndent();
+        if (success.kind == .void) {
+            try self.writer.writeAll("return .{ .ok = {} };\n");
+        } else {
+            try self.writer.print("return .{{ .ok = {s} }};\n", .{try zeroValue(self, success.*)});
+        }
+    }
+    self.popScope();
+
+    try self.writer.writeAll("}\n\n");
+}
+
+pub fn emitTrampolines(self: *Emitter) !void {
+    const a = self.arena.allocator();
+    var it = self.trampolines_needed.keyIterator();
+    while (it.next()) |fn_name_ptr| {
+        const fn_name = fn_name_ptr.*;
+        const def = self.state.functions.get(fn_name) orelse continue;
+        if (def.node.* != .function_decl) continue;
+        const f = &def.node.function_decl;
+        const params = switch (f.params.*) {
+            .params => |p| p.params,
+            else => continue,
+        };
+        const ret = try functionReturnType(self, fn_name, def);
+        const zig_fn = try self.fnName(fn_name);
+
+        try self.writer.print("fn lls_trampoline_{s}(ctx: *rt.Context, _: ?*anyopaque", .{zig_fn});
+        var arg_names: std.ArrayList([]const u8) = .empty;
+        for (params, 0..) |p, i| {
+            var p_vt: ?ValType = null;
+            if (p.type_annotation) |ann| {
+                const p_ir = from_ast.typeFromAst(ann, self.state, self.state.typeAlloc()) catch null;
+                if (p_ir) |pir| p_vt = try self.valTypeOfIR(def.node, pir);
+            }
+            const p_zig = if (p_vt) |pv| pv.zig else "i64";
+            const arg_name = try std.fmt.allocPrint(a, "arg_{d}", .{i});
+            try arg_names.append(a, arg_name);
+            try self.writer.print(", {s}: {s}", .{ arg_name, p_zig });
+        }
+        try self.writer.print(") anyerror!{s} {{\n", .{ret.zig});
+        const joined_args = try std.mem.join(a, ", ", arg_names.items);
+        if (joined_args.len == 0) {
+            try self.writer.print("    return try {s}(ctx);\n", .{zig_fn});
+        } else {
+            try self.writer.print("    return try {s}(ctx, {s});\n", .{ zig_fn, joined_args });
+        }
+        try self.writer.writeAll("}\n\n");
     }
 }
 
@@ -218,7 +439,7 @@ pub fn emitGlobalDecls(self: *Emitter) !void {
     for (names.items) |name| {
         const g = self.globals.get(name).?;
         if (g.fn_key != null or g.module_path != null) continue;
-        const vt = try self.classify(g.node, g.display);
+        const vt = try self.valTypeFor(g.node, g.ir_type, g.display);
         try self.requireValueType(g.node, vt);
         try self.writer.print("var {s}: {s} = {s};\n", .{ g.zig_name, vt.zig, try zeroValue(self, vt) });
     }
@@ -227,27 +448,30 @@ pub fn emitGlobalDecls(self: *Emitter) !void {
 
 pub fn emitTopLevel(self: *Emitter) !void {
     self.cur_ret = .{ .display = "void", .clean = "void", .kind = .void, .zig = "void" };
+    self.current_trace_func = null;
+    self.current_trace_file = "";
     try self.writer.writeAll("fn lls_top_level(ctx: *rt.Context) anyerror!void {\n");
     self.indent = 1;
     try self.writeIndent();
-    try self.writer.writeAll("ctx.setLine(0, 0);\n");
+    try self.writer.writeAll("ctx.setSite(0);\n");
+    try emitClosureEnvLocals(self, self.state.top_level_closure_ids.items);
     self.pushScope();
     for (self.doc.statements) |s| {
         if (s.* == .function_decl or s.* == .struct_decl or s.* == .enum_decl or
             s.* == .error_decl or s.* == .type_decl or s.* == .extern_decl) continue;
-        if (self.reach) |*r| {
+        if (self.reach) |r| {
             if (!r.shouldEmitTopLevel(self.doc, s)) continue;
         }
         if (s.* == .declaration) {
             const d = &s.declaration;
             if (root_mod.isImportDecl(d)) continue;
             const g = self.globals.get(d.name) orelse {
-                return self.failAt(s, "native backend (Phase 2) does not support this top-level declaration", .{});
+                return self.failAt(s, "native backend does not support this top-level declaration", .{});
             };
             if (g.fn_key != null or g.module_path != null) continue;
             try stmt_mod.emitLineMarker(self, s);
-            const vt = try self.classify(s, g.display);
-            const code = try expr_mod.emitValueCoerced(self, d.value, vt);
+            const vt = try self.valTypeFor(s, g.ir_type, g.display);
+            const code = try expr_mod.emitDeclaredValue(self, d.value, vt);
             try self.writeIndent();
             try self.writer.print("{s} = {s};\n", .{ g.zig_name, code });
             continue;
@@ -259,7 +483,7 @@ pub fn emitTopLevel(self: *Emitter) !void {
 }
 
 pub fn functionReturnType(self: *Emitter, name: []const u8, def: state_mod.FunctionDef) !ValType {
-    var display = def.return_type orelse blk: {
+    const display = def.return_type orelse blk: {
         if (def.node.* == .function_decl) {
             if (def.node.function_decl.return_type) |rt| {
                 if (try from_ast.typeAstToDisplay(rt, self.state)) |disp| break :blk disp;
@@ -267,25 +491,12 @@ pub fn functionReturnType(self: *Emitter, name: []const u8, def: state_mod.Funct
         }
         break :blk "void";
     };
-    if (def.node.* == .function_decl) {
-        const f = def.node.function_decl;
-        const raw = if (f.return_type) |rt| try from_ast.typeAstToDisplay(rt, self.state) else null;
-        if (raw) |r| {
-            if (std.mem.eql(u8, r, "error")) display = "error";
-        } else if (std.mem.eql(u8, display, "unknown | error")) {
-            if (!bodyHasValuedReturn(f.body)) {
-                display = "void | error";
-            } else if (bodyReturnsOnlyErrors(self.state, f.body)) {
-                display = "error";
-            }
-        }
-    }
-    const t = try self.classify(def.node, display);
+    const t = try self.valTypeFor(def.node, def.return_ir, display);
     if (t.clean.len == 0) {
         return self.failAt(def.node, "native backend does not support the return type of '{s}'", .{name});
     }
     if (t.kind == .other) {
-        return self.failAt(def.node, "native backend (Phase 2) does not support return type '{s}'", .{display});
+        return self.failAt(def.node, "native backend does not support return type '{s}'", .{display});
     }
     return t;
 }
@@ -304,8 +515,23 @@ pub fn prepareFunction(
     self.defer_scopes.clearRetainingCapacity();
 
     var base = std.StringHashMap(*Binding).init(a);
-    for (params, 0..) |p, i| {
-        if (p.is_rest) return self.failAt(f.params, "native backend does not support rest parameters yet", .{});
+    for (params, 0..) |*p, i| {
+        var ir_type: ?ir.Type = null;
+        if (p.type_annotation) |ann| {
+            ir_type = from_ast.typeFromAst(ann, self.state, self.state.typeAlloc()) catch null;
+        } else if (i == 0 and method_struct != null and std.mem.eql(u8, p.name, "self")) {
+            const struct_ty: ir.Type = .{ .struct_ = method_struct.? };
+            ir_type = try self.state.typeAlloc().ptrType(struct_ty);
+        }
+        if (p.is_rest) {
+            const def_lookup = self.state.functions.get(f.name);
+            if (def_lookup != null and def_lookup.?.rest_ir != null) {
+                ir_type = def_lookup.?.rest_ir;
+            } else if (ir_type) |irt| {
+                const elem = if (irt == .array) irt.array.elem.* else irt;
+                ir_type = try self.state.typeAlloc().arrayType(elem, null, true);
+            }
+        }
         var display = if (p.type_annotation) |ann|
             (try from_ast.typeAstToDisplay(ann, self.state)) orelse "unknown"
         else
@@ -317,28 +543,38 @@ pub fn prepareFunction(
         {
             display = try std.fmt.allocPrint(a, "*{s}", .{method_struct.?});
         }
-        const vt = try self.classify(f.params, display);
+        if (p.is_rest and ir_type != null) {
+            display = try ir.displayTypeQualifiedAlloc(a, ir_type.?);
+        }
+        const vt = try self.valTypeFor(f.params, ir_type, display);
         try self.requireValueType(f.params, vt);
         const b = try a.create(Binding);
         b.* = .{
             .name = p.name,
             .zig_name = try self.paramArgName(p.name),
             .display = display,
+            .ir_type = ir_type,
             .is_param = true,
+            .closure_id = self.state.closure_params.get(p),
         };
+        // Initialize mutation/read flags from the compiler-recorded facts.
+        if (self.state.param_facts.get(p)) |facts| {
+            b.read = facts.read;
+            b.assigned = facts.assigned;
+            b.reassigned = facts.reassigned;
+        }
         try base.put(p.name, b);
         try self.params.append(a, .{
             .name = p.name,
             .arg_name = b.zig_name,
             .display = display,
+            .ir_type = ir_type,
             .zig = vt.zig,
             .kind = vt.kind,
         });
     }
     try self.scopes.append(a, base);
     try self.defer_scopes.append(a, .empty);
-
-    try prescan_mod.preScanStmt(self, f.body);
 }
 
 pub fn zeroValue(self: *Emitter, t: ValType) ![]const u8 {
@@ -348,61 +584,11 @@ pub fn zeroValue(self: *Emitter, t: ValType) ![]const u8 {
         .bool => "false",
         .string => "\"\"",
         .optional, .null_value => "null",
-        .struct_, .array, .slice, .pointer => "undefined",
+        .struct_, .union_, .array, .slice, .pointer, .func => "undefined",
         .error_value => "undefined",
         else => if (t.may_error)
             "undefined"
         else
             self.failNoLoc("native backend cannot zero-initialize type '{s}'", .{t.display}),
     };
-}
-
-fn bodyHasValuedReturn(node: *ast_mod.Node) bool {
-    return switch (node.*) {
-        .return_expr => |r| r.return_value != null,
-        .block => |b| blk: {
-            for (b.statements) |s| if (bodyHasValuedReturn(s)) break :blk true;
-            break :blk false;
-        },
-        .if_expr => |i| bodyHasValuedReturn(i.body) or (i.else_body != null and bodyHasValuedReturn(i.else_body.?)),
-        .switch_expr => |sw| blk: {
-            for (sw.prongs) |p| if (bodyHasValuedReturn(p.body)) break :blk true;
-            break :blk false;
-        },
-        .for_expr => |f| bodyHasValuedReturn(f.body),
-        .defer_stmt => |d| bodyHasValuedReturn(d.body),
-        else => false,
-    };
-}
-
-fn bodyReturnsOnlyErrors(state: *state_mod.CompilerState, node: *ast_mod.Node) bool {
-    return switch (node.*) {
-        .return_expr => |r| blk: {
-            const v = r.return_value orelse break :blk true;
-            if (v.* == .error_expr) break :blk true;
-            const disp = state.type_of_results.get(v) orelse break :blk false;
-            break :blk isPureErrorDisplay(state, disp);
-        },
-        .block => |b| blk: {
-            for (b.statements) |s| if (!bodyReturnsOnlyErrors(state, s)) break :blk false;
-            break :blk true;
-        },
-        .if_expr => |i| bodyReturnsOnlyErrors(state, i.body) and (i.else_body == null or bodyReturnsOnlyErrors(state, i.else_body.?)),
-        .switch_expr => |sw| blk: {
-            for (sw.prongs) |p| if (!bodyReturnsOnlyErrors(state, p.body)) break :blk false;
-            break :blk true;
-        },
-        .for_expr => |f| bodyReturnsOnlyErrors(state, f.body),
-        .defer_stmt => |d| bodyReturnsOnlyErrors(state, d.body),
-        else => true,
-    };
-}
-
-fn isPureErrorDisplay(state: *state_mod.CompilerState, display: []const u8) bool {
-    if (std.mem.eql(u8, display, "error")) return true;
-    if (state.error_sets.contains(display)) return true;
-    if (std.mem.lastIndexOfScalar(u8, display, '.')) |dot| {
-        return state.error_sets.contains(display[0..dot]);
-    }
-    return false;
 }

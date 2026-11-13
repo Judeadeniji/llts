@@ -10,7 +10,7 @@ pub const Error = std.mem.Allocator.Error;
 pub fn cloneNode(a: std.mem.Allocator, n: *const Node) Error!*Node {
     const out = try a.create(Node);
     out.* = switch (n.*) {
-        .literal, .primary, .continue_expr, .extern_decl, .enum_decl, .error_decl => n.*,
+        .literal, .primary, .extern_decl, .enum_decl, .error_decl => n.*,
         .declaration => |d| blk: {
             var c = d;
             c.value = try cloneNode(a, d.value);
@@ -117,6 +117,11 @@ pub fn cloneNode(a: std.mem.Allocator, n: *const Node) Error!*Node {
             c.value = try cloneOpt(a, br.value);
             break :blk .{ .break_expr = c };
         },
+        .continue_expr => |co| blk: {
+            var c = co;
+            c.value = try cloneOpt(a, co.value);
+            break :blk .{ .continue_expr = c };
+        },
         .defer_stmt => |d| blk: {
             var c = d;
             c.body = try cloneNode(a, d.body);
@@ -131,6 +136,7 @@ pub fn cloneNode(a: std.mem.Allocator, n: *const Node) Error!*Node {
             }
             c.fields = fields;
             c.methods = try cloneSlice(a, s.methods);
+            c.params = try cloneParams(a, s.params);
             break :blk .{ .struct_decl = c };
         },
         .type_decl => |td| blk: {
@@ -140,7 +146,7 @@ pub fn cloneNode(a: std.mem.Allocator, n: *const Node) Error!*Node {
         },
         .struct_init => |s| blk: {
             var c = s;
-            c.type_expr = try cloneNode(a, s.type_expr);
+            c.type_expr = try cloneOpt(a, s.type_expr);
             const fields = try a.alloc(root.StructFieldInit, s.fields.len);
             for (s.fields, fields) |src, *dst| {
                 dst.* = src;
@@ -213,6 +219,15 @@ pub fn cloneNode(a: std.mem.Allocator, n: *const Node) Error!*Node {
             break :blk .{ .shape_type = c };
         },
     };
+    return out;
+}
+
+fn cloneParams(a: std.mem.Allocator, params: []root.Param) Error![]root.Param {
+    const out = try a.alloc(root.Param, params.len);
+    for (params, out) |src, *dst| {
+        dst.* = src;
+        dst.type_annotation = try cloneOpt(a, src.type_annotation);
+    }
     return out;
 }
 

@@ -104,11 +104,9 @@ pub fn build(b: *std.Build) void {
     const run_step = b.step("run", "Run llts");
     run_step.dependOn(&run_cmd.step);
 
-    // `zig build release` — same three tools built in ReleaseSafe and installed
-    // over zig-out/. A Debug compiler spends ~40x longer in the typechecker than
-    // a ReleaseSafe one, so this is the mode you want for everyday `llts build`.
-    // `zig build` still produces Debug (better panics/traces while hacking on it).
-    const release_install = addReleaseTools(b, target);
+    // `zig build release` — same tools built in ReleaseSafe and installed
+    // over zig-out/.
+    _ = addReleaseTools(b, target);
 
     // const mod_tests = b.addTest(.{
     //     .root_module = llts_mod,
@@ -123,7 +121,7 @@ pub fn build(b: *std.Build) void {
         }),
     });
     const run_integration = b.addRunArtifact(integration_tests);
-    run_integration.step.dependOn(release_install);
+    run_integration.step.dependOn(b.getInstallStep());
     run_integration.setCwd(b.path("."));
 
     const lsp_e2e_tests = b.addTest(.{
@@ -134,7 +132,7 @@ pub fn build(b: *std.Build) void {
         }),
     });
     const run_lsp_e2e = b.addRunArtifact(lsp_e2e_tests);
-    run_lsp_e2e.step.dependOn(release_install);
+    run_lsp_e2e.step.dependOn(b.getInstallStep());
     run_lsp_e2e.setCwd(b.path("."));
 
     const lsp_unit_tests = b.addTest(.{
@@ -165,10 +163,48 @@ pub fn build(b: *std.Build) void {
     const runtime_test_step = b.step("runtime-test", "Run native runtime unit tests");
     runtime_test_step.dependOn(&run_runtime_tests.step);
 
+    const native_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/native.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "llts", .module = llts_mod },
+            },
+        }),
+    });
+    native_tests.root_module.link_libc = true;
+    const run_native_tests = b.addRunArtifact(native_tests);
+    run_native_tests.step.dependOn(b.getInstallStep());
+    run_native_tests.setCwd(b.path("."));
+
+    const native_test_step = b.step("native-test", "Run native backend suite");
+    native_test_step.dependOn(&run_native_tests.step);
+
+    const suite_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/suite/runner.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "llts", .module = llts_mod },
+            },
+        }),
+    });
+    suite_tests.root_module.link_libc = true;
+    const run_suite_tests = b.addRunArtifact(suite_tests);
+    run_suite_tests.step.dependOn(b.getInstallStep());
+    run_suite_tests.setCwd(b.path("."));
+
+    const suite_test_step = b.step("suite-test", "Run compiler pipeline suite (scanner, parser, compiler, typecheck, pipeline)");
+    suite_test_step.dependOn(&run_suite_tests.step);
+
     const test_step = b.step("test", "Run unit tests");
     // test_step.dependOn(&run_mod_tests.step);
     test_step.dependOn(&run_integration.step);
     test_step.dependOn(&run_lsp_e2e.step);
     test_step.dependOn(&run_lsp_unit.step);
     test_step.dependOn(&run_runtime_tests.step);
+    test_step.dependOn(&run_native_tests.step);
+    test_step.dependOn(&run_suite_tests.step);
 }

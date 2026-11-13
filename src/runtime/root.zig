@@ -49,11 +49,20 @@ pub const Error = err_mod.Error;
 // Shadow-stack diagnostics.
 pub const ShadowStack = trace_mod.ShadowStack;
 pub const Frame = trace_mod.Frame;
+pub const Site = trace_mod.Site;
 
 // Trap reporting (message + shadow stack), shared by all runtime primitives.
 pub const fail = io_mod.fail;
 pub const failMsg = io_mod.failMsg;
 pub const exitProcess = io_mod.exitProcess;
+
+/// First-class function and dynamic closure representation (16-byte fat pointer).
+pub fn Closure(comptime CallFn: type) type {
+    return struct {
+        env: ?*anyopaque,
+        call: CallFn,
+    };
+}
 
 test {
     // Keep the whole runtime tree compiling (and its tests discovered).

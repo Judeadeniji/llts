@@ -34,23 +34,14 @@ pub const target = zli.Flag{
 pub const strict = zli.Flag{
     .name = "strict",
     .shortcut = "s",
-    .description = "Enforce sound type system (mandatory parameter types, strict null/union safety)",
-    .type = .Bool,
-    .default_value = .{ .Bool = false },
-};
-
-pub const strict_native = zli.Flag{
-    .name = "strict",
-    .shortcut = "s",
-    .description = "Enforce sound type system — enabled by default for native targets",
+    .description = "Enforce sound type system (mandatory parameter types, strict null/union safety); on by default",
     .type = .Bool,
     .default_value = .{ .Bool = true },
 };
 
-pub const native = zli.Flag{
-    .name = "native",
-    .shortcut = "n",
-    .description = "Compile to a native binary via the native backend (implies --strict)",
+pub const vm = zli.Flag{
+    .name = "vm",
+    .description = "Use the bytecode VM instead of the native backend",
     .type = .Bool,
     .default_value = .{ .Bool = false },
 };
@@ -64,14 +55,14 @@ pub const emit_zig = zli.Flag{
 
 pub const emit_bin = zli.Flag{
     .name = "emit-bin",
-    .description = "Emit native machine code binary",
+    .description = "Emit a native machine code binary (native is the default)",
     .type = .Bool,
     .default_value = .{ .Bool = false },
 };
 
 pub const emit_bytecode = zli.Flag{
     .name = "emit-bytecode",
-    .description = "Emit LLTS bytecode (.llb)",
+    .description = "Emit LLTS bytecode (.llb) (implies --vm)",
     .type = .Bool,
     .default_value = .{ .Bool = false },
 };
@@ -85,7 +76,7 @@ pub const emit_asm = zli.Flag{
 
 pub const emit = zli.Flag{
     .name = "emit",
-    .description = "Native artifact kind to emit: bin, asm, llvm-ir, llvm-bc, h, docs, implib (implies --native)",
+    .description = "Native artifact kind to emit: bin, asm, llvm-ir, llvm-bc, h, docs, implib (native emission)",
     .type = .String,
     .default_value = .{ .String = "" },
 };
@@ -134,13 +125,21 @@ pub const version_flag = zli.Flag{
     .default_value = .{ .Bool = false },
 };
 
+pub const eval = zli.Flag{
+    .name = "eval",
+    .shortcut = "e",
+    .description = "Evaluate inline source code",
+    .type = .String,
+    .default_value = .{ .String = "" },
+};
+
 pub fn addCompileFlags(cmd: *zli.Command) !void {
     try cmd.addFlag(log_level);
     try cmd.addFlag(release);
     try cmd.addFlag(optimize);
     try cmd.addFlag(target);
     try cmd.addFlag(strict);
-    try cmd.addFlag(native);
+    try cmd.addFlag(vm);
     try cmd.addFlag(emit_zig);
     try cmd.addFlag(emit_bin);
     try cmd.addFlag(emit_bytecode);
@@ -155,12 +154,13 @@ pub fn addCompileFlags(cmd: *zli.Command) !void {
 pub fn addRunFlags(cmd: *zli.Command) !void {
     try addCompileFlags(cmd);
     try cmd.addFlag(max_memory);
+    try cmd.addFlag(eval);
 }
 
 pub fn addEmitZigFlags(cmd: *zli.Command) !void {
     try cmd.addFlag(log_level);
     try cmd.addFlag(release);
-    try cmd.addFlag(strict_native);
+    try cmd.addFlag(strict);
     try cmd.addFlag(runtime_path);
     try cmd.addFlag(comptime_max_loop_iterations);
 }

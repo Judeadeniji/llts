@@ -1,4 +1,4 @@
-//! Shared integer / float width table (Zig-like).
+//! Shared integer / float width table.
 //! Canonical definitions live in the native runtime (`src/runtime/widths.zig`);
 //! this module re-exports them plus the `Value`-dependent helpers so every
 //! existing `widths.X` import keeps working. Honest end-to-end: type IR,

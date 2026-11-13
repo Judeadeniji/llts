@@ -340,7 +340,7 @@ fn walkNode(ctx: *Context, node: *ast.Node, worklist: ?*std.ArrayList(usize)) vo
             for (al.elements) |el| walkNode(ctx, el, worklist);
         },
         .struct_init => |si| {
-            walkTypeNode(ctx, si.type_expr, worklist);
+            if (si.type_expr) |te| walkTypeNode(ctx, te, worklist);
             for (si.fields) |f| walkNode(ctx, f.value, worklist);
         },
         .try_expr => |te| walkNode(ctx, te.expression, worklist),
@@ -364,7 +364,9 @@ fn walkNode(ctx: *Context, node: *ast.Node, worklist: ?*std.ArrayList(usize)) vo
         .break_expr => |br| {
             if (br.value) |bv| walkNode(ctx, bv, worklist);
         },
-        .continue_expr => {},
+        .continue_expr => |c| {
+            if (c.value) |cv| walkNode(ctx, cv, worklist);
+        },
         .defer_stmt => |d| walkNode(ctx, d.body, worklist),
         .if_expr => |i| {
             walkNode(ctx, i.condition, worklist);
@@ -421,6 +423,11 @@ fn walkFunctionDecl(ctx: *Context, f: ast.FunctionDecl, is_struct_method: bool, 
             if (p.type_annotation) |ta| walkTypeNode(ctx, ta, worklist);
             // Skip `self` receiver in struct methods
             if (is_struct_method and idx == 0 and std.mem.eql(u8, p.name, "self")) continue;
+            // A `type` parameter is compile-time only: it is never bound at
+            // runtime, so "unused" does not apply.
+            if (p.type_annotation) |ta| {
+                if (ta.* == .primary and std.mem.eql(u8, ta.primary.name, "type")) continue;
+            }
             ctx.addLocal(p.name, .parameter, p.loc, worklist) catch {};
         }
     }
@@ -595,7 +602,7 @@ pub fn detectAndWarn(state: *state_mod.CompilerState, doc: *const ast.Document) 
         const file_path = if (shadow.loc.path.len > 0) shadow.loc.path else doc.path;
         const line = if (shadow.loc.line > 0) shadow.loc.line else 1;
         const col = if (shadow.loc.column > 0) shadow.loc.column else 1;
-        compile_errors.compileWarnAt(state, file_path, doc.source, line, col, "{s}", .{msg});
+        compile_errors.compileWarnAt(state, file_path, line, col, "{s}", .{msg});
     }
 
     for (result.unused) |unused| {
@@ -604,6 +611,6 @@ pub fn detectAndWarn(state: *state_mod.CompilerState, doc: *const ast.Document) 
         const file_path = if (unused.loc.path.len > 0) unused.loc.path else doc.path;
         const line = if (unused.loc.line > 0) unused.loc.line else 1;
         const col = if (unused.loc.column > 0) unused.loc.column else 1;
-        compile_errors.compileWarnAt(state, file_path, doc.source, line, col, "{s}", .{msg});
+        compile_errors.compileWarnAt(state, file_path, line, col, "{s}", .{msg});
     }
 }

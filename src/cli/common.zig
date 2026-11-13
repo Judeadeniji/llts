@@ -111,7 +111,7 @@ pub fn getZigArgs(allocator: std.mem.Allocator, ctx: zli.CommandContext) ![]cons
 }
 
 /// Like `getZigArgs`, but never treats trailing positionals as zig args.
-/// Use for `llts run --native`, where positionals after the file are program argv.
+/// Use for `llts run`, where positionals after the file are program argv.
 pub fn getZigArgsFlagsOnly(allocator: std.mem.Allocator, ctx: zli.CommandContext) ![]const []const u8 {
     return collectZigArgs(allocator, ctx, false);
 }

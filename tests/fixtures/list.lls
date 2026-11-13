@@ -1,0 +1,31 @@
+# Minimal fixed-capacity i64 list standing in for the removed std/list library.
+#
+# Tests use it as a scratch log of small integers (`push`, `get`, `len`). It
+# holds 16 values, which is more than any test pushes, and it is deliberately
+# plain data so the tests exercise language behavior rather than a library.
+
+pub @struct List {
+    items: [16]i64;
+    count: i64;
+}
+
+pub @func create(initial_hint: int): *List {
+    $lst = List {
+        items: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        count: 0,
+    };
+    return &lst;
+}
+
+pub @func push(lst: *List, item: i64) {
+    lst.items[lst.count] = item;
+    lst.count = lst.count + 1;
+}
+
+pub @func get(lst: *List, index: int): i64 {
+    return lst.items[index];
+}
+
+pub @func len(lst: *List): int {
+    return lst.count;
+}

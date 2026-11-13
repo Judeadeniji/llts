@@ -88,6 +88,9 @@ pub fn checkArity(state: *CompilerState, intr: Intrinsic, name: []const u8, got:
 
 pub fn typecheck(state: *CompilerState, env: *typecheck_root.Env, ta: ir.TypeAlloc, intr: Intrinsic, call_node: *ast.Node, c: *const ast.Call) !ir.Type {
     const name = c.callee.primary.name;
+    if (intr == .@"asm" and c.inline_asm != null) {
+        return typecheckExtendedAsm(state, env, ta, call_node, c);
+    }
     try checkArity(state, intr, name, c.args.len);
 
     switch (intr) {
@@ -124,6 +127,7 @@ pub fn typecheck(state: *CompilerState, env: *typecheck_root.Env, ta: ir.TypeAll
                 break :blk t;
             };
             try state.type_of_results.put(call_node, try typecheck_root.ownDisplay(state, denoted));
+            try state.type_ir_of_results.put(call_node, denoted);
             try recordTypeValue(state, call_node, denoted);
             return ir.TType;
         },
@@ -137,7 +141,12 @@ pub fn typecheck(state: *CompilerState, env: *typecheck_root.Env, ta: ir.TypeAll
                 };
                 try state.size_of_results.put(call_node, size);
             } else {
-                _ = try typecheck_root.inferExpr(state, env, ta, arg);
+                const t = try typecheck_root.inferExpr(state, env, ta, arg);
+                if (try layout.sizeOfType(state, t)) |size| {
+                    try state.size_of_results.put(call_node, size);
+                } else if (try staticTypeArgSize(state, arg)) |size| {
+                    try state.size_of_results.put(call_node, size);
+                }
             }
             return ir.TInt;
         },
@@ -256,6 +265,9 @@ pub fn typecheck(state: *CompilerState, env: *typecheck_root.Env, ta: ir.TypeAll
 
 pub fn compile(state: *CompilerState, intr: Intrinsic, node: *ast.Node, c: *const ast.Call) !void {
     const name = c.callee.primary.name;
+    if (intr == .@"asm" and c.inline_asm != null) {
+        return compile_errors.compileFailFmt(state, "Extended @asm is only supported by the native backend", .{});
+    }
     // We assume arity was checked in typecheck, but we can assert or just check again.
     // In debug builds we could assert. For now let's just do it.
     try checkArity(state, intr, name, c.args.len);
@@ -358,8 +370,136 @@ pub fn compile(state: *CompilerState, intr: Intrinsic, node: *ast.Node, c: *cons
     }
 }
 
+fn typecheckExtendedAsm(
+    state: *CompilerState,
+    env: *typecheck_root.Env,
+    ta: ir.TypeAlloc,
+    call_node: *ast.Node,
+    c: *const ast.Call,
+) !ir.Type {
+    const spec = c.inline_asm.?;
+    if (c.args.len == 0) {
+        return compile_errors.compileFailFmt(state, "Extended @asm requires a result type", .{});
+    }
+    try resolveTypeExprs(state, env, ta, c.args[0]);
+    const result_type = try from_ast.typeFromAst(c.args[0], state, ta);
+    if (result_type == .unknown or result_type == .type_ or result_type == .never) {
+        return compile_errors.compileFailFmt(
+            state,
+            "@asm result must be a concrete runtime type",
+            .{},
+        );
+    }
+    try validateAsmOperandSize(state, result_type, "<result>");
+
+    var return_outputs: usize = 0;
+    for (spec.outputs) |output| {
+        if (output.return_type) |return_display| {
+            return_outputs += 1;
+            const declared = try from_ast.parseDisplayType(state, ta, return_display, null);
+            if (!ir.typeEquals(ir.peelDefined(declared), ir.peelDefined(result_type))) {
+                return compile_errors.compileFailFmt(
+                    state,
+                    "@asm return output type '{s}' does not match declared result type '{s}'",
+                    .{ return_display, try typecheck_root.ownDisplay(state, result_type) },
+                );
+            }
+            continue;
+        }
+        const index = output.arg_index orelse {
+            return compile_errors.compileFailFmt(state, "Invalid @asm output operand", .{});
+        };
+        const target = c.args[index];
+        if (!isAsmOutputPlace(target)) {
+            return compile_errors.compileFailFmt(state, "@asm output must target a mutable place", .{});
+        }
+        if (env.anyConstPlaceRoot(target)) |name| {
+            return compile_errors.compileFailFmt(state, "@asm cannot write to constant '{s}'", .{name});
+        }
+        const target_type = try typecheck_root.inferExpr(state, env, ta, target);
+        try validateAsmOperandSize(state, target_type, output.name);
+    }
+    for (spec.inputs) |input| {
+        const input_type = try typecheck_root.inferExpr(state, env, ta, c.args[input.arg_index]);
+        try validateAsmOperandSize(state, input_type, input.name);
+    }
+
+    if (result_type == .void) {
+        if (return_outputs != 0) {
+            return compile_errors.compileFailFmt(state, "void @asm cannot declare a return output", .{});
+        }
+    } else if (return_outputs != 1) {
+        return compile_errors.compileFailFmt(
+            state,
+            "non-void @asm requires exactly one '(-> Type)' output",
+            .{},
+        );
+    }
+    _ = call_node;
+    return result_type;
+}
+
+fn isAsmOutputPlace(node: *ast.Node) bool {
+    return switch (node.*) {
+        .primary => |p| p.kind == .identifier or p.kind == .register,
+        .member, .index => true,
+        else => false,
+    };
+}
+
+/// Validate that an `@asm` operand or result fits within machine register constraints.
+/// On 64-bit architectures, general-purpose register operands are at most 8 bytes.
+/// Aggregates (e.g. slices `[]byte` which are 16-byte ptr+len structs, or multi-field structs)
+/// cannot be passed by value in a register constraint and must be referenced via a pointer `*T` using `&`.
+fn validateAsmOperandSize(state: *CompilerState, t: ir.Type, name: []const u8) !void {
+    const size = (try asmOperandSize(state, t)) orelse return;
+    if (size <= 8) return;
+    const d = try typecheck_root.ownDisplay(state, t);
+    return compile_errors.compileFailFmt(
+        state,
+        "operand '{s}' has type '{s}' ({d} bytes); register operands must be at most 8 bytes; pass a pointer with '&'",
+        .{ name, d, size },
+    );
+}
+
+/// Static byte size for an `@asm` operand. Slices/strings are pointer + length
+/// (16 bytes); the layout helper reports these as scalar handles, so handle
+/// aggregate widths here before falling back to it.
+fn asmOperandSize(state: *CompilerState, t: ir.Type) !?i64 {
+    return switch (ir.peelDefined(t)) {
+        .u1, .bool_lit => 1,
+        .i8, .u8 => 1,
+        .i16, .u16 => 2,
+        .i32, .u32, .f32 => 4,
+        .i64, .u64, .f64, .isize, .usize, .fsize, .int_lit, .enum_, .enum_lit, .error_, .error_set, .error_lit, .ptr, .func, .str_lit => 8,
+        .null, .void => 0,
+        .array => |a| blk: {
+            const len = a.length orelse break :blk 16;
+            const elem_size = (try asmOperandSize(state, a.elem.*)) orelse break :blk null;
+            break :blk @as(i64, @intCast(len)) * elem_size;
+        },
+        .tuple => |elems| blk: {
+            var total: i64 = 0;
+            for (elems) |e| {
+                const elem_size = (try asmOperandSize(state, e)) orelse break :blk null;
+                total += elem_size;
+            }
+            break :blk total;
+        },
+        .struct_ => |name| blk: {
+            if (state.enums.contains(name)) break :blk 8;
+            if (from_ast.lookupStruct(state, name)) |sd| break :blk @as(i64, @intCast(sd.size));
+            break :blk 8;
+        },
+        else => blk: {
+            const size = try layout.sizeOfType(state, t);
+            break :blk if (size) |s| @as(i64, s) else null;
+        },
+    };
+}
+
 /// Emit-time `@sizeOf` for a bare type argument the typechecker did not visit.
-fn staticTypeArgSize(state: *CompilerState, node: *ast.Node) !?i32 {
+pub fn staticTypeArgSize(state: *CompilerState, node: *ast.Node) !?i32 {
     const is_type = switch (node.*) {
         .pointer_type, .array_type, .union_type, .intersection_type, .func_type, .tuple_type, .shape_type => true,
         .primary => |p| p.kind == .identifier and scope.resolveLocal(state, p.name) == -1 and
@@ -396,14 +536,14 @@ pub fn isTypeValueNode(state: *CompilerState, env: *typecheck_root.Env, node: *a
 /// Record the type a type-valued node denotes (read back by `typeFromAst`).
 pub fn recordTypeValue(state: *CompilerState, node: *ast.Node, t: ir.Type) !void {
     try state.type_call_results.put(node, try typecheck_root.ownDisplayQualified(state, t));
+    try state.type_call_ir_results.put(node, t);
 }
 
 /// The type denoted by a type-valued node (see `isTypeValueNode`).
 pub fn denotedType(state: *CompilerState, env: *typecheck_root.Env, ta: ir.TypeAlloc, node: *ast.Node) !ir.Type {
     if (from_ast.isTypeCall(state, node)) {
         _ = try typecheck_root.inferExpr(state, env, ta, node);
-        const disp = state.type_call_results.get(node) orelse return ir.TUnknown;
-        return try from_ast.parseDisplayType(state, ta, disp, null);
+        return state.type_call_ir_results.get(node) orelse ir.TUnknown;
     }
     try resolveTypeExprs(state, env, ta, node);
     const t = try from_ast.typeFromAst(node, state, ta);

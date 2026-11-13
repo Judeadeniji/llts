@@ -57,6 +57,9 @@ pub const Break = struct {
 
 pub const Continue = struct {
     label: ?[]const u8 = null,
+    /// Operand of a labeled `@switch` continue: `continue :sw new_value;`.
+    /// Loops continue without a value (Zig semantics).
+    value: ?*Node = null,
     loc: Location,
 };
 
@@ -96,7 +99,6 @@ pub const Switch = struct {
     loc: Location,
 };
 
-
 pub const Extern = struct {
     name: []const u8,
     is_public: bool = false,
@@ -112,6 +114,10 @@ pub const StructDecl = struct {
     name: []const u8,
     fields: []StructField,
     methods: []*Node,
+    /// `@struct Name(T: type)` — a generic struct template. Only type params
+    /// are allowed; the declaration itself is never laid out or emitted, each
+    /// distinct argument list gets its own instance (`Name(T)`).
+    params: []Param = &.{},
     is_public: bool = false,
     loc: Location,
 };
@@ -126,6 +132,9 @@ pub const EnumVariant = struct {
 pub const EnumDecl = struct {
     name: []const u8,
     variants: []const EnumVariant,
+    /// Parsed so `@enum Name(T: type)` reports a clear error instead of a
+    /// syntax error; enums carry no member types, so params are rejected.
+    params: []Param = &.{},
     is_public: bool = false,
     loc: Location,
 };

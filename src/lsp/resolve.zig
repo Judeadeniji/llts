@@ -252,7 +252,7 @@ fn containsNode(node: *ast.Node, target: *ast.Node) bool {
         .return_expr => |r| return if (r.return_value) |v| containsNode(v, target) else false,
         .defer_stmt => |d| return containsNode(d.body, target),
         .struct_init => |si| {
-            if (containsNode(si.type_expr, target)) return true;
+            if (si.type_expr) |te| if (containsNode(te, target)) return true;
             for (si.fields) |f| {
                 if (containsNode(f.value, target)) return true;
             }

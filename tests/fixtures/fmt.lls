@@ -1,0 +1,6 @@
+# Leaf module imported by `mod.lls`, so `mod.fmt` names a module namespace the
+# way `std.fmt` did.
+
+pub @func label(): int {
+    return 1;
+}

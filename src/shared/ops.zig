@@ -2,9 +2,8 @@ const std = @import("std");
 
 pub const BinOps = struct {
     pub const values = [_][]const u8{
-        "+",  "-",  "*",  "/",  "%",  "^",  "==", "!=", ">", ">=", "<", "<=",
-        "&&", "||", "**", "|>", "..", "=>", "??",
-        "&",  "|",  "~",  "<<", ">>",
+        "+",  "-",  "*",  "/",  "%",  "^",  "==", "!=", ">", ">=", "<",  "<=",
+        "&&", "||", "**", "|>", "..", "=>", "??", "&",  "|", "~",  "<<", ">>",
         // Wrapping arithmetic (`+%`, `-%`, `*%`): two's-complement wrap on
         // overflow. Plain `+`/`-`/`*` are checked and trap on overflow.
         "+%", "-%", "*%",
@@ -17,7 +16,7 @@ pub const UnaryOps = struct {
 
 pub const AssignOps = struct {
     pub const values = [_][]const u8{
-        "=", "+=", "-=", "*=", "/=", "%=", "^=", "&&=", "||=",
+        "=",  "+=", "-=", "*=",  "/=",  "%=", "^=", "&&=", "||=",
         "&=", "|=", "~=", "<<=", ">>=",
     };
 };

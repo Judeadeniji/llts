@@ -497,6 +497,7 @@ fn inferRhsType(
             }
             // Named function → its declared return type.
             if (state.functions.get(callee_name)) |def| {
+                if (def.return_ir) |t| return t;
                 if (def.return_type) |rt| {
                     return from_ast.parseDisplayType(null, ta, rt, null) catch ir.TUnknown;
                 }
@@ -504,15 +505,36 @@ fn inferRhsType(
             return ir.TUnknown;
         },
         .error_expr => return ir.TError,
+        // `obj.field` — needed so `$cur = self.head;` seeds a real type and
+        // `@for (cur != null)` can narrow the loop body.
+        .member => |m| {
+            if (m.property.* != .primary) return ir.TUnknown;
+            const named = structNameOfType(inferRhsType(state, ta, env, m.object)) orelse return ir.TUnknown;
+            const sd = from_ast.lookupStruct(state, named) orelse return ir.TUnknown;
+            const field_disp = sd.types.get(m.property.primary.name) orelse return ir.TUnknown;
+            return from_ast.parseDisplayType(null, ta, field_disp, null) catch ir.TUnknown;
+        },
         .struct_init => |si| {
             // `User { … }` → `User` (resolveStructName never emits diagnostics).
-            if (from_ast.resolveStructName(state, si.type_expr)) |sn| {
-                return .{ .struct_ = sn };
+            if (si.type_expr) |te| {
+                if (from_ast.resolveStructName(state, te)) |sn| {
+                    return .{ .struct_ = sn };
+                }
             }
             return ir.TUnknown;
         },
         else => return ir.TUnknown,
     }
+}
+
+/// Struct name behind `t`, looking through aliases and pointers (`*List` →
+/// `List`): a member access needs the struct, not its pointer.
+fn structNameOfType(t: ir.Type) ?[]const u8 {
+    return switch (ir.peelDefined(t)) {
+        .struct_ => |name| name,
+        .ptr => |elem| structNameOfType(elem.*),
+        else => null,
+    };
 }
 
 /// Per-block dataflow results: the flow env at block entry.

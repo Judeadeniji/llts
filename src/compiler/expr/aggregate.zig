@@ -6,6 +6,7 @@ const state_mod = @import("../state.zig");
 const expr = @import("root.zig");
 const path = @import("path.zig");
 const types = @import("../typecheck/from_ast.zig");
+const ir = @import("../typecheck/ir.zig");
 const compiler_errors = @import("../../errors/compile.zig");
 const layout = @import("../layout.zig");
 
@@ -148,8 +149,8 @@ pub fn compileArray(state: *CompilerState, arr: *const ast.ArrayLiteral) !void {
     try fillArray(state, arr);
 }
 
-pub fn compileStructInit(state: *CompilerState, init: *const ast.StructInit) !void {
-    const struct_def = try resolveStructDef(state, init);
+pub fn compileStructInit(state: *CompilerState, node: *ast.Node, init: *const ast.StructInit) !void {
+    const struct_def = try resolveStructDef(state, node, init);
     // Frame bump by default; immortal for module/globals and `return Foo{…}` (escape.zig).
     const alloc = if (state.alloc_immortal) "__allocImmortalBytes" else "__allocBytes";
     try emit.emitNameGet(state, .OP_GET_GLOBAL, alloc);
@@ -352,15 +353,45 @@ fn emitZeroForTypeName(state: *CompilerState, name: []const u8) !void {
     }
 }
 
-fn resolveStructDef(state: *CompilerState, init: *const ast.StructInit) !state_mod.StructDef {
-    const sn = types.resolveStructName(state, init.type_expr) orelse {
+fn resolveStructDef(state: *CompilerState, node: *ast.Node, init: *const ast.StructInit) !state_mod.StructDef {
+    // Shape annotations and inferred object literals use the display spelling
+    // of the structural type as the layout key (layouts registered lazily).
+    if (init.type_expr) |te| {
+        // Inline shape annotation, or a type function that *returns* a shape
+        // (`$x: Make(i64) = { a: 1 }`). Both key the layout by display spelling.
+        if (te.* == .shape_type or (types.typeNodeHasCall(te) and ir.peelDefined(state.type_call_ir_results.get(te) orelse ir.TUnknown) == .shape)) {
+            const display = (try types.typeAstToDisplayQualified(te, state)) orelse {
+                return compiler_errors.compileFailFmt(state, "Invalid struct initialization type", .{});
+            };
+            return types.lookupStruct(state, display) orelse {
+                return compiler_errors.compileFailFmt(state, "Unknown struct '{s}'", .{display});
+            };
+        }
+        // A generic struct instantiation keys its layout by the denoted type.
+        if (types.isTypeCall(state, te)) {
+            const display = state.type_call_results.get(te) orelse {
+                return compiler_errors.compileFailFmt(state, "Invalid struct initialization type", .{});
+            };
+            return types.lookupStruct(state, display) orelse {
+                return compiler_errors.compileFailFmt(state, "Unknown struct '{s}'", .{display});
+            };
+        }
+    } else {
+        const display = state.type_of_results.get(node) orelse {
+            return compiler_errors.compileFailFmt(state, "Cannot infer object literal type", .{});
+        };
+        return types.lookupStruct(state, display) orelse {
+            return compiler_errors.compileFailFmt(state, "Unknown struct '{s}'", .{display});
+        };
+    }
+    const sn = types.resolveStructName(state, init.type_expr.?) orelse {
         return compiler_errors.compileFailFmt(state, "Invalid struct initialization type", .{});
     };
     var struct_name = sn;
     if (std.mem.indexOfScalar(u8, struct_name, '.') != null) {
         struct_name = try path.resolveModuleType(state, struct_name);
     }
-    try types.checkStructInitExport(state, init.type_expr, struct_name);
+    try types.checkStructInitExport(state, init.type_expr.?, struct_name);
     return types.lookupStruct(state, struct_name) orelse {
         return compiler_errors.compileFailFmt(state, "Unknown struct '{s}'", .{sn});
     };

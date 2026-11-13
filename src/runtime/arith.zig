@@ -8,6 +8,7 @@
 //! to the target native type. Unadorned i64 ops are the `Width.i64` case.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const io = @import("io.zig");
 const widths = @import("widths.zig");
 
@@ -125,6 +126,15 @@ pub fn formatShiftOutOfRange(buf: []u8, b: i64) ![]const u8 {
     return std.fmt.bufPrint(buf, "Shift amount out of range 0..63 (got {d})", .{b});
 }
 
+/// Check that `value` fits `width`, staging a typed result (VM `@as` parity).
+/// The emitter casts the returned i64 down after this passes.
+pub fn narrow(width: Width, value: i64) ArithError!i64 {
+    if (!widths.i64Fits(width, value)) {
+        return io.failMsg("@as: value out of range for target width");
+    }
+    return value;
+}
+
 pub fn shl(a: i64, b: i64) ArithError!i64 {
     if (b < 0 or b >= 64) {
         var buf: [64]u8 = undefined;
@@ -212,6 +222,34 @@ fn typedArith(kind: TypedKind, width: Width, a: i64, b: i64, checked: bool) Arit
         .u64, .usize => low, // bit-preserving two's-complement pattern
         .f32, .f64, .fsize => unreachable,
     };
+}
+
+fn provenArith(kind: TypedKind, width: Width, a: i64, b: i64) i64 {
+    if (builtin.mode == .Debug) {
+        const result = switch (kind) {
+            .add => @addWithOverflow(a, b),
+            .sub => @subWithOverflow(a, b),
+            .mul => @mulWithOverflow(a, b),
+        };
+        if (result[1] != 0 or !widths.i64Fits(width, result[0])) {
+            @panic("native range proof violated");
+        }
+    }
+    return typedArith(kind, width, a, b, false) catch unreachable;
+}
+
+/// Arithmetic whose statically inferred result interval fits `width`.
+/// Debug builds verify the proof; optimized builds execute one wrapping op.
+pub inline fn addProven(width: Width, a: i64, b: i64) i64 {
+    return provenArith(.add, width, a, b);
+}
+
+pub inline fn subProven(width: Width, a: i64, b: i64) i64 {
+    return provenArith(.sub, width, a, b);
+}
+
+pub inline fn mulProven(width: Width, a: i64, b: i64) i64 {
+    return provenArith(.mul, width, a, b);
 }
 
 pub fn addChecked(width: Width, a: i64, b: i64) ArithError!i64 {

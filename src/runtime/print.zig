@@ -61,6 +61,29 @@ pub fn writeStr(out: *std.ArrayList(u8), alloc: std.mem.Allocator, s: []const u8
     try out.appendSlice(alloc, s);
 }
 
+/// Escaped string with double quotes for objects/arrays (Node.js/Bun parity).
+pub fn writeEscapedStr(out: *std.ArrayList(u8), alloc: std.mem.Allocator, s: []const u8) !void {
+    try out.append(alloc, '"');
+    for (s) |c| {
+        switch (c) {
+            '"' => try out.appendSlice(alloc, "\\\""),
+            '\\' => try out.appendSlice(alloc, "\\\\"),
+            '\n' => try out.appendSlice(alloc, "\\n"),
+            '\r' => try out.appendSlice(alloc, "\\r"),
+            '\t' => try out.appendSlice(alloc, "\\t"),
+            else => try out.append(alloc, c),
+        }
+    }
+    try out.append(alloc, '"');
+}
+
+pub fn writeIndent(out: *std.ArrayList(u8), alloc: std.mem.Allocator, indent: usize) !void {
+    var i: usize = 0;
+    while (i < indent) : (i += 1) {
+        try out.appendSlice(alloc, "  ");
+    }
+}
+
 /// Byte buffers: printable span prints raw, otherwise decimal list
 /// (`writePackedBytes` parity). Empty prints nothing.
 pub fn writeBytes(out: *std.ArrayList(u8), alloc: std.mem.Allocator, data: []const u8) !void {
@@ -95,13 +118,23 @@ pub fn writeError(out: *std.ArrayList(u8), alloc: std.mem.Allocator, e: err_mod.
 /// Array formatting (`writeArray` parity): empty → `[]`; an all-integer array
 /// whose values are printable bytes (32..126 / `\n` / `\t`) prints as a raw
 /// string; otherwise `[a, b, c]` with recursive element formatting.
-pub fn writeArray(out: *std.ArrayList(u8), alloc: std.mem.Allocator, arr: anytype) !void {
+pub fn writeArray(out: *std.ArrayList(u8), alloc: std.mem.Allocator, arr: anytype) anyerror!void {
+    try writeArrayIndent(out, alloc, arr, 0, false);
+}
+
+pub fn writeArrayIndent(
+    out: *std.ArrayList(u8),
+    alloc: std.mem.Allocator,
+    arr: anytype,
+    indent: usize,
+    in_object: bool,
+) anyerror!void {
     if (arr.len == 0) {
         try out.appendSlice(alloc, "[]");
         return;
     }
     const Child = std.meta.Elem(@TypeOf(arr));
-    if (comptime isIntChild(Child)) {
+    if (!in_object and comptime isIntChild(Child)) {
         var printable = true;
         for (arr) |x| {
             const ch: i128 = x;
@@ -120,12 +153,48 @@ pub fn writeArray(out: *std.ArrayList(u8), alloc: std.mem.Allocator, arr: anytyp
             return;
         }
     }
-    try out.append(alloc, '[');
-    for (arr, 0..) |x, i| {
-        if (i > 0) try out.appendSlice(alloc, ", ");
-        try writeValue(out, alloc, x);
+
+    const is_elem_struct = comptime blk: {
+        var C = Child;
+        if (@typeInfo(C) == .pointer and @typeInfo(C).pointer.size == .one) {
+            C = @typeInfo(C).pointer.child;
+        }
+        break :blk @typeInfo(C) == .@"struct" and @hasDecl(C, "lls_field_names") and (!@hasDecl(C, "is_tuple") or !C.is_tuple);
+    };
+
+    if (is_elem_struct) {
+        try out.appendSlice(alloc, "[\n");
+        for (arr, 0..) |x, i| {
+            if (i == 0) {
+                try writeIndent(out, alloc, indent + 1);
+            }
+            try writeValueIndent(out, alloc, x, indent + 1, true);
+            if (i + 1 < arr.len) {
+                try out.appendSlice(alloc, ", ");
+            } else {
+                try out.append(alloc, '\n');
+            }
+        }
+        try writeIndent(out, alloc, indent);
+        try out.append(alloc, ']');
+        return;
     }
-    try out.append(alloc, ']');
+
+    if (in_object) {
+        try out.appendSlice(alloc, "[ ");
+        for (arr, 0..) |x, i| {
+            if (i > 0) try out.appendSlice(alloc, ", ");
+            try writeValueIndent(out, alloc, x, indent, true);
+        }
+        try out.appendSlice(alloc, " ]");
+    } else {
+        try out.append(alloc, '[');
+        for (arr, 0..) |x, i| {
+            if (i > 0) try out.appendSlice(alloc, ", ");
+            try writeValueIndent(out, alloc, x, indent, false);
+        }
+        try out.append(alloc, ']');
+    }
 }
 
 fn isIntChild(comptime T: type) bool {
@@ -135,16 +204,72 @@ fn isIntChild(comptime T: type) bool {
     };
 }
 
+pub fn writeStructIndent(
+    out: *std.ArrayList(u8),
+    alloc: std.mem.Allocator,
+    v: anytype,
+    indent: usize,
+) anyerror!void {
+    if (indent > 32) {
+        try out.appendSlice(alloc, "[Circular]");
+        return;
+    }
+    const T = @TypeOf(v);
+    const struct_name: []const u8 = if (comptime @hasDecl(T, "lls_struct_name")) T.lls_struct_name else "";
+    const field_count = std.meta.fields(T).len;
+
+    if (field_count == 0) {
+        if (struct_name.len > 0) {
+            try out.appendSlice(alloc, struct_name);
+            try out.appendSlice(alloc, " {}");
+        } else {
+            try out.appendSlice(alloc, "{}");
+        }
+        return;
+    }
+
+    if (struct_name.len > 0) {
+        try out.appendSlice(alloc, struct_name);
+        try out.appendSlice(alloc, " {\n");
+    } else {
+        try out.appendSlice(alloc, "{\n");
+    }
+
+    inline for (std.meta.fields(T), 0..) |field, idx| {
+        try writeIndent(out, alloc, indent + 1);
+        const fname: []const u8 = if (comptime @hasDecl(T, "lls_field_names"))
+            T.lls_field_names[idx]
+        else
+            field.name;
+        try out.appendSlice(alloc, fname);
+        try out.appendSlice(alloc, ": ");
+        try writeValueIndent(out, alloc, @field(v, field.name), indent + 1, true);
+        try out.appendSlice(alloc, ",\n");
+    }
+
+    try writeIndent(out, alloc, indent);
+    try out.append(alloc, '}');
+}
+
 /// Generic value formatting for emitted print sites. Supports optionals
 /// (LLTS `null`), bools, all integer/float widths, strings, byte buffers,
-/// arrays, and error values. Structs other than `Error` are a compile error —
-/// the emitter formats those with layout-driven code in a later phase.
-pub fn writeValue(out: *std.ArrayList(u8), alloc: std.mem.Allocator, v: anytype) !void {
+/// arrays, structs formatted like Node.js/Bun objects, and error values.
+pub fn writeValue(out: *std.ArrayList(u8), alloc: std.mem.Allocator, v: anytype) anyerror!void {
+    try writeValueIndent(out, alloc, v, 0, false);
+}
+
+pub fn writeValueIndent(
+    out: *std.ArrayList(u8),
+    alloc: std.mem.Allocator,
+    v: anytype,
+    indent: usize,
+    in_object: bool,
+) anyerror!void {
     const T = @TypeOf(v);
     switch (@typeInfo(T)) {
         .optional => {
             if (v) |inner| {
-                try writeValue(out, alloc, inner);
+                try writeValueIndent(out, alloc, inner, indent, in_object);
             } else {
                 try writeNull(out, alloc);
             }
@@ -162,32 +287,42 @@ pub fn writeValue(out: *std.ArrayList(u8), alloc: std.mem.Allocator, v: anytype)
         },
         .array => {
             if (comptime std.meta.Elem(T) == u8) {
-                try writeBytes(out, alloc, &v);
+                if (in_object) {
+                    try writeEscapedStr(out, alloc, &v);
+                } else {
+                    try writeBytes(out, alloc, &v);
+                }
             } else {
-                try writeArray(out, alloc, &v);
+                try writeArrayIndent(out, alloc, &v, indent, in_object);
             }
         },
         .pointer => |p| switch (p.size) {
             .slice => {
                 if (comptime p.child == u8) {
-                    if (p.is_const) {
+                    if (in_object) {
+                        try writeEscapedStr(out, alloc, v);
+                    } else if (p.is_const) {
                         try writeStr(out, alloc, v);
                     } else {
                         try writeBytes(out, alloc, v);
                     }
                 } else {
-                    try writeArray(out, alloc, v);
+                    try writeArrayIndent(out, alloc, v, indent, in_object);
                 }
             },
             .one => {
-                // Pointer-to-array (string literals, `&local_array`): const
-                // pointers are strings (raw); mutable ones use array rules.
                 if (comptime @typeInfo(p.child) == .array) {
                     if (p.is_const) {
-                        try writeStr(out, alloc, v[0..]);
+                        if (in_object) {
+                            try writeEscapedStr(out, alloc, v[0..]);
+                        } else {
+                            try writeStr(out, alloc, v[0..]);
+                        }
                     } else {
-                        try writeValue(out, alloc, v.*);
+                        try writeValueIndent(out, alloc, v.*, indent, in_object);
                     }
+                } else if (comptime @typeInfo(p.child) == .@"struct") {
+                    try writeValueIndent(out, alloc, v.*, indent, in_object);
                 } else {
                     @compileError("print: pointer printing not supported in R1 (" ++ @typeName(T) ++ ")");
                 }
@@ -203,6 +338,18 @@ pub fn writeValue(out: *std.ArrayList(u8), alloc: std.mem.Allocator, v: anytype)
                 try out.appendSlice(alloc, s);
             } else if (T == Struct) {
                 try writeBytes(out, alloc, v.bytes);
+            } else if (comptime @hasDecl(T, "is_tuple") and T.is_tuple) {
+                try out.append(alloc, '[');
+                inline for (std.meta.fields(T), 0..) |f, idx| {
+                    if (idx > 0) try out.appendSlice(alloc, ", ");
+                    try writeValueIndent(out, alloc, @field(v, f.name), indent, in_object);
+                }
+                try out.append(alloc, ']');
+            } else if (comptime @hasDecl(T, "lls_field_names")) {
+                try writeStructIndent(out, alloc, v, indent);
+            } else if (comptime @hasDecl(T, "to_bytes")) {
+                const b = v.to_bytes();
+                try writeBytes(out, alloc, &b);
             } else {
                 @compileError("print: unsupported struct type " ++ @typeName(T));
             }
@@ -212,7 +359,7 @@ pub fn writeValue(out: *std.ArrayList(u8), alloc: std.mem.Allocator, v: anytype)
                 @FieldType(T, "err") == err_mod.Error)
             {
                 switch (v) {
-                    .ok => |inner| try writeValue(out, alloc, inner),
+                    .ok => |inner| try writeValueIndent(out, alloc, inner, indent, in_object),
                     .err => |e| try writeError(out, alloc, e),
                 }
             } else {

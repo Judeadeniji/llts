@@ -1,0 +1,33 @@
+# Minimal arena stand-in for the removed std/mem library.
+#
+# It only tracks allocation offsets: `alloc(n)` hands back the next offset and
+# advances by `n`, `reset()` rewinds, `deinit()` marks the arena dead. That is
+# enough for tests that check allocation order and defer/arena interplay; it
+# does not model real storage.
+
+pub @struct Arena {
+    next: i64;
+    alive: bool;
+
+    @func alloc(self, n: int): int {
+        $p = self.next;
+        self.next = self.next + n;
+        return p + 1;
+    }
+
+    @func reset(self) {
+        self.next = 0;
+    }
+
+    @func deinit(self) {
+        self.alive = false;
+    }
+}
+
+pub @func create(initial_hint: int): Arena {
+    return Arena { next: 0, alive: true };
+}
+
+pub @func alloc(size: int): int {
+    return size;
+}

@@ -15,6 +15,10 @@ fn showHelp(ctx: zli.CommandContext) !void {
         version.print();
         std.process.exit(0);
     }
+    const eval_code = ctx.flag("eval", []const u8);
+    if (eval_code.len > 0) {
+        return run.execute(ctx);
+    }
     common.setLogLevel(ctx);
     try ctx.command.printHelp();
 }
@@ -26,7 +30,7 @@ pub fn build(stdout: anytype, stdin: anytype, gpa: std.mem.Allocator) !*zli.Comm
         .version = version.VERSION,
     }, showHelp);
 
-    try root.addFlag(flags.log_level);
+    try flags.addRunFlags(root);
     try root.addFlag(flags.version_flag);
 
     const version_sub = try zli.Command.init(stdout, stdin, gpa, .{
@@ -38,13 +42,13 @@ pub fn build(stdout: anytype, stdin: anytype, gpa: std.mem.Allocator) !*zli.Comm
 
     const run_cmd = try zli.Command.init(stdout, stdin, gpa, .{
         .name = "run",
-        .description = "Run an LLTS source or bytecode file (use --native to compile and run natively)",
+        .description = "Run an LLTS source file natively, or bytecode with the VM (use --vm for source files)",
     }, run.execute);
     try flags.addRunFlags(run_cmd);
     try run_cmd.addPositionalArg(.{
         .name = "file",
         .description = "Source (.lls) or bytecode (.llb) file to run",
-        .required = true,
+        .required = false,
     });
     try run_cmd.addPositionalArg(.{
         .name = "args",
@@ -56,13 +60,13 @@ pub fn build(stdout: anytype, stdin: anytype, gpa: std.mem.Allocator) !*zli.Comm
 
     const build_sub = try zli.Command.init(stdout, stdin, gpa, .{
         .name = "build",
-        .description = "Compile an LLTS source file to bytecode or a native binary (--native)",
+        .description = "Compile an LLTS source file to a native binary (use --vm for bytecode)",
     }, build_cmd.execute);
     try flags.addCompileFlags(build_sub);
     try build_sub.addFlag(.{
         .name = "output",
         .shortcut = "o",
-        .description = "Output file path (default: out.llb; out when --native)",
+        .description = "Output file path (default: out; out.llb with --vm)",
         .type = .String,
         .default_value = .{ .String = "" },
     });

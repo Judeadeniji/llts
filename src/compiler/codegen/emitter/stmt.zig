@@ -1,22 +1,28 @@
 const std = @import("std");
 const ast_mod = @import("../../../ast/root.zig");
+const ir = @import("../../typecheck/ir.zig");
+const state_mod = @import("../../state.zig");
 const root_mod = @import("root.zig");
-const prescan_mod = @import("prescan.zig");
 const expr_mod = @import("expr.zig");
 const Emitter = root_mod.Emitter;
 const ValType = root_mod.ValType;
 const Binding = root_mod.Binding;
 const BreakTarget = root_mod.BreakTarget;
 const LoopTarget = root_mod.LoopTarget;
+const SwitchContinueTarget = root_mod.SwitchContinueTarget;
 
 pub fn emitAssignment(self: *Emitter, node: *ast_mod.Node, asn: *const ast_mod.Assignment) !void {
-    if (!std.mem.eql(u8, asn.operator, "=")) {
-        return self.failAt(node, "native backend (Phase 3) does not support '{s}' yet", .{asn.operator});
+    const compound = expr_mod.compoundOp(asn.operator);
+    if (!std.mem.eql(u8, asn.operator, "=") and compound == null) {
+        return self.failAt(node, "native backend does not support compound assignment '{s}'", .{asn.operator});
     }
     if (asn.left.* == .primary and
         (asn.left.primary.kind == .identifier or asn.left.primary.kind == .register) and
         std.mem.eql(u8, asn.left.primary.name, "_"))
     {
+        if (compound != null) {
+            return self.failAt(node, "cannot use compound assignment with discard '_'", .{});
+        }
         // `_ = expr;` evaluates for effect. Function values and module names
         // have no native representation and exist only to silence unused
         // analysis, so a bare name discards to nothing.
@@ -24,6 +30,7 @@ pub fn emitAssignment(self: *Emitter, node: *ast_mod.Node, asn: *const ast_mod.A
             const n = asn.right.primary;
             if (n.kind == .identifier or n.kind == .register) {
                 if (self.state.functions.contains(n.name)) return;
+                if (self.state.fn_aliases.contains(n.name)) return;
                 if (self.lookupBindingOptional(n.name)) |b| {
                     if (b.fn_key != null or b.module_path != null) return;
                 }
@@ -43,9 +50,12 @@ pub fn emitAssignment(self: *Emitter, node: *ast_mod.Node, asn: *const ast_mod.A
                 return self.failAt(asn.left, "native backend only supports assigning to names", .{});
             }
             const target = try self.lookupBinding(asn.left, p.name);
-            const vt = try self.classify(node, target.display);
+            const vt = try self.valTypeFor(node, target.ir_type, target.display);
             try self.requireValueType(node, vt);
-            const rhs = try expr_mod.emitValueCoerced(self, asn.right, vt);
+            const rhs = if (compound) |c|
+                try expr_mod.emitCompoundValue(self, node, asn.left, asn.right, c, vt)
+            else
+                try expr_mod.emitValueCoerced(self, asn.right, vt);
             try self.writeIndent();
             try self.writer.print("{s} = {s};\n", .{ target.zig_name, rhs });
         },
@@ -55,17 +65,26 @@ pub fn emitAssignment(self: *Emitter, node: *ast_mod.Node, asn: *const ast_mod.A
             };
             const field = target.info.fields[target.index];
             try self.requireValueType(asn.left, field.vt);
-            const rhs = try expr_mod.emitValueCoerced(self, asn.right, field.vt);
+            const rhs = if (compound) |c|
+                try expr_mod.emitCompoundValue(self, node, asn.left, asn.right, c, field.vt)
+            else
+                try expr_mod.emitValueCoerced(self, asn.right, field.vt);
             const lvalue = try emitPlaceLvalue(self, asn.left);
             try self.writeIndent();
             try self.writer.print("{s} = {s};\n", .{ lvalue, rhs });
         },
-        .index => |*ix| try emitIndexAssignment(self, node, asn, ix),
+        .index => |*ix| try emitIndexAssignment(self, node, asn, ix, compound),
         else => return self.failAt(asn.left, "native backend only supports assigning to names, fields, or array elements", .{}),
     }
 }
 
-pub fn emitIndexAssignment(self: *Emitter, node: *ast_mod.Node, asn: *const ast_mod.Assignment, ix: *const ast_mod.Index) !void {
+pub fn emitIndexAssignment(
+    self: *Emitter,
+    node: *ast_mod.Node,
+    asn: *const ast_mod.Assignment,
+    ix: *const ast_mod.Index,
+    compound: ?expr_mod.CompoundOp,
+) !void {
     if (ix.is_slice) {
         return self.failAt(node, "Cannot assign to a slice view", .{});
     }
@@ -82,24 +101,48 @@ pub fn emitIndexAssignment(self: *Emitter, node: *ast_mod.Node, asn: *const ast_
         obj_t = payload.*;
         obj_code = try std.fmt.allocPrint(a, "({s}).*", .{obj_code});
     }
+    if (obj_t.is_const or obj_t.kind == .string) {
+        return self.failAt(node, "cannot assign to elements of a const slice or string", .{});
+    }
+    if (obj_t.kind == .struct_) {
+        if (try self.structInfoForValType(node, obj_t)) |info| {
+            if (ix.index) |idx_node| {
+                const idx_str = switch (idx_node.*) {
+                    .literal => |lit| if (lit.literal_type == .number) lit.value else null,
+                    else => null,
+                };
+                if (idx_str) |s| {
+                    if (info.field_index.get(s)) |fidx| {
+                        const field = info.fields[fidx];
+                        const rhs = if (compound) |c|
+                            try expr_mod.emitCompoundValue(self, node, asn.left, asn.right, c, field.vt)
+                        else
+                            try expr_mod.emitValueCoerced(self, asn.right, field.vt);
+                        try self.writeIndent();
+                        try self.writer.print("{s}.{s} = {s};\n", .{ obj_code, field.zig_name, rhs });
+                        return;
+                    }
+                }
+            }
+        }
+    }
     const word: []const u8 = switch (obj_t.kind) {
         .array => "Array",
         .slice => "Slice",
-        .string => "String",
         else => return self.failAt(node, "native backend cannot assign into '{s}' yet", .{obj_t.display}),
     };
-    // Allow stores into `[]byte` / byte-slice views (including `v[i..j]`).
-    // String-literal objects are rejected above.
     const use: []const u8 = switch (obj_t.kind) {
         .slice => "slice",
-        .string => "str",
         else => "arr",
     };
     const index_node = ix.index orelse return self.failAt(node, "expected index expression", .{});
     const elem_t = obj_t.elem orelse {
         return self.failAt(node, "native backend cannot determine the element type of '{s}'", .{obj_t.display});
     };
-    const rhs = try expr_mod.emitValueCoerced(self, asn.right, elem_t.*);
+    const rhs = if (compound) |c|
+        try expr_mod.emitCompoundValue(self, node, asn.left, asn.right, c, elem_t.*)
+    else
+        try expr_mod.emitValueCoerced(self, asn.right, elem_t.*);
     const index_code = try expr_mod.emitI64Operand(self, index_node);
 
     self.counter += 1;
@@ -116,12 +159,8 @@ pub fn emitIndexAssignment(self: *Emitter, node: *ast_mod.Node, asn: *const ast_
     try self.writer.print("if ({s} < 0 or {s} >= @as(i64, @intCast(({s}).len))) return rt.io.fail({s}, .{{ {s}, @as(i64, @intCast(({s}).len)) }});\n", .{
         idx_name, idx_name, obj_code, try self.zigString(fmt), idx_name, obj_code,
     });
-    const target_code = if (obj_t.kind == .string)
-        try std.fmt.allocPrint(a, "@constCast({s})", .{obj_code})
-    else
-        obj_code;
     try self.writeIndent();
-    try self.writer.print("{s}[@intCast({s})] = {s};\n", .{ target_code, idx_name, rhs_name });
+    try self.writer.print("{s}[@intCast({s})] = {s};\n", .{ obj_code, idx_name, rhs_name });
 }
 
 pub fn emitPlaceLvalue(self: *Emitter, node: *ast_mod.Node) ![]const u8 {
@@ -242,13 +281,7 @@ pub fn emitCondFor(self: *Emitter, node: *ast_mod.Node, f: *const ast_mod.For) !
     const a = self.arena.allocator();
     const condition = try emitBoolCondition(self, f.expr, "@for");
     self.counter += 1;
-    const zig_label: ?[]const u8 = if (f.label) |label|
-        if (loopLabelUsed(self, f.body, label))
-            try std.fmt.allocPrint(a, "lls_loop_{d}", .{self.counter})
-        else
-            null
-    else
-        null;
+    const zig_label = try loopZigLabel(self, f, self.counter);
     try self.loop_targets.append(a, .{ .label = f.label, .zig_label = zig_label, .scope_depth = self.scopes.items.len });
     defer _ = self.loop_targets.pop();
 
@@ -278,26 +311,15 @@ pub fn emitCaptureCondFor(self: *Emitter, node: *ast_mod.Node, f: *const ast_mod
     const payload = cond_t.payload orelse {
         return self.failAt(node, "native backend cannot determine the optional payload type", .{});
     };
+    const payload_ir: ?ir.Type = if (self.recordedType(f.expr)) |t| ir.optionalPayload(t) else null;
 
     self.counter += 1;
     const id = self.counter;
     const tmp_name = try std.fmt.allocPrint(a, "lls_foropt_{d}", .{id});
     const cap_name = try self.localName(f.captures[0].name);
-    const zig_label: ?[]const u8 = if (f.label) |label|
-        if (loopLabelUsed(self, f.body, label))
-            try std.fmt.allocPrint(a, "lls_loop_{d}", .{id})
-        else
-            null
-    else
-        null;
+    const zig_label = try loopZigLabel(self, f, id);
 
-    self.pushScope();
-    const probe = try a.create(Binding);
-    probe.* = .{ .name = f.captures[0].name, .zig_name = "", .display = payload.display };
-    try self.scopes.items[self.scopes.items.len - 1].put(f.captures[0].name, probe);
-    try prescan_mod.preScanStmt(self, f.body);
-    const cap_read = probe.read;
-    self.popScope();
+    const cap_read = if (self.state.for_capture_facts.get(node)) |facts| facts[0].read else false;
 
     try self.loop_targets.append(a, .{ .label = f.label, .zig_label = zig_label, .scope_depth = self.scopes.items.len });
     defer _ = self.loop_targets.pop();
@@ -315,7 +337,7 @@ pub fn emitCaptureCondFor(self: *Emitter, node: *ast_mod.Node, f: *const ast_mod
     self.pushScope();
     defer self.popScope();
     const b = try a.create(Binding);
-    b.* = .{ .name = f.captures[0].name, .zig_name = cap_name, .display = payload.display };
+    b.* = .{ .name = f.captures[0].name, .zig_name = cap_name, .display = payload.display, .ir_type = payload_ir };
     try self.scopes.items[self.scopes.items.len - 1].put(f.captures[0].name, b);
     if (!cap_read) {
         try self.writeIndent();
@@ -344,6 +366,26 @@ pub fn emitCondition(self: *Emitter, node: *ast_mod.Node) ![]const u8 {
 }
 
 pub fn emitContinue(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Continue) !void {
+    if (c.value) |value| {
+        const label = c.label orelse {
+            return self.failAt(node, "'continue' with a value requires a label naming an enclosing @switch", .{});
+        };
+        const target = findSwitchContinueTarget(self, label) orelse {
+            return self.failAt(node, "native backend cannot find @switch with label '{s}'", .{label});
+        };
+        const a = self.arena.allocator();
+        const code = try expr_mod.emitStrongCoercion(self, value, target.scrut_type);
+        self.counter += 1;
+        const tmp = try std.fmt.allocPrint(a, "lls_cont_{d}", .{self.counter});
+        try self.writeIndent();
+        try self.writer.print("const {s}: {s} = {s};\n", .{ tmp, target.scrut_type.zig, code });
+        try self.emitDeferredFromDepth(target.scope_depth);
+        try self.writeIndent();
+        try self.writer.print("{s} = {s};\n", .{ target.scrut_name, tmp });
+        try self.writeIndent();
+        try self.writer.print("continue :{s};\n", .{target.zig_label});
+        return;
+    }
     const target = findLoopTarget(self, c.label) orelse {
         if (c.label) |label| {
             return self.failAt(node, "native backend cannot find loop with label '{s}'", .{label});
@@ -359,11 +401,27 @@ pub fn emitContinue(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Conti
     }
 }
 
+fn findSwitchContinueTarget(self: *Emitter, label: []const u8) ?*const SwitchContinueTarget {
+    var i = self.switch_targets.items.len;
+    while (i > 0) {
+        i -= 1;
+        const target = &self.switch_targets.items[i];
+        if (std.mem.eql(u8, target.label, label)) return target;
+    }
+    return null;
+}
+
 pub fn emitEqualityCode(self: *Emitter, left: []const u8, lt: ValType, right_node: *ast_mod.Node) ![]const u8 {
     const a = self.arena.allocator();
     const rt = try self.valueType(right_node);
     if (rt.may_error and !(lt.kind == .error_value and rt.kind == .error_value)) {
         return self.failAt(right_node, "error-union value must be handled with '?' before @switch", .{});
+    }
+    if (lt.isByteSequence() and rt.isByteSequence()) {
+        const left_slice = if (lt.kind == .array) try std.fmt.allocPrint(a, "{s}[0..]", .{left}) else left;
+        const r_expr = try expr_mod.emitExpr(self, right_node);
+        const right_slice = if (rt.kind == .array) try std.fmt.allocPrint(a, "({s})[0..]", .{r_expr}) else r_expr;
+        return std.fmt.allocPrint(a, "rt.arith.eqStr({s}, {s})", .{ left_slice, right_slice });
     }
     if (lt.kind != rt.kind) {
         return self.failAt(right_node, "cannot compare @switch '{s}' with pattern '{s}'", .{ lt.display, rt.display });
@@ -378,7 +436,7 @@ pub fn emitEqualityCode(self: *Emitter, left: []const u8, lt: ValType, right_nod
         .float => return std.fmt.allocPrint(a, "rt.arith.eqF64({s}, {s})", .{
             try expr_mod.f64Code(self, left, lt), try expr_mod.emitF64Operand(self, right_node),
         }),
-        else => return self.failAt(right_node, "native backend (Phase 3) does not support @switch on '{s}' yet", .{lt.display}),
+        else => return self.failAt(right_node, "native backend does not support @switch on '{s}' yet", .{lt.display}),
     }
 }
 
@@ -505,38 +563,24 @@ pub fn emitIterableFor(self: *Emitter, node: *ast_mod.Node, f: *const ast_mod.Fo
     const elem_t = iter_t.elem orelse {
         return self.failAt(node, "native backend cannot determine the element type of '{s}'", .{iter_t.display});
     };
+    const elem_ir: ?ir.Type = if (self.recordedType(f.expr)) |t| switch (ir.peelDefined(t)) {
+        .array => |arr| arr.elem.*,
+        else => null,
+    } else null;
 
     self.counter += 1;
     const id = self.counter;
     const iter_name = try std.fmt.allocPrint(a, "lls_iter_{d}", .{id});
-    const zig_label: ?[]const u8 = if (f.label) |label|
-        if (loopLabelUsed(self, f.body, label))
-            try std.fmt.allocPrint(a, "lls_loop_{d}", .{id})
-        else
-            null
-    else
-        null;
+    const zig_label = try loopZigLabel(self, f, id);
 
     const cap0_name = try self.localName(f.captures[0].name);
     const cap1_name = if (f.captures.len > 1) try self.localName(f.captures[1].name) else "";
     const raw1_name = try std.fmt.allocPrint(a, "lls_iter_i_{d}", .{id});
 
-    self.pushScope();
-    const probe0 = try a.create(Binding);
-    probe0.* = .{ .name = f.captures[0].name, .zig_name = "", .display = elem_t.display };
-    try self.scopes.items[self.scopes.items.len - 1].put(f.captures[0].name, probe0);
-    var probe1: ?*Binding = null;
-    if (f.captures.len > 1) {
-        const b = try a.create(Binding);
-        b.* = .{ .name = f.captures[1].name, .zig_name = "", .display = "int" };
-        try self.scopes.items[self.scopes.items.len - 1].put(f.captures[1].name, b);
-        probe1 = b;
-    }
+    const for_facts = self.state.for_capture_facts.get(node);
+    const cap0_read = if (for_facts) |facts| facts[0].read else false;
+    const cap1_read = if (for_facts) |facts| facts[1].read else false;
     const body = try forBody(self, node, f);
-    try prescan_mod.preScanStmt(self, f.body);
-    const cap0_read = probe0.read;
-    const cap1_read = if (probe1) |b| b.read else false;
-    self.popScope();
 
     try self.writeIndent();
     try self.writer.writeAll("{\n");
@@ -560,14 +604,14 @@ pub fn emitIterableFor(self: *Emitter, node: *ast_mod.Node, f: *const ast_mod.Fo
     defer self.popScope();
     {
         const b = try a.create(Binding);
-        b.* = .{ .name = f.captures[0].name, .zig_name = cap0_name, .display = elem_t.display };
+        b.* = .{ .name = f.captures[0].name, .zig_name = cap0_name, .display = elem_t.display, .ir_type = elem_ir };
         try self.scopes.items[self.scopes.items.len - 1].put(f.captures[0].name, b);
     }
     if (f.captures.len > 1) {
         try self.writeIndent();
         try self.writer.print("const {s}: i64 = @intCast({s});\n", .{ cap1_name, raw1_name });
         const b = try a.create(Binding);
-        b.* = .{ .name = f.captures[1].name, .zig_name = cap1_name, .display = "int" };
+        b.* = .{ .name = f.captures[1].name, .zig_name = cap1_name, .display = "int", .ir_type = ir.TI64 };
         try self.scopes.items[self.scopes.items.len - 1].put(f.captures[1].name, b);
     }
     if (!cap0_read) {
@@ -600,8 +644,8 @@ pub fn emitIfBody(self: *Emitter, body: *ast_mod.Node) !void {
     self.popScope();
 }
 
-pub fn emitIfChain(self: *Emitter, i: *const ast_mod.If, first: bool) anyerror!void {
-    if (i.pipe_value != null) return emitCaptureIfChain(self, i, first);
+pub fn emitIfChain(self: *Emitter, node: *ast_mod.Node, i: *const ast_mod.If, first: bool) anyerror!void {
+    if (i.pipe_value != null) return emitCaptureIfChain(self, node, i, first);
 
     const cond = try emitCondition(self, i.condition);
     if (first) try self.writeIndent();
@@ -615,18 +659,23 @@ pub fn emitIfChain(self: *Emitter, i: *const ast_mod.If, first: bool) anyerror!v
     try emitIfElse(self, i.else_body);
 }
 
-pub fn emitCaptureIfChain(self: *Emitter, i: *const ast_mod.If, first: bool) anyerror!void {
+pub fn emitCaptureIfChain(self: *Emitter, node: *ast_mod.Node, i: *const ast_mod.If, first: bool) anyerror!void {
     const a = self.arena.allocator();
     const cond_t = try self.valueType(i.condition);
-    if (cond_t.may_error) {
-        return self.failAt(i.condition, "native backend does not support error-union @if captures yet", .{});
+    const is_error_union = cond_t.may_error and cond_t.kind != .error_value;
+    if (!is_error_union and cond_t.kind != .optional) {
+        return self.failAt(i.condition, "@if capture requires an optional or error-union value, got '{s}'", .{cond_t.display});
     }
-    if (cond_t.kind != .optional) {
-        return self.failAt(i.condition, "@if capture requires an optional value, got '{s}'", .{cond_t.display});
-    }
-    const payload = cond_t.payload orelse {
-        return self.failAt(i.condition, "native backend cannot determine the optional payload type", .{});
+    const payload = (if (is_error_union) cond_t.success else cond_t.payload) orelse {
+        return self.failAt(i.condition, "native backend cannot determine the payload type of '{s}'", .{cond_t.display});
     };
+    const payload_ir: ?ir.Type = if (self.recordedType(i.condition)) |t| blk: {
+        if (is_error_union) {
+            break :blk ir.unwrapError(self.state.typeAlloc(), t) catch null;
+        } else {
+            break :blk ir.optionalPayload(t);
+        }
+    } else null;
     const pipe = i.pipe_value.?;
     const capture_name = switch (pipe.*) {
         .primary => |p| if (p.kind == .identifier or p.kind == .register)
@@ -638,30 +687,43 @@ pub fn emitCaptureIfChain(self: *Emitter, i: *const ast_mod.If, first: bool) any
 
     self.counter += 1;
     const id = self.counter;
-    const tmp_name = try std.fmt.allocPrint(a, "lls_ifopt_{d}", .{id});
+    const tmp_name = if (is_error_union)
+        try std.fmt.allocPrint(a, "lls_ifres_{d}", .{id})
+    else
+        try std.fmt.allocPrint(a, "lls_ifopt_{d}", .{id});
     const cap_name = try self.localName(capture_name);
 
-    self.pushScope();
-    const probe = try a.create(Binding);
-    probe.* = .{ .name = capture_name, .zig_name = "", .display = payload.display };
-    try self.scopes.items[self.scopes.items.len - 1].put(capture_name, probe);
-    try prescan_mod.preScanStmt(self, i.body);
-    const cap_read = probe.read;
-    self.popScope();
+    // Key by the outer *ast.Node so the pointer is stable across traversal.
+    const cap_facts = self.state.if_capture_facts.get(node);
+    const cap_read = if (cap_facts) |f| f.read else false;
+    const cap_assigned = if (cap_facts) |f| f.assigned else false;
+    const cap_reassigned = if (cap_facts) |f| f.reassigned else false;
 
     if (first) try self.writeIndent();
     try self.writer.print("const {s}: {s} = {s};\n", .{ tmp_name, cond_t.zig, try expr_mod.emitExpr(self, i.condition) });
     if (first) try self.writeIndent();
-    try self.writer.print("if ({s}) |{s}| {{\n", .{ tmp_name, cap_name });
-    self.indent += 1;
+    if (is_error_union) {
+        try self.writer.print("if ({s} == .ok) {{\n", .{tmp_name});
+        self.indent += 1;
+        const kw = if (cap_reassigned or (cap_assigned and payload.kind != .pointer and payload.kind != .slice and payload.kind != .string)) "var" else "const";
+        try self.writeIndent();
+        try self.writer.print("{s} {s}: {s} = {s}.ok;\n", .{ kw, cap_name, payload.zig, tmp_name });
+    } else {
+        try self.writer.print("if ({s}) |{s}| {{\n", .{ tmp_name, cap_name });
+        self.indent += 1;
+    }
     self.pushScope();
     defer self.popScope();
     const b = try a.create(Binding);
-    b.* = .{ .name = capture_name, .zig_name = cap_name, .display = payload.display };
+    b.* = .{ .name = capture_name, .zig_name = cap_name, .display = payload.display, .ir_type = payload_ir };
     try self.scopes.items[self.scopes.items.len - 1].put(capture_name, b);
     if (!cap_read) {
         try self.writeIndent();
-        try self.writer.print("_ = {s};\n", .{cap_name});
+        if (cap_assigned) {
+            try self.writer.print("_ = &{s};\n", .{cap_name});
+        } else {
+            try self.writer.print("_ = {s};\n", .{cap_name});
+        }
     }
     const body = switch (i.body.*) {
         .block => |*blk| blk,
@@ -683,13 +745,13 @@ pub fn emitIfElse(self: *Emitter, else_body: ?*ast_mod.Node) !void {
                 if (nested.pipe_value != null) {
                     try self.writer.writeAll(" else {\n");
                     self.indent += 1;
-                    try emitCaptureIfChain(self, nested, true);
+                    try emitCaptureIfChain(self, eb, nested, true);
                     self.indent -= 1;
                     try self.writeIndent();
                     try self.writer.writeAll("}\n");
                 } else {
                     try self.writer.writeAll(" else ");
-                    try emitIfChain(self, nested, false);
+                    try emitIfChain(self, eb, nested, false);
                 }
             },
             .block => {
@@ -708,14 +770,10 @@ pub fn emitIfElse(self: *Emitter, else_body: ?*ast_mod.Node) !void {
 }
 
 pub fn emitIfStmt(self: *Emitter, node: *ast_mod.Node, i: *const ast_mod.If) !void {
-    _ = node;
-    try emitIfChain(self, i, true);
+    try emitIfChain(self, node, i, true);
 }
 
 pub fn emitIfValue(self: *Emitter, node: *ast_mod.Node, i: *const ast_mod.If) ![]const u8 {
-    if (i.pipe_value != null) {
-        return self.failAt(node, "native backend does not support @if captures yet", .{});
-    }
     if (i.else_body == null) {
         return self.failAt(node, "value-producing @if requires @else", .{});
     }
@@ -739,7 +797,7 @@ pub fn emitIfValue(self: *Emitter, node: *ast_mod.Node, i: *const ast_mod.If) ![
     defer self.writer = old_writer;
 
     self.indent += 1;
-    try emitIfChain(self, i, true);
+    try emitIfChain(self, node, i, true);
     self.indent -= 1;
     try self.writeIndent();
     try self.writer.writeAll("}");
@@ -759,15 +817,50 @@ pub fn emitDefer(self: *Emitter, node: *ast_mod.Node, d: *const ast_mod.Defer) !
 
 pub fn emitLineMarker(self: *Emitter, node: *ast_mod.Node) !void {
     if (self.options.release) return;
+    const func_name = self.current_trace_func orelse return;
     const loc = node.loc();
     if (loc.line == 0) return;
+    const file = if (loc.path.len > 0) loc.path else self.current_trace_file;
+    const site_id = try self.addTraceSite(func_name, file, loc.line, loc.column);
     try self.writeIndent();
-    try self.writer.print("ctx.setLine({d}, {d});\n", .{ loc.line, loc.column });
+    try self.writer.print("ctx.setSite({d});\n", .{site_id});
+}
+
+/// Emit a machine-readable source marker so a failed Zig compile can be mapped
+/// back to the LLTS statement that produced the generated code.
+fn emitSourceSiteMarker(self: *Emitter, node: *ast_mod.Node) !void {
+    const loc = node.loc();
+    if (loc.line == 0) return;
+    const file = if (loc.path.len > 0) loc.path else self.current_trace_file;
+    try self.writeIndent();
+    try self.writer.print("// llts-site {d} {d} {s}\n", .{ loc.line, loc.column, file });
 }
 
 pub fn emitLocalDeclaration(self: *Emitter, node: *ast_mod.Node, d: *const ast_mod.Declaration) !void {
-    const info = self.infos.get(node) orelse {
-        return self.failAt(node, "internal: missing binding for local '{s}'", .{d.name});
+    const a = self.arena.allocator();
+    const info = if (self.infos.get(node)) |b| b else blk: {
+        const b = try a.create(Binding);
+        const fn_key: ?[]const u8 = blk_fn: {
+            if (d.value.* == .primary and (d.value.primary.kind == .identifier or d.value.primary.kind == .register)) {
+                if (self.state.functions.contains(d.value.primary.name)) break :blk_fn d.value.primary.name;
+            }
+            break :blk_fn null;
+        };
+        const module_path = if (fn_key == null) self.resolveModuleValue(d.value) else null;
+        const facts = self.state.binding_facts.get(node) orelse state_mod.BindingFacts{};
+        b.* = .{
+            .name = d.name,
+            .zig_name = "",
+            .display = if (fn_key != null) "func" else if (module_path != null) "module" else self.displayForDeclValue(d) catch "unknown",
+            .ir_type = if (fn_key != null or module_path != null) null else self.declaredIRType(d),
+            .fn_key = fn_key,
+            .module_path = module_path,
+            .read = facts.read,
+            .assigned = facts.assigned,
+            .reassigned = facts.reassigned,
+        };
+        try self.infos.put(node, b);
+        break :blk b;
     };
     // Function values and module namespaces are devirtualized at their call
     // sites; they have no Zig variable.
@@ -775,14 +868,65 @@ pub fn emitLocalDeclaration(self: *Emitter, node: *ast_mod.Node, d: *const ast_m
         try self.scopes.items[self.scopes.items.len - 1].put(d.name, info);
         return;
     }
-    const vt = try self.classify(node, info.display);
+    if (self.state.devirtualized_closures.get(node) orelse self.state.devirtualized_closures.get(d.value)) |cid| {
+        if (self.state.closures.get(d.value)) |cinfo| {
+            if (cinfo.captures.len > 0) {
+                var fields_buf: std.ArrayList([]const u8) = .empty;
+                for (cinfo.captures) |cap| {
+                    const resolved = try self.lookupBinding(d.value, cap.name);
+                    if (cap.is_mutated) {
+                        const field_code = try std.fmt.allocPrint(a, ".{s} = @constCast(&({s}))", .{ cap.name, resolved.zig_name });
+                        try fields_buf.append(a, field_code);
+                    } else {
+                        const field_code = try std.fmt.allocPrint(a, ".{s} = {s}", .{ cap.name, resolved.zig_name });
+                        try fields_buf.append(a, field_code);
+                    }
+                }
+                const fields_joined = try std.mem.join(a, ", ", fields_buf.items);
+                try self.writeIndent();
+                try self.writer.print("lls_env_stack_{d} = .{{ {s} }};\n", .{ cid, fields_joined });
+            }
+        }
+        try self.scopes.items[self.scopes.items.len - 1].put(d.name, info);
+        return;
+    }
+    const vt = try self.valTypeFor(node, info.ir_type, info.display);
     try self.requireValueType(node, vt);
     if (info.zig_name.len == 0) info.zig_name = try self.localName(d.name);
 
     const init_code = if (d.type_annotation != null)
-        try expr_mod.emitValueCoerced(self, d.value, vt)
+        try expr_mod.emitDeclaredValue(self, d.value, vt)
     else
         try expr_mod.emitExpr(self, d.value);
+
+    if (self.state.addr_taken_decls.contains(d.value)) {
+        // The compiler recorded `&name` somewhere in this body, so the storage
+        // must outlive the frame: the pointer may be stored into a field or
+        // returned, and a Zig stack slot dies with the function. Box the value
+        // in immortal heap and bind the name to the box pointer, so every later
+        // use of the name (reads, writes, `&name`) goes through `name.*`.
+        const cell = try std.fmt.allocPrint(a, "lls_box_{s}", .{info.zig_name});
+        const ptr = try std.fmt.allocPrint(a, "lls_cell_{s}", .{info.zig_name});
+        try self.writeIndent();
+        try self.writer.print("const {s}: *{s} = blk: {{\n", .{ info.zig_name, vt.zig });
+        try self.writeIndent();
+        try self.writer.print("    const {s} = try ctx.allocImmortal(@sizeOf({s}), @alignOf({s}));\n", .{ cell, vt.zig, vt.zig });
+        try self.writeIndent();
+        try self.writer.print("    const {s}: *{s} = @ptrCast(@alignCast({s}.ptr));\n", .{ ptr, vt.zig, cell });
+        try self.writeIndent();
+        try self.writer.print("    {s}.* = {s};\n", .{ ptr, init_code });
+        try self.writeIndent();
+        try self.writer.print("    break :blk {s};\n", .{ptr});
+        try self.writeIndent();
+        try self.writer.writeAll("};\n");
+        if (!info.read) {
+            try self.writeIndent();
+            try self.writer.print("_ = &{s};\n", .{info.zig_name});
+        }
+        info.zig_name = try std.fmt.allocPrint(a, "{s}.*", .{info.zig_name});
+        try self.scopes.items[self.scopes.items.len - 1].put(d.name, info);
+        return;
+    }
 
     // Index stores into `[]byte` / string views don't reassign the slice header,
     // so Zig wants `const` (same as `.slice` / `.pointer`). Use `var` only when
@@ -823,13 +967,7 @@ pub fn emitRangeFor(self: *Emitter, node: *ast_mod.Node, f: *const ast_mod.For) 
     const id = self.counter;
     const start_name = try std.fmt.allocPrint(a, "lls_loop_start_{d}", .{id});
     const end_name = try std.fmt.allocPrint(a, "lls_loop_end_{d}", .{id});
-    const zig_label: ?[]const u8 = if (f.label) |label|
-        if (loopLabelUsed(self, f.body, label))
-            try std.fmt.allocPrint(a, "lls_loop_{d}", .{id})
-        else
-            null
-    else
-        null;
+    const zig_label = try loopZigLabel(self, f, id);
 
     const cap_name: []const u8 = if (f.captures.len > 0)
         try self.localName(f.captures[0].name)
@@ -853,7 +991,12 @@ pub fn emitRangeFor(self: *Emitter, node: *ast_mod.Node, f: *const ast_mod.For) 
     defer self.popScope();
     if (f.captures.len > 0) {
         const b = try a.create(Binding);
-        b.* = .{ .name = f.captures[0].name, .zig_name = cap_name, .display = "int" };
+        b.* = .{
+            .name = f.captures[0].name,
+            .zig_name = cap_name,
+            .display = "int",
+            .ir_type = ir.TI64,
+        };
         try self.scopes.items[self.scopes.items.len - 1].put(f.captures[0].name, b);
     }
 
@@ -880,12 +1023,13 @@ pub fn emitRangeFor(self: *Emitter, node: *ast_mod.Node, f: *const ast_mod.For) 
 pub fn emitStatements(self: *Emitter, statements: []*ast_mod.Node) !void {
     for (statements) |s| {
         try emitStmt(self, s);
-        if (prescan_mod.stmtTerminates(self, s)) break;
+        if (self.state.terminates.get(s) orelse false) break;
     }
 }
 
 pub fn emitStmt(self: *Emitter, node: *ast_mod.Node) anyerror!void {
     try emitLineMarker(self, node);
+    try emitSourceSiteMarker(self, node);
     switch (node.*) {
         .declaration => |*d| {
             if (root_mod.isImportDecl(d)) return;
@@ -934,7 +1078,7 @@ pub fn emitStmt(self: *Emitter, node: *ast_mod.Node) anyerror!void {
     }
 }
 
-pub fn emitSwitchChain(self: *Emitter, sw: *const ast_mod.Switch, scrut: []const u8, scrut_t: ValType, first: bool) !void {
+pub fn emitSwitchChain(self: *Emitter, sw: *const ast_mod.Switch, scrut: []const u8, scrut_t: ValType, first: bool, is_value: bool) !void {
     var wrote_any = false;
     var else_prong: ?ast_mod.SwitchProng = null;
     for (sw.prongs) |prong| {
@@ -970,6 +1114,20 @@ pub fn emitSwitchChain(self: *Emitter, sw: *const ast_mod.Switch, scrut: []const
         try self.writeIndent();
         try self.writer.writeAll("}\n");
         return;
+    } else if (is_value) {
+        if (wrote_any) {
+            try self.writer.writeAll(" else {\n");
+        } else {
+            if (first) try self.writeIndent();
+            try self.writer.writeAll("{\n");
+        }
+        self.indent += 1;
+        try self.writeIndent();
+        try self.writer.writeAll("unreachable;\n");
+        self.indent -= 1;
+        try self.writeIndent();
+        try self.writer.writeAll("}\n");
+        return;
     }
     if (wrote_any) try self.writer.writeAll("\n");
 }
@@ -990,13 +1148,36 @@ pub fn emitSwitchStmt(self: *Emitter, node: *ast_mod.Node, sw: *const ast_mod.Sw
     const vt = try switchScrutineeType(self, node, sw);
     const a = self.arena.allocator();
     self.counter += 1;
-    const scrut_name = try std.fmt.allocPrint(a, "lls_scrut_{d}", .{self.counter});
+    const id = self.counter;
+    const scrut_name = try std.fmt.allocPrint(a, "lls_scrut_{d}", .{id});
     const scrut_code = if (vt.kind == .error_value) try expr_mod.errorOperandCode(self, sw.condition) else try expr_mod.emitExpr(self, sw.condition);
+    const wraps = switchContinueUsed(self, sw);
     try self.writeIndent();
-    try self.writer.print("const {s}: {s} = {s};\n", .{
-        scrut_name, vt.zig, scrut_code,
+    try self.writer.print("{s} {s}: {s} = {s};\n", .{
+        if (wraps) "var" else "const", scrut_name, vt.zig, scrut_code,
     });
-    try emitSwitchChain(self, sw, scrut_name, vt, true);
+    if (!wraps) {
+        try emitSwitchChain(self, sw, scrut_name, vt, true, false);
+        return;
+    }
+    const loop_label = try std.fmt.allocPrint(a, "lls_sw_loop_{d}", .{id});
+    try self.switch_targets.append(a, .{
+        .label = sw.label.?,
+        .zig_label = loop_label,
+        .scrut_name = scrut_name,
+        .scrut_type = vt,
+        .scope_depth = self.scopes.items.len,
+    });
+    defer _ = self.switch_targets.pop();
+    try self.writeIndent();
+    try self.writer.print("{s}: while (true) {{\n", .{loop_label});
+    self.indent += 1;
+    try emitSwitchChain(self, sw, scrut_name, vt, true, false);
+    try self.writeIndent();
+    try self.writer.writeAll("break;\n");
+    self.indent -= 1;
+    try self.writeIndent();
+    try self.writer.writeAll("}\n");
 }
 
 pub fn emitBlockValue(self: *Emitter, node: *ast_mod.Node, b: *const ast_mod.Block) ![]const u8 {
@@ -1034,13 +1215,6 @@ pub fn emitBlockValue(self: *Emitter, node: *ast_mod.Node, b: *const ast_mod.Blo
 }
 
 pub fn emitSwitchValue(self: *Emitter, node: *ast_mod.Node, sw: *const ast_mod.Switch) ![]const u8 {
-    var has_else = false;
-    for (sw.prongs) |prong| {
-        if (prong.is_else) has_else = true;
-    }
-    if (!has_else) {
-        return self.failAt(node, "value-producing @switch requires @else", .{});
-    }
     const a = self.arena.allocator();
     const vt = try switchScrutineeType(self, node, sw);
     const result_t = try self.valueType(node);
@@ -1063,13 +1237,35 @@ pub fn emitSwitchValue(self: *Emitter, node: *ast_mod.Node, sw: *const ast_mod.S
     self.writer = buf.writer(a).any();
     defer self.writer = old_writer;
 
+    const wraps = switchContinueUsed(self, sw);
     self.indent += 1;
     const scrut_code = if (vt.kind == .error_value) try expr_mod.errorOperandCode(self, sw.condition) else try expr_mod.emitExpr(self, sw.condition);
     try self.writeIndent();
-    try self.writer.print("const {s}: {s} = {s};\n", .{
-        scrut_name, vt.zig, scrut_code,
+    try self.writer.print("{s} {s}: {s} = {s};\n", .{
+        if (wraps) "var" else "const", scrut_name, vt.zig, scrut_code,
     });
-    try emitSwitchChain(self, sw, scrut_name, vt, true);
+    if (wraps) {
+        const loop_label = try std.fmt.allocPrint(a, "lls_sw_loop_{d}", .{id});
+        try self.switch_targets.append(a, .{
+            .label = sw.label.?,
+            .zig_label = loop_label,
+            .scrut_name = scrut_name,
+            .scrut_type = vt,
+            .scope_depth = self.scopes.items.len,
+        });
+        defer _ = self.switch_targets.pop();
+        try self.writeIndent();
+        try self.writer.print("{s}: while (true) {{\n", .{loop_label});
+        self.indent += 1;
+        try emitSwitchChain(self, sw, scrut_name, vt, true, true);
+        try self.writeIndent();
+        try self.writer.writeAll("break;\n");
+        self.indent -= 1;
+        try self.writeIndent();
+        try self.writer.writeAll("}\n");
+    } else {
+        try emitSwitchChain(self, sw, scrut_name, vt, true, true);
+    }
     self.indent -= 1;
     try self.writeIndent();
     try self.writer.writeAll("}");
@@ -1112,6 +1308,151 @@ pub fn forBody(self: *Emitter, node: *ast_mod.Node, f: *const ast_mod.For) !*con
         .block => |*b| b,
         else => self.failAt(node, "@for body must be a block", .{}),
     };
+}
+
+const JumpScanMode = enum { continue_label, plain_crossing };
+
+const JumpScan = struct {
+    label: []const u8 = "",
+    mode: JumpScanMode,
+    /// Number of generated switch-continue wrapper loops crossed so far.
+    wrappers: usize = 0,
+};
+
+/// Does the labeled `@switch` use `continue :label`? Only such switches are
+/// lowered to a wrapper loop (and only their wrapper labels are emitted).
+fn switchContinueUsed(self: *Emitter, sw: *const ast_mod.Switch) bool {
+    const label = sw.label orelse return false;
+    for (sw.prongs) |prong| {
+        var scan = JumpScan{ .label = label, .mode = .continue_label };
+        if (scanJumps(self, prong.body, &scan)) return true;
+    }
+    return false;
+}
+
+/// Is there a plain `break`/`continue` in the loop body that would be captured
+/// by a generated switch-continue wrapper and so needs an explicit Zig label?
+fn loopNeedsSwitchLabel(self: *Emitter, body: *ast_mod.Node) bool {
+    var scan = JumpScan{ .mode = .plain_crossing };
+    return scanJumps(self, body, &scan);
+}
+
+/// Generate a Zig loop label when the loop is targeted by a labeled jump or
+/// when a generated switch wrapper sits between it and a plain jump.
+fn loopZigLabel(self: *Emitter, f: *const ast_mod.For, id: usize) !?[]const u8 {
+    const used = if (f.label) |label| loopLabelUsed(self, f.body, label) else false;
+    if (!used and !loopNeedsSwitchLabel(self, f.body)) return null;
+    return try std.fmt.allocPrint(self.arena.allocator(), "lls_loop_{d}", .{id});
+}
+
+fn scanJumps(self: *Emitter, node: *ast_mod.Node, s: *JumpScan) bool {
+    switch (node.*) {
+        .continue_expr => |c| switch (s.mode) {
+            .continue_label => return if (c.label) |l| std.mem.eql(u8, l, s.label) else false,
+            .plain_crossing => return s.wrappers > 0 and c.label == null,
+        },
+        .break_expr => |b| {
+            if (s.mode == .plain_crossing and s.wrappers > 0 and b.label == null and b.value == null) return true;
+            if (b.value) |v| return scanJumps(self, v, s);
+            return false;
+        },
+        .block => |b| {
+            for (b.statements) |st| {
+                if (scanJumps(self, st, s)) return true;
+            }
+            return false;
+        },
+        .switch_expr => |sw| {
+            // An inner label with the same name shadows the one being scanned.
+            if (s.mode == .continue_label and sw.label != null and std.mem.eql(u8, sw.label.?, s.label)) return false;
+            if (scanJumps(self, sw.condition, s)) return true;
+            var inner = s.*;
+            if (s.mode == .plain_crossing and switchContinueUsed(self, &sw)) inner.wrappers += 1;
+            for (sw.prongs) |prong| {
+                for (prong.patterns) |pat| {
+                    if (scanJumps(self, pat, s)) return true;
+                }
+                if (scanJumps(self, prong.body, &inner)) return true;
+            }
+            return false;
+        },
+        .for_expr => |f| {
+            // A nested loop is a new target for plain `break`/`continue`.
+            if (s.mode == .plain_crossing) return false;
+            if (f.label != null and std.mem.eql(u8, f.label.?, s.label)) return false;
+            if (scanJumps(self, f.expr, s)) return true;
+            return scanJumps(self, f.body, s);
+        },
+        .return_expr => |r| {
+            if (r.return_value) |v| return scanJumps(self, v, s);
+            return false;
+        },
+        .defer_stmt => |d| return scanJumps(self, d.body, s),
+        .declaration => |d| return scanJumps(self, d.value, s),
+        .assignment => |asn| {
+            if (scanJumps(self, asn.left, s)) return true;
+            return scanJumps(self, asn.right, s);
+        },
+        .if_expr => |i| {
+            if (scanJumps(self, i.condition, s)) return true;
+            if (i.pipe_value) |v| {
+                if (scanJumps(self, v, s)) return true;
+            }
+            if (scanJumps(self, i.body, s)) return true;
+            if (i.else_body) |e| return scanJumps(self, e, s);
+            return false;
+        },
+        .binary => |b| {
+            if (scanJumps(self, b.left, s)) return true;
+            return scanJumps(self, b.right, s);
+        },
+        .unary => |u| return scanJumps(self, u.arg, s),
+        .call => |c| {
+            if (scanJumps(self, c.callee, s)) return true;
+            for (c.args) |arg| {
+                if (scanJumps(self, arg, s)) return true;
+            }
+            return false;
+        },
+        .member => |m| {
+            if (scanJumps(self, m.object, s)) return true;
+            return scanJumps(self, m.property, s);
+        },
+        .index => |ix| {
+            if (scanJumps(self, ix.object, s)) return true;
+            if (ix.index) |v| {
+                if (scanJumps(self, v, s)) return true;
+            }
+            if (ix.end) |v| {
+                if (scanJumps(self, v, s)) return true;
+            }
+            if (ix.type_annotation) |v| return scanJumps(self, v, s);
+            return false;
+        },
+        .array_literal => |al| {
+            for (al.elements) |e| {
+                if (scanJumps(self, e, s)) return true;
+            }
+            return false;
+        },
+        .try_expr => |t| return scanJumps(self, t.expression, s),
+        .unwrap_expr => |u| return scanJumps(self, u.expression, s),
+        .error_expr => |e| {
+            for (e.args) |arg| {
+                if (scanJumps(self, arg, s)) return true;
+            }
+            return false;
+        },
+        .struct_init => |si| {
+            if (si.type_expr) |te| if (scanJumps(self, te, s)) return true;
+            for (si.fields) |field| {
+                if (scanJumps(self, field.value, s)) return true;
+            }
+            return false;
+        },
+        .comptime_expr => |ce| return scanJumps(self, ce.expr, s),
+        else => return false,
+    }
 }
 
 pub fn loopLabelUsed(self: *Emitter, node: *ast_mod.Node, label: []const u8) bool {
@@ -1192,7 +1533,7 @@ pub fn loopLabelUsed(self: *Emitter, node: *ast_mod.Node, label: []const u8) boo
             }
         },
         .struct_init => |si| {
-            if (loopLabelUsed(self, si.type_expr, label)) return true;
+            if (si.type_expr) |te| if (loopLabelUsed(self, te, label)) return true;
             for (si.fields) |field| {
                 if (loopLabelUsed(self, field.value, label)) return true;
             }
@@ -1208,9 +1549,10 @@ pub fn switchScrutineeType(self: *Emitter, node: *ast_mod.Node, sw: *const ast_m
     if (vt.may_error and vt.kind != .error_value) {
         return self.failAt(node, "error-union value must be handled with '?' before @switch", .{});
     }
+    if (vt.isByteSequence()) return vt;
     switch (vt.kind) {
         .int, .float, .bool, .string, .error_value => {},
-        else => return self.failAt(node, "native backend (Phase 3) does not support @switch on '{s}' yet", .{vt.display}),
+        else => return self.failAt(node, "native backend does not support @switch on '{s}' yet", .{vt.display}),
     }
     return vt;
 }

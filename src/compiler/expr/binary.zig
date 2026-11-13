@@ -5,6 +5,7 @@ const state_mod = @import("../state.zig");
 const expr = @import("root.zig");
 const call = @import("call.zig");
 const types = @import("../typecheck/from_ast.zig");
+const ir = @import("../typecheck/ir.zig");
 const widths = @import("../widths.zig");
 const scope = @import("../scope.zig");
 const compile_errors = @import("../../errors/compile.zig");
@@ -101,17 +102,61 @@ fn extractConstantString(allocator: std.mem.Allocator, node: *const ast.Node) an
     }
 }
 
+/// Canonical width for an operand: recorded IR first, display only when the
+/// emitter has no recorded type (emit-only paths).
+fn widthOf(state: *CompilerState, node: *ast.Node) ?widths.Width {
+    if (state.type_ir_of_results.get(node)) |t| {
+        switch (ir.peelDefined(t)) {
+            .u1 => return .u1,
+            .i8 => return .i8,
+            .i16 => return .i16,
+            .i32 => return .i32,
+            .i64 => return .i64,
+            .u8 => return .u8,
+            .u16 => return .u16,
+            .u32 => return .u32,
+            .u64 => return .u64,
+            .f32 => return .f32,
+            .f64 => return .f64,
+            .isize => return .isize,
+            .usize => return .usize,
+            .fsize => return .fsize,
+            else => {},
+        }
+    }
+    const disp = state.type_of_results.get(node) orelse types.resolveType(state, node) orelse return null;
+    return widths.fromName(disp);
+}
+
+/// `string` / `[]u8` / `[N]u8`-like operands select the string opcodes.
+fn isStringyNode(state: *CompilerState, node: *ast.Node) bool {
+    if (state.type_ir_of_results.get(node)) |t| {
+        return switch (ir.peelDefined(t)) {
+            .struct_ => |n| std.mem.eql(u8, n, "string"),
+            .array => |a| isByteElem(a.elem.*),
+            else => false,
+        };
+    }
+    const disp = state.type_of_results.get(node) orelse types.resolveType(state, node);
+    return types.isStringyType(disp);
+}
+
+fn isByteElem(t: ir.Type) bool {
+    return switch (ir.peelDefined(t)) {
+        .u8 => true,
+        .struct_ => |n| std.mem.eql(u8, n, "byte"),
+        else => false,
+    };
+}
+
 fn emitBinOp(state: *CompilerState, bin: *const ast.Binary) !void {
     const op = bin.operator;
-    const l_type = state.type_of_results.get(bin.left) orelse types.resolveType(state, bin.left);
-    const r_type = state.type_of_results.get(bin.right) orelse types.resolveType(state, bin.right);
-    const l_width = if (l_type) |t| widths.fromName(t) else null;
-    const r_width = if (r_type) |t| widths.fromName(t) else null;
+    const l_width = widthOf(state, bin.left);
+    const r_width = widthOf(state, bin.right);
     const both_int = l_width != null and !l_width.?.isFloat() and r_width != null and !r_width.?.isFloat();
 
     if (std.mem.eql(u8, op, "+")) {
-        const str = types.isStringyType(types.resolveType(state, bin.left)) or
-            types.isStringyType(types.resolveType(state, bin.right));
+        const str = isStringyNode(state, bin.left) or isStringyNode(state, bin.right);
         if (str) {
             try emit.emitOp(state, .OP_STRING_ADD);
         } else if (both_int) {
@@ -173,8 +218,7 @@ fn emitBinOp(state: *CompilerState, bin: *const ast.Binary) !void {
     } else if (std.mem.eql(u8, op, ">>")) {
         try emit.emitOp(state, .OP_SHR);
     } else if (std.mem.eql(u8, op, "==") or std.mem.eql(u8, op, "!=")) {
-        const both = types.isStringyType(types.resolveType(state, bin.left)) and
-            types.isStringyType(types.resolveType(state, bin.right));
+        const both = isStringyNode(state, bin.left) and isStringyNode(state, bin.right);
         const eq = std.mem.eql(u8, op, "==");
         if (eq) try emit.emitOp(state, if (both) .OP_STRING_EQUAL else .OP_EQUAL) else try emit.emitOp(state, if (both) .OP_STRING_NOT_EQUAL else .OP_NOT_EQUAL);
     } else if (std.mem.eql(u8, op, "<")) {

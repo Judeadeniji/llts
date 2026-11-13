@@ -55,8 +55,12 @@ pub fn compileDeclaration(state: *CompilerState, decl: *const ast.Declaration) !
 
     const is_module_export = std.mem.indexOf(u8, decl.name, "::") != null;
     // Module / top-level values outlive any frame — allocate literals immortally.
+    // Also promote any local whose address is taken (`&x`) anywhere in the enclosing
+    // function body: a handle stored into a field/returned must outlive the frame
+    // rewind, so we allocate it below the immortal floor rather than in the frame.
     const prev_immortal = state.alloc_immortal;
-    if (state.scope_depth == 0 or is_module_export) state.alloc_immortal = true;
+    const addr_taken = state.addr_taken_decls.contains(decl.value);
+    if (state.scope_depth == 0 or is_module_export or addr_taken) state.alloc_immortal = true;
     defer state.alloc_immortal = prev_immortal;
 
     if (comptime_value) |cval| {
@@ -86,14 +90,21 @@ pub fn compileDeclaration(state: *CompilerState, decl: *const ast.Declaration) !
         } else {
             type_name = try from_ast.typeAstToDisplayQualified(ta, state);
         }
-        // Assignability is enforced in typecheck; keep a defensive check for emit-only paths.
-        if (types.resolveType(state, decl.value)) |got| {
-            if (type_name) |expected| {
-                if (!typesAssignable(state, got, expected)) {
+        // Assignability is enforced in typecheck; keep a defensive check for emit-only
+        // paths. Prefer the recorded IR so the check reads canonical identity.
+        if (type_name) |expected| {
+            var arena = std.heap.ArenaAllocator.init(state.allocator);
+            defer arena.deinit();
+            const got: ?[]const u8 = if (state.type_ir_of_results.get(decl.value)) |got_ir|
+                try ir.displayTypeQualifiedAlloc(arena.allocator(), got_ir)
+            else
+                types.resolveType(state, decl.value);
+            if (got) |g| {
+                if (!typesAssignable(state, g, expected)) {
                     return compile_errors.compileFailFmt(
                         state,
                         "declaration of '{s}': type '{s}' is not assignable to '{s}'",
-                        .{ decl.name, got, expected },
+                        .{ decl.name, g, expected },
                     );
                 }
             }
@@ -135,6 +146,13 @@ pub fn compileDeclaration(state: *CompilerState, decl: *const ast.Declaration) !
             .is_const = decl.is_const,
             .alloc_region = if (cloned) .frame else escape.regionOfRhs(state, decl.value),
         });
+        // If this local's address is taken anywhere in the enclosing function
+        // body, mark it `.pass` so that reads of `x` keep resolving to the
+        // immortal shell (the `&x` itself is type-level for aggregate handles,
+        // but `return &x` / field stores must not dangle).
+        if (addr_taken) {
+            escape.markLocalRegion(state, decl.name, .pass);
+        }
         if (decl.is_const) {
             const slot: u8 = @intCast(state.locals.items.len - 1);
             try emit.emitOp(state, .OP_MARK_CONST);
@@ -147,7 +165,16 @@ pub fn compileDeclaration(state: *CompilerState, decl: *const ast.Declaration) !
             try emit.emitOp(state, .OP_POP);
         }
     } else {
-        if (type_name) |tn| try state.global_types.put(decl.name, tn);
+        if (type_name) |tn| {
+            try state.global_types.put(decl.name, tn);
+            if (!state.global_type_irs.contains(decl.name)) {
+                const t_ir: ?ir.Type = if (std.mem.startsWith(u8, tn, "module:"))
+                    ir.Type{ .struct_ = tn }
+                else
+                    from_ast.parseDisplayType(state, state.typeAlloc(), tn, null) catch null;
+                if (t_ir) |t| try state.global_type_irs.put(decl.name, t);
+            }
+        }
         try emit.emitNameGet(state, .OP_SET_GLOBAL, decl.name);
         try emit.emitOp(state, .OP_POP);
         if (decl.is_const) {
@@ -189,8 +216,9 @@ fn typesAssignable(state: *CompilerState, got: []const u8, expected: []const u8)
             if (std.mem.startsWith(u8, got, "[") and got.len > 1 and got[1] != ']') {
                 return std.mem.eql(u8, got, expected);
             }
-            // []byte / string </: [N]byte
-            if (std.mem.eql(u8, got, "[]byte") or std.mem.eql(u8, got, "string")) return false;
+            // []byte / []u8 / string / const []u8 </: [N]byte / [N]u8
+            if (std.mem.eql(u8, got, "[]byte") or std.mem.eql(u8, got, "[]u8") or std.mem.eql(u8, got, "string") or
+                std.mem.eql(u8, got, "const []u8") or std.mem.eql(u8, got, "[]const u8")) return false;
             return std.mem.eql(u8, got, expected);
         }
         return true;
@@ -265,7 +293,7 @@ fn arrayElemSuffix(display: []const u8) ?[]const u8 {
 
 fn inferDeclType(state: *CompilerState, value: *ast.Node) ?[]const u8 {
     return switch (value.*) {
-        .struct_init => |s| types.resolveStructName(state, s.type_expr),
+        .struct_init => |s| if (s.type_expr) |te| types.resolveStructName(state, te) else null,
         .array_literal => |a| blk: {
             if (a.elements.len == 0) {
                 const s = std.fmt.allocPrint(state.allocator, "[0]unknown", .{}) catch break :blk null;
@@ -278,7 +306,7 @@ fn inferDeclType(state: *CompilerState, value: *ast.Node) ?[]const u8 {
             break :blk s;
         },
         .literal => |lit| switch (lit.literal_type) {
-            .string => "[]byte",
+            .string => "const []u8",
             .boolean => "u1",
             .null => "null",
             .number, .hex, .octal, .binary => if (std.mem.indexOfScalar(u8, lit.value, '.') != null) "float" else "int",
@@ -320,6 +348,7 @@ pub fn compileExtern(state: *CompilerState, ext: *const ast.Extern) !void {
 
 pub fn compileStruct(state: *CompilerState, s: *const ast.StructDecl) !void {
     var type_map = std.StringHashMap([]const u8).init(state.allocator);
+    var field_irs: std.StringHashMapUnmanaged(ir.Type) = .{};
     var field_list: std.ArrayList(layout.FieldSpec) = .empty;
     defer field_list.deinit(state.allocator);
 
@@ -329,6 +358,11 @@ pub fn compileStruct(state: *CompilerState, s: *const ast.StructDecl) !void {
             disp = (try from_ast.typeAstToDisplayQualified(ta, state)) orelse "unknown";
         }
         try type_map.put(field.name, disp);
+        const field_ir = if (field.type_annotation) |ann|
+            from_ast.typeFromAst(ann, state, state.typeAlloc()) catch ir.namedType(disp)
+        else
+            ir.namedType(disp);
+        try field_irs.put(state.allocator, field.name, field_ir);
         try field_list.append(state.allocator, .{ .name = field.name, .type_name = disp });
     }
     const laid = try layout.layoutFields(state.allocator, field_list.items);
@@ -336,12 +370,14 @@ pub fn compileStruct(state: *CompilerState, s: *const ast.StructDecl) !void {
         var old = kv.value;
         old.offsets.deinit();
         old.types.deinit();
+        old.field_irs.deinit(state.allocator);
     }
     try state.structs.put(s.name, .{
         .name = s.name,
         .size = laid.size,
         .offsets = laid.offsets,
         .types = type_map,
+        .field_irs = field_irs,
     });
 
     // Qualify method names to Struct::method for dispatch
@@ -363,6 +399,13 @@ pub fn compileStruct(state: *CompilerState, s: *const ast.StructDecl) !void {
 }
 
 pub fn compileEnum(state: *CompilerState, e: *const ast.EnumDecl) !void {
+    if (e.params.len > 0) {
+        return compile_errors.compileFailFmt(
+            state,
+            "Enum '{s}' cannot take type parameters: variants carry no types to parameterize",
+            .{e.name},
+        );
+    }
     var variants = std.StringHashMap(i32).init(state.allocator);
     var string_values: ?std.StringHashMap([]const u8) = null;
     errdefer if (string_values) |*sv| sv.deinit();
@@ -453,6 +496,7 @@ pub fn compileTypeDecl(state: *CompilerState, td: *const ast.TypeDecl) !void {
     try state.typedefs.put(td.name, .{
         .name = td.name,
         .underlying = disp,
+        .ir = try from_ast.typeFromAst(td.type_expr, state, state.typeAlloc()),
         .distinct = td.distinct,
         .stub = false,
     });
@@ -470,11 +514,16 @@ pub fn compileTypeDecl(state: *CompilerState, td: *const ast.TypeDecl) !void {
             }
         }
     }
+    if (std.mem.indexOf(u8, disp, " | ") != null) {
+        try from_ast.ensureUnionLayoutFromDisplay(state, td.name);
+        try from_ast.ensureUnionLayoutFromDisplay(state, disp);
+    }
 }
 
 fn registerShapeLayout(state: *CompilerState, key: []const u8, shape: *const ast.ShapeType) !void {
     if (state.structs.contains(key)) return;
     var type_map = std.StringHashMap([]const u8).init(state.allocator);
+    var field_irs: std.StringHashMapUnmanaged(ir.Type) = .{};
     var field_list: std.ArrayList(layout.FieldSpec) = .empty;
     defer field_list.deinit(state.allocator);
 
@@ -484,6 +533,11 @@ fn registerShapeLayout(state: *CompilerState, key: []const u8, shape: *const ast
             field_disp = (try from_ast.typeAstToDisplayQualified(ta, state)) orelse "unknown";
         }
         try type_map.put(field.name, field_disp);
+        const field_ir = if (field.type_annotation) |ann|
+            from_ast.typeFromAst(ann, state, state.typeAlloc()) catch ir.namedType(field_disp)
+        else
+            ir.namedType(field_disp);
+        try field_irs.put(state.allocator, field.name, field_ir);
         try field_list.append(state.allocator, .{ .name = field.name, .type_name = field_disp });
     }
     const laid = try layout.layoutFields(state.allocator, field_list.items);
@@ -492,6 +546,7 @@ fn registerShapeLayout(state: *CompilerState, key: []const u8, shape: *const ast
         .size = laid.size,
         .offsets = laid.offsets,
         .types = type_map,
+        .field_irs = field_irs,
     });
 }
 
@@ -503,4 +558,3 @@ fn widthCastKind(node: *ast.Node) ?u8 {
     }
     return null;
 }
-

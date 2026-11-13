@@ -43,22 +43,21 @@ pub fn compileCall(state: *CompilerState, c: *const ast.Call, node: *ast.Node) !
 
     // Generic call: the instance takes only the value arguments.
     if (state.generic_calls.get(node)) |gc| {
-        var value_args: std.ArrayList(*ast.Node) = .empty;
-        defer value_args.deinit(state.allocator);
-        for (generics.params(&gc.template.function_decl), c.args) |p, a| {
-            if (!generics.isTypeParam(p)) try value_args.append(state.allocator, a);
+        const n = @min(gc.value_args, c.args.len);
+        const value_args = c.args[c.args.len - n ..];
+        if (gc.receiver and c.callee.* == .member) {
+            try emitMethodCall(state, gc.instance, c.callee.member.object, value_args);
+            return;
         }
-        if (try emitNamedCall(state, gc.instance, value_args.items, false, null)) return;
+        if (try emitNamedCall(state, gc.instance, value_args, false, null)) return;
         return compile_errors.compileFailFmt(state, "Internal error: missing generic instance '{s}'", .{gc.instance});
     }
 
     // Type-function call used as a value (`print(Opt(i64))`): its name.
     if (types.isTypeCall(state, node)) {
-        const disp = state.type_call_results.get(node) orelse "unknown";
         var arena = std.heap.ArenaAllocator.init(state.allocator);
         defer arena.deinit();
-        const ta = ir.TypeAlloc{ .allocator = arena.allocator() };
-        const t = try types.parseDisplayType(state, ta, disp, null);
+        const t = state.type_call_ir_results.get(node) orelse ir.TUnknown;
         try emit.emitString(state, try ir.displayTypeAlloc(arena.allocator(), t));
         return;
     }
@@ -78,8 +77,9 @@ pub fn compileCall(state: *CompilerState, c: *const ast.Call, node: *ast.Node) !
             // Structs with a real `get` method are unaffected: their type display
             // does not start with `[`.
             if (std.mem.eql(u8, prop, "get") and c.args.len == 1) {
-                if (types.resolveType(state, mem.object)) |disp| {
-                    if (arrayElemDisplay(disp) != null) {
+                if (resolveExprIr(state, mem.object)) |obj_t| {
+                    const peeled = ir.peelDefined(obj_t);
+                    if (peeled == .array and !peeled.array.is_const) {
                         try expr.compileExpression(state, mem.object);
                         try expr.compileExpression(state, c.args[0]);
                         try emit.emitOp(state, .OP_GET_ARRAY_OR_NULL);
@@ -87,30 +87,30 @@ pub fn compileCall(state: *CompilerState, c: *const ast.Call, node: *ast.Node) !
                     }
                 }
             }
-            if (types.resolveType(state, mem.object)) |type_name| {
-                if (types.lookupStruct(state, type_name)) |sd| {
-                    if (sd.offsets.get(prop) == null) {
-                        const method_name = try std.fmt.allocPrint(state.allocator, "{s}::{s}", .{ sd.name, prop });
-                        try state.owned.append(state.allocator, method_name);
-                        try emitMethodCall(state, method_name, mem.object, c.args);
-                        return;
+            if (resolveExprIr(state, mem.object)) |obj_t| {
+                if (ir.structNameOf(obj_t)) |type_name| {
+                    if (types.lookupStruct(state, type_name)) |sd| {
+                        if (sd.offsets.get(prop) == null) {
+                            const method_name = try std.fmt.allocPrint(state.allocator, "{s}::{s}", .{ sd.name, prop });
+                            try state.owned.append(state.allocator, method_name);
+                            try emitMethodCall(state, method_name, mem.object, c.args);
+                            return;
+                        }
                     }
                 }
             }
         }
     }
 
-    if (try resolveCalleeName(state, c.callee)) |name| {
-        if (std.mem.indexOf(u8, name, "::") != null and c.callee.* == .member) {
+    if (try resolveCalleeName(state, c.callee)) |name| {        if (std.mem.indexOf(u8, name, "::") != null and c.callee.* == .member) {
             var buf: [512]u8 = undefined;
             const re_key = std.fmt.bufPrint(&buf, "${s}", .{name}) catch "";
-            const re = state.global_types.get(re_key);
-            const is_reexport = if (re) |r| std.mem.startsWith(u8, r, "module:") else false;
+            const is_reexport = path.moduleBindingType(state, re_key) != null;
             if (!state.chunk.exports.contains(name) and !is_reexport) {
                 const mem = &c.callee.member;
                 const mod_name = if (mem.object.* == .primary) mem.object.primary.name else "Module";
                 const prop_name = if (mem.property.* == .primary) mem.property.primary.name else "property";
-                                return compile_errors.compileFailFmt(state, "'{s}' has no export '{s}'", .{ mod_name, prop_name });
+                return compile_errors.compileFailFmt(state, "'{s}' has no export '{s}'", .{ mod_name, prop_name });
             }
         }
         if (try emitNamedCall(state, name, c.args, false, null)) return;
@@ -130,14 +130,16 @@ pub fn compileCall(state: *CompilerState, c: *const ast.Call, node: *ast.Node) !
     scope.dropLocalEntries(state, state.locals.items.len - locals_before);
 }
 
-/// For an array/slice display type (`[N]T`, `[]T`), return the element display
-/// string. Returns null for tuples (`[A, B]`) and non-array types.
-fn arrayElemDisplay(disp: []const u8) ?[]const u8 {
-    if (disp.len < 2 or disp[0] != '[') return null;
-    const close = std.mem.indexOfScalar(u8, disp, ']') orelse return null;
-    const rest = std.mem.trim(u8, disp[close + 1 ..], " \t");
-    if (rest.len == 0) return null;
-    return rest;
+/// Canonical IR for an expression, falling back to a module-global binding.
+fn resolveExprIr(state: *CompilerState, node: *ast.Node) ?ir.Type {
+    if (state.type_ir_of_results.get(node)) |t| return t;
+    if (node.* == .primary) {
+        const p = node.primary;
+        if ((p.kind == .identifier or p.kind == .register) and scope.resolveLocal(state, p.name) == -1) {
+            if (state.global_type_irs.get(p.name)) |t| return t;
+        }
+    }
+    return null;
 }
 
 fn emitMethodCall(state: *CompilerState, name: []const u8, self_obj: *ast.Node, args: []*ast.Node) !void {

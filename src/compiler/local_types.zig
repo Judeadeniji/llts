@@ -39,6 +39,8 @@ pub fn hoist(state: *CompilerState, statements: []*ast.Node) !void {
             // Template bodies are hoisted per instance (see `generics.zig`).
             .function_decl => |*f| if (!state.templates.contains(f.name)) try hoistFunction(state, f, f.name),
             .struct_decl => |st| {
+                // Generic struct methods are hoisted per instance (`generics.zig`).
+                if (st.params.len > 0) continue;
                 for (st.methods) |m| {
                     if (m.* != .function_decl) continue;
                     const owner = try std.fmt.allocPrint(state.allocator, "{s}::{s}", .{ st.name, m.function_decl.name });
@@ -68,8 +70,8 @@ fn bodyHasLocalType(node: ?*ast.Node) bool {
     const n = node orelse return false;
     switch (n.*) {
         .type_decl => return true,
-        .function_decl, .struct_decl, .enum_decl, .error_decl, .extern_decl, .literal, .params, .continue_expr => return false,
-        .primary, .declaration, .binary, .unary, .assignment, .call, .member, .index, .array_literal, .block, .return_expr, .if_expr, .switch_expr, .for_expr, .break_expr, .defer_stmt, .struct_init, .try_expr, .unwrap_expr, .error_expr, .comptime_expr, .array_type, .pointer_type, .tuple_type, .union_type, .intersection_type, .func_type, .shape_type => {},
+        .function_decl, .struct_decl, .enum_decl, .error_decl, .extern_decl, .literal, .params => return false,
+        .primary, .declaration, .binary, .unary, .assignment, .call, .member, .index, .array_literal, .block, .return_expr, .if_expr, .switch_expr, .for_expr, .break_expr, .continue_expr, .defer_stmt, .struct_init, .try_expr, .unwrap_expr, .error_expr, .comptime_expr, .array_type, .pointer_type, .tuple_type, .union_type, .intersection_type, .func_type, .shape_type => {},
     }
     return nodeChildrenHaveLocalType(n);
 }
@@ -119,7 +121,7 @@ fn nodeChildrenHaveLocalType(n: *ast.Node) bool {
         .break_expr => |br| return bodyHasLocalType(br.value),
         .defer_stmt => |d| return bodyHasLocalType(d.body),
         .struct_init => |si| {
-            if (bodyHasLocalType(si.type_expr)) return true;
+            if (si.type_expr) |te| if (bodyHasLocalType(te)) return true;
             for (si.fields) |f| if (bodyHasLocalType(f.value)) return true;
             return false;
         },
@@ -146,7 +148,8 @@ fn nodeChildrenHaveLocalType(n: *ast.Node) bool {
             for (st.fields) |f| if (bodyHasLocalType(f.type_annotation)) return true;
             return false;
         },
-        .type_decl, .function_decl, .struct_decl, .enum_decl, .error_decl, .extern_decl, .literal, .params, .continue_expr => return false,
+        .continue_expr => |c| return bodyHasLocalType(c.value),
+        .type_decl, .function_decl, .struct_decl, .enum_decl, .error_decl, .extern_decl, .literal, .params => return false,
     }
 }
 
@@ -179,6 +182,11 @@ const Scoped = struct {
             try decl.compileTypeDecl(self.state, td);
             try self.state.local_type_decls.put(td, {});
         }
+    }
+
+    /// Scoped hoisting never rewrites array lengths.
+    fn length(_: *const Scoped, _: []const u8) ?[]const u8 {
+        return null;
     }
 
     fn lookup(self: *const Scoped, name: []const u8) ?[]const u8 {
@@ -256,11 +264,18 @@ const Scoped = struct {
 };
 
 /// One flat set of renames applied everywhere (type parameters of a generic instance).
+/// `lengths` substitutes value parameters into array lengths (`[N]T`).
 const Flat = struct {
-    renames: *const Renames,
+    renames: ?*const Renames = null,
+    lengths: ?*const std.StringHashMap([]const u8) = null,
 
     fn lookup(self: *const Flat, name: []const u8) ?[]const u8 {
-        return self.renames.get(name);
+        const r = self.renames orelse return null;
+        return r.get(name);
+    }
+    fn length(self: *const Flat, text: []const u8) ?[]const u8 {
+        const l = self.lengths orelse return null;
+        return l.get(text);
     }
     fn enter(_: *Flat, _: []*ast.Node) Error!void {}
     fn leave(_: *Flat) void {}
@@ -310,6 +325,14 @@ pub fn renameOpt(node: ?*ast.Node, renames: *const Renames) void {
 pub fn rename(node: *ast.Node, renames: *const Renames) void {
     var ctx = Flat{ .renames = renames };
     walk(node, &ctx) catch unreachable;
+}
+
+/// Replace array lengths spelled as a value parameter with its argument
+/// (`[N]T` → `[4]T`). Used by generic struct instances.
+pub fn substituteLengths(node: ?*ast.Node, lengths: *const std.StringHashMap([]const u8)) void {
+    const n = node orelse return;
+    var ctx = Flat{ .lengths = lengths };
+    walk(n, &ctx) catch unreachable;
 }
 
 fn walkOpt(node: ?*ast.Node, ctx: anytype) Error!void {
@@ -378,14 +401,19 @@ fn walk(node: *ast.Node, ctx: anytype) Error!void {
         .break_expr => |br| try walkOpt(br.value, ctx),
         .defer_stmt => |d| try walk(d.body, ctx),
         .struct_init => |s| {
-            try walk(s.type_expr, ctx);
+            if (s.type_expr) |te| try walk(te, ctx);
             for (s.fields) |f| try walk(f.value, ctx);
         },
         .try_expr => |t| try walk(t.expression, ctx),
         .unwrap_expr => |u| try walk(u.expression, ctx),
         .error_expr => |e| for (e.args) |a| try walk(a, ctx),
         .comptime_expr => |c| try walk(c.expr, ctx),
-        .array_type => |a| try walk(a.elem, ctx),
+        .array_type => |*a| {
+            try walk(a.elem, ctx);
+            if (a.length_text) |text| {
+                if (ctx.length(text)) |sub| a.length_text = sub;
+            }
+        },
         .pointer_type => |p| try walk(p.elem, ctx),
         .tuple_type => |t| for (t.elems) |e| try walk(e, ctx),
         .union_type => |u| {
@@ -401,6 +429,7 @@ fn walk(node: *ast.Node, ctx: anytype) Error!void {
             try walkOpt(f.return_type, ctx);
         },
         .shape_type => |s| for (s.fields) |f| try walkOpt(f.type_annotation, ctx),
-        .literal, .params, .continue_expr, .function_decl, .struct_decl, .enum_decl, .error_decl, .extern_decl => {},
+        .continue_expr => |c| try walkOpt(c.value, ctx),
+        .literal, .params, .function_decl, .struct_decl, .enum_decl, .error_decl, .extern_decl => {},
     }
 }

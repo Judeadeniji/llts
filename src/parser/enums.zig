@@ -1,6 +1,7 @@
 const std = @import("std");
 const ctx = @import("ctx.zig");
 const ast = @import("../ast/root.zig");
+const decl = @import("decl.zig");
 
 const Parser = ctx.Parser;
 const ParseError = ctx.ParseError;
@@ -10,6 +11,12 @@ const Node = ast.Node;
 pub fn parseCompilerEnum(self: *Parser) ParseError!*Node {
     const enum_token = self.previous() orelse return error.ParseFailed;
     const name = try self.consume(.identifier, "Expected enum name", null);
+    // `@enum Name(T: type)` parses, then compileEnum rejects the params.
+    var params: []ast.Param = &.{};
+    if (self.checkDelim("(")) {
+        _ = self.advance();
+        params = (try decl.parseParamsList(self)).elements;
+    }
     _ = try self.consume(.delimiter, "Expected '{' before enum body", "{");
 
     var variants: std.ArrayList(ast.EnumVariant) = .empty;
@@ -48,6 +55,7 @@ pub fn parseCompilerEnum(self: *Parser) ParseError!*Node {
     return self.create(.{ .enum_decl = .{
         .name = try self.dupe(name.value),
         .variants = try variants.toOwnedSlice(self.arena),
+        .params = params,
         .loc = self.locOf(enum_token),
     } });
 }

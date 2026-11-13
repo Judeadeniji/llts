@@ -1,5 +1,6 @@
 const std = @import("std");
 const state_mod = @import("state.zig");
+const ir = @import("typecheck/ir.zig");
 const ast = @import("../ast/root.zig");
 const scanner = @import("../scanner/root.zig");
 const parser = @import("../parser/root.zig");
@@ -102,7 +103,7 @@ fn treeContainsImport(node: *ast.Node) bool {
             return treeContainsImport(d.value);
         },
         .struct_init => |init| {
-            if (treeContainsImport(init.type_expr)) return true;
+            if (init.type_expr) |te| if (treeContainsImport(te)) return true;
             for (init.fields) |f| if (treeContainsImport(f.value)) return true;
             return false;
         },
@@ -219,7 +220,7 @@ fn loadImportsInTree(
             }
         },
         .struct_init => |init| {
-            try loadImportsInTree(state, doc, init.type_expr, current_module, out, visited);
+            if (init.type_expr) |te| try loadImportsInTree(state, doc, te, current_module, out, visited);
             for (init.fields) |f| try loadImportsInTree(state, doc, f.value, current_module, out, visited);
         },
         .for_expr => |f| {
@@ -360,11 +361,13 @@ fn loadModule(
         const owned_key = try std.fmt.allocPrint(state.allocator, "${s}", .{name});
         try state.owned.append(state.allocator, owned_key);
         try state.global_types.put(owned_key, mod_val);
+        try state.global_type_irs.put(owned_key, .{ .struct_ = mod_val });
 
         if (current_module) |parent| {
             const owned_pkey = try std.fmt.allocPrint(state.allocator, "${s}::{s}", .{ parent, name });
             try state.owned.append(state.allocator, owned_pkey);
             try state.global_types.put(owned_pkey, mod_val);
+            try state.global_type_irs.put(owned_pkey, .{ .struct_ = mod_val });
         }
     }
 
@@ -666,7 +669,7 @@ fn rewriteModuleRefs(
             }
         },
         .struct_init => |*init| {
-            try rewriteModuleRefs(state, init.type_expr, local_map, bound);
+            if (init.type_expr) |te| try rewriteModuleRefs(state, te, local_map, bound);
             for (init.fields) |*f| {
                 try rewriteModuleRefs(state, f.value, local_map, bound);
             }
@@ -813,7 +816,7 @@ fn collectLocal(state: *CompilerState, node: *ast.Node, mod_key: []const u8, map
 fn rewriteRefs(node: *ast.Node, local_map: *std.StringHashMap([]const u8)) void {
     switch (node.*) {
         .struct_init => |*s| {
-            rewriteRefs(s.type_expr, local_map);
+            if (s.type_expr) |te| rewriteRefs(te, local_map);
             for (s.fields) |f| rewriteRefs(f.value, local_map);
         },
         .primary => |*p| {

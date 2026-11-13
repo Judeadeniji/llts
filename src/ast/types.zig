@@ -6,6 +6,7 @@ pub const ArrayType = struct {
     elem: *Node,
     /// null = unsized slice `[]T`.
     length_text: ?[]const u8 = null,
+    is_const: bool = false,
     loc: Location,
 };
 
