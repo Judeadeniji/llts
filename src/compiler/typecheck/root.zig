@@ -568,7 +568,7 @@ fn requireAssignAt(state: *state_mod.CompilerState, got: ir.Type, expected: ir.T
     if (from) |node| {
         if (matchesValueLiteralToType(node, expected)) return;
     }
-    // Zig-style: integer literals may coerce into any integer width that fits,
+    // Integer literals may coerce into any integer width that fits,
     // including optional integer targets (`?usize`, `?i32`, …).
     if (integerAssignTarget(expected)) |target| {
         if (got == .i64 or ir.peelDefined(got) == .int_lit) {
@@ -1195,7 +1195,7 @@ fn requireMethodReceiver(
 ) TypecheckError!void {
     if (ir.involvesUnknown(got) or ir.involvesUnknown(expected)) return;
     if (ir.isSubtype(got, expected)) return;
-    // Zig-style: value receiver auto-& into *T; *T auto-deref into value receiver.
+    // Value receivers auto-& into *T; *T auto-deref into value receivers.
     if (expected == .ptr and got == .struct_) {
         if (expected.ptr.* == .struct_ and std.mem.eql(u8, got.struct_, expected.ptr.*.struct_)) return;
     }
@@ -1476,7 +1476,7 @@ fn isBareIntLiteral(node: *ast.Node) bool {
     };
 }
 
-/// Zig-style: a bare integer literal may take on the other operand's integer width.
+/// A bare integer literal may take on the other operand's integer width.
 fn coerceNumericPair(
     state: *state_mod.CompilerState,
     l: ir.Type,

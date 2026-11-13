@@ -1,4 +1,4 @@
-//! Shared integer / float width table (Zig-like) — canonical copy owned by the
+//! Shared integer / float width table — canonical copy owned by the
 //! native runtime. `src/compiler/widths.zig` re-exports these plus the
 //! `Value`-dependent helpers so every existing `widths.X` import keeps working.
 //! Honest end-to-end: type IR, packed layout, `@as`, and `Value` tags agree.

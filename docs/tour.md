@@ -362,7 +362,7 @@ Only symbols marked with `pub` are accessible outside their declaring file.
 
 ## 12. Native Hardware Access: Inline Assembly
 
-When compiling natively (`--native`), LLTS supports GNU/Zig-style inline assembly:
+When compiling natively (`--native`), LLTS supports GNU-style inline assembly:
 
 ```lls
 pub @func main() {

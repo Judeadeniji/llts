@@ -239,7 +239,7 @@ pub fn parseContinueStatement(self: *Parser) ParseError!*Node {
         const lab = try self.consume(.identifier, "Expected label after ':' in continue statement", null);
         label = try self.dupe(lab.value);
     }
-    // Zig-style labeled switch continue: `continue :sw new_value;`.
+    // Labeled switch continue: `continue :sw new_value;`.
     var value: ?*Node = null;
     if (!self.checkDelim(";")) {
         value = try expr.parseExpression(self);

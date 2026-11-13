@@ -1,6 +1,6 @@
 # LLTS
 
-**LLTS is a strictly-typed systems programming language with a compact type system, Zig-inspired explicit memory, and a native compiler generating standalone machine binaries.**
+**LLTS is a strictly-typed systems programming language with a compact type system, explicit memory management, and a native compiler generating standalone machine binaries.**
 
 LLTS is a name, not an acronym, and it is not TypeScript — just as LLVM is not a VM. Its type notation borrows a few ideas — structural object types, unions, and optional `?T` — but the syntax, compiler, native backend, and memory model are its own.
 

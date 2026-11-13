@@ -339,7 +339,7 @@ fn arenaCreate(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
         else => return fail(vm, "__arena_create", "invalid capacity"),
     };
     if (hint < 0) return fail(vm, "__arena_create", "invalid capacity");
-    // hint = initial chunk size (0 → DEFAULT_CHUNK). Arena grows when full (Zig-like).
+    // hint = initial chunk size (0 → DEFAULT_CHUNK). Arena grows when full.
     const cap: i32 = if (hint == 0) DEFAULT_CHUNK else @intCast(hint);
 
     const chunk = try makeChunk(vm, cap);

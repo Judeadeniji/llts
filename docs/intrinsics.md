@@ -46,7 +46,7 @@ Embeds target-specific machine instructions directly into the native compilation
 @asm("nop");
 ```
 
-#### Extended GNU/Zig-Style Assembly
+#### Extended GNU-Style Assembly
 ```lls
 $res = @asm(i64, ```
     movq %[val], %[out]

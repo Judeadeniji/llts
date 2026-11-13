@@ -99,7 +99,7 @@ $second = Node { val: 2, next: &first };
 
 ## 4. Scope Cleanup: `defer` and `errdefer`
 
-LLTS provides deterministic, scope-based cleanup mechanisms inspired by Zig.
+LLTS provides deterministic, scope-based cleanup mechanisms.
 
 ### `defer <statement>;`
 `defer` schedules a statement to run unconditionally when the surrounding lexical block exits (whether normally, via `return`, `break`, or early exit):

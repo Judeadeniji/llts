@@ -75,7 +75,7 @@ pub const AsmInput = struct {
     arg_index: usize,
 };
 
-/// Parsed GNU/Zig-style extended assembly attached to an `@asm` call.
+/// Parsed GNU-style extended assembly attached to an `@asm` call.
 /// `Call.args[0]` is the declared result type; remaining arguments are the
 /// expressions referenced by input/output `${...}` holes.
 pub const InlineAsm = struct {

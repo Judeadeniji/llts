@@ -134,7 +134,7 @@ $label = @switch (count) {
 ```
 
 ### Labeled Switch Continue (`continue :label new_value;`)
-LLTS supports Zig-style labeled `@switch` continuation. An arm can store a new scrutinizing value and restart matching at the labeled `@switch`:
+LLTS supports labeled `@switch` continuation. An arm can store a new scrutinizing value and restart matching at the labeled `@switch`:
 
 ```lls
 $state = 1;

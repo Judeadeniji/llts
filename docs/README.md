@@ -1,6 +1,6 @@
 # LLTS Documentation
 
-Welcome to the documentation for LLTS — a small systems language with a compact type system, Zig-inspired explicit memory, and a hand-written compiler with bytecode and native backends.
+Welcome to the documentation for LLTS — a small systems language with a compact type system, explicit memory management, and a hand-written compiler with bytecode and native backends.
 
 ## Contents
 

@@ -17,7 +17,7 @@ Native code may embed target-specific, side-effecting assembly with `@asm("templ
 
 ## Extended Assembly
 
-Extended assembly uses GNU/Zig-style template, output, input, and clobber sections:
+Extended assembly uses GNU-style template, output, input, and clobber sections:
 
 ```lls
 @asm(ReturnType, ```<template> : <outputs> : <inputs> : <clobbers>```)
