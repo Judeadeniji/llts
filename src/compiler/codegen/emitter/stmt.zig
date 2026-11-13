@@ -895,7 +895,7 @@ pub fn emitLocalDeclaration(self: *Emitter, node: *ast_mod.Node, d: *const ast_m
     if (info.zig_name.len == 0) info.zig_name = try self.localName(d.name);
 
     const init_code = if (d.type_annotation != null)
-        try expr_mod.emitValueCoerced(self, d.value, vt)
+        try expr_mod.emitDeclaredValue(self, d.value, vt)
     else
         try expr_mod.emitExpr(self, d.value);
 

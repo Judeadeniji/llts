@@ -471,7 +471,7 @@ pub fn emitTopLevel(self: *Emitter) !void {
             if (g.fn_key != null or g.module_path != null) continue;
             try stmt_mod.emitLineMarker(self, s);
             const vt = try self.valTypeFor(s, g.ir_type, g.display);
-            const code = try expr_mod.emitValueCoerced(self, d.value, vt);
+            const code = try expr_mod.emitDeclaredValue(self, d.value, vt);
             try self.writeIndent();
             try self.writer.print("{s} = {s};\n", .{ g.zig_name, code });
             continue;

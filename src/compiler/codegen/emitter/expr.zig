@@ -1258,8 +1258,21 @@ pub fn emitValueCoercedForce(self: *Emitter, node: *ast_mod.Node, target: ValTyp
 }
 
 pub fn emitValueCoercedMode(self: *Emitter, node: *ast_mod.Node, target: ValType, force: bool) ![]const u8 {
+    return emitValueCoercedFrom(self, node, null, target, force);
+}
+
+/// Coerce a declaration initializer to the declared type. The checker rewrites
+/// the initializer's recorded type to the annotation, so a place initializer
+/// (`$b: B = a;`) would otherwise look like it already has the target type.
+/// The place's storage type is what the emitted Zig actually holds.
+pub fn emitDeclaredValue(self: *Emitter, node: *ast_mod.Node, target: ValType) anyerror![]const u8 {
+    const src = try placeStorageType(self, node);
+    return emitValueCoercedFrom(self, node, src, target, false);
+}
+
+fn emitValueCoercedFrom(self: *Emitter, node: *ast_mod.Node, src_override: ?ValType, target: ValType, force: bool) anyerror![]const u8 {
     const a = self.arena.allocator();
-    const src = try self.valueType(node);
+    const src = src_override orelse try self.valueType(node);
     if (target.kind == .error_value) {
         if (src.kind != .error_value) {
             return self.failAt(node, "cannot assign '{s}' to '{s}' in native emission", .{ src.display, target.display });
@@ -1410,7 +1423,10 @@ pub fn emitValueCoercedMode(self: *Emitter, node: *ast_mod.Node, target: ValType
         }
         return code;
     }
-    if (target.kind == .struct_ and src.kind == .struct_) return code;
+    if (target.kind == .struct_ and src.kind == .struct_) {
+        if (std.mem.eql(u8, src.zig, target.zig)) return code;
+        return coerceStructValue(self, node, code, src, target);
+    }
     // `return self` from a pointer-receiver method: the VM reports the struct
     // display, so native copies the pointee to match the declared type.
     if (target.kind == .struct_ and src.kind == .pointer and src.payload != null and
@@ -1431,6 +1447,100 @@ pub fn emitValueCoercedMode(self: *Emitter, node: *ast_mod.Node, target: ValType
     if (target.kind == .slice and src.kind == .slice) return code;
     if (target.kind == .pointer and src.kind == .pointer) return code;
     return self.failAt(node, "cannot assign '{s}' to '{s}' in native emission", .{ src.display, target.display });
+}
+
+/// Storage type of a place expression (identifier/member/index) as emitted,
+/// independent of any contextual type the checker recorded on the node. Used
+/// for declaration initializers, where the annotation replaces the recorded
+/// initializer type (`$b: B = a;` records `B` on `a`).
+fn placeStorageType(self: *Emitter, node: *ast_mod.Node) anyerror!?ValType {
+    switch (node.*) {
+        .primary => |p| {
+            if (p.kind != .identifier and p.kind != .register) return null;
+            if (self.lookupBindingOptional(p.name)) |b| {
+                if (b.fn_key != null or b.module_path != null or b.ir_type == null) return null;
+                return try self.valTypeFor(node, b.ir_type, b.display);
+            }
+            if (self.globals.get(p.name)) |g| {
+                if (g.fn_key != null or g.module_path != null or g.ir_type == null) return null;
+                return try self.valTypeFor(node, g.ir_type, g.display);
+            }
+            return null;
+        },
+        .member => |*m| {
+            const target = (try resolveMemberField(self, node, m)) orelse return null;
+            return target.info.fields[target.index].vt;
+        },
+        .index => |*ix| {
+            if (ix.is_slice) return null;
+            var obj = try self.valueType(ix.object);
+            if (obj.kind == .pointer) obj = (obj.payload orelse return null).*;
+            if (obj.kind == .array or obj.kind == .slice) {
+                return (obj.elem orelse return null).*;
+            }
+            if (obj.kind == .struct_) {
+                const info = (try self.structInfoForValType(node, obj)) orelse return null;
+                const idx_node = ix.index orelse return null;
+                const idx_text = switch (idx_node.*) {
+                    .literal => |lit| if (lit.literal_type == .number) lit.value else null,
+                    else => null,
+                };
+                if (idx_text) |text| {
+                    if (info.field_index.get(text)) |fidx| return info.fields[fidx].vt;
+                }
+            }
+            return null;
+        },
+        else => return null,
+    }
+}
+
+/// Rebuild a struct value in another struct type that shares its field names.
+/// Zig struct types are nominal, so a value of a named `@type`/`@struct` and an
+/// anonymous shape spelling of the same fields (or an alias of either) cannot
+/// be assigned directly even though the LLTS type checker accepts the subtype
+/// relation. Fields absent from the target are dropped, matching shape width
+/// subtyping.
+fn coerceStructValue(self: *Emitter, node: *ast_mod.Node, code: []const u8, src: ValType, target: ValType) anyerror![]const u8 {
+    const a = self.arena.allocator();
+    const src_info = (try self.structInfoForValType(node, src)) orelse {
+        return self.failAt(node, "cannot assign '{s}' to '{s}' in native emission", .{ src.display, target.display });
+    };
+    const target_info = (try self.structInfoForValType(node, target)) orelse {
+        return self.failAt(node, "cannot assign '{s}' to '{s}' in native emission", .{ src.display, target.display });
+    };
+    self.counter += 1;
+    const id = self.counter;
+    var parts: std.ArrayList([]const u8) = .empty;
+    for (target_info.fields) |target_field| {
+        const src_index = src_info.field_index.get(target_field.name) orelse {
+            return self.failAt(node, "cannot assign '{s}' to '{s}': missing field '{s}'", .{
+                src.display, target.display, target_field.name,
+            });
+        };
+        const src_field = src_info.fields[src_index];
+        const field_code = try std.fmt.allocPrint(a, "lls_conv_{d}.{s}", .{ id, src_field.zig_name });
+        const coerced = try coerceStructField(self, node, field_code, src_field.vt, target_field.vt);
+        try parts.append(a, try std.fmt.allocPrint(a, ".{s} = {s}", .{ target_field.zig_name, coerced }));
+    }
+    const joined = try std.mem.join(a, ", ", parts.items);
+    return std.fmt.allocPrint(a,
+        \\lls_conv_{d}: {{
+        \\    const lls_conv_{d}: {s} = {s};
+        \\    break :lls_conv_{d} {s}{{ {s} }};
+        \\}}
+    , .{ id, id, src.zig, code, id, target_info.zig_name, joined });
+}
+
+/// Convert one field of a structural rebuild. Named and anonymous struct types
+/// with the same fields are converted recursively; equal Zig types pass
+/// through unchanged.
+fn coerceStructField(self: *Emitter, node: *ast_mod.Node, code: []const u8, src: ValType, target: ValType) anyerror![]const u8 {
+    if (std.mem.eql(u8, src.zig, target.zig)) return code;
+    if (src.kind == .struct_ and target.kind == .struct_) {
+        return coerceStructValue(self, node, code, src, target);
+    }
+    return code;
 }
 
 fn pointerPointeeMatches(pointee: ValType, target: ValType) bool {

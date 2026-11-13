@@ -499,6 +499,34 @@ test "emitter: array element stays indirect after an element write or a dynamic 
     try helpers.expectNativeStdout(allocator, dynamic, "7\n8\n");
 }
 
+test "pipeline native execution: anonymous shape passed to a named type" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\@type P = { x: i64; y: i64; };
+        \\@func take(p: P) { print(p.x); }
+        \\pub @func main() {
+        \\    $s: { x: i64; y: i64; } = { x: 1, y: 2 };
+        \\    take(s);
+        \\}
+    ;
+    try helpers.expectNativeStdout(allocator, src, "1\n");
+}
+
+test "pipeline native execution: named type and shape alias convert both ways" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\@alias A = { x: i64; };
+        \\@type B = { x: i64; };
+        \\pub @func main() {
+        \\    $a: A = { x: 1 };
+        \\    $b: B = a;
+        \\    $c: A = b;
+        \\    print(b.x, c.x);
+        \\}
+    ;
+    try helpers.expectNativeStdout(allocator, src, "1 1\n");
+}
+
 test "pipeline native execution: closure called through a struct field" {
     const allocator = std.testing.allocator;
     const src =
