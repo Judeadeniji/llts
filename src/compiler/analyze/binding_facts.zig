@@ -39,7 +39,7 @@ pub fn analyze(state: *state_mod.CompilerState, doc: *ast.Document) !void {
     }
 
     try recordClosureParams(state);
-    pruneMemberClosures(state);
+    pruneAggregateClosures(state);
 
     // Synchronize closure captures with addr_taken facts: any capture that is mutated
     // must have its declaration in addr_taken_decls (boxed in immortal heap cell), and any
@@ -71,20 +71,55 @@ pub fn analyze(state: *state_mod.CompilerState, doc: *ast.Document) !void {
     }
 }
 
-/// Drop field-closure facts whose aggregate is mutated anywhere: a field write,
-/// a pointer receiver, or `&obj`. Escape facts settle only after the fixpoint,
-/// so the entries are re-checked here once all rounds are done.
-fn pruneMemberClosures(state: *state_mod.CompilerState) void {
+/// Drop aggregate-element closure facts whose aggregate is mutated anywhere: an
+/// element or field write, a pointer receiver, or `&obj`. Aggregates are
+/// marked assigned at different fixpoint rounds, so the entries are re-checked
+/// here once all rounds are done.
+fn pruneAggregateClosures(state: *state_mod.CompilerState) void {
+    pruneStaleAggregate(state, &state.closure_member_ids);
+    pruneStaleAggregate(state, &state.closure_index_ids);
+}
+
+fn pruneStaleAggregate(state: *state_mod.CompilerState, ids: *std.AutoHashMap(*ast.Node, state_mod.ClosureValueRef)) void {
     var stale: std.ArrayList(*ast.Node) = .empty;
     defer stale.deinit(state.allocator);
-    var it = state.closure_member_ids.iterator();
+    var it = ids.iterator();
     while (it.next()) |entry| {
         const facts = state.binding_facts.get(entry.value_ptr.decl_node) orelse state_mod.BindingFacts{};
         if (facts.assigned or facts.reassigned) {
             stale.append(state.allocator, entry.key_ptr.*) catch return;
         }
     }
-    for (stale.items) |key| _ = state.closure_member_ids.remove(key);
+    for (stale.items) |key| _ = ids.remove(key);
+}
+
+/// The element index of a literal integer, or null when the expression is not a
+/// compile-time constant (a variable index cannot denote a fixed element).
+fn constantIndex(node: *ast.Node) ?usize {
+    if (node.* != .literal) return null;
+    const lit = node.literal;
+    if (lit.literal_type != .number) return null;
+    var raw = lit.value;
+    var radix: u8 = 10;
+    if (std.mem.startsWith(u8, raw, "0x")) {
+        radix = 16;
+        raw = raw[2..];
+    } else if (std.mem.startsWith(u8, raw, "0o")) {
+        radix = 8;
+        raw = raw[2..];
+    } else if (std.mem.startsWith(u8, raw, "0b")) {
+        radix = 2;
+        raw = raw[2..];
+    }
+    var buf: [64]u8 = undefined;
+    var len: usize = 0;
+    for (raw) |ch| {
+        if (ch == '_') continue;
+        if (len == buf.len) return null;
+        buf[len] = ch;
+        len += 1;
+    }
+    return std.fmt.parseInt(usize, buf[0..len], radix) catch null;
 }
 
 /// Record instance parameters that every call site fills with the same closure
@@ -495,6 +530,34 @@ const Ctx = struct {
         }
     }
 
+    /// Remember that `arr[i]` always reads the same closure literal, when `arr`
+    /// is a local built from an array literal, `i` is a compile-time constant,
+    /// and that element holds the closure. Mutating the array, or taking its
+    /// address, marks the local `assigned` and drops the entry.
+    fn recordIndexClosure(ctx: *Ctx, node: *ast.Node, ix: ast.Index) !void {
+        if (ix.is_slice) return;
+        const index_node = ix.index orelse return;
+        const index = constantIndex(index_node) orelse return;
+        if (ix.object.* != .primary) return;
+        const obj = ix.object.primary;
+        if (obj.kind != .identifier and obj.kind != .register) return;
+        const entry = ctx.lookup(obj.name) orelse return;
+        const decl_node = switch (entry) {
+            .decl => |d| d,
+            else => return,
+        };
+        if (decl_node.* != .declaration) return;
+        const value = decl_node.declaration.value;
+        if (value.* != .array_literal) return;
+        if (index >= value.array_literal.elements.len) return;
+        const ref = ctx.closureRefOf(value.array_literal.elements[index]) orelse return;
+        try ctx.state.closure_index_ids.put(node, .{
+            .decl_node = decl_node,
+            .closure_node = ref.closure_node,
+            .id = ref.id,
+        });
+    }
+
     /// The closure an expression denotes: a closure literal, or a local bound to
     /// one that is never reassigned.
     fn closureRefOf(ctx: *Ctx, expr: *ast.Node) ?state_mod.ClosureValueRef {
@@ -780,6 +843,7 @@ const Ctx = struct {
                 try ctx.walkExpr(ix.object);
                 if (ix.index) |v| try ctx.walkExpr(v);
                 if (ix.end) |v| try ctx.walkExpr(v);
+                try ctx.recordIndexClosure(node, ix);
             },
             .array_literal => |al| {
                 for (al.elements) |e| {

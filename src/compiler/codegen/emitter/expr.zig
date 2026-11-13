@@ -315,10 +315,12 @@ pub fn emitCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) any
 
     // A closure literal may be called on the spot (`(@func (x: int) { … })(1)`);
     // its target is registered by the binding analysis like any other closure.
-    // A function-valued field (`counter.increment()`) is not a method, so it
-    // falls through to the function-value call path below.
+    // A function-valued field (`counter.increment()`) is not a method, and an
+    // element (`handlers[0]()`) is not a name, so both fall through to the
+    // function-value call path below.
     if (c.callee.* != .primary and c.callee.* != .call and
-        c.callee.* != .function_decl and c.callee.* != .member)
+        c.callee.* != .function_decl and c.callee.* != .member and
+        c.callee.* != .index)
     {
         return self.failAt(node, "native backend (Phase 2) only supports direct function calls", .{});
     }
@@ -492,19 +494,25 @@ pub fn emitCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) any
         }
         const args_joined = try std.mem.join(a, ", ", args_buf.items);
         const callee_expr = try emitExpr(self, c.callee);
-        // A field that always holds the same closure calls that closure's
-        // trampoline directly; the environment still arrives in the field, so
-        // no indirect call is needed.
-        if (c.callee.* == .member) {
-            if (self.state.closure_member_ids.get(c.callee)) |ref| {
-                self.counter += 1;
-                const cid = self.counter;
-                const tramp = try std.fmt.allocPrint(a, "lls_closure_fn_{d}", .{ref.id});
-                if (args_joined.len == 0) {
-                    return std.fmt.allocPrint(a, "blk: {{ const lls_f_{d} = {s}; break :blk (try {s}(ctx, lls_f_{d}.env)); }}", .{ cid, callee_expr, tramp, cid });
-                }
-                return std.fmt.allocPrint(a, "blk: {{ const lls_f_{d} = {s}; break :blk (try {s}(ctx, lls_f_{d}.env, {s})); }}", .{ cid, callee_expr, tramp, cid, args_joined });
+        // A field or element that always holds the same closure calls that
+        // closure's trampoline directly; the environment still arrives in the
+        // aggregate, so no indirect call is needed.
+        const agg_ref = switch (c.callee.*) {
+            .member => self.state.closure_member_ids.get(c.callee),
+            .index => self.state.closure_index_ids.get(c.callee),
+            else => null,
+        };
+        if (agg_ref) |ref| {
+            self.counter += 1;
+            const cid = self.counter;
+            const tramp = try std.fmt.allocPrint(a, "lls_closure_fn_{d}", .{ref.id});
+            // An element read carries its own `blk:` (bounds check), so the
+            // label must not be reused.
+            const label = try std.fmt.allocPrint(a, "lls_agg_{d}", .{cid});
+            if (args_joined.len == 0) {
+                return std.fmt.allocPrint(a, "{s}: {{ const lls_f_{d} = {s}; break :{s} (try {s}(ctx, lls_f_{d}.env)); }}", .{ label, cid, callee_expr, label, tramp, cid });
             }
+            return std.fmt.allocPrint(a, "{s}: {{ const lls_f_{d} = {s}; break :{s} (try {s}(ctx, lls_f_{d}.env, {s})); }}", .{ label, cid, callee_expr, label, tramp, cid, args_joined });
         }
 
         // A parameter that always receives the same closure calls that
@@ -524,10 +532,13 @@ pub fn emitCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) any
         }
         self.counter += 1;
         const cid = self.counter;
+        // The callee expression can carry its own `blk:` (an indexed or
+        // bounds-checked read), so this wrapper needs a label of its own.
+        const label = try std.fmt.allocPrint(a, "lls_fptr_{d}", .{cid});
         if (args_joined.len == 0) {
-            return std.fmt.allocPrint(a, "blk: {{ const lls_f_{d} = {s}; break :blk (try lls_f_{d}.call(ctx, lls_f_{d}.env)); }}", .{ cid, callee_expr, cid, cid });
+            return std.fmt.allocPrint(a, "{s}: {{ const lls_f_{d} = {s}; break :{s} (try lls_f_{d}.call(ctx, lls_f_{d}.env)); }}", .{ label, cid, callee_expr, label, cid, cid });
         }
-        return std.fmt.allocPrint(a, "blk: {{ const lls_f_{d} = {s}; break :blk (try lls_f_{d}.call(ctx, lls_f_{d}.env, {s})); }}", .{ cid, callee_expr, cid, cid, args_joined });
+        return std.fmt.allocPrint(a, "{s}: {{ const lls_f_{d} = {s}; break :{s} (try lls_f_{d}.call(ctx, lls_f_{d}.env, {s})); }}", .{ label, cid, callee_expr, label, cid, cid, args_joined });
     }
 
     return self.failAt(node, "native backend cannot resolve function '{s}' (function values must be called directly)", .{callee});

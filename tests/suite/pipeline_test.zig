@@ -409,6 +409,96 @@ test "emitter: field of an address-taken struct stays indirect" {
     try helpers.expectNativeStdout(allocator, src, "1\n2\n");
 }
 
+test "emitter: closure held in an array element is called directly" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\pub @func main() {
+        \\    $n: int = 0;
+        \\    $handlers: [2]@func(): int = [
+        \\        @func(): int {
+        \\            n = n + 1;
+        \\            return n;
+        \\        },
+        \\        @func(): int {
+        \\            return 9;
+        \\        },
+        \\    ];
+        \\    print(handlers[0]());
+        \\    print(handlers[1]());
+        \\}
+    ;
+    try helpers.expectEmitOmits(allocator, src, ".call(ctx");
+}
+
+test "pipeline native execution: array element closures keep their own environments" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\pub @func main() {
+        \\    $n: int = 0;
+        \\    $handlers: [2]@func(): int = [
+        \\        @func(): int {
+        \\            n = n + 1;
+        \\            return n;
+        \\        },
+        \\        @func(): int {
+        \\            return 9;
+        \\        },
+        \\    ];
+        \\    print(handlers[0]());
+        \\    print(handlers[1]());
+        \\    print(handlers[0]());
+        \\}
+    ;
+    try helpers.expectNativeStdout(allocator, src, "1\n9\n2\n");
+}
+
+test "emitter: array element stays indirect after an element write or a dynamic index" {
+    const allocator = std.testing.allocator;
+    const mutated =
+        \\pub @func main() {
+        \\    $n: int = 0;
+        \\    $handlers: [2]@func(): int = [
+        \\        @func(): int {
+        \\            n = n + 1;
+        \\            return n;
+        \\        },
+        \\        @func(): int {
+        \\            return 8;
+        \\        },
+        \\    ];
+        \\    print(handlers[0]());
+        \\    handlers[0] = @func(): int {
+        \\        n = n + 10;
+        \\        return n;
+        \\    };
+        \\    print(handlers[0]());
+        \\}
+    ;
+    // The write replaces the element, so the calls may not assume a target.
+    try helpers.expectEmitContains(allocator, mutated, ".call(ctx");
+    try helpers.expectNativeStdout(allocator, mutated, "1\n11\n");
+
+    const dynamic =
+        \\@func pick(xs: [2]@func(): int, i: int): int {
+        \\    return xs[i]();
+        \\}
+        \\pub @func main() {
+        \\    $handlers: [2]@func(): int = [
+        \\        @func(): int {
+        \\            return 7;
+        \\        },
+        \\        @func(): int {
+        \\            return 8;
+        \\        },
+        \\    ];
+        \\    print(handlers[0]());
+        \\    print(pick(handlers, 1));
+        \\}
+    ;
+    try helpers.expectEmitContains(allocator, dynamic, ".call(ctx");
+    try helpers.expectNativeStdout(allocator, dynamic, "7\n8\n");
+}
+
 test "pipeline native execution: closure called through a struct field" {
     const allocator = std.testing.allocator;
     const src =

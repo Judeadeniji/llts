@@ -418,6 +418,11 @@ pub const CompilerState = struct {
     /// literal, mapped to that closure. `decl_node` is the local that owns the
     /// aggregate; an entry survives only while that local is never mutated.
     closure_member_ids: std.AutoHashMap(*ast.Node, ClosureValueRef),
+    /// Index expressions (`arr[0]`) whose element always holds one closure
+    /// literal, mapped to that closure. Keys are plain element reads of a local
+    /// array literal at a compile-time constant index; an entry survives only
+    /// while that local is never mutated.
+    closure_index_ids: std.AutoHashMap(*ast.Node, ClosureValueRef),
     /// Last AST location seen while compiling — used when a CompileError has no explicit loc.
     diag_path: []const u8 = "",
     diag_line: u32 = 0,
@@ -458,6 +463,7 @@ pub fn create(allocator: std.mem.Allocator) !CompilerState {
         .closure_params = std.AutoHashMap(*const ast.Param, u32).init(allocator),
         .closure_value_ids = std.AutoHashMap(*ast.Node, ClosureValueRef).init(allocator),
         .closure_member_ids = std.AutoHashMap(*ast.Node, ClosureValueRef).init(allocator),
+        .closure_index_ids = std.AutoHashMap(*ast.Node, ClosureValueRef).init(allocator),
         .chunk = chunk_mod.Chunk.init(allocator),
         .comptime_max_loop_iterations = max_iters,
         .functions = std.StringHashMap(FunctionDef).init(allocator),
@@ -681,6 +687,7 @@ pub fn deinit(self: *CompilerState) void {
     self.closure_params.deinit();
     self.closure_value_ids.deinit();
     self.closure_member_ids.deinit();
+    self.closure_index_ids.deinit();
 }
 
 pub fn currentChunk(state: *CompilerState) *chunk_mod.Chunk {
