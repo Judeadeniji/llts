@@ -94,6 +94,21 @@ llts build --native --target aarch64-linux src/main.lls -o bin/app-arm64
 > [!IMPORTANT]
 > The native backend enforces `--strict` typing mode by default. Parameter types and struct/union soundness must be explicit.
 
+#### Native Build Cache
+
+Native builds invoke the Zig compiler, which keeps an analysis cache. `llts` points that cache at a dedicated directory instead of the project's `.zig-cache`: the project cache holds every `zig build` artifact and grows into gigabytes, and a miss there costs roughly three times a miss in a small dedicated cache. Native compilations are almost always misses (each program's text differs, so the runtime is re-analyzed), which makes that gap the dominant per-run cost.
+
+The cache directory is resolved in this order:
+
+| Priority | Location | When |
+|---|---|---|
+| 1 | `$LLTS_NATIVE_CACHE_DIR` | Always wins when set. |
+| 2 | `$TMPDIR/llts-native-cache` | `TMPDIR` is set (typically `/tmp`). |
+| 3 | `/tmp/llts-native-cache` | No usable `TMPDIR`, but `/tmp` exists. |
+| 4 | `$XDG_CACHE_HOME/llts/native`, else `$HOME/.cache/llts/native` | No temp directory is available. |
+
+The directory is created on demand. An empty variable is treated as unset (`TMPDIR=` does not create a relative cache path). Passing an explicit cache through `llts run --native --zig-args "--cache-dir=..."` (or `LLTS_ZIG_ARGS`) overrides the default and disables this resolution.
+
 ---
 
 ### 3. `llts emit-zig`
