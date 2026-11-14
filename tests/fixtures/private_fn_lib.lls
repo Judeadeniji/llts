@@ -1,0 +1,7 @@
+@func hidden(): i32 {
+    return 7;
+}
+
+pub @func visible(): i32 {
+    return hidden();
+}

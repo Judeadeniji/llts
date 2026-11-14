@@ -1,0 +1,2 @@
+@extern "c" nothing: void;
+pub @func main() {}

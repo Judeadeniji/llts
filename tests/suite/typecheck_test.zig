@@ -249,13 +249,61 @@ test "extern: registers native C signatures" {
     try std.testing.expectEqual(@as(usize, 0), getpid.params.len);
 }
 
+test "extern: registers data symbols and typechecks reads and writes" {
+    const allocator = std.testing.allocator;
+    const ir = helpers.compiler.ir;
+    const src =
+        \\pub @extern "c" optind: i32;
+        \\@extern "c" environ_ptr: ?*u8;
+        \\pub @func main() {
+        \\    $a: i32 = optind;
+        \\    optind = a + 1;
+        \\}
+    ;
+    var analyzed = try helpers.analyzeSource(allocator, src, true);
+    defer analyzed.deinit();
+
+    const optind = analyzed.state.externs.get("optind").?;
+    try std.testing.expect(optind.kind == .data);
+    try std.testing.expect(std.meta.activeTag(optind.data_type.?) == .scalar);
+    try std.testing.expect(ir.typeEquals(optind.data_type.?.scalar, ir.namedType("i32")));
+    try std.testing.expect(optind.params.len == 0);
+
+    const environ_ptr = analyzed.state.externs.get("environ_ptr").?;
+    try std.testing.expect(std.meta.activeTag(environ_ptr.data_type.?) == .optional_ptr);
+}
+
+test "extern: data symbols reject calls and bad assignments" {
+    const allocator = std.testing.allocator;
+    const cases = [_][]const u8{
+        \\@extern "c" optind: i32;
+        \\pub @func main() { optind(); }
+        ,
+        \\@extern "c" optind: i32;
+        \\pub @func main() { optind = "x"; }
+        ,
+        \\@extern "c" optind: i32;
+        \\pub @func main() { $s: string = optind; }
+        ,
+        \\@extern "c" nothing: void;
+        \\pub @func main() {}
+        ,
+    };
+    for (cases, 0..) |src, i| {
+        helpers.expectCompileFail(allocator, src) catch |err| {
+            std.debug.print("extern data rejection case {d} was accepted\n", .{i});
+            return err;
+        };
+    }
+}
+
 test "extern: registration rejects invalid declarations" {
     const allocator = std.testing.allocator;
     const cases = [_][]const u8{
         \\@extern "stdcall" @func f(): void;
         \\pub @func main() {}
         ,
-        \\@extern "c" errno: i32;
+        \\@extern "c" errno: string;
         \\pub @func main() {}
         ,
         \\@extern "c" @func f(x: void): void;

@@ -82,7 +82,7 @@ Directives handled intrinsically by the compiler front end:
 | `@error` | Closed typed error set declaration |
 | `@type` | Nominal, distinct type declaration |
 | `@alias` | Transparent type alias declaration |
-| `@extern` | External C function binding (native only) |
+| `@extern` | External C function or data binding (native only) |
 | `@const` | Immutable binding modifier |
 | `@if`, `@else` | Conditional branching and value expressions |
 | `@switch` | Pattern matching and value expressions |

@@ -998,6 +998,19 @@ pub const Emitter = struct {
         if (self.globals.get(name)) |g| {
             return .{ .zig_name = g.zig_name, .display = g.display, .ir_type = g.ir_type };
         }
+        if (self.state.externs.get(name)) |ext| {
+            if (ext.kind == .data) {
+                const ct = ext.data_type orelse {
+                    return self.failAt(node, "native backend cannot resolve extern data '{s}'", .{name});
+                };
+                const vt = try self.externCTypeValType(node, ct);
+                return .{
+                    .zig_name = try self.zigIdentifier(ext.symbol),
+                    .display = vt.display,
+                    .ir_type = try from_ast.externCTypeToIr(self.state.typeAlloc(), ct),
+                };
+            }
+        }
         if (self.state.functions.get(name)) |_| {
             const zname = try self.fnName(name);
             const rec_ir = self.recordedType(node);

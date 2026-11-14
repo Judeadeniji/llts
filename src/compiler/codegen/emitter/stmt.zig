@@ -4,6 +4,7 @@ const ir = @import("../../typecheck/ir.zig");
 const state_mod = @import("../../state.zig");
 const root_mod = @import("root.zig");
 const expr_mod = @import("expr.zig");
+const path_mod = @import("../../expr/path.zig");
 const Emitter = root_mod.Emitter;
 const ValType = root_mod.ValType;
 const Binding = root_mod.Binding;
@@ -60,6 +61,20 @@ pub fn emitAssignment(self: *Emitter, node: *ast_mod.Node, asn: *const ast_mod.A
             try self.writer.print("{s} = {s};\n", .{ target.zig_name, rhs });
         },
         .member => |*m| {
+            if (path_mod.tryResolveStaticPath(self.state, asn.left) catch null) |import_key| {
+                if (self.state.externs.get(import_key)) |ext| {
+                    if (ext.kind == .data) {
+                        const vt = try self.externCTypeValType(asn.left, ext.data_type.?);
+                        const rhs = if (compound) |c|
+                            try expr_mod.emitCompoundValue(self, node, asn.left, asn.right, c, vt)
+                        else
+                            try expr_mod.emitValueCoerced(self, asn.right, vt);
+                        try self.writeIndent();
+                        try self.writer.print("{s} = {s};\n", .{ try self.zigIdentifier(ext.symbol), rhs });
+                        return;
+                    }
+                }
+            }
             const target = (try expr_mod.resolveMemberField(self, asn.left, m)) orelse {
                 return self.failAt(asn.left, "native backend only supports assigning to struct fields", .{});
             };
@@ -174,6 +189,11 @@ pub fn emitPlaceLvalue(self: *Emitter, node: *ast_mod.Node) ![]const u8 {
             return target.zig_name;
         },
         .member => |m| {
+            if (path_mod.tryResolveStaticPath(self.state, node) catch null) |import_key| {
+                if (self.state.externs.get(import_key)) |ext| {
+                    if (ext.kind == .data) return self.zigIdentifier(ext.symbol);
+                }
+            }
             const target = (try expr_mod.resolveMemberField(self, node, &m)) orelse {
                 return self.failAt(node, "native backend only supports assigning to struct fields", .{});
             };

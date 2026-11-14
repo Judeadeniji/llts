@@ -207,7 +207,7 @@ $greeting = @concat(0, "Hello, ", "World!");
 ## 7. External Interop
 
 ### `@extern`
-Declares an external C function for linking. Extern declarations are file-scope only and are resolved by the native backend; the bytecode VM rejects them.
+Declares an external C function or data symbol for linking. Extern declarations are file-scope only and are resolved by the native backend; the bytecode VM rejects them.
 
 ```lls
 pub @extern "c" @func puts(s: c_str): i32;
@@ -217,18 +217,22 @@ pub @extern "c" @func puts(s: c_str): i32;
 @extern "c" @func malloc(size: usize): ?*u8;
 @extern "c" @func free(ptr: ?*u8): void;
 @extern "c" @func printf(fmt: c_str, ...): i32;
+@extern "c" optind: i32;
 
 pub @func main() {
     $n: i32 = printf("pid=%d\n", getpid());
+    optind = optind + 1;
 }
 ```
 
-- **Syntax:** `( "pub" )? "@extern" STRING "@func" IDENTIFIER "(" ExternParams? ")" ( ":" Type )? ";"`. An omitted return type means `void`.
+- **Function syntax:** `( "pub" )? "@extern" STRING "@func" IDENTIFIER "(" ExternParams? ")" ( ":" Type )? ";"`. An omitted return type means `void`.
+- **Data syntax:** `( "pub" )? "@extern" STRING IDENTIFIER ":" Type ";"`. The declared type must be a supported C type other than `void`; the symbol is a mutable C global.
 - **ABI:** the string is required and only `"c"` is supported.
 - **Parameters:** names and types are mandatory. `...` may appear only as the final parameter-list token, and at least one fixed parameter must precede it.
-- **Calling:** extern names are not values. They may only be called directly (including through a module import such as `lib.puts(...)`); passing one as a function value is an error.
+- **Calling:** extern functions are not values. They may only be called directly (including through a module import such as `lib.puts(...)`); passing one as a function value is an error.
+- **Data access:** data symbols are ordinary lvalues. Read, assign, use `@typeOf`/`@nameOf`, or qualify a `pub` symbol through a module (`lib.optind`). Calling a data symbol is an error.
 - **Linking:** the LLTS name is the link symbol; `pub` only controls module export. libc is linked by the native pipeline.
-- **Not supported yet:** extern data symbols, non-C ABIs, symbol aliasing, extern structs passed by value, and implicit `string` to `c_str` conversion.
+- **Not supported yet:** non-C ABIs, symbol aliasing, extern structs passed by value, and implicit `string` to `c_str` conversion.
 
 #### C type mapping
 
@@ -236,7 +240,7 @@ pub @func main() {
 | --- | --- |
 | `i8`, `i16`, `i32`, `i64`, `u8`, `u16`, `u32`, `u64`, `isize`, `usize` | same |
 | `f32`, `f64` | same |
-| `void` | `void` |
+| `void` | function return only; rejected for data symbols |
 | `c_str` | `[*:0]const u8` |
 | `?c_str` | `?[*:0]const u8` |
 | `*T`, `?*T` | `*T`, `?*T` |

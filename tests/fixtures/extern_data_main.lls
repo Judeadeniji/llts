@@ -1,0 +1,8 @@
+pub @const $lib = @import("./extern_data_lib.lls");
+
+pub @func main() {
+    lib.optind = 41;
+    print(lib.optind);
+    $n: i32 = lib.increment();
+    print(n);
+}

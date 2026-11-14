@@ -1628,6 +1628,11 @@ fn placeStorageType(self: *Emitter, node: *ast_mod.Node) anyerror!?ValType {
                 if (b.fn_key != null or b.module_path != null or b.ir_type == null) return null;
                 return try self.valTypeFor(node, b.ir_type, b.display);
             }
+            if (self.state.externs.get(p.name)) |ext| {
+                if (ext.kind == .data) {
+                    return try self.externCTypeValType(node, ext.data_type.?);
+                }
+            }
             if (self.globals.get(p.name)) |g| {
                 if (g.fn_key != null or g.module_path != null or g.ir_type == null) return null;
                 return try self.valTypeFor(node, g.ir_type, g.display);
@@ -1800,6 +1805,9 @@ pub fn emitMember(self: *Emitter, node: *ast_mod.Node, m: *const ast_mod.Member)
         // `mod.CONST` / `mod.sub.CONST`: module globals are emitted under their
         // qualified `module::NAME` keys, so read the emitted binding directly.
         if ((path_mod.tryResolveStaticPath(self.state, node) catch null)) |import_key| {
+            if (self.state.externs.get(import_key)) |ext| {
+                if (ext.kind == .data) return self.zigIdentifier(ext.symbol);
+            }
             if (self.globals.get(import_key)) |g| return g.zig_name;
         }
         const obj_t = try self.storageValueType(m.object);
