@@ -18,6 +18,7 @@ pub const types = @import("typecheck/from_ast.zig");
 pub const from_ast = @import("typecheck/from_ast.zig");
 pub const ir = @import("typecheck/ir.zig");
 const compile_errors = @import("../errors/compile.zig");
+const collector_mod = @import("../errors/collector.zig");
 pub const unused = @import("unused.zig");
 const binding_facts = @import("analyze/binding_facts.zig");
 const range_facts = @import("analyze/range.zig");
@@ -58,10 +59,32 @@ pub fn analyze(
     state.diag_path = doc.path;
     _ = try state.chunk.addSource(doc.path, doc.source);
 
+    // Recovery reports into the shared collector instead of aborting at the
+    // first fault, so analysis needs a collector even when the caller did not
+    // install one (tests, embedding). With our own collector we print at the
+    // end and turn the recorded errors into a failure; the CLI installs its
+    // own and does both outside `analyze`.
+    const own_collector = collector_mod.getActive() == null;
+    var local_coll: collector_mod.Collector = undefined;
+    if (own_collector) {
+        local_coll = collector_mod.Collector.init(allocator, collector_mod.getDefaultCap());
+        collector_mod.setActive(&local_coll);
+    }
+    const coll = collector_mod.getActive().?;
+    defer if (own_collector) {
+        collector_mod.clearActive();
+        local_coll.deinit();
+    };
+    errdefer if (own_collector and coll.items.items.len > 0) coll.reportAll();
+
     try modules.resolveImports(&state, doc);
+    // A failed import is recorded and left as an empty namespace; typechecking
+    // past it could only produce "unknown member" cascades.
+    if (coll.hasErrors()) return error.CompileError;
     try registerStructNames(&state, doc);
     try registerFunctions(&state, doc);
     try registerModuleDecls(&state, doc);
+    try registerExterns(&state, doc);
 
     for (doc.statements) |s| {
         if (s.* == .struct_decl and s.struct_decl.params.len > 0) continue; // instantiated on use
@@ -70,6 +93,11 @@ pub fn analyze(
     try local_types.hoist(&state, doc.statements);
 
     try typecheck.typecheck(&state, doc);
+    // If the collector already has errors (recovered diagnostics), skip the
+    // whole-program post-checks so we don't cascade into spurious
+    // "undeclared"/reachability failures. Return the partially populated state;
+    // the caller gates emission on the collector.
+    if (coll.hasErrors()) return error.CompileError;
     try requireEntryMain(&state, doc);
     state.reachability = try reachability.compute(&state, doc);
     unused.detectAndWarn(&state, doc);
@@ -99,6 +127,7 @@ pub fn prepareForTypecheck(state: *state_mod.CompilerState, doc: *ast.Document) 
     try registerStructNames(state, doc);
     try registerFunctions(state, doc);
     try registerModuleDecls(state, doc);
+    try registerExterns(state, doc);
 
     for (doc.statements) |s| {
         if (s.* == .struct_decl or s.* == .enum_decl or s.* == .error_decl or s.* == .type_decl) try stmt.compileStatement(state, s);
@@ -635,9 +664,9 @@ fn analyzeBody(
         },
         .call => |c| {
             if (try path_mod.tryResolveStaticPath(state, c.callee)) |name| {
-                try calls.put(name, {});
+                if (!state.isNativeCallable(name)) try calls.put(name, {});
             } else if (c.callee.* == .primary and c.callee.primary.kind == .identifier) {
-                if (!state.native_globals.contains(c.callee.primary.name)) {
+                if (!state.isNativeCallable(c.callee.primary.name)) {
                     try calls.put(c.callee.primary.name, {});
                 }
             } else if (c.callee.* == .member) {
@@ -794,6 +823,103 @@ fn selfReceiverTypeName(state: *state_mod.CompilerState, full_name: []const u8) 
         return bare;
     }
     return null;
+}
+
+fn externNameConflicts(state: *state_mod.CompilerState, name: []const u8) bool {
+    return state.externs.contains(name) or
+        state.functions.contains(name) or
+        state.global_vars.contains(name) or
+        state.global_types.contains(name) or
+        state.global_consts.contains(name) or
+        state.native_globals.contains(name);
+}
+
+fn externSignaturesEqual(a: state_mod.ExternInfo, b: state_mod.ExternInfo) bool {
+    if (a.is_c_variadic != b.is_c_variadic) return false;
+    if (a.params.len != b.params.len) return false;
+    if (!state_mod.cTypeEquals(a.ret, b.ret)) return false;
+    for (a.params, b.params) |ap, bp| {
+        if (!state_mod.cTypeEquals(ap.ctype, bp.ctype)) return false;
+    }
+    return true;
+}
+
+/// Validate and register native `@extern` declarations. Runs after modules are
+/// qualified so `source_name` is the callable name while `symbol` stays bare.
+fn registerExterns(state: *state_mod.CompilerState, doc: *ast.Document) !void {
+    for (doc.statements) |s| {
+        if (s.* != .extern_decl) continue;
+        const ext = &s.extern_decl;
+        const loc = ext.loc;
+        const path = if (loc.path.len > 0) loc.path else state.diag_path;
+        const line = if (loc.line > 0) loc.line else 1;
+        const column = if (loc.column > 0) loc.column else 1;
+
+        const fail = struct {
+            fn at(
+                st: *state_mod.CompilerState,
+                p: []const u8,
+                l: u32,
+                c: u32,
+                comptime fmt: []const u8,
+                args: anytype,
+            ) error{CompileError} {
+                return compile_errors.compileFailAt(st, p, l, c, fmt, args);
+            }
+        }.at;
+
+        if (!std.mem.eql(u8, ext.abi, "c")) {
+            return fail(state, path, line, column, "Unsupported extern ABI '{s}'; only \"c\" is supported", .{ext.abi});
+        }
+        if (ext.kind == .data) {
+            return fail(state, path, line, column, "Extern data symbols are not supported yet ('{s}')", .{ext.symbol});
+        }
+        if (std.mem.eql(u8, ext.symbol, "main")) {
+            return fail(state, path, line, column, "Extern symbol 'main' is reserved for the program entry point", .{});
+        }
+        if (externNameConflicts(state, ext.name)) {
+            return fail(state, path, line, column, "Extern '{s}' conflicts with an existing declaration", .{ext.name});
+        }
+        if (ext.is_c_variadic and ext.params.len == 0) {
+            return fail(state, path, line, column, "Variadic extern function '{s}' requires at least one fixed parameter", .{ext.name});
+        }
+
+        const params = try state.allocator.alloc(state_mod.ExternParam, ext.params.len);
+        errdefer state.allocator.free(params);
+        for (ext.params, 0..) |param, i| {
+            for (ext.params[0..i]) |prev| {
+                if (std.mem.eql(u8, prev.name, param.name)) {
+                    return fail(state, path, line, column, "Duplicate parameter name '{s}' in extern declaration '{s}'", .{ param.name, ext.name });
+                }
+            }
+            params[i] = .{
+                .name = param.name,
+                .ctype = try from_ast.resolveExternCType(state, param.type_annotation, false, loc),
+            };
+        }
+        const ret = try from_ast.resolveExternCType(state, ext.return_type, true, loc);
+        const info = state_mod.ExternInfo{
+            .source_name = ext.name,
+            .symbol = ext.symbol,
+            .abi = ext.abi,
+            .params = params,
+            .ret = ret,
+            .is_c_variadic = ext.is_c_variadic,
+            .is_public = ext.is_public,
+            .loc = ext.loc,
+            .node = s,
+        };
+
+        var it = state.externs.valueIterator();
+        while (it.next()) |other| {
+            if (!std.mem.eql(u8, other.symbol, ext.symbol)) continue;
+            if (!externSignaturesEqual(other.*, info)) {
+                return fail(state, path, line, column, "Extern symbol '{s}' is already declared with a different signature", .{ext.symbol});
+            }
+        }
+
+        try state.externs.put(ext.name, info);
+    }
 }
 
 fn registerModuleDecls(state: *state_mod.CompilerState, doc: *ast.Document) !void {

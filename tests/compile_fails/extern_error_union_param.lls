@@ -1,0 +1,2 @@
+@extern "c" @func handle(e: i32 | error): void;
+pub @func main() {}

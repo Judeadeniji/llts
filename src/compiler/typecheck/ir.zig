@@ -39,6 +39,9 @@ pub const Type = union(enum) {
     isize,
     usize,
     fsize,
+    /// NUL-terminated C string (`c_str`). Native extern ABI only; deliberately
+    /// distinct from LLTS `string` (a length-carrying `const []u8`).
+    c_str,
     null,
     /// Unit: function completed with no result (`(): void`, bare `return;`).
     /// Distinct from `null` (optional absence) and `never` (noreturn / bottom).
@@ -62,7 +65,7 @@ pub const Type = union(enum) {
     /// Go-style distinct `@type Name = T` (aliases unwrap and never appear here).
     defined: struct { name: []const u8, underlying: *Type },
     /// `@func(T, U): R` — first-class function type (structural).
-    func: struct { params: []Type, ret: *Type, variadic: bool },
+    func: struct { params: []Type, ret: *Type, variadic: bool, param_is_optional: []bool },
     /// `{ field: T; … }` anonymous object shape (structural).
     shape: []ShapeField,
     /// `@error Name` closed error set.
@@ -108,6 +111,7 @@ pub const TType: Type = .{ .type_ = {} };
 
 var byte_elem: Type = .{ .u8 = {} };
 pub const TString: Type = .{ .array = .{ .elem = &byte_elem, .length = null, .is_const = true } };
+pub const TCStr: Type = .{ .c_str = {} };
 
 /// Allocator used while building type trees during a typecheck pass.
 pub const TypeAlloc = struct {
@@ -172,11 +176,13 @@ pub const TypeAlloc = struct {
         return .{ .defined = .{ .name = name, .underlying = up } };
     }
 
-    pub fn funcType(self: TypeAlloc, params: []const Type, ret: Type, variadic: bool) !Type {
+    pub fn funcType(self: TypeAlloc, params: []const Type, ret: Type, variadic: bool, param_is_optional: []bool) !Type {
         const ps = try self.allocator.alloc(Type, params.len);
         @memcpy(ps, params);
         const rp = try self.allocType(ret);
-        return .{ .func = .{ .params = ps, .ret = rp, .variadic = variadic } };
+        const opt = try self.allocator.alloc(bool, param_is_optional.len);
+        @memcpy(opt, param_is_optional);
+        return .{ .func = .{ .params = ps, .ret = rp, .variadic = variadic, .param_is_optional = opt } };
     }
 
     pub fn shapeType(self: TypeAlloc, fields: []const ShapeField) !Type {
@@ -269,6 +275,7 @@ pub fn namedType(name: []const u8) Type {
     if (std.mem.eql(u8, name, "never")) return TNever;
     if (std.mem.eql(u8, name, "error")) return TError;
     if (std.mem.eql(u8, name, "string")) return TString;
+    if (std.mem.eql(u8, name, "c_str")) return TCStr;
     if (std.mem.eql(u8, name, "unknown")) return TUnknown;
     if (std.mem.eql(u8, name, "type")) return TType;
     return .{ .struct_ = name };
@@ -327,6 +334,7 @@ fn dispNamed(allocator: std.mem.Allocator, n: []const u8, qualified: bool) ![]co
 fn displayTypeAllocFlags(allocator: std.mem.Allocator, t: Type, qualified: bool) ![]const u8 {
     return switch (t) {
         .u1, .i8, .i16, .i32, .i64, .u8, .u16, .u32, .u64, .f32, .f64, .isize, .usize, .fsize => try allocator.dupe(u8, displayWidth(t)),
+        .c_str => try allocator.dupe(u8, "c_str"),
         .null => try allocator.dupe(u8, "null"),
         .void => try allocator.dupe(u8, "void"),
         .error_ => try allocator.dupe(u8, "error"),
@@ -488,6 +496,7 @@ fn displayTypeAllocFlags(allocator: std.mem.Allocator, t: Type, qualified: bool)
 pub fn displayTypeSimple(t: Type) ?[]const u8 {
     return switch (t) {
         .u1, .i8, .i16, .i32, .i64, .u8, .u16, .u32, .u64, .f32, .f64, .isize, .usize, .fsize => displayWidth(t),
+        .c_str => "c_str",
         .null => "null",
         .void => "void",
         .error_ => "error",
@@ -560,7 +569,7 @@ pub fn typeEquals(a: Type, b: Type) bool {
         .error_set => |n| b == .error_set and std.mem.eql(u8, n, b.error_set),
         .error_lit => |e| b == .error_lit and std.mem.eql(u8, e.set_name, b.error_lit.set_name) and std.mem.eql(u8, e.variant, b.error_lit.variant),
         .defined => |d| (b == .defined and std.mem.eql(u8, d.name, b.defined.name)) or typeEquals(d.underlying.*, b),
-        .u1, .i8, .i16, .i32, .i64, .u8, .u16, .u32, .u64, .f32, .f64, .isize, .usize, .fsize, .null, .void, .error_, .unknown, .never, .type_ => std.meta.activeTag(a) == std.meta.activeTag(b),
+        .u1, .i8, .i16, .i32, .i64, .u8, .u16, .u32, .u64, .f32, .f64, .isize, .usize, .fsize, .c_str, .null, .void, .error_, .unknown, .never, .type_ => std.meta.activeTag(a) == std.meta.activeTag(b),
         .union_ => |arms| blk: {
             if (b != .union_) break :blk false;
             if (arms.len != b.union_.len) break :blk false;
@@ -702,6 +711,14 @@ pub fn isSubtype(a: Type, b: Type) bool {
         .enum_ => |ename| switch (a) {
             .enum_lit => |e| std.mem.eql(u8, e.enum_name, ename),
             .i64 => true,
+            .union_ => |arms| subtypeAll(arms, b),
+            .defined => false,
+            else => false,
+        },
+        .c_str => switch (a) {
+            // A string literal is a compile-time NUL-terminated C string when
+            // passed/assigned directly; runtime `string` values are not.
+            .str_lit => true,
             .union_ => |arms| subtypeAll(arms, b),
             .defined => false,
             else => false,
@@ -954,6 +971,8 @@ pub fn typeTag(t: Type) ?TypeTag {
         .bool_lit => .u1,
         .str_lit => .string,
         .union_ => |u| if (isErrorUnion(.{ .union_ = u })) .error_union else null,
+        // Native-only ABI type; no runtime tag/bytecode representation.
+        .c_str => null,
         else => null,
     };
 }
@@ -1134,7 +1153,7 @@ pub fn parseDisplayType(ta: TypeAlloc, s_in: []const u8) !Type {
             }
         }
         const ret = if (parts.ret) |r| try parseDisplayType(ta, r) else TUnknown;
-        return try ta.funcType(params.items, ret, variadic);
+        return try ta.funcType(params.items, ret, variadic, &.{});
     }
     // Historical display used "int" / "byte".
     if (std.mem.eql(u8, s, "int") or std.mem.eql(u8, s, "number")) return TI64;

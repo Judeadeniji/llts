@@ -13,6 +13,7 @@
 const std = @import("std");
 const ast = @import("../../ast/root.zig");
 const state_mod = @import("../state.zig");
+const ir = @import("../typecheck/ir.zig");
 
 // ── public entry point ───────────────────────────────────────────────────────
 
@@ -723,6 +724,34 @@ const Ctx = struct {
         }
     }
 
+    fn ctypeMayWrite(ct: state_mod.CType) bool {
+        return switch (ct) {
+            .ptr, .optional_ptr => true,
+            else => false,
+        };
+    }
+
+    /// A C callee may write through a pointer argument, so the underlying LLTS
+    /// storage cannot be emitted as an immutable Zig local.
+    fn externWritesArrayStorage(ctx: *Ctx, arg: *ast.Node) bool {
+        const t = ctx.state.type_ir_of_results.get(arg) orelse return false;
+        return switch (ir.peelDefined(t)) {
+            .array => |arr| arr.length != null and !arr.is_const,
+            else => false,
+        };
+    }
+
+    fn markExternWriteRoot(ctx: *Ctx, node: *ast.Node) void {
+        switch (node.*) {
+            .primary => |p| {
+                if (p.kind == .identifier or p.kind == .register) ctx.markAssigned(p.name);
+            },
+            .member => |m| markExternWriteRoot(ctx, m.object),
+            .index => |ix| markExternWriteRoot(ctx, ix.object),
+            else => {},
+        }
+    }
+
     fn walkExpr(ctx: *Ctx, node: *ast.Node) anyerror!void {
         switch (node.*) {
             .primary => |p| {
@@ -790,8 +819,17 @@ const Ctx = struct {
                         return;
                     }
                 }
+                const extern_info: ?state_mod.ExternInfo = if (ctx.state.extern_calls.get(node)) |ename|
+                    ctx.state.externs.get(ename)
+                else
+                    null;
                 for (c.args, 0..) |arg, ai| {
                     try ctx.walkExpr(arg);
+                    if (extern_info) |ext| {
+                        if (ai < ext.params.len and ctypeMayWrite(ext.params[ai].ctype) and externWritesArrayStorage(ctx, arg)) {
+                            markExternWriteRoot(ctx, arg);
+                        }
+                    }
                     // A callee that keeps the pointer (or one we cannot see
                     // into) extends the pointee's lifetime past this frame.
                     if (ctx.argEscapes(node, c, ai)) try ctx.noteEscape(arg);
@@ -840,6 +878,11 @@ const Ctx = struct {
                 }
             },
             .index => |ix| {
+                // A slice view borrows the backing aggregate, and the view is
+                // writable whenever the source is. The root must therefore be
+                // emitted as mutable storage even if the view itself is the
+                // only thing that writes through it.
+                if (ix.is_slice) try ctx.walkPlaceRootAssigned(ix.object);
                 try ctx.walkExpr(ix.object);
                 if (ix.index) |v| try ctx.walkExpr(v);
                 if (ix.end) |v| try ctx.walkExpr(v);
@@ -866,8 +909,7 @@ const Ctx = struct {
                 }
             },
             .comptime_expr => |ce| try ctx.walkExpr(ce.expr),
-            .block, .return_expr, .defer_stmt, .break_expr, .continue_expr,
-            .if_expr, .for_expr, .switch_expr => try ctx.walkStmt(node),
+            .block, .return_expr, .defer_stmt, .break_expr, .continue_expr, .if_expr, .for_expr, .switch_expr => try ctx.walkStmt(node),
             .function_decl => |f| {
                 const prev_closure_depth = ctx.closure_base_depth;
                 ctx.closure_base_depth = ctx.scopes.items.len;
@@ -962,8 +1004,7 @@ const Ctx = struct {
                 }
             },
             .function_decl => try ctx.walkExpr(node),
-            .struct_decl, .enum_decl,
-            .error_decl, .type_decl, .extern_decl => {},
+            .struct_decl, .enum_decl, .error_decl, .type_decl, .extern_decl => {},
             else => try ctx.walkExpr(node),
         }
     }

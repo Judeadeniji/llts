@@ -1,0 +1,2 @@
+@extern "c" @func fill(buf: [4]u8): void;
+pub @func main() {}

@@ -1,0 +1,2 @@
+@extern "c" @func sum(x: i32, x: i32): i32;
+pub @func main() {}

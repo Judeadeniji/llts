@@ -1,6 +1,32 @@
 const out = @import("../io/out.zig");
 const color = @import("../io/color.zig");
 const diag = @import("diag.zig");
+const collector = @import("collector.zig");
+const render = @import("render.zig");
+
+/// Returns the active collector, or null if diagnostics should print directly.
+fn active() ?*collector.Collector {
+    return collector.getActive();
+}
+
+/// Shared source diagnostic path. When a collector is active, records a
+/// diagnostic instead of printing; otherwise renders it immediately.
+fn emitSource(
+    path: []const u8,
+    source: []const u8,
+    line: u32,
+    column: u32,
+    message: []const u8,
+    mark_emitted: bool,
+    severity: render.Severity,
+) void {
+    if (active()) |c| {
+        _ = c.add(path, source, line, column, message, severity);
+        return;
+    }
+    if (mark_emitted) diag.markEmitted();
+    render.printDiagnostic(path, source, line, column, message, severity, &.{});
+}
 
 pub fn reportSourceError(
     path: []const u8,
@@ -9,38 +35,11 @@ pub fn reportSourceError(
     column: u32,
     message: []const u8,
 ) void {
-    diag.markEmitted();
-    const c_err = color.paint(color.bold ++ color.bright_red);
-    const c_arrow = color.paint(color.bold ++ color.bright_cyan);
-    const c_num = color.paint(color.blue);
-    const c_caret = color.paint(color.bold ++ color.bright_cyan);
-    const r = color.r();
-
-    out.printStderr("{s}Error{s}: {s}\n", .{ c_err, r, message });
-    out.printStderr("  {s}-->{s} {s}:{d}:{d}\n", .{ c_arrow, r, path, line, column });
-
-    var current: u32 = 1;
-    var start: usize = 0;
-    var i: usize = 0;
-    while (i <= source.len) : (i += 1) {
-        if (i == source.len or source[i] == '\n') {
-            if (current == line) {
-                const line_src = source[start..i];
-                out.printStderr("   {s}{d}{s} | {s}\n", .{ c_num, line, r, line_src });
-                out.printStderr("     | ", .{});
-                var c: u32 = 1;
-                const col = if (column == 0) 1 else column;
-                while (c < col) : (c += 1) out.printStderr(" ", .{});
-                out.printStderr("{s}^{s}\n", .{ c_caret, r });
-                break;
-            }
-            current += 1;
-            start = i + 1;
-        }
-    }
+    emitSource(path, source, line, column, message, true, .err);
 }
 
-/// Non-fatal warning with source caret. Does not mark `diag.emitted` (fatal-only flag).
+/// Non-fatal warning with source excerpt. Does not mark `diag.emitted`
+/// (fatal-only flag).
 pub fn reportSourceWarning(
     path: []const u8,
     source: []const u8,
@@ -48,34 +47,7 @@ pub fn reportSourceWarning(
     column: u32,
     message: []const u8,
 ) void {
-    const c_warn = color.paint(color.bold ++ color.bright_yellow);
-    const c_arrow = color.paint(color.bold ++ color.bright_cyan);
-    const c_num = color.paint(color.blue);
-    const c_caret = color.paint(color.bold ++ color.bright_cyan);
-    const r = color.r();
-
-    out.printStderr("{s}Warning{s}: {s}\n", .{ c_warn, r, message });
-    out.printStderr("  {s}-->{s} {s}:{d}:{d}\n", .{ c_arrow, r, path, line, column });
-
-    var current: u32 = 1;
-    var start: usize = 0;
-    var i: usize = 0;
-    while (i <= source.len) : (i += 1) {
-        if (i == source.len or source[i] == '\n') {
-            if (current == line) {
-                const line_src = source[start..i];
-                out.printStderr("   {s}{d}{s} | {s}\n", .{ c_num, line, r, line_src });
-                out.printStderr("     | ", .{});
-                var c: u32 = 1;
-                const col = if (column == 0) 1 else column;
-                while (c < col) : (c += 1) out.printStderr(" ", .{});
-                out.printStderr("{s}^{s}\n", .{ c_caret, r });
-                break;
-            }
-            current += 1;
-            start = i + 1;
-        }
-    }
+    emitSource(path, source, line, column, message, false, .warning);
 }
 
 /// Source diagnostic plus a single stack frame (scan / parse / compile).
@@ -87,8 +59,19 @@ pub fn reportSourceErrorWithFrame(
     message: []const u8,
     frame_name: []const u8,
 ) void {
-    reportSourceError(path, source, line, column, message);
-    reportLocationFrameCol(path, line, column, frame_name);
+    if (active()) |c| {
+        _ = c.add(path, source, line, column, message, .err);
+        c.addFrame(path, line, column, frame_name);
+        return;
+    }
+    diag.markEmitted();
+    const frames = [_]render.Frame{.{
+        .path = path,
+        .line = line,
+        .column = column,
+        .name = frame_name,
+    }};
+    render.printDiagnostic(path, source, line, column, message, .err, &frames);
 }
 
 pub fn reportLocationFrame(path: []const u8, line: u32, name: []const u8) void {
@@ -96,6 +79,10 @@ pub fn reportLocationFrame(path: []const u8, line: u32, name: []const u8) void {
 }
 
 pub fn reportLocationFrameCol(path: []const u8, line: u32, column: u32, name: []const u8) void {
+    if (active()) |c| {
+        c.addFrame(path, line, column, name);
+        return;
+    }
     diag.markEmitted();
     const c_dim = color.paint(color.dim);
     const c_name = color.paint(color.cyan);
@@ -104,15 +91,19 @@ pub fn reportLocationFrameCol(path: []const u8, line: u32, column: u32, name: []
 }
 
 pub fn reportCompileMessage(message: []const u8) void {
+    if (active()) |c| {
+        _ = c.add("", "", 1, 1, message, .err);
+        return;
+    }
     diag.markEmitted();
-    const c_err = color.paint(color.bold ++ color.bright_red);
-    const r = color.r();
-    out.printStderr("{s}Error{s}: {s}\n", .{ c_err, r, message });
+    render.printDiagnostic("", "", 1, 1, message, .err, &.{});
 }
 
 pub fn reportRuntimeError(message: []const u8) void {
+    if (active()) |c| {
+        _ = c.add("", "", 1, 1, message, .err);
+        return;
+    }
     diag.markEmitted();
-    const c_err = color.paint(color.bold ++ color.bright_red);
-    const r = color.r();
-    out.printStderr("{s}Error{s}: {s}\n", .{ c_err, r, message });
+    render.printDiagnostic("", "", 1, 1, message, .err, &.{});
 }

@@ -8,6 +8,15 @@ const parser = @import("../parser/root.zig");
 const CompilerState = state_mod.CompilerState;
 const ModuleError = error{ OutOfMemory, CompileError };
 const report = @import("../errors/report.zig");
+const compile_err = @import("../errors/compile.zig");
+const collector_mod = @import("../errors/collector.zig");
+
+/// Errors recorded so far, used to tell "this import failed" apart from
+/// diagnostics inherited from earlier modules.
+fn collectedErrorCount() usize {
+    if (collector_mod.getActive()) |c| return c.errorCount();
+    return 0;
+}
 
 fn reportImportStack(state: *CompilerState) void {
     // Print outermost → innermost so the `@import` chain reads like a call stack
@@ -63,7 +72,9 @@ pub fn getImportSite(node: *ast.Node) ?ImportSite {
             if (node.call.args.len == 1 and node.call.args[0].* == .literal and node.call.args[0].literal.literal_type == .string) {
                 return .{
                     .path = node.call.args[0].literal.value,
-                    .loc = callee.loc(),
+                    // Point at the path argument, not `@import`: diagnostics and
+                    // import-chain frames should underline the module name.
+                    .loc = node.call.args[0].loc(),
                 };
             }
         }
@@ -213,7 +224,11 @@ fn loadImportsInTree(
         },
         .declaration => |d| {
             if (getImportSite(d.value)) |imp| {
-                try loadModule(state, doc, imp.path, d.name, current_module, out, visited, imp.loc);
+                // A broken import is already recorded; keep resolving the rest.
+                loadModule(state, doc, imp.path, d.name, current_module, out, visited, imp.loc) catch |err| switch (err) {
+                    error.CompileError => return,
+                    else => |e| return e,
+                };
             } else {
                 if (d.type_annotation) |ta| try loadImportsInTree(state, doc, ta, current_module, out, visited);
                 try loadImportsInTree(state, doc, d.value, current_module, out, visited);
@@ -254,7 +269,11 @@ fn loadImportsInTree(
         },
         .call => |c| {
             if (getImportSite(node)) |imp| {
-                try loadModule(state, doc, imp.path, null, current_module, out, visited, imp.loc);
+                // A broken import is already recorded; keep resolving the rest.
+                loadModule(state, doc, imp.path, null, current_module, out, visited, imp.loc) catch |err| switch (err) {
+                    error.CompileError => return,
+                    else => |e| return e,
+                };
             } else {
                 try loadImportsInTree(state, doc, c.callee, current_module, out, visited);
                 for (c.args) |a| try loadImportsInTree(state, doc, a, current_module, out, visited);
@@ -351,7 +370,9 @@ fn loadModule(
     visited: *std.StringHashMap(void),
     import_loc: ast.Location,
 ) ModuleError!void {
-    const resolved = try resolvePath(state, doc.path, import_path);
+    const resolved = resolvePath(state, doc.path, import_path) catch {
+        return compile_err.compileFailAt(state, doc.path, import_loc.line, import_loc.column, "Unknown module '{s}'", .{import_path});
+    };
     try state.owned.append(state.allocator, resolved);
 
     const key = moduleKey(resolved);
@@ -387,6 +408,8 @@ fn loadModule(
         try state.import_from.put(resolved, state.import_stack.items[state.import_stack.items.len - 1]);
     }
 
+    // A module that cannot be read is recorded and treated as an empty
+    // namespace: the remaining imports still resolve.
     const source = std.fs.cwd().readFileAlloc(state.allocator, resolved, 16 * 1024 * 1024) catch {
         var buf: [512]u8 = undefined;
         const msg = std.fmt.bufPrint(&buf, "Cannot read import '{s}'", .{resolved}) catch "Cannot read import";
@@ -394,22 +417,34 @@ fn loadModule(
         const col = if (import_loc.column > 0) import_loc.column else 1;
         report.reportSourceErrorWithFrame(doc.path, doc.source, line, col, msg, "<compile>");
         reportImportStack(state);
-        return error.CompileError;
+        return;
     };
     try state.owned.append(state.allocator, source);
 
     _ = state.chunk.addSource(resolved, source) catch {};
 
-    var scan_result = scanner.scan(state.allocator, source, resolved) catch {
-        reportImportStack(state);
-        return error.CompileError;
+    const errors_before = collectedErrorCount();
+    var scan_result = scanner.scan(state.allocator, source, resolved) catch |err| {
+        // Only OOM reaches here: the scanner recovers from lexical errors.
+        if (err == error.OutOfMemory) return error.OutOfMemory;
+        return;
     };
     defer scanner.deinitScanResult(&scan_result);
-
-    const mod_doc = parser.parse(state.allocator, scan_result.tokens.items, resolved, source, null) catch {
+    if (collectedErrorCount() > errors_before) {
         reportImportStack(state);
-        return error.CompileError;
+        return;
+    }
+
+    var parse_diags: std.ArrayList(ast.Diagnostic) = .empty;
+    defer parse_diags.deinit(state.allocator);
+    const mod_doc = parser.parse(state.allocator, scan_result.tokens.items, resolved, source, &parse_diags) catch {
+        reportImportStack(state);
+        return;
     };
+    for (mod_doc.diagnostics) |d| {
+        report.reportSourceErrorWithFrame(resolved, source, d.line, d.column, d.message, "<parse>");
+        reportImportStack(state);
+    }
     const owned_doc = try state.allocator.create(ast.Document);
     owned_doc.* = mod_doc;
     // Keep module arenas alive until compile finishes (nodes are referenced from `doc`).
@@ -462,7 +497,7 @@ fn resolvePath(state: *CompilerState, from: []const u8, import_path: []const u8)
     } else |_| {}
 
     state.allocator.free(joined);
-    return @import("../errors/compile.zig").compileFailFmt(state, "Unknown module '{s}'", .{import_path});
+    return error.CompileError;
 }
 
 /// Collapse `.` / `..` so diagnostics show `dir/leaf.lls` instead of `dir/././leaf.lls`.

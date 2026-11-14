@@ -34,6 +34,7 @@ pub fn execute(ctx: zli.CommandContext) !void {
     const file = ctx.getArg("file").?;
     const out_val = ctx.flag("output", []const u8);
     const comptime_iters = common.getComptimeMaxLoopIterations(ctx.allocator, ctx);
+    llts.collector.setDefaultCap(common.getMaxErrors(ctx.allocator, ctx));
 
     if (llts.serialize.isBytecodePath(file)) {
         common.failExit("Cannot compile a .llb file; use a .lls source", .{});

@@ -71,6 +71,8 @@ $tail = buffer[2..];          # index 2 to end
 $full = buffer[..];           # full slice view
 ```
 
+Slices borrow the backing array: writing through a mutable view updates the original storage, while views over `@const` arrays are read-only.
+
 ### Heterogeneous Tuples
 Tuples store a fixed sequence of mixed types and are accessed via `.0`, `.1`:
 

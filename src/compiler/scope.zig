@@ -119,14 +119,14 @@ pub fn resolveVariable(state: *CompilerState, name: []const u8) !void {
         state.global_vars.contains(name) or
         state.global_consts.contains(name) or
         state.functions.contains(name) or
-        state.native_globals.contains(name))
+        state.isNativeCallable(name))
     {
         // Variable is known
     } else {
         var buf: [256]u8 = undefined;
         const type_key = std.fmt.bufPrint(&buf, "${s}", .{name}) catch "";
         if (!state.global_types.contains(type_key)) {
-                        return compile_errors.compileFailFmt(state, "Unknown identifier '{s}'", .{name});
+            return compile_errors.compileFailFmt(state, "Unknown identifier '{s}'", .{name});
         }
     }
     if (state.functions.contains(name)) {
@@ -195,7 +195,7 @@ fn emitScopeDefers(state: *CompilerState, depth: i32, kind: ExitKind) !void {
         const defer_entry = list.items[@intCast(i)];
         const stmt_node = defer_entry.body;
         const is_errdefer = defer_entry.is_errdefer;
-        
+
         switch (kind) {
             .normal => if (is_errdefer) continue,
             .error_path => {},

@@ -93,7 +93,26 @@ The immutability guarantee is deep. If a struct is bound with `@const`, its fiel
 }
 
 @const $ORIGIN = Point { x: 0, y: 0 };
-ORIGIN.x = 10; # COMPILE ERROR: Cannot mutate field of constant
+ORIGIN.x = 10; # COMPILE ERROR: Cannot mutate field of constant 'ORIGIN'
+```
+
+Immutability also applies to aggregate fields. Slicing an array field is allowed, but the resulting view is read-only:
+
+```llts
+@struct Bag { items: [3]i64; }
+
+@const $B = Bag { items: [1, 2, 3] };
+$view = B.items[1..];  # allowed: read-only view
+
+view[0] = 9;           # COMPILE ERROR: Cannot mutate elements of a constant slice
+```
+
+Copying the struct first creates independent mutable storage:
+
+```llts
+$copy = B;
+$v = copy.items[1..];
+v[0] = 9;              # allowed: mutates copy, not B
 ```
 
 ### Address-of Restriction
@@ -101,7 +120,7 @@ Taking the address of a compile-time constant is rejected:
 
 ```llts
 @const $C = 42;
-$p = &$C; # COMPILE ERROR: Cannot take address of constant
+$p = &$C; # COMPILE ERROR: Cannot take the address of constant 'C'
 ```
 
 ---

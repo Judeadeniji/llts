@@ -10,7 +10,14 @@ pub const Error = std.mem.Allocator.Error;
 pub fn cloneNode(a: std.mem.Allocator, n: *const Node) Error!*Node {
     const out = try a.create(Node);
     out.* = switch (n.*) {
-        .literal, .primary, .extern_decl, .enum_decl, .error_decl => n.*,
+        .literal, .primary, .enum_decl, .error_decl => n.*,
+        .extern_decl => |e| blk: {
+            var c = e;
+            c.params = try cloneParams(a, e.params);
+            c.return_type = try cloneOpt(a, e.return_type);
+            c.data_type = try cloneOpt(a, e.data_type);
+            break :blk .{ .extern_decl = c };
+        },
         .declaration => |d| blk: {
             var c = d;
             c.value = try cloneNode(a, d.value);

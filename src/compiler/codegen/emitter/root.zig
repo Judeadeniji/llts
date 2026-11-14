@@ -595,7 +595,7 @@ pub const Emitter = struct {
                     .i16 => "i16",
                     .i32 => "i32",
                     .i64 => "i64",
-                    .u1 => "bool",
+                    .u1 => "u1",
                     .u8 => "u8",
                     .u16 => "u16",
                     .u32 => "u32",
@@ -607,6 +607,17 @@ pub const Emitter = struct {
         }
 
         switch (t) {
+            .c_str => {
+                const payload_vt = try a.create(ValType);
+                payload_vt.* = (try self.valTypeFromIR(node, ir.namedType("u8"))) orelse {
+                    return self.failAt(node, "native backend cannot represent the c_str payload type", .{});
+                };
+                vt.kind = .pointer;
+                vt.clean = "c_str";
+                vt.payload = payload_vt;
+                vt.zig = "[*:0]const u8";
+                return vt;
+            },
             .null => {
                 vt.kind = .null_value;
                 vt.zig = "@TypeOf(null)";
@@ -798,6 +809,7 @@ pub const Emitter = struct {
         try self.writer.writeAll(");\n\n");
 
         try unit_mod.emitGlobalDecls(self);
+        try unit_mod.emitExternDecls(self);
         try unit_mod.emitClosures(self);
         try unit_mod.emitFunctions(self);
         try unit_mod.emitTrampolines(self);
@@ -1022,6 +1034,27 @@ pub const Emitter = struct {
         _ = self.defer_scopes.pop();
     }
 
+    /// Drop scope state left behind by a failed item. Everything here is
+    /// arena-backed, so truncation is enough; the partial text already written
+    /// for the failed item is discarded by the caller.
+    pub fn truncateScopesTo(self: *Emitter, floor: usize) void {
+        self.scopes.shrinkRetainingCapacity(floor);
+        self.defer_scopes.shrinkRetainingCapacity(floor);
+    }
+
+    /// Clean slate between per-item emission attempts (functions, closures,
+    /// trampolines, globals).
+    pub fn resetItemState(self: *Emitter) void {
+        self.indent = 1;
+        self.scopes.clearRetainingCapacity();
+        self.defer_scopes.clearRetainingCapacity();
+        self.params.clearRetainingCapacity();
+        self.break_targets.clearRetainingCapacity();
+        self.loop_targets.clearRetainingCapacity();
+        self.switch_targets.clearRetainingCapacity();
+        self.infos.clearRetainingCapacity();
+    }
+
     pub fn pushScope(self: *Emitter) void {
         self.scopes.append(self.arena.allocator(), std.StringHashMap(*Binding).init(self.arena.allocator())) catch unreachable;
         self.defer_scopes.append(self.arena.allocator(), .empty) catch unreachable;
@@ -1161,7 +1194,92 @@ pub const Emitter = struct {
         try out.append(a, '"');
         return out.toOwnedSlice(a);
     }
+
+    pub fn zigIdentifier(self: *Emitter, name: []const u8) ![]const u8 {
+        const a = self.arena.allocator();
+        const needs_quote = name.len == 0 or
+            (!std.ascii.isAlphabetic(name[0]) and name[0] != '_') or blk: {
+            for (name[1..]) |ch| {
+                if (!std.ascii.isAlphanumeric(ch) and ch != '_') break :blk true;
+            }
+            break :blk isZigKeyword(name) or isZigPrimitive(name);
+        };
+        if (needs_quote) return std.fmt.allocPrint(a, "@{s}", .{try self.zigString(name)});
+        return name;
+    }
+
+    /// Zig representation of a C type, shared by extern declarations and calls.
+    pub fn externCTypeValType(self: *Emitter, node: *ast_mod.Node, ct: state_mod.CType) !ValType {
+        const a = self.arena.allocator();
+        return switch (ct) {
+            .scalar => |t| (try self.valTypeFromIR(node, t)) orelse {
+                return self.failAt(node, "native backend cannot represent extern C type '{s}'", .{try ir.displayTypeQualifiedAlloc(a, t)});
+            },
+            .c_str => (try self.valTypeFromIR(node, ir.TCStr)) orelse {
+                return self.failAt(node, "native backend cannot represent c_str", .{});
+            },
+            .optional_c_str => blk: {
+                const inner = (try self.valTypeFromIR(node, ir.TCStr)) orelse {
+                    return self.failAt(node, "native backend cannot represent c_str", .{});
+                };
+                const inner_p = try a.create(ValType);
+                inner_p.* = inner;
+                break :blk .{
+                    .display = "?c_str",
+                    .clean = "c_str",
+                    .kind = .optional,
+                    .payload = inner_p,
+                    .zig = "?[*:0]const u8",
+                };
+            },
+            .ptr => |t| (try self.valTypeFromIR(node, t)) orelse {
+                return self.failAt(node, "native backend cannot represent extern pointer type", .{});
+            },
+            .optional_ptr => |ptr| blk: {
+                const inner = (try self.valTypeFromIR(node, ptr)) orelse {
+                    return self.failAt(node, "native backend cannot represent extern pointer type", .{});
+                };
+                const inner_p = try a.create(ValType);
+                inner_p.* = inner;
+                break :blk .{
+                    .display = try std.fmt.allocPrint(a, "?{s}", .{inner.display}),
+                    .clean = inner.clean,
+                    .kind = .optional,
+                    .payload = inner_p,
+                    .zig = try std.fmt.allocPrint(a, "?{s}", .{inner.zig}),
+                };
+            },
+        };
+    }
 };
+
+fn isZigKeyword(name: []const u8) bool {
+    const keywords = [_][]const u8{
+        "addrspace", "align",  "allowzero",   "and",            "anyframe", "anytype",
+        "asm",       "async",  "await",       "break",          "callconv", "catch",
+        "comptime",  "const",  "continue",    "defer",          "else",     "enum",
+        "errdefer",  "error",  "export",      "extern",         "fn",       "for",
+        "if",        "inline", "linksection", "noalias",        "noinline", "nosuspend",
+        "opaque",    "or",     "orelse",      "packed",         "pub",      "resume",
+        "return",    "struct", "suspend",     "switch",         "test",     "threadlocal",
+        "try",       "union",  "unreachable", "usingnamespace", "var",      "volatile",
+        "while",
+    };
+    for (keywords) |kw| if (std.mem.eql(u8, name, kw)) return true;
+    return false;
+}
+
+fn isZigPrimitive(name: []const u8) bool {
+    const primitives = [_][]const u8{
+        "anyerror",     "anyframe", "anyopaque", "bool",    "c_char",      "c_int",    "c_long",
+        "c_longlong",   "c_short",  "c_uint",    "c_ulong", "c_ulonglong", "c_ushort", "comptime_float",
+        "comptime_int", "f16",      "f32",       "f64",     "f80",         "f128",     "i8",
+        "i16",          "i32",      "i64",       "i128",    "isize",       "noreturn", "type",
+        "u8",           "u16",      "u32",       "u64",     "u128",        "usize",    "void",
+    };
+    for (primitives) |prim| if (std.mem.eql(u8, name, prim)) return true;
+    return false;
+}
 
 pub fn isImportDecl(decl: *const ast_mod.Declaration) bool {
     if (decl.value.* != .call) return false;

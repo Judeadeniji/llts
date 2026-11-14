@@ -1,0 +1,7 @@
+# expect: Cannot mutate elements of a constant slice
+@const $values = [1, 2, 3];
+
+pub @func main() {
+    $view = values[..];
+    view[0] = 9;
+}

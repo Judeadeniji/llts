@@ -1,0 +1,2 @@
+@extern "c" @func f(): i32;
+pub @func main() { $x: string = f(); }

@@ -1,0 +1,5 @@
+pub @const $lib = @import("./extern_lib.lls");
+
+pub @func main() {
+    $r: i32 = lib.greet();
+}

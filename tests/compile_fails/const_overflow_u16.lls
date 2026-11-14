@@ -1,0 +1,8 @@
+# expect: Integer overflow in constant expression: value 65536 does not fit 'u16'
+# mode: strict
+@const $a: u16 = 65535;
+@const $b: u16 = a + 1;
+
+pub @func main() {
+    print(b);
+}

@@ -45,7 +45,17 @@ fn failScan(self: *ctx.Scanner, err: ScanError, message: []const u8) ScanError {
 
 fn scanAll(self: *ctx.Scanner) ScanError!void {
     while (self.pos < self.source.len) {
-        try scanNext(self);
+        const before_pos = self.pos;
+        scanNext(self) catch |err| {
+            if (err == error.OutOfMemory) return err;
+            // Recoverable scan error: already reported by failScan via the
+            // active collector (or printed directly if none). Guarantee
+            // forward progress so we don't loop on the same bad byte.
+            if (self.pos == before_pos) {
+                if (self.peek(0)) |_| { _ = self.advance(); }
+            }
+            continue;
+        };
     }
     try self.pushToken(.eof, "", self.column, self.line);
 }

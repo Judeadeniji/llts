@@ -146,7 +146,7 @@ fn enqueueFunction(result: *Result, work: *std.ArrayList([]const u8), name: []co
 fn expandCallTargets(state: *CompilerState, call_name: []const u8) !std.ArrayList([]const u8) {
     var targets: std.ArrayList([]const u8) = .empty;
 
-    if (!state.native_globals.contains(call_name)) {
+    if (!state.isNativeCallable(call_name)) {
         var kit = state.functions.keyIterator();
         while (kit.next()) |k| {
             if (std.mem.eql(u8, k.*, call_name)) {
@@ -336,7 +336,7 @@ fn noteCall(
     work: *std.ArrayList([]const u8),
 ) !void {
     if (try resolveCallTarget(state, callee)) |name| {
-        if (state.native_globals.contains(name)) return;
+        if (state.isNativeCallable(name)) return;
         var targets = try expandCallTargets(state, name);
         defer targets.deinit(state.allocator);
         for (targets.items) |target| try enqueueFunction(result, work, target);
@@ -442,12 +442,11 @@ fn resolveCallTarget(state: *CompilerState, callee: *ast.Node) !?[]const u8 {
     return null;
 }
 
-test "reachability keeps only called std/slog function" {
+test "reachability keeps only called imported function" {
     const allocator = std.testing.allocator;
     const source =
-        \\@const $std = @import("std/index.lls");
-        \\@const $err_msg = error("this is an error", "hello");
-        \\std.slog.err(err_msg);
+        \\@const $mod = @import("tests/fixtures/mod.lls");
+        \\mod.fmt.label();
         \\pub @func main() {}
         \\
     ;
@@ -465,10 +464,9 @@ test "reachability keeps only called std/slog function" {
     try std.testing.expect(chunk.functions.count() >= 1);
 }
 
-test "native print does not pull in std/io print" {
+test "native print does not pull in extra functions" {
     const allocator = std.testing.allocator;
     const source =
-        \\@const $std = @import("std/index.lls");
         \\print(42);
         \\pub @func main() {}
         \\

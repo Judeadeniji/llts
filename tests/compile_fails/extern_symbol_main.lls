@@ -1,0 +1,1 @@
+@extern "c" @func main(): i32;

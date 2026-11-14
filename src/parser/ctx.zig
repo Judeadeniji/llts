@@ -20,9 +20,13 @@ pub const Parser = struct {
     path: []const u8,
     source: []const u8,
     arena: std.mem.Allocator,
+    diag_allocator: std.mem.Allocator,
     diagnostics: ?*std.ArrayList(ast.Diagnostic) = null,
     /// Inside a function declared `: type`, `return` takes a type expression.
     in_type_fn: bool = false,
+    /// Nesting depth of `{ ... }` blocks. File-scope-only declarations such as
+    /// `@extern` are rejected when this is non-zero.
+    block_depth: usize = 0,
 
     pub fn peek(self: *const Parser, step: usize) ?Token {
         const i = self.current + step;
@@ -100,9 +104,9 @@ pub const Parser = struct {
     pub fn failTok(self: *Parser, token: Token, comptime fmt: []const u8, args: anytype) ParseError {
         var msg_buf: [512]u8 = undefined;
         const message = std.fmt.bufPrint(&msg_buf, fmt, args) catch "parse error";
-        
+
         if (self.diagnostics) |diags| {
-            diags.append(self.arena, .{
+            diags.append(self.diag_allocator, .{
                 .line = token.line,
                 .column = token.column,
                 .message = self.arena.dupe(u8, message) catch "parse error",
@@ -118,7 +122,7 @@ pub const Parser = struct {
     /// Emit a diagnostic without format-string interpolation (message may contain `{}`).
     pub fn failTokRaw(self: *Parser, token: Token, message: []const u8) ParseError {
         if (self.diagnostics) |diags| {
-            diags.append(self.arena, .{
+            diags.append(self.diag_allocator, .{
                 .line = token.line,
                 .column = token.column,
                 .message = self.arena.dupe(u8, message) catch "parse error",
@@ -137,6 +141,7 @@ pub const Parser = struct {
             const prev = self.previous().?;
             if (prev.type == .delimiter and std.mem.eql(u8, prev.value, ";")) return;
             const next = self.peek(0).?;
+            if (next.type == .delimiter and std.mem.eql(u8, next.value, "}")) return;
             if (next.type == .compiler_keyword) {
                 if (std.mem.eql(u8, next.value, "@func") or
                     std.mem.eql(u8, next.value, "@const") or

@@ -886,6 +886,7 @@ fn parseHoleExpression(self: *Parser, src: []const u8, loc: ast.Location) ParseE
         .path = self.path,
         .source = self.source,
         .arena = self.arena,
+        .diag_allocator = self.diag_allocator,
         .diagnostics = self.diagnostics,
         .in_type_fn = self.in_type_fn,
     };

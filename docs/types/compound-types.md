@@ -56,6 +56,19 @@ $full = text[..];   # "HelloWorld" (full view)
 - `start` is inclusive; `end` is exclusive.
 - Slicing bounds are checked at runtime (`Slice out of bounds` error if range exceeds length).
 - Slice views over string literals and constant arrays are immutable; attempting to write through a constant slice view is rejected at compile time.
+- Slicing borrows the backing array: writing through a mutable view mutates the original storage. This is different from assigning the array itself, which copies it.
+
+```lls
+$buffer = [1, 2, 3];
+$view: []i64 = buffer[1..];
+
+view[0] = 99;
+print(buffer[1]);   # 99
+
+@const $ORIGIN = [0, 0];
+$origin_view = ORIGIN[..];  # read-only view
+origin_view[0] = 5;         # COMPILE ERROR: Cannot mutate elements of a constant slice
+```
 
 ---
 

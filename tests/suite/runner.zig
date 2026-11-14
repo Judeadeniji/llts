@@ -9,6 +9,7 @@ pub const parser_tests = @import("parser_test.zig");
 pub const typecheck_tests = @import("typecheck_test.zig");
 pub const compiler_tests = @import("compiler_test.zig");
 pub const pipeline_tests = @import("pipeline_test.zig");
+pub const multi_error_tests = @import("multi_error_test.zig");
 
 test {
     std.testing.refAllDecls(@This());

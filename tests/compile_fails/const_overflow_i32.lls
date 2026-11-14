@@ -1,0 +1,8 @@
+# expect: Integer overflow in constant expression: value 2147483648 does not fit 'i32'
+# mode: strict
+@const $a: i32 = 2147483647;
+@const $b: i32 = a + 1;
+
+pub @func main() {
+    print(b);
+}

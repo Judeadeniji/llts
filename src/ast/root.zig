@@ -47,6 +47,7 @@ pub const SwitchProng = stmt.SwitchProng;
 pub const Switch = stmt.Switch;
 
 pub const Extern = stmt.Extern;
+pub const ExternKind = stmt.ExternKind;
 pub const StructField = stmt.StructField;
 pub const StructDecl = stmt.StructDecl;
 pub const EnumDecl = stmt.EnumDecl;

@@ -1,0 +1,3 @@
+@struct Point { x: i32; y: i32; }
+@extern "c" @func draw(p: ?*Point): void;
+pub @func main() {}

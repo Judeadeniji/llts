@@ -87,7 +87,19 @@ fn expectNativeStdout(allocator: std.mem.Allocator, source: []const u8, expected
 // 1. In-memory Negative / Conformance Tests (replaces tests/45_compile_fails)
 // ---------------------------------------------------------------------------
 
-test "compile_fails: fixtures are rejected by compiler or runtime trap" {
+/// The `# expect: <text>` line every fixture carries: the diagnostic the
+/// compiler (or the trap, for emitted code) must produce.
+fn expectedDiagnostic(source: []const u8) ?[]const u8 {
+    var lines = std.mem.splitScalar(u8, source, '\n');
+    while (lines.next()) |line| {
+        if (std.mem.startsWith(u8, line, "# expect:")) {
+            return std.mem.trim(u8, line["# expect:".len..], " \t\r");
+        }
+    }
+    return null;
+}
+
+test "compile_fails: fixtures are rejected with their declared diagnostic" {
     const allocator = std.testing.allocator;
     const dir_path = "tests/compile_fails";
     var dir = try std.fs.cwd().openDir(dir_path, .{ .iterate = true });
@@ -105,8 +117,18 @@ test "compile_fails: fixtures are rejected by compiler or runtime trap" {
         const source = try file.readToEndAlloc(allocator, 1024 * 1024);
         defer allocator.free(source);
 
+        const expected = expectedDiagnostic(source) orelse {
+            std.debug.print("Fixture has no '# expect:' line: {s}\n", .{entry.name});
+            return error.MissingExpectation;
+        };
+
         var out: std.ArrayList(u8) = .empty;
         defer out.deinit(allocator);
+
+        var diagnostics: std.ArrayList(u8) = .empty;
+        defer diagnostics.deinit(allocator);
+        llts.io.out.captureStderr(&diagnostics, allocator);
+        defer llts.io.out.captureStderr(null, allocator);
 
         if (llts.pipeline.emitZigCode(allocator, entry.name, source, out.writer(allocator), .{
             .strict = true,
@@ -114,6 +136,10 @@ test "compile_fails: fixtures are rejected by compiler or runtime trap" {
         })) |_| {
             // If it emitted Zig, running the native binary must fail (trap)
             const res = runNativeSource(allocator, source) catch {
+                if (std.mem.indexOf(u8, diagnostics.items, expected) == null) {
+                    std.debug.print("Fixture '{s}' expected '{s}', got:\n{s}\n", .{ entry.name, expected, diagnostics.items });
+                    return error.UnexpectedDiagnostic;
+                }
                 continue;
             };
             defer allocator.free(res.stdout);
@@ -122,8 +148,20 @@ test "compile_fails: fixtures are rejected by compiler or runtime trap" {
                 std.debug.print("Fixture succeeded both in compile and run: {s}\n", .{entry.name});
                 return error.ExpectedFailure;
             }
+            // The trap message comes from the child process, not the collector.
+            if (std.mem.indexOf(u8, res.stderr, expected) == null and
+                std.mem.indexOf(u8, diagnostics.items, expected) == null)
+            {
+                std.debug.print("Fixture '{s}' expected '{s}', got:\n{s}{s}\n", .{ entry.name, expected, diagnostics.items, res.stderr });
+                return error.UnexpectedDiagnostic;
+            }
         } else |_| {
-            // Emitting failed at compile time as expected
+            // Emitting failed at compile time: the collected diagnostic must
+            // carry the message the fixture declares.
+            if (std.mem.indexOf(u8, diagnostics.items, expected) == null) {
+                std.debug.print("Fixture '{s}' expected '{s}', got:\n{s}\n", .{ entry.name, expected, diagnostics.items });
+                return error.UnexpectedDiagnostic;
+            }
         }
     }
     try std.testing.expect(count >= 20);
@@ -326,7 +364,7 @@ test "native execution: heterogeneous tuples with dot access and mutation" {
         \\    print(tup.0);
         \\}
     ;
-    try expectNativeStdout(allocator, src, "10\nhi\ntrue\n42\n");
+    try expectNativeStdout(allocator, src, "10\nhi\n1\n42\n");
 }
 
 test "native execution: discriminated struct unions with @switch" {
@@ -377,7 +415,7 @@ test "native execution: wrapping arithmetic operators +%, -%, *%" {
         \\    print(wrapped == -9223372036854775807 - 1);
         \\}
     ;
-    try expectNativeStdout(allocator, src, "true\n");
+    try expectNativeStdout(allocator, src, "1\n");
 }
 
 test "native execution: multi-arg print with struct and string" {
@@ -412,6 +450,29 @@ test "native execution: string slicing" {
     try expectNativeStdout(allocator, src, "hello\nworld\nhello\n");
 }
 
+test "native execution: slice views alias backing storage" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\@struct Bag { items: [3]i64; }
+        \\pub @func main() {
+        \\    $buffer = [1, 2, 3, 4, 5];
+        \\    $view = buffer[1..4];
+        \\    view[0] = 99;
+        \\    print(buffer[1], view[0]);
+        \\
+        \\    $copy = buffer;
+        \\    copy[0] = 7;
+        \\    print(buffer[0], copy[0]);
+        \\
+        \\    $bag = Bag { items: [10, 20, 30] };
+        \\    $items = bag.items[1..];
+        \\    items[0] = 55;
+        \\    print(bag.items[1], items[0]);
+        \\}
+    ;
+    try expectNativeStdout(allocator, src, "99 99\n1 7\n55 55\n");
+}
+
 test "native execution: bitwise, float arithmetic, and value @if capture" {
     const allocator = std.testing.allocator;
     const src =
@@ -437,4 +498,98 @@ test "native execution: bitwise, float arithmetic, and value @if capture" {
         \\}
     ;
     try expectNativeStdout(allocator, src, "1 7 5 16 8\n5 2\nhas val 42\n99\n");
+}
+
+test "emitter: extern declarations and direct C calls" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\pub @extern "c" @func puts(s: c_str): i32;
+        \\@extern "c" @func printf(fmt: c_str, ...): i32;
+        \\@extern "c" @func getenv(name: c_str): ?c_str;
+        \\pub @func main() {
+        \\    $r: i32 = puts("hello");
+        \\    $v: i32 = printf("%d\n", 42);
+        \\    $e: ?c_str = getenv("PATH");
+        \\}
+    ;
+    try expectNativeEmitContains(allocator, src, "extern fn puts(s: [*:0]const u8) i32;");
+    try expectNativeEmitContains(allocator, src, "extern fn printf(fmt: [*:0]const u8, ...) i32;");
+    try expectNativeEmitContains(allocator, src, "extern fn getenv(name: [*:0]const u8) ?[*:0]const u8;");
+    try expectNativeEmitContains(allocator, src, "puts(\"hello\")");
+    try expectNativeEmitContains(allocator, src, "printf(\"%d\\n\", @as(i32, 42))");
+}
+
+test "native execution: extern calls, C returns, and variadic promotion" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\pub @extern "c" @func printf(fmt: c_str, ...): i32;
+        \\@extern "c" @func strlen(s: c_str): usize;
+        \\@extern "c" @func getpid(): i32;
+        \\@extern "c" @func malloc(size: usize): ?*u8;
+        \\@extern "c" @func free(p: ?*u8): void;
+        \\pub @func main() {
+        \\    $n: usize = strlen("hello");
+        \\    print(n);
+        \\    $pid: i32 = getpid();
+        \\    print(pid > 0);
+        \\    $p: ?*u8 = malloc(8);
+        \\    free(p);
+        \\    printf("hello %s %d\n", "world", 42);
+        \\    $f: f32 = 1.5;
+        \\    printf("f=%f\n", f);
+        \\    $a: i8 = @as(i8, -5);
+        \\    $b: u8 = @as(u8, 7);
+        \\    printf("i=%d u=%d b=%d\n", a, b, true);
+        \\}
+    ;
+    try expectNativeStdout(allocator, src, "5\ntrue\nhello world 42\nf=1.500000\ni=-5 u=7 b=1\n");
+}
+
+test "native execution: extern byte buffer and optional c_str" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\pub @extern "c" @func printf(fmt: c_str, ...): i32;
+        \\@extern "c" @func getenv(name: c_str): ?c_str;
+        \\@extern "c" @func memset(p: *u8, c: i32, n: usize): ?*u8;
+        \\pub @func main() {
+        \\    $buf: [4]u8 = [0, 0, 0, 0];
+        \\    _ = memset(buf, 65, 4);
+        \\    printf("%c%c%c%c\n", buf[0], buf[1], buf[2], buf[3]);
+        \\    $env: ?c_str = getenv("PATH");
+        \\    @if (env) |v| {
+        \\        $zero: usize = 0;
+        \\        printf("env=%d\n", strlen(v) > zero);
+        \\    } @else {
+        \\        print("missing");
+        \\    }
+        \\}
+        \\@extern "c" @func strlen(s: c_str): usize;
+    ;
+    try expectNativeStdout(allocator, src, "AAAA\nenv=1\n");
+}
+
+test "native execution: imported pub extern links its bare symbol" {
+    const allocator = std.testing.allocator;
+    var child = std.process.Child.init(&.{
+        "zig-out/bin/llts",
+        "run",
+        "tests/fixtures/extern_main.lls",
+    }, allocator);
+    child.stdout_behavior = .Pipe;
+    child.stderr_behavior = .Pipe;
+    try child.spawn();
+    const stdout = try child.stdout.?.readToEndAlloc(allocator, 1024 * 1024);
+    defer allocator.free(stdout);
+    const stderr = try child.stderr.?.readToEndAlloc(allocator, 1024 * 1024);
+    defer allocator.free(stderr);
+    const term = try child.wait();
+    const code: u8 = switch (term) {
+        .Exited => |c| @intCast(c),
+        else => 1,
+    };
+    if (code != 0) {
+        std.debug.print("Native run failed with code {d}:\n{s}\n", .{ code, stderr });
+        return error.NativeRunFailed;
+    }
+    try std.testing.expectEqualStrings("from-module\n", stdout);
 }

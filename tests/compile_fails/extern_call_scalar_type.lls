@@ -1,0 +1,2 @@
+@extern "c" @func f(x: i32): void;
+pub @func main() { f("x"); }

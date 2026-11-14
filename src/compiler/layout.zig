@@ -84,7 +84,7 @@ pub fn sizeOfType(state: *state_mod.CompilerState, t: ir.Type) !?i32 {
             break :blk 8;
         },
         .union_ => if (ir.optionalPayload(t)) |payload| try sizeOfType(state, payload) else 8,
-        .enum_, .enum_lit, .str_lit, .array, .tuple, .ptr, .func, .error_, .error_set, .error_lit => 8,
+        .enum_, .enum_lit, .str_lit, .c_str, .array, .tuple, .ptr, .func, .error_, .error_set, .error_lit => 8,
         .unknown, .never, .type_ => null,
     };
 }

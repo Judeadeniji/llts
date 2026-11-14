@@ -63,6 +63,46 @@ print(u.name);
 
 ---
 
+## 2.4 Numeric Assignability and Constant Folding
+
+Cross-width numeric assignment is checked against the value, not just the source
+type. A constant that provably fits the target needs no cast, so the following
+are accepted:
+
+```llts
+$small: i32 = -5;      # exact constant fits i32
+$total: i32 = 2 + 3;   # folded to 5, fits i32
+$byte: u8 = 250;       # literal fits u8
+```
+
+A value that does not fit is still rejected — there is no silent truncation:
+
+```llts
+$byte: u8 = 256;       # COMPILE ERROR: Literal 256 overflows target type 'u8'
+```
+
+Bindings without an annotation keep the wider type (`i64` for integers), so an
+unannotated `$small = -5` is an `i64`.
+
+`@const` initializers are evaluated at compile time and must fit both the
+folder's arithmetic and the declared width:
+
+```llts
+@const $MAX: i32 = 2147483647;
+@const $OVER: i32 = MAX + 1;
+# COMPILE ERROR: Integer overflow in constant expression: value 2147483648 does not fit 'i32'
+
+@const $BIG = 9223372036854775807 + 1;
+# COMPILE ERROR: Integer overflow in constant expression: addition exceeds 'i64'; did you mean '+%'?
+```
+
+The width in the message is always the one that overflowed (`u1`, `i8`, `u8`,
+`i16`, `u16`, `i32`, `u32`, `i64`, …), and the same diagnostic is produced by
+the bytecode and native backends. Use the wrapping operators (`+%`, `-%`, `*%`)
+when wraparound is intended.
+
+---
+
 ## 3. Flow-Sensitive Type Narrowing
 
 Flow analysis tracks the type of variables along each branch of execution. When a condition proves that a variable cannot hold certain values, the compiler narrows its type within that lexical scope.

@@ -9,7 +9,7 @@ Zig implementation. The TypeScript prototype/reference is [`llts-js`](../llts-js
 - [x] Basic Tokens: Identifiers, Numbers (int, float, hex, binary, octal), Strings, Booleans.
 - [x] Registers: `$a`, `$t0`, etc. (declaration-only sigil; uses omit `$`).
 - [x] Keywords: `return`, `true`, `false`, `break`, `continue`, `pub`, `defer`.
-- [x] Compiler Directives: `@func`, `@import`, `@const`, `@if`, `@for`, `@struct`, `@typeOf`, `@sizeOf`, `@addrOf`, `@isError`, `@extern`.
+- [x] Compiler Directives: `@func`, `@import`, `@const`, `@if`, `@for`, `@struct`, `@typeOf`, `@sizeOf`, `@addrOf`, `@isError`, and native `@extern` function bindings.
 - [x] Operators: Arithmetic, Assignment (including compound `+=` etc.), Comparison, Logical, Pipe (`|>`), Power (`**` / `^`).
 - [x] Comments: Line comments starting with `#`.
 
@@ -183,6 +183,8 @@ Discrepancies where current documentation in `docs/` differs from compiler capab
 - [x] **Explicit error handling** — `error(msg)` and `?`.
 - [x] **`@const` enforcement** — reassignment is a compile / runtime error.
 - [x] **`@const` initializers** — compile-time constant expressions only.
+- [x] **Native C extern functions** — `@extern "c" @func` with fixed signatures, `c_str`/`?c_str`, pointers, and variadic calls. VM rejects extern declarations.
+- [ ] **Extern completeness** — extern data symbols, link-symbol aliases (`@extern "c" @func puts as "puts"` or similar), and non-C ABIs (`stdcall`, `sysv`, `win64`, `zig`). Extern structs passed by value and implicit `string`→`c_str` conversion remain unplanned until a C layout model exists.
 
 ### P2 — Standard Library
 
