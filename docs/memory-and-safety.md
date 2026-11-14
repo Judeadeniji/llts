@@ -82,7 +82,7 @@ Pointers provide explicit reference semantics for aggregates.
    $origin = Point { x: 0.0, y: 0.0 };
    $ptr: *Point = &origin;
    ```
-3. **No Address of `@const`:** You cannot take the address of an immutable binding. Attempting `&$c` on `@const $c` triggers a compile error (`Cannot take the address of constant 'c'`).
+3. **No Address of `@const`:** You cannot take the address of an immutable binding. Attempting `&$c` on `@const $c` triggers a compile error (`Cannot take the address of constant 'c'`). A `@const` aggregate may still be sliced, but the resulting slice is a read-only view: writing through it is rejected (`Cannot mutate elements of a constant slice`).
 4. **Nullable Pointers (`?*T`):** Pointers can be combined with optionals to represent nullable references (`*T | null`).
 
 ```lls
@@ -157,4 +157,4 @@ Multiple `defer` and `errdefer` statements in the same scope are executed in **L
 | **No Dangling Pointers** | Escape analysis rejects returning pointers or slices to local frame variables. |
 | **No Double Free / GC Pauses** | Stack frames rewind automatically on scope exit; heap allocations will belong to the standard library. |
 | **Guaranteed Cleanup** | `defer` statements execute on every exit path; `errdefer` runs on error returns. |
-| **Safe Immutability** | `@const` variables cannot be rebound and cannot have their address borrowed with `&`. |
+| **Safe Immutability** | `@const` variables cannot be rebound, have their address borrowed with `&`, or be mutated through slices. |

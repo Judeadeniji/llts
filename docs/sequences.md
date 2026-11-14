@@ -88,7 +88,7 @@ If an array is bound with `@const`, neither the variable nor any of its elements
 
 ```llts
 @const $ORIGIN = [0, 0];
-ORIGIN[0] = 5; # COMPILE ERROR: Cannot mutate element of constant
+ORIGIN[0] = 5; # COMPILE ERROR: Cannot mutate elements of constant 'ORIGIN'
 ```
 
 ### 2.5 Passing and Returning Arrays
@@ -126,7 +126,14 @@ In both the VM and the native backend, a slice `[]T` is represented as a 16-byte
 - `ptr`: Points directly to the first element in the backing buffer.
 - `len`: Stores the active element count.
 
-Because a slice does not own the memory it references, creating or passing slices requires **zero heap allocation and zero element copying**.
+Because a slice does not own the memory it references, creating or passing slices requires **zero heap allocation and zero element copying**. This differs from assigning an array to a new variable, which copies every element by value:
+
+```llts
+$copy = arr;    # copies the array elements
+$view = arr[..]; # borrows arr's existing storage
+```
+
+The native backend lowers a slice of an array place to a pointer into that array's storage; the VM records a reference to the backing buffer. Neither copies elements.
 
 ### 3.2 Slicing Range Expressions
 
@@ -173,6 +180,17 @@ pub @func main() {
 
     print(buffer[1]);     # 99 (underlying array was modified!)
 }
+```
+
+This aliasing applies in both the VM and the native backend. A writable slice requires mutable backing storage; the compiler keeps the backing array mutable so writes through the view are well-defined.
+
+Slices of `@const` arrays are still allowed, but they are read-only views. Slicing does not bypass the binding's immutability:
+
+```llts
+@const $ORIGIN = [0, 0];
+$view = ORIGIN[..];   # allowed: read-only view
+
+view[0] = 5;          # COMPILE ERROR: Cannot mutate elements of a constant slice
 ```
 
 ### 3.5 Escape Analysis & Stack Borrow Safety

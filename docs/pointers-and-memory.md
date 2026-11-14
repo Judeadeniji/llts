@@ -99,6 +99,13 @@ Taking the address of a `@const` binding is rejected:
 $p = &ORIGIN; 
 ```
 
+A `@const` array may be sliced without taking its address explicitly, but the resulting slice is a read-only view:
+```llts
+@const $TABLE = [1, 2, 3];
+$view = TABLE[..];  # allowed: read-only view
+view[0] = 9;        # COMPILE ERROR: Cannot mutate elements of a constant slice
+```
+
 ---
 
 ## 4. Automatic Dereference Syntax
