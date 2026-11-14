@@ -998,6 +998,9 @@ fn lookupModuleDeclExact(state: *state_mod.CompilerState, ta: ir.TypeAlloc, mod_
 
     var qbuf: [512]u8 = undefined;
     const q = std.fmt.bufPrint(&qbuf, "{s}::{s}", .{ mod_path, member }) catch return null;
+    if (state.externs.contains(q)) {
+        return compiler_errors.compileFailFmt(state, "extern function '{s}' can only be called directly", .{ir.cleanTypeName(q)});
+    }
     if (preferredGlobalIr(state, q)) |t| return t;
     if (state.chunk.exports.contains(q) or state.global_vars.contains(q) or state.global_consts.contains(q)) {
         if (try funcTypeOfName(state, ta, q)) |ft| return ft;
@@ -1605,6 +1608,9 @@ fn inferExprInner(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, 
 fn inferPrimaryExpr(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, p: ast.Primary) TypecheckError!ir.Type {
     if (p.kind == .identifier or p.kind == .register) {
         if (env.lookup(p.name)) |t| return t;
+        if (state.externs.contains(p.name)) {
+            return compiler_errors.compileFailFmt(state, "extern function '{s}' can only be called directly", .{ir.cleanTypeName(p.name)});
+        }
         if (state.global_type_irs.get(p.name)) |gt| {
             if (gt != .unknown) return gt;
         }
@@ -2725,6 +2731,146 @@ fn coerceShiftPair(
     return lw;
 }
 
+fn isStringLiteralNode(node: *const ast.Node) bool {
+    return node.* == .literal and node.literal.literal_type == .string;
+}
+
+fn isExternBytePtr(t: ir.Type) bool {
+    const p = ir.peelDefined(t);
+    return p == .ptr and ir.peelDefined(p.ptr.*) == .u8;
+}
+
+fn isByteSequenceSource(got: ir.Type, node: *const ast.Node) bool {
+    if (isStringLiteralNode(node)) return true;
+    return ir.isByteSlice(got) or ir.peelDefined(got) == .str_lit;
+}
+
+fn externOptionalType(ta: ir.TypeAlloc, payload: ir.Type) !ir.Type {
+    var arms = [_]ir.Type{ payload, ir.TNull };
+    return try ta.unionType(&arms);
+}
+
+fn externCTypeToIr(ta: ir.TypeAlloc, ct: state_mod.CType) TypecheckError!ir.Type {
+    return switch (ct) {
+        .scalar => |t| t,
+        .c_str => ir.TCStr,
+        .optional_c_str => try externOptionalType(ta, ir.TCStr),
+        .ptr => |t| t,
+        .optional_ptr => |t| try externOptionalType(ta, t),
+    };
+}
+
+fn checkExternFixedArg(
+    state: *state_mod.CompilerState,
+    env: *Env,
+    ta: ir.TypeAlloc,
+    name: []const u8,
+    index: usize,
+    ct: state_mod.CType,
+    arg: *ast.Node,
+) TypecheckError!void {
+    const got = try inferExpr(state, env, ta, arg);
+    var ctx_buf: [128]u8 = undefined;
+    const ctx = std.fmt.bufPrint(&ctx_buf, "argument {d} of extern '{s}'", .{ index + 1, ir.cleanTypeName(name) }) catch "extern argument";
+    switch (ct) {
+        .scalar => |t| try requireAssignFrom(state, got, t, ctx, arg),
+        .c_str => {
+            if (isStringLiteralNode(arg) or ir.isSubtype(got, ir.TCStr)) return;
+            try requireAssignFrom(state, got, ir.TCStr, ctx, arg);
+        },
+        .optional_c_str => {
+            if (isStringLiteralNode(arg)) return;
+            try requireAssignFrom(state, got, try externOptionalType(ta, ir.TCStr), ctx, arg);
+        },
+        .ptr => |t| {
+            if (ir.isSubtype(got, t)) return;
+            if (isExternBytePtr(t) and isByteSequenceSource(got, arg)) return;
+            try requireAssignFrom(state, got, t, ctx, arg);
+        },
+        .optional_ptr => |t| {
+            if (ir.isSubtype(got, try externOptionalType(ta, t))) return;
+            if (isExternBytePtr(t) and isByteSequenceSource(got, arg)) return;
+            try requireAssignFrom(state, got, try externOptionalType(ta, t), ctx, arg);
+        },
+    }
+}
+
+fn isSupportedExternVararg(got: ir.Type, node: *const ast.Node) bool {
+    if (isStringLiteralNode(node)) return true;
+    const p = ir.peelDefined(got);
+    return switch (p) {
+        .u1, .i8, .i16, .i32, .i64, .u8, .u16, .u32, .u64, .f32, .f64, .isize, .usize => true,
+        .c_str, .ptr, .null, .str_lit, .bool_lit, .int_lit => true,
+        .union_ => if (ir.optionalPayload(p)) |payload| blk: {
+            const q = ir.peelDefined(payload);
+            break :blk q == .c_str or q == .ptr;
+        } else false,
+        else => false,
+    };
+}
+
+fn checkExternVararg(
+    state: *state_mod.CompilerState,
+    env: *Env,
+    ta: ir.TypeAlloc,
+    name: []const u8,
+    index: usize,
+    arg: *ast.Node,
+) TypecheckError!void {
+    const got = try inferExpr(state, env, ta, arg);
+    if (isSupportedExternVararg(got, arg)) return;
+    const shown = try ownDisplay(state, got);
+    if (ir.isByteSlice(got)) {
+        return compiler_errors.compileFailFmt(
+            state,
+            "variadic argument {d} of extern '{s}' cannot be a runtime string or slice ('{s}'); pass a string literal or c_str",
+            .{ index + 1, ir.cleanTypeName(name), shown },
+        );
+    }
+    return compiler_errors.compileFailFmt(
+        state,
+        "variadic argument {d} of extern '{s}' has unsupported type '{s}'",
+        .{ index + 1, ir.cleanTypeName(name), shown },
+    );
+}
+
+fn inferExternCall(
+    state: *state_mod.CompilerState,
+    env: *Env,
+    ta: ir.TypeAlloc,
+    call_node: *ast.Node,
+    c: *const ast.Call,
+    name: []const u8,
+    ext: *const state_mod.ExternInfo,
+) TypecheckError!ir.Type {
+    if (ext.is_c_variadic) {
+        if (c.args.len < ext.params.len) {
+            return compiler_errors.compileFailFmt(
+                state,
+                "extern function '{s}' expects at least {d} argument(s), got {d}",
+                .{ ir.cleanTypeName(name), ext.params.len, c.args.len },
+            );
+        }
+    } else if (c.args.len != ext.params.len) {
+        return compiler_errors.compileFailFmt(
+            state,
+            "extern function '{s}' expects {d} argument(s), got {d}",
+            .{ ir.cleanTypeName(name), ext.params.len, c.args.len },
+        );
+    }
+
+    var i: usize = 0;
+    while (i < ext.params.len) : (i += 1) {
+        try checkExternFixedArg(state, env, ta, name, i, ext.params[i].ctype, c.args[i]);
+    }
+    while (i < c.args.len) : (i += 1) {
+        try checkExternVararg(state, env, ta, name, i, c.args[i]);
+    }
+
+    try state.extern_calls.put(call_node, name);
+    return try externCTypeToIr(ta, ext.ret);
+}
+
 fn inferCall(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, call_node: *ast.Node, c: *const ast.Call) TypecheckError!ir.Type {
     if (c.callee.* == .primary and std.mem.startsWith(u8, c.callee.primary.name, "@")) {
         const name = c.callee.primary.name;
@@ -2735,6 +2881,9 @@ fn inferCall(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, call_
     }
 
     if (resolveCalleeName(state, c)) |callee_name| {
+        if (state.externs.getPtr(callee_name)) |ext| {
+            return try inferExternCall(state, env, ta, call_node, c, callee_name, ext);
+        }
         // `Name(T)` — a generic struct used as a type: instantiate it and
         // record the denoted struct for every type position / struct init.
         if (state.struct_templates.get(callee_name)) |template| {

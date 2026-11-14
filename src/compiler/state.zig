@@ -488,6 +488,12 @@ pub const CompilerState = struct {
     pub fn typeAlloc(self: *CompilerState) ir.TypeAlloc {
         return .{ .allocator = self.type_arena.allocator() };
     }
+
+    /// Runtime builtins and native externs are terminal callables: they have no
+    /// LLTS body to typecheck, reach, or emit.
+    pub fn isNativeCallable(self: *const CompilerState, name: []const u8) bool {
+        return self.native_globals.contains(name) or self.externs.contains(name);
+    }
 };
 
 pub fn create(allocator: std.mem.Allocator) !CompilerState {

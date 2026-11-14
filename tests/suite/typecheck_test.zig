@@ -318,3 +318,83 @@ test "extern: registration rejects invalid declarations" {
         };
     }
 }
+
+test "extern: typechecks fixed calls, C returns, and variadic arguments" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\pub @extern "c" @func puts(s: c_str): i32;
+        \\@extern "c" @func printf(fmt: c_str, ...): i32;
+        \\@extern "c" @func malloc(size: usize): ?*u8;
+        \\@extern "c" @func getenv(name: c_str): ?c_str;
+        \\@extern "c" @func write(fd: i32, buf: *u8, n: usize): isize;
+        \\pub @func main() {
+        \\    $r: i32 = puts("hello");
+        \\    $v: i32 = printf("%d\n", 42, true, "suffix", 1.5);
+        \\    $p: ?*u8 = malloc(8);
+        \\    $h: ?c_str = getenv("HOME");
+        \\    $buf: [4]u8 = [1, 2, 3, 4];
+        \\    $w: isize = write(1, "abc", 3);
+        \\    $w2: isize = write(1, buf, 4);
+        \\}
+    ;
+    var analyzed = try helpers.analyzeSource(allocator, src, true);
+    defer analyzed.deinit();
+    try std.testing.expectEqual(@as(usize, 6), analyzed.state.extern_calls.count());
+}
+
+test "extern: call typechecking rejects arity, types, and value uses" {
+    const allocator = std.testing.allocator;
+    const cases = [_][]const u8{
+        \\@extern "c" @func f(): void;
+        \\pub @func main() { f(1); }
+        ,
+        \\@extern "c" @func f(x: i32): void;
+        \\pub @func main() { f(); }
+        ,
+        \\@extern "c" @func f(x: i32): void;
+        \\pub @func main() { f("x"); }
+        ,
+        \\@extern "c" @func f(s: c_str): void;
+        \\pub @func main() { $s: string = "x"; f(s); }
+        ,
+        \\@extern "c" @func f(p: *u8): void;
+        \\pub @func main() { f(null); }
+        ,
+        \\@extern "c" @func f(x: i32, ...): void;
+        \\pub @func main() { $s: string = "x"; f(1, s); }
+        ,
+        \\@extern "c" @func f(x: i32, ...): void;
+        \\pub @func main() { $o: ?i32 = null; f(1, o); }
+        ,
+        \\@extern "c" @func f(): i32;
+        \\pub @func main() { $x: string = f(); }
+        ,
+        \\@extern "c" @func puts(s: c_str): i32;
+        \\pub @func main() { print(puts); }
+        ,
+        \\@extern "c" @func puts(s: c_str): i32;
+        \\pub @func main() { $t = @typeOf(puts); }
+        ,
+    };
+    for (cases, 0..) |src, i| {
+        helpers.expectCompileFail(allocator, src) catch |err| {
+            std.debug.print("extern call rejection case {d} was accepted\n", .{i});
+            return err;
+        };
+    }
+}
+
+test "extern: reachability treats extern calls as terminal" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\pub @extern "c" @func puts(s: c_str): i32;
+        \\@extern "c" @func printf(fmt: c_str, ...): i32;
+        \\pub @func main() {
+        \\    $r: i32 = puts("hello");
+        \\    $v: i32 = printf("%d\n", r);
+        \\}
+    ;
+    var analyzed = try helpers.analyzeSource(allocator, src, false);
+    defer analyzed.deinit();
+    try std.testing.expectEqual(@as(usize, 2), analyzed.state.extern_calls.count());
+}

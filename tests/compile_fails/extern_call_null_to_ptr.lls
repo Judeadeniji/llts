@@ -1,0 +1,2 @@
+@extern "c" @func f(p: *u8): void;
+pub @func main() { f(null); }

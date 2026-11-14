@@ -1385,7 +1385,7 @@ pub fn resolveType(state: *state_mod.CompilerState, node: *ast.Node) ?[]const u8
                 const name = c.callee.primary.name;
                 const is_callable = state.functions.contains(name) or
                     state.chunk.functions.contains(name) or
-                    state.native_globals.contains(name);
+                    state.isNativeCallable(name);
                 if (!is_callable) {
                     var scratch = std.heap.ArenaAllocator.init(state.allocator);
                     defer scratch.deinit();

@@ -647,9 +647,9 @@ fn analyzeBody(
         },
         .call => |c| {
             if (try path_mod.tryResolveStaticPath(state, c.callee)) |name| {
-                try calls.put(name, {});
+                if (!state.isNativeCallable(name)) try calls.put(name, {});
             } else if (c.callee.* == .primary and c.callee.primary.kind == .identifier) {
-                if (!state.native_globals.contains(c.callee.primary.name)) {
+                if (!state.isNativeCallable(c.callee.primary.name)) {
                     try calls.put(c.callee.primary.name, {});
                 }
             } else if (c.callee.* == .member) {
