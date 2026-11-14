@@ -506,3 +506,29 @@ test "native execution: extern byte buffer and optional c_str" {
     ;
     try expectNativeStdout(allocator, src, "AAAA\nenv=1\n");
 }
+
+test "native execution: imported pub extern links its bare symbol" {
+    const allocator = std.testing.allocator;
+    var child = std.process.Child.init(&.{
+        "zig-out/bin/llts",
+        "run",
+        "tests/fixtures/extern_main.lls",
+    }, allocator);
+    child.stdout_behavior = .Pipe;
+    child.stderr_behavior = .Pipe;
+    try child.spawn();
+    const stdout = try child.stdout.?.readToEndAlloc(allocator, 1024 * 1024);
+    defer allocator.free(stdout);
+    const stderr = try child.stderr.?.readToEndAlloc(allocator, 1024 * 1024);
+    defer allocator.free(stderr);
+    const term = try child.wait();
+    const code: u8 = switch (term) {
+        .Exited => |c| @intCast(c),
+        else => 1,
+    };
+    if (code != 0) {
+        std.debug.print("Native run failed with code {d}:\n{s}\n", .{ code, stderr });
+        return error.NativeRunFailed;
+    }
+    try std.testing.expectEqualStrings("from-module\n", stdout);
+}

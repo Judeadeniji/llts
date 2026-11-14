@@ -1,0 +1,5 @@
+pub @extern "c" @func puts(s: c_str): i32;
+
+pub @func greet(): i32 {
+    return puts("from-module");
+}

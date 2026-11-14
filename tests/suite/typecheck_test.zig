@@ -398,3 +398,22 @@ test "extern: reachability treats extern calls as terminal" {
     defer analyzed.deinit();
     try std.testing.expectEqual(@as(usize, 2), analyzed.state.extern_calls.count());
 }
+
+test "extern: bytecode backend rejects extern declarations" {
+    const allocator = std.testing.allocator;
+    const compiler = helpers.compiler;
+    const src =
+        \\pub @extern "c" @func puts(s: c_str): i32;
+        \\pub @func main() {
+        \\    $r: i32 = puts("hello");
+        \\}
+    ;
+    var doc = try helpers.parseSource(allocator, src);
+    defer doc.deinit();
+    var state = try compiler.analyze(allocator, &doc, .{ .debug = true, .strict = true });
+    defer {
+        state.chunk.deinit();
+        compiler.state_mod.deinit(&state);
+    }
+    try std.testing.expectError(error.CompileError, compiler.emitBytecode(&state, &doc));
+}
