@@ -1,0 +1,3 @@
+@extern "c" @func compute(): i32;
+@func compute(): i32 { return 1; }
+pub @func main() {}

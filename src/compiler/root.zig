@@ -63,6 +63,7 @@ pub fn analyze(
     try registerStructNames(&state, doc);
     try registerFunctions(&state, doc);
     try registerModuleDecls(&state, doc);
+    try registerExterns(&state, doc);
 
     for (doc.statements) |s| {
         if (s.* == .struct_decl and s.struct_decl.params.len > 0) continue; // instantiated on use
@@ -109,6 +110,7 @@ pub fn prepareForTypecheck(state: *state_mod.CompilerState, doc: *ast.Document) 
     try registerStructNames(state, doc);
     try registerFunctions(state, doc);
     try registerModuleDecls(state, doc);
+    try registerExterns(state, doc);
 
     for (doc.statements) |s| {
         if (s.* == .struct_decl or s.* == .enum_decl or s.* == .error_decl or s.* == .type_decl) try stmt.compileStatement(state, s);
@@ -804,6 +806,102 @@ fn selfReceiverTypeName(state: *state_mod.CompilerState, full_name: []const u8) 
         return bare;
     }
     return null;
+}
+
+fn externNameConflicts(state: *state_mod.CompilerState, name: []const u8) bool {
+    return state.externs.contains(name) or
+        state.functions.contains(name) or
+        state.global_vars.contains(name) or
+        state.global_types.contains(name) or
+        state.global_consts.contains(name) or
+        state.native_globals.contains(name);
+}
+
+fn externSignaturesEqual(a: state_mod.ExternInfo, b: state_mod.ExternInfo) bool {
+    if (a.is_c_variadic != b.is_c_variadic) return false;
+    if (a.params.len != b.params.len) return false;
+    if (!state_mod.cTypeEquals(a.ret, b.ret)) return false;
+    for (a.params, b.params) |ap, bp| {
+        if (!state_mod.cTypeEquals(ap.ctype, bp.ctype)) return false;
+    }
+    return true;
+}
+
+/// Validate and register native `@extern` declarations. Runs after modules are
+/// qualified so `source_name` is the callable name while `symbol` stays bare.
+fn registerExterns(state: *state_mod.CompilerState, doc: *ast.Document) !void {
+    for (doc.statements) |s| {
+        if (s.* != .extern_decl) continue;
+        const ext = &s.extern_decl;
+        const loc = ext.loc;
+        const path = if (loc.path.len > 0) loc.path else state.diag_path;
+        const line = if (loc.line > 0) loc.line else 1;
+        const column = if (loc.column > 0) loc.column else 1;
+
+        const fail = struct {
+            fn at(
+                st: *state_mod.CompilerState,
+                p: []const u8,
+                l: u32,
+                c: u32,
+                comptime fmt: []const u8,
+                args: anytype,
+            ) error{CompileError} {
+                return compile_errors.compileFailAt(st, p, l, c, fmt, args);
+            }
+        }.at;
+
+        if (!std.mem.eql(u8, ext.abi, "c")) {
+            return fail(state, path, line, column, "Unsupported extern ABI '{s}'; only \"c\" is supported", .{ext.abi});
+        }
+        if (ext.kind == .data) {
+            return fail(state, path, line, column, "Extern data symbols are not supported yet ('{s}')", .{ext.symbol});
+        }
+        if (std.mem.eql(u8, ext.symbol, "main")) {
+            return fail(state, path, line, column, "Extern symbol 'main' is reserved for the program entry point", .{});
+        }
+        if (externNameConflicts(state, ext.name)) {
+            return fail(state, path, line, column, "Extern '{s}' conflicts with an existing declaration", .{ext.name});
+        }
+        if (ext.is_c_variadic and ext.params.len == 0) {
+            return fail(state, path, line, column, "Variadic extern function '{s}' requires at least one fixed parameter", .{ext.name});
+        }
+
+        const params = try state.allocator.alloc(state_mod.ExternParam, ext.params.len);
+        errdefer state.allocator.free(params);
+        for (ext.params, 0..) |param, i| {
+            for (ext.params[0..i]) |prev| {
+                if (std.mem.eql(u8, prev.name, param.name)) {
+                    return fail(state, path, line, column, "Duplicate parameter name '{s}' in extern declaration '{s}'", .{ param.name, ext.name });
+                }
+            }
+            params[i] = .{
+                .name = param.name,
+                .ctype = try from_ast.resolveExternCType(state, param.type_annotation, false, loc),
+            };
+        }
+        const ret = try from_ast.resolveExternCType(state, ext.return_type, true, loc);
+        const info = state_mod.ExternInfo{
+            .source_name = ext.name,
+            .symbol = ext.symbol,
+            .abi = ext.abi,
+            .params = params,
+            .ret = ret,
+            .is_c_variadic = ext.is_c_variadic,
+            .is_public = ext.is_public,
+            .loc = ext.loc,
+        };
+
+        var it = state.externs.valueIterator();
+        while (it.next()) |other| {
+            if (!std.mem.eql(u8, other.symbol, ext.symbol)) continue;
+            if (!externSignaturesEqual(other.*, info)) {
+                return fail(state, path, line, column, "Extern symbol '{s}' is already declared with a different signature", .{ext.symbol});
+            }
+        }
+
+        try state.externs.put(ext.name, info);
+    }
 }
 
 fn registerModuleDecls(state: *state_mod.CompilerState, doc: *ast.Document) !void {

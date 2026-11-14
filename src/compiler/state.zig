@@ -7,6 +7,46 @@ const layout = @import("layout.zig");
 const ir = @import("typecheck/ir.zig");
 const reachability = @import("reachability.zig");
 
+/// C-compatible type accepted in a native `@extern` signature.
+pub const CType = union(enum) {
+    /// Scalar C type; includes `void` for return positions only.
+    scalar: ir.Type,
+    c_str,
+    optional_c_str,
+    /// `*T`; the stored type is the full `ir.ptr`.
+    ptr: ir.Type,
+    /// `?*T`; the stored type is the pointer payload (not the optional union).
+    optional_ptr: ir.Type,
+};
+
+pub const ExternParam = struct {
+    name: []const u8,
+    ctype: CType,
+};
+
+pub const ExternInfo = struct {
+    /// Module-qualified source name.
+    source_name: []const u8,
+    /// Untouched link symbol.
+    symbol: []const u8,
+    abi: []const u8,
+    params: []ExternParam,
+    ret: CType,
+    is_c_variadic: bool,
+    is_public: bool,
+    loc: ast.Location,
+};
+
+pub fn cTypeEquals(a: CType, b: CType) bool {
+    if (std.meta.activeTag(a) != std.meta.activeTag(b)) return false;
+    return switch (a) {
+        .scalar => |t| ir.typeEquals(t, b.scalar),
+        .c_str, .optional_c_str => true,
+        .ptr => |t| ir.typeEquals(t, b.ptr),
+        .optional_ptr => |t| ir.typeEquals(t, b.optional_ptr),
+    };
+}
+
 pub const Local = struct {
     name: []const u8,
     depth: i32,
@@ -322,6 +362,10 @@ pub const CompilerState = struct {
     ready_global_consts: std.StringHashMap(void),
     const_values: std.StringHashMap(const_eval.ConstValue),
     native_globals: std.StringHashMap(void),
+    /// Native `@extern` declarations keyed by module-qualified source name.
+    externs: std.StringHashMap(ExternInfo),
+    /// Extern call nodes → qualified extern name, filled by typecheck.
+    extern_calls: std.AutoHashMap(*ast.Node, []const u8),
     /// Name → global slot for OP_GET/SET_GLOBAL emit.
     global_slots: std.StringHashMap(u16),
     inline_return_jumps: std.ArrayList(std.ArrayList(usize)) = .empty,
@@ -491,6 +535,8 @@ pub fn create(allocator: std.mem.Allocator) !CompilerState {
         .ready_global_consts = std.StringHashMap(void).init(allocator),
         .const_values = std.StringHashMap(const_eval.ConstValue).init(allocator),
         .native_globals = std.StringHashMap(void).init(allocator),
+        .externs = std.StringHashMap(ExternInfo).init(allocator),
+        .extern_calls = std.AutoHashMap(*ast.Node, []const u8).init(allocator),
         .global_slots = std.StringHashMap(u16).init(allocator),
         .type_of_results = std.AutoHashMap(*ast.Node, []const u8).init(allocator),
         .type_ir_of_results = std.AutoHashMap(*ast.Node, ir.Type).init(allocator),
@@ -651,6 +697,10 @@ pub fn deinit(self: *CompilerState) void {
     while (cv_it.next()) |vp| const_eval.deinitConstValue(vp.*, self.allocator);
     self.const_values.deinit();
     self.native_globals.deinit();
+    var exit = self.externs.valueIterator();
+    while (exit.next()) |e| self.allocator.free(e.params);
+    self.externs.deinit();
+    self.extern_calls.deinit();
     self.global_slots.deinit();
     self.type_of_results.deinit();
     self.type_ir_of_results.deinit();

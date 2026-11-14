@@ -1,0 +1,2 @@
+@extern "c" @func fill(p: **u8): void;
+pub @func main() {}

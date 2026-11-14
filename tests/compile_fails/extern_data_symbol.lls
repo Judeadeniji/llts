@@ -1,0 +1,2 @@
+@extern "c" errno: i32;
+pub @func main() {}

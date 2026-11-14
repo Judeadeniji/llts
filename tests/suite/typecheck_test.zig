@@ -203,3 +203,118 @@ test "ir: typeFromAst maps c_str and ?c_str" {
     const payload = ir.optionalPayload(ret) orelse return error.TestUnexpectedResult;
     try std.testing.expect(ir.typeEquals(payload, ir.TCStr));
 }
+
+test "extern: registers native C signatures" {
+    const allocator = std.testing.allocator;
+    const ir = helpers.compiler.ir;
+    const src =
+        \\pub @extern "c" @func puts(s: c_str): i32;
+        \\@extern "c" @func printf(fmt: c_str, ...): i32;
+        \\@extern "c" @func malloc(size: usize): ?*u8;
+        \\@extern "c" @func getenv(name: c_str): ?c_str;
+        \\@extern "c" @func free(ptr: ?*u8): void;
+        \\@extern "c" @func getpid(): i32;
+        \\pub @func main() {}
+    ;
+    var analyzed = try helpers.analyzeSource(allocator, src, true);
+    defer analyzed.deinit();
+
+    const puts = analyzed.state.externs.get("puts").?;
+    try std.testing.expectEqualStrings("puts", puts.symbol);
+    try std.testing.expectEqualStrings("c", puts.abi);
+    try std.testing.expectEqual(@as(usize, 1), puts.params.len);
+    try std.testing.expectEqualStrings("s", puts.params[0].name);
+    try std.testing.expect(puts.params[0].ctype == .c_str);
+    try std.testing.expect(puts.ret == .scalar);
+    try std.testing.expect(ir.typeEquals(puts.ret.scalar, ir.namedType("i32")));
+    try std.testing.expect(!puts.is_c_variadic);
+
+    const printf = analyzed.state.externs.get("printf").?;
+    try std.testing.expect(printf.is_c_variadic);
+    try std.testing.expectEqual(@as(usize, 1), printf.params.len);
+
+    const malloc = analyzed.state.externs.get("malloc").?;
+    try std.testing.expect(malloc.ret == .optional_ptr);
+    try std.testing.expect(ir.typeEquals(malloc.ret.optional_ptr.ptr.*, ir.namedType("u8")));
+
+    const getenv = analyzed.state.externs.get("getenv").?;
+    try std.testing.expect(getenv.ret == .optional_c_str);
+
+    const free = analyzed.state.externs.get("free").?;
+    try std.testing.expect(free.params[0].ctype == .optional_ptr);
+    try std.testing.expect(free.ret == .scalar);
+    try std.testing.expect(ir.typeEquals(free.ret.scalar, ir.TVoid));
+
+    const getpid = analyzed.state.externs.get("getpid").?;
+    try std.testing.expectEqual(@as(usize, 0), getpid.params.len);
+}
+
+test "extern: registration rejects invalid declarations" {
+    const allocator = std.testing.allocator;
+    const cases = [_][]const u8{
+        \\@extern "stdcall" @func f(): void;
+        \\pub @func main() {}
+        ,
+        \\@extern "c" errno: i32;
+        \\pub @func main() {}
+        ,
+        \\@extern "c" @func f(x: void): void;
+        \\pub @func main() {}
+        ,
+        \\@extern "c" @func f(x: ?i32): void;
+        \\pub @func main() {}
+        ,
+        \\@extern "c" @func f(x: ??c_str): void;
+        \\pub @func main() {}
+        ,
+        \\@extern "c" @func f(x: string): void;
+        \\pub @func main() {}
+        ,
+        \\@extern "c" @func f(x: []u8): void;
+        \\pub @func main() {}
+        ,
+        \\@extern "c" @func f(x: [4]u8): void;
+        \\pub @func main() {}
+        ,
+        \\@struct S { x: i32; }
+        \\@extern "c" @func f(x: S): void;
+        \\pub @func main() {}
+        ,
+        \\@extern "c" @func f(x: i32 | error): void;
+        \\pub @func main() {}
+        ,
+        \\@struct S { x: i32; }
+        \\@extern "c" @func f(x: ?*S): void;
+        \\pub @func main() {}
+        ,
+        \\@extern "c" @func f(x: **u8): void;
+        \\pub @func main() {}
+        ,
+        \\@extern "c" @func f(x: i32, x: i32): void;
+        \\pub @func main() {}
+        ,
+        \\@extern "c" @func f(): void;
+        \\@extern "c" @func f(): void;
+        \\pub @func main() {}
+        ,
+        \\@extern "c" @func f(): void;
+        \\@func f() {}
+        \\pub @func main() {}
+        ,
+        \\@extern "c" @func f(): void;
+        \\$f = 1;
+        \\pub @func main() {}
+        ,
+        \\@extern "c" @func print(s: c_str): void;
+        \\pub @func main() {}
+        ,
+        \\@extern "c" @func main(): i32;
+        ,
+    };
+    for (cases, 0..) |src, i| {
+        helpers.expectCompileFail(allocator, src) catch |err| {
+            std.debug.print("extern rejection case {d} was accepted\n", .{i});
+            return err;
+        };
+    }
+}

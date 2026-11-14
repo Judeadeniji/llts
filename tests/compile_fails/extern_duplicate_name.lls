@@ -1,0 +1,3 @@
+@extern "c" @func puts(s: c_str): i32;
+@extern "c" @func puts(s: c_str): i32;
+pub @func main() {}

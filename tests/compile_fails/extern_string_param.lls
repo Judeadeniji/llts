@@ -1,0 +1,2 @@
+@extern "c" @func puts(s: string): i32;
+pub @func main() {}

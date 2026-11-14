@@ -1,0 +1,2 @@
+@extern "c" @func print(s: c_str): void;
+pub @func main() {}

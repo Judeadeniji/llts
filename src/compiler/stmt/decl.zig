@@ -343,7 +343,8 @@ fn checkLocalDup(state: *CompilerState, name: []const u8) !void {
 }
 
 pub fn compileExtern(state: *CompilerState, ext: *const ast.Extern) !void {
-    try state.native_globals.put(ext.name, {});
+    _ = ext;
+    return compile_errors.compileFailFmt(state, "extern declarations are native-only", .{});
 }
 
 pub fn compileStruct(state: *CompilerState, s: *const ast.StructDecl) !void {
