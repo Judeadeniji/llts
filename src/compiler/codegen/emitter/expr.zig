@@ -278,7 +278,7 @@ fn emitExternVararg(self: *Emitter, node: *ast_mod.Node, arg: *ast_mod.Node) ![]
             if (w == .f32) return std.fmt.allocPrint(a, "@as(f64, @floatCast({s}))", .{code});
             return code;
         },
-        .bool => return std.fmt.allocPrint(a, "@as(i32, @intFromBool({s}))", .{code}),
+        .bool => return std.fmt.allocPrint(a, "@as(i32, @intCast({s}))", .{code}),
         .pointer => return code,
         .optional => {
             const payload = at.payload orelse {
@@ -1409,14 +1409,15 @@ pub fn emitUnary(self: *Emitter, node: *ast_mod.Node, u: *const ast_mod.Unary) !
     const t = try self.valueType(u.arg);
     if (t.may_error) {
         return self.failAt(u.arg, "error-union value must be handled with '?' first", .{});
-    }        if (std.mem.eql(u8, u.operator, "!")) {
-            if (t.kind != .bool) {
-                return self.failAt(node, "'!' requires a boolean operand, got '{s}'", .{t.display});
-            }
-            // `bool` lowers to `u1`: negate in Zig's boolean domain, then take
-            // the bit back.
-            return std.fmt.allocPrint(a, "@intFromBool(!(({s}) != 0))", .{try emitExpr(self, u.arg)});
+    }
+    if (std.mem.eql(u8, u.operator, "!")) {
+        if (t.kind != .bool) {
+            return self.failAt(node, "'!' requires a boolean operand, got '{s}'", .{t.display});
         }
+        // `bool` lowers to `u1`: negate in Zig's boolean domain, then take
+        // the bit back.
+        return std.fmt.allocPrint(a, "@intFromBool(!(({s}) != 0))", .{try emitExpr(self, u.arg)});
+    }
     if (std.mem.eql(u8, u.operator, "-")) {
         if (t.kind == .float) {
             const fn_name = if (std.mem.eql(u8, t.zig, "f32")) "negF32" else "negF64";
@@ -2031,11 +2032,11 @@ pub fn emitSlice(self: *Emitter, node: *ast_mod.Node, ix: *const ast_mod.Index) 
         \\    break :{s} {s}[@intCast({s})..@intCast({s})];
         \\}}
     , .{
-        label,     obj_decl,  obj_name, object_zig, object_expr,
-        lo_name,   lo_code,   hi_name,  hi_code,
-        lo_name,   hi_name,   lo_name,  hi_name,
-        obj_name,  lo_name,   hi_name,  obj_name,
-        label,     obj_name,  lo_name,  hi_name,
+        label,   obj_decl, obj_name, object_zig, object_expr,
+        lo_name, lo_code,  hi_name,  hi_code,    lo_name,
+        hi_name, lo_name,  hi_name,  obj_name,   lo_name,
+        hi_name, obj_name, label,    obj_name,   lo_name,
+        hi_name,
     });
 }
 

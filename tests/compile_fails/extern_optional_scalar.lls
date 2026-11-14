@@ -1,2 +1,3 @@
+# expect: Unsupported optional extern type '?i32' (only '?c_str' and '?*T' are supported)
 @extern "c" @func f(x: ?i32): void;
 pub @func main() {}

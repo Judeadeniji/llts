@@ -1,3 +1,4 @@
+# expect: Unsupported C type 'Point' in extern signature; allowed types are scalars, 'c_str', '?c_str', '*T', and '?*T'
 @struct Point { x: i32; y: i32; }
 @extern "c" @func draw(p: Point): void;
 pub @func main() {}

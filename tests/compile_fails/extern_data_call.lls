@@ -1,2 +1,3 @@
+# expect: extern data symbol 'optind' is not callable
 @extern "c" optind: i32;
 pub @func main() { optind(); }

@@ -1,2 +1,3 @@
+# expect: variadic argument 2 of extern 'f' cannot be a runtime string or slice ('const []u8'); pass a string literal or c_str
 @extern "c" @func f(x: i32, ...): void;
 pub @func main() { $s: string = "x"; f(1, s); }

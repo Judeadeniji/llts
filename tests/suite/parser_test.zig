@@ -170,7 +170,7 @@ test "parser: extern functions carry full C signatures" {
         \\@extern "c" @func printf(fmt: c_str, ...): i32;
         \\pub @func main() {}
     ;
-    var doc = try helpers.parseSource(allocator, src);
+    var doc = try helpers.parseSource(allocator, src, null);
     defer doc.deinit();
 
     try std.testing.expectEqual(@as(usize, 9), doc.statements.len);
@@ -236,7 +236,7 @@ test "parser: extern function may omit its return type" {
     const src =
         \\@extern "c" @func noop();
     ;
-    var doc = try helpers.parseSource(allocator, src);
+    var doc = try helpers.parseSource(allocator, src, null);
     defer doc.deinit();
 
     try std.testing.expectEqual(@as(usize, 1), doc.statements.len);
@@ -251,7 +251,7 @@ test "parser: extern data form parses for tooling" {
     const src =
         \\pub @extern "c" errno: i32;
     ;
-    var doc = try helpers.parseSource(allocator, src);
+    var doc = try helpers.parseSource(allocator, src, null);
     defer doc.deinit();
 
     try std.testing.expectEqual(@as(usize, 1), doc.statements.len);
@@ -271,7 +271,7 @@ test "parser: variadic extern keeps the fixed parameters" {
     const src =
         \\@extern "c" @func printf(fmt: c_str, ...): i32;
     ;
-    var doc = try helpers.parseSource(allocator, src);
+    var doc = try helpers.parseSource(allocator, src, null);
     defer doc.deinit();
 
     const printf_decl = &doc.statements[0].extern_decl;
@@ -359,7 +359,7 @@ test "parser: extern after a function body is still file scope" {
         \\}
         \\@extern "c" @func getpid(): i32;
     ;
-    var doc = try helpers.parseSource(allocator, src);
+    var doc = try helpers.parseSource(allocator, src, null);
     defer doc.deinit();
 
     try std.testing.expectEqual(@as(usize, 2), doc.statements.len);

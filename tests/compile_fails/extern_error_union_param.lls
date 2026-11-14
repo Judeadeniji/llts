@@ -1,2 +1,3 @@
+# expect: Only optional types ('?T') are supported in extern signatures
 @extern "c" @func handle(e: i32 | error): void;
 pub @func main() {}

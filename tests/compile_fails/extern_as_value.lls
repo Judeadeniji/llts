@@ -1,2 +1,3 @@
+# expect: extern function 'puts' can only be called directly
 @extern "c" @func puts(s: c_str): i32;
 pub @func main() { print(puts); }

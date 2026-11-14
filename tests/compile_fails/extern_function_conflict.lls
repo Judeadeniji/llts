@@ -1,3 +1,4 @@
+# expect: Extern 'compute' conflicts with an existing declaration
 @extern "c" @func compute(): i32;
 @func compute(): i32 { return 1; }
 pub @func main() {}

@@ -1,2 +1,3 @@
+# expect: Expected type name
 @extern "c" @func fill(p: **u8): void;
 pub @func main() {}

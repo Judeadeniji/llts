@@ -38,7 +38,7 @@ pub fn parseSourceDetailed(allocator: std.mem.Allocator, source: []const u8) !Pa
     };
     errdefer result.diagnostics.deinit(allocator);
 
-    var scan_res = try scanSource(allocator, source);
+    var scan_res = try scanSource(allocator, source, null);
     defer scanner.deinitScanResult(&scan_res);
 
     result.doc = try parser.parse(allocator, scan_res.tokens.items, "test.lls", source, &result.diagnostics);

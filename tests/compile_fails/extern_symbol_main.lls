@@ -1,1 +1,2 @@
+# expect: Extern symbol 'main' is reserved for the program entry point
 @extern "c" @func main(): i32;

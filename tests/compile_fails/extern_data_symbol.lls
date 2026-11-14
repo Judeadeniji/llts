@@ -1,2 +1,3 @@
+# expect: Unsupported C type 'const []u8' in extern signature
 @extern "c" errno: string;
 pub @func main() {}

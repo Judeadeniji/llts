@@ -1,2 +1,3 @@
+# expect: Extern 'print' conflicts with an existing declaration
 @extern "c" @func print(s: c_str): void;
 pub @func main() {}

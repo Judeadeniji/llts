@@ -1,2 +1,3 @@
+# expect: Extern data symbols cannot have type 'void'
 @extern "c" nothing: void;
 pub @func main() {}

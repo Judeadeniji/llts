@@ -1,2 +1,3 @@
+# expect: Duplicate parameter name 'x' in extern declaration 'sum'
 @extern "c" @func sum(x: i32, x: i32): i32;
 pub @func main() {}

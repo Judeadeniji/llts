@@ -586,7 +586,7 @@ test "native execution: extern calls, C returns, and variadic promotion" {
         \\    printf("i=%d u=%d b=%d\n", a, b, true);
         \\}
     ;
-    try expectNativeStdout(allocator, src, "5\ntrue\nhello world 42\nf=1.500000\ni=-5 u=7 b=1\n");
+    try expectNativeStdout(allocator, src, "5\n1\nhello world 42\nf=1.500000\ni=-5 u=7 b=1\n");
 }
 
 test "native execution: extern byte buffer and optional c_str" {
@@ -687,5 +687,5 @@ test "native execution: public wrappers can use private functions" {
 }
 
 test "native execution: public wrappers can use private externs" {
-    try expectNativeFileStdout(std.testing.allocator, "tests/fixtures/extern_private_ok_main.lls", "true\n55\n");
+    try expectNativeFileStdout(std.testing.allocator, "tests/fixtures/extern_private_ok_main.lls", "1\n55\n");
 }

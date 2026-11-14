@@ -1,2 +1,3 @@
+# expect: argument 1 of extern 'f': type 'null' is not assignable to '*u8'
 @extern "c" @func f(p: *u8): void;
 pub @func main() { f(null); }

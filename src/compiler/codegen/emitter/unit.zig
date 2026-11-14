@@ -519,6 +519,9 @@ pub fn emitExternDecls(self: *Emitter) !void {
 }
 
 fn emitGlobalDecl(self: *Emitter, g: *Global) !void {
+    const vt = try self.valTypeFor(g.node, g.ir_type, g.display);
+    try self.requireValueType(g.node, vt);
+    try self.writer.print("var {s}: {s} = {s};\n", .{ g.zig_name, vt.zig, try zeroValue(self, vt) });
 }
 
 pub fn emitTopLevel(self: *Emitter) !void {

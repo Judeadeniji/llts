@@ -1,2 +1,3 @@
+# expect: declaration of 'x': type 'i32' is not assignable to 'const []u8'
 @extern "c" @func f(): i32;
 pub @func main() { $x: string = f(); }

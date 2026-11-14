@@ -1,2 +1,3 @@
+# expect: Unsupported C type 'const []u8' in extern signature; allowed types are scalars, 'c_str', '?c_str', '*T', and '?*T'
 @extern "c" @func puts(s: string): i32;
 pub @func main() {}

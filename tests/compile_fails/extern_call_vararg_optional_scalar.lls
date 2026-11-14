@@ -1,2 +1,3 @@
+# expect: variadic argument 2 of extern 'f' has unsupported type '?i32'
 @extern "c" @func f(x: i32, ...): void;
 pub @func main() { $o: ?i32 = null; f(1, o); }

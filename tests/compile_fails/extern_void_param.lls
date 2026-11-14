@@ -1,2 +1,3 @@
+# expect: Extern parameters cannot have type 'void'
 @extern "c" @func f(x: void): void;
 pub @func main() {}

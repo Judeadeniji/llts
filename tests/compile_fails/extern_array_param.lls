@@ -1,2 +1,3 @@
+# expect: Unsupported C type '[4]u8' in extern signature; allowed types are scalars, 'c_str', '?c_str', '*T', and '?*T'
 @extern "c" @func fill(buf: [4]u8): void;
 pub @func main() {}

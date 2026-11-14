@@ -168,7 +168,6 @@ test "typecheck: method with a type parameter before 'self' is rejected, not a c
     try helpers.expectCompileFail(allocator, src);
 }
 
-<<<<<<< HEAD
 test "ir: c_str display, equality, and assignability" {
     const allocator = std.testing.allocator;
     const ir = helpers.compiler.ir;
@@ -214,7 +213,7 @@ test "ir: typeFromAst maps c_str and ?c_str" {
     const src =
         \\pub @extern "c" @func getenv(name: c_str): ?c_str;
     ;
-    var doc = try helpers.parseSource(allocator, src);
+    var doc = try helpers.parseSource(allocator, src, null);
     defer doc.deinit();
 
     var arena = std.heap.ArenaAllocator.init(allocator);
@@ -242,7 +241,7 @@ test "extern: registers native C signatures" {
         \\@extern "c" @func getpid(): i32;
         \\pub @func main() {}
     ;
-    var analyzed = try helpers.analyzeSource(allocator, src, true);
+    var analyzed = try helpers.analyzeSource(allocator, src, null, true);
     defer analyzed.deinit();
 
     const puts = analyzed.state.externs.get("puts").?;
@@ -286,7 +285,7 @@ test "extern: registers data symbols and typechecks reads and writes" {
         \\    optind = a + 1;
         \\}
     ;
-    var analyzed = try helpers.analyzeSource(allocator, src, true);
+    var analyzed = try helpers.analyzeSource(allocator, src, null, true);
     defer analyzed.deinit();
 
     const optind = analyzed.state.externs.get("optind").?;
@@ -411,7 +410,7 @@ test "extern: typechecks fixed calls, C returns, and variadic arguments" {
         \\    $w2: isize = write(1, buf, 4);
         \\}
     ;
-    var analyzed = try helpers.analyzeSource(allocator, src, true);
+    var analyzed = try helpers.analyzeSource(allocator, src, null, true);
     defer analyzed.deinit();
     try std.testing.expectEqual(@as(usize, 6), analyzed.state.extern_calls.count());
 }
@@ -468,7 +467,7 @@ test "extern: reachability treats extern calls as terminal" {
         \\    $v: i32 = printf("%d\n", r);
         \\}
     ;
-    var analyzed = try helpers.analyzeSource(allocator, src, false);
+    var analyzed = try helpers.analyzeSource(allocator, src, null, false);
     defer analyzed.deinit();
     try std.testing.expectEqual(@as(usize, 2), analyzed.state.extern_calls.count());
 }
@@ -482,7 +481,7 @@ test "extern: bytecode backend rejects extern declarations" {
         \\    $r: i32 = puts("hello");
         \\}
     ;
-    var doc = try helpers.parseSource(allocator, src);
+    var doc = try helpers.parseSource(allocator, src, null);
     defer doc.deinit();
     var state = try compiler.analyze(allocator, &doc, .{ .debug = true, .strict = true });
     defer {

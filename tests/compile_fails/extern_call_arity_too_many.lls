@@ -1,2 +1,3 @@
+# expect: extern function 'f' expects 0 argument(s), got 1
 @extern "c" @func f(): void;
 pub @func main() { f(1); }
