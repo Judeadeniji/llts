@@ -84,7 +84,7 @@ fn parseCompilerExtern(self: *Parser) ParseError!*Node {
 
     const abi = try self.consume(
         .string,
-        "Expected ABI string after @extern, e.g. @extern \"c\" @func puts(s: cstring): i32;",
+        "Expected ABI string after @extern, e.g. @extern \"c\" @func puts(s: c_str): i32;",
         null,
     );
 

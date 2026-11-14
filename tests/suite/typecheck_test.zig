@@ -142,3 +142,64 @@ test "typecheck: method with a type parameter before 'self' is rejected, not a c
     ;
     try helpers.expectCompileFail(allocator, src);
 }
+
+test "ir: c_str display, equality, and assignability" {
+    const allocator = std.testing.allocator;
+    const ir = helpers.compiler.ir;
+
+    const c_str = ir.namedType("c_str");
+    try std.testing.expect(ir.typeEquals(c_str, ir.TCStr));
+    try std.testing.expect(ir.isBuiltinTypeName("c_str"));
+    try std.testing.expectEqualStrings("c_str", ir.displayType(c_str));
+    try std.testing.expectEqualStrings("c_str", ir.displayTypeSimple(ir.TCStr).?);
+
+    try std.testing.expect(ir.isSubtype(ir.TCStr, ir.TCStr));
+    try std.testing.expect(ir.isSubtype(.{ .str_lit = "hello" }, ir.TCStr));
+    try std.testing.expect(!ir.isSubtype(ir.TCStr, ir.TString));
+    try std.testing.expect(!ir.isSubtype(ir.TString, ir.TCStr));
+    try std.testing.expect(!ir.typeEquals(ir.TCStr, ir.TString));
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const ta = ir.TypeAlloc{ .allocator = arena.allocator() };
+
+    const optional = try ta.unionType(&.{ ir.TCStr, ir.TNull });
+    const payload = ir.optionalPayload(optional) orelse return error.TestUnexpectedResult;
+    try std.testing.expect(ir.typeEquals(payload, ir.TCStr));
+    try std.testing.expect(ir.isSubtype(ir.TCStr, optional));
+    try std.testing.expect(ir.isSubtype(ir.TNull, optional));
+    try std.testing.expect(ir.isSubtype(.{ .str_lit = "hello" }, optional));
+    try std.testing.expect(!ir.isSubtype(optional, ir.TCStr));
+    try std.testing.expect(!ir.isSubtype(ir.TString, optional));
+
+    const disp = try ir.displayTypeAlloc(allocator, optional);
+    defer allocator.free(disp);
+    try std.testing.expectEqualStrings("?c_str", disp);
+
+    const parsed = try ir.parseDisplayType(ta, "?c_str");
+    try std.testing.expect(ir.typeEquals(parsed, optional));
+}
+
+test "ir: typeFromAst maps c_str and ?c_str" {
+    const allocator = std.testing.allocator;
+    const ir = helpers.compiler.ir;
+    const from_ast = helpers.compiler.from_ast;
+
+    const src =
+        \\pub @extern "c" @func getenv(name: c_str): ?c_str;
+    ;
+    var doc = try helpers.parseSource(allocator, src);
+    defer doc.deinit();
+
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const ta = ir.TypeAlloc{ .allocator = arena.allocator() };
+
+    const extern_decl = &doc.statements[0].extern_decl;
+    const param = try from_ast.typeFromAst(extern_decl.params[0].type_annotation, null, ta);
+    try std.testing.expect(ir.typeEquals(param, ir.TCStr));
+
+    const ret = try from_ast.typeFromAst(extern_decl.return_type, null, ta);
+    const payload = ir.optionalPayload(ret) orelse return error.TestUnexpectedResult;
+    try std.testing.expect(ir.typeEquals(payload, ir.TCStr));
+}

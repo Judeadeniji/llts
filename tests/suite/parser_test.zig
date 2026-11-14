@@ -160,14 +160,14 @@ fn expectParseDiagnostic(
 test "parser: extern functions carry full C signatures" {
     const allocator = std.testing.allocator;
     const src =
-        \\pub @extern "c" @func puts(s: cstring): i32;
+        \\pub @extern "c" @func puts(s: c_str): i32;
         \\@extern "c" @func getpid(): i32;
-        \\@extern "c" @func strlen(s: cstring): usize;
-        \\@extern "c" @func getenv(name: cstring): ?cstring;
+        \\@extern "c" @func strlen(s: c_str): usize;
+        \\@extern "c" @func getenv(name: c_str): ?c_str;
         \\@extern "c" @func malloc(size: usize): ?*u8;
         \\@extern "c" @func free(ptr: ?*u8): void;
         \\@extern "c" @func write(fd: i32, buf: *u8, count: usize): isize;
-        \\@extern "c" @func printf(fmt: cstring, ...): i32;
+        \\@extern "c" @func printf(fmt: c_str, ...): i32;
         \\pub @func main() {}
     ;
     var doc = try helpers.parseSource(allocator, src);
@@ -185,7 +185,7 @@ test "parser: extern functions carry full C signatures" {
     try std.testing.expectEqual(@as(usize, 1), puts_decl.params.len);
     try std.testing.expectEqualStrings("s", puts_decl.params[0].name);
     const s_type = puts_decl.params[0].type_annotation orelse return error.TestUnexpectedResult;
-    try std.testing.expectEqualStrings("cstring", s_type.primary.name);
+    try std.testing.expectEqualStrings("c_str", s_type.primary.name);
     const puts_ret = puts_decl.return_type orelse return error.TestUnexpectedResult;
     try std.testing.expectEqualStrings("i32", puts_ret.primary.name);
 
@@ -194,13 +194,13 @@ test "parser: extern functions carry full C signatures" {
     try std.testing.expectEqualStrings("i32", getpid_decl.return_type.?.primary.name);
 
     const strlen_decl = &doc.statements[2].extern_decl;
-    try std.testing.expectEqualStrings("cstring", strlen_decl.params[0].type_annotation.?.primary.name);
+    try std.testing.expectEqualStrings("c_str", strlen_decl.params[0].type_annotation.?.primary.name);
     try std.testing.expectEqualStrings("usize", strlen_decl.return_type.?.primary.name);
 
     const getenv_decl = &doc.statements[3].extern_decl;
     const getenv_ret = getenv_decl.return_type orelse return error.TestUnexpectedResult;
     try std.testing.expect(getenv_ret.* == .union_type);
-    try std.testing.expectEqualStrings("cstring", getenv_ret.union_type.left.primary.name);
+    try std.testing.expectEqualStrings("c_str", getenv_ret.union_type.left.primary.name);
     try std.testing.expectEqualStrings("null", getenv_ret.union_type.right.primary.name);
 
     const malloc_decl = &doc.statements[4].extern_decl;
@@ -269,7 +269,7 @@ test "parser: extern data form parses for tooling" {
 test "parser: variadic extern keeps the fixed parameters" {
     const allocator = std.testing.allocator;
     const src =
-        \\@extern "c" @func printf(fmt: cstring, ...): i32;
+        \\@extern "c" @func printf(fmt: c_str, ...): i32;
     ;
     var doc = try helpers.parseSource(allocator, src);
     defer doc.deinit();
@@ -294,7 +294,7 @@ test "parser: nested extern declarations are rejected" {
     try expectParseDiagnostic(
         allocator,
         \\pub @func main() {
-        \\    @extern "c" @func puts(s: cstring): i32;
+        \\    @extern "c" @func puts(s: c_str): i32;
         \\}
         \\
     ,
