@@ -1,0 +1,17 @@
+# Signed narrowing accepted without @as: exact constants that fit the target.
+@const $MIN_I8: i8 = -128;
+@const $MAX_I8: i8 = 127;
+@const $FIVE: i32 = -5;
+@const $SUM: i32 = 2 + 3;
+@const $DIFF: i32 = (10 - 20);
+
+pub @func main() {
+    $i8: i8 = -128;
+    $i16: i16 = -32768;
+    $i32: i32 = -5;
+    $folded: i32 = 2 + 3;
+    $parenthesised: i32 = (10 - 20);
+
+    print(i8, i16, i32, folded, parenthesised);
+    print(MIN_I8, MAX_I8, FIVE, SUM, DIFF);
+}

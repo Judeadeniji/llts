@@ -561,7 +561,8 @@ fn constValueZig(self: *Emitter, node: *ast_mod.Node, vt: ValType, value: const_
     const a = self.arena.allocator();
     switch (value) {
         .null => return "null",
-        .bool => |b| return if (b) "true" else "false",
+        // `bool` lowers to `u1`: a folded boolean is its bit.
+        .bool => |b| return if (b) "1" else "0",
         .i64 => |n| return try std.fmt.allocPrint(a, "{d}", .{n}),
         .f64 => |f| {
             if (!std.math.isFinite(f)) return null;
@@ -678,6 +679,13 @@ pub fn prepareFunction(
         if (p.is_rest and ir_type != null) {
             display = try ir.displayTypeQualifiedAlloc(a, ir_type.?);
         }
+        // An optional param (`x?: T`) is `?T` in the body and in the Zig
+        // signature, so omitted calls can pass `null`.
+        if (p.is_optional and ir_type != null and ir.optionalPayload(ir_type.?) == null) {
+            const ta = self.state.typeAlloc();
+            ir_type = try ta.unionType(&.{ ir_type.?, ir.TNull });
+            display = try ir.displayTypeQualifiedAlloc(a, ir_type.?);
+        }
         const vt = try self.valTypeFor(f.params, ir_type, display);
         try self.requireValueType(f.params, vt);
         const b = try a.create(Binding);
@@ -713,7 +721,7 @@ pub fn zeroValue(self: *Emitter, t: ValType) ![]const u8 {
     return switch (t.kind) {
         .int => "0",
         .float => "0.0",
-        .bool => "false",
+        .bool => "0",
         .string => "\"\"",
         .optional, .null_value => "null",
         .struct_, .union_, .array, .slice, .pointer, .func => "undefined",

@@ -1,0 +1,8 @@
+# expect: Integer overflow in constant expression: value 2 does not fit 'u1'
+# mode: strict
+@const $a: u1 = 1;
+@const $b: u1 = a + 1;
+
+pub @func main() {
+    print(b);
+}

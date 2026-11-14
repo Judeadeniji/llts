@@ -1,0 +1,18 @@
+# Unsigned narrowing accepted without @as: exact constants that fit the target,
+# including literals above maxInt(i64) when the target is u64.
+@const $MAX_U8: u8 = 255;
+@const $HEX_U8: u8 = 0xFF;
+@const $MAX_U32: u32 = 4294967295;
+@const $MAX_U64: u64 = 18446744073709551615;
+
+pub @func main() {
+    $u1: u1 = 1;
+    $u8: u8 = 255;
+    $u16: u16 = 65535;
+    $u32: u32 = 4294967295;
+    $u64: u64 = 18446744073709551615;
+    $sum: u32 = 4000000000 + 294967295;
+
+    print(u1, u8, u16, u32, u64, sum);
+    print(MAX_U8, HEX_U8, MAX_U32, MAX_U64);
+}

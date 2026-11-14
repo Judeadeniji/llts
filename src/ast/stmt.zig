@@ -14,6 +14,7 @@ pub const Param = struct {
     name: []const u8,
     type_annotation: ?*Node = null,
     is_rest: bool = false,
+    is_optional: bool = false,
     loc: Location,
 };
 

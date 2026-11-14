@@ -1,0 +1,8 @@
+# expect: Integer overflow in constant expression: value 4294967296 does not fit 'u32'
+# mode: strict
+@const $a: u32 = 4294967295;
+@const $b: u32 = a + 1;
+
+pub @func main() {
+    print(b);
+}

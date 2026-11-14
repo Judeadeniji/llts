@@ -642,6 +642,13 @@ fn requireAssignAt(state: *state_mod.CompilerState, got: ir.Type, expected: ir.T
             const col = if (loc.column > 0) loc.column else 1;
             const g = try ownDisplay(state, got);
             const e = try ownDisplay(state, expected);
+            // An exact constant that fits the target needs no cast, whatever
+            // the signedness: `$n: u32 = 4294967295;`, `$i: i8 = -128;`. The
+            // initializer stays typed at its folded width so the emitter still
+            // inserts the narrowing cast.
+            if (from) |node| {
+                if (constIntFitsExpr(node, exp_w.?)) return;
+            }
             if (widths.isWidening(got_w.?, exp_w.?)) {
                 compiler_errors.compileWarnAt(
                     state,
@@ -655,14 +662,6 @@ fn requireAssignAt(state: *state_mod.CompilerState, got: ir.Type, expected: ir.T
                 return;
             }
             if (widths.isNarrowing(got_w.?, exp_w.?)) {
-                // An exact constant that fits the target needs no cast: the
-                // value cannot lose anything, so `$x: i32 = -5;` is legal.
-                if (from) |node| {
-                    if (constIntFitsExpr(node, exp_w.?)) {
-                        try recordExprType(state, node, expected);
-                        return;
-                    }
-                }
                 if (state.strict) {
                     return compiler_errors.compileFailAt(
                         state,
@@ -1244,7 +1243,8 @@ fn funcTypeOfName(state: *state_mod.CompilerState, ta: ir.TypeAlloc, func_name: 
     var variadic = false;
     if (!try fnParamTypes(state, ta, func_name, &params, &rest, &variadic)) return null;
     const ret = try fnReturnType(state, ta, func_name);
-    return try ta.funcType(params.items, ret, variadic);
+    const def = state.functions.get(func_name) orelse return null;
+    return try ta.funcType(params.items, ret, variadic, def.param_is_optional);
 }
 
 fn resolveMethodSelfType(
@@ -1382,6 +1382,8 @@ fn fnParamTypes(state: *state_mod.CompilerState, ta: ir.TypeAlloc, func_name: []
         }
         break :blk null;
     };
+    var param_is_optional: std.ArrayList(bool) = .empty;
+    defer param_is_optional.deinit(ta.allocator);
     for (plist, 0..) |pnode, i| {
         var t: ir.Type = ir.TUnknown;
         if (pnode.type_annotation) |ann| {
@@ -1408,11 +1410,17 @@ fn fnParamTypes(state: *state_mod.CompilerState, ta: ir.TypeAlloc, func_name: []
             out_rest.* = try ta.arrayType(elem, null, true);
             continue;
         }
+
+        if (pnode.is_optional) {
+            t = try ta.unionType(&.{ t, ir.TNull });
+        }
+        try param_is_optional.append(ta.allocator, pnode.is_optional);
         try out_params.append(ta.allocator, t);
     }
     def.is_variadic = is_variadic;
     def.rest_ir = out_rest.*;
     def.param_irs = try ta.allocator.dupe(ir.Type, out_params.items);
+    def.param_is_optional = try ta.allocator.dupe(bool, param_is_optional.items);
     return true;
 }
 
@@ -2588,6 +2596,8 @@ fn inferFunctionDeclExpr(
 
     var params_buf: std.ArrayList(ir.Type) = .empty;
     defer params_buf.deinit(ta.allocator);
+    var param_is_optional_buf: std.ArrayList(bool) = .empty;
+    defer param_is_optional_buf.deinit(ta.allocator);
     for (plist, 0..) |pnode, i| {
         var t: ir.Type = ir.TUnknown;
         if (pnode.type_annotation) |ann| {
@@ -2603,6 +2613,10 @@ fn inferFunctionDeclExpr(
             const elem = if (t == .array) t.array.elem.* else (if (t == .unknown) ir.TUnknown else t);
             t = try ta.arrayType(elem, null, true);
         }
+        if (pnode.is_optional) {
+            t = try ta.unionType(&.{ t, ir.TNull });
+        }
+        try param_is_optional_buf.append(ta.allocator, pnode.is_optional);
         try params_buf.append(ta.allocator, t);
     }
 
@@ -2702,7 +2716,7 @@ fn inferFunctionDeclExpr(
         try state.top_level_closure_ids.append(state.allocator, closure_id);
     }
 
-    const func_type = try ta.funcType(params_duped, final_ret, is_variadic);
+    const func_type = try ta.funcType(params_duped, final_ret, is_variadic, param_is_optional_buf.items);
     try recordExprType(state, node, func_type);
     return func_type;
 }
@@ -3003,13 +3017,24 @@ fn inferCall(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, call_
                         return compiler_errors.compileFailFmt(state, "Method might mutate constant '{s}'", .{recv_name});
                     }
                 }
+                const def = state.functions.get(name.?) orelse null;
+                const param_is_optional = if (def) |d| d.param_is_optional else &[_]bool{};
                 // Receiver is prepended; user args must match params after self.
-                const expected_user = if (named_count > 0) named_count - 1 else 0;
-                if (!variadic and rest == null and any_annotated and c.args.len != expected_user) {
-                    return compiler_errors.compileFailFmt(state, "Function '{s}' expected {d} arguments, got {d}", .{ name.?, expected_user, c.args.len });
+                // Count required (non-optional) parameters for minimum arity check (excluding self)
+                var required_user_count: usize = 0;
+                for (params.items, 0..) |_, i| {
+                    if (i == 0) continue; // skip self
+                    if (i < param_is_optional.len and param_is_optional[i]) {
+                        // optional param - doesn't count toward required
+                    } else {
+                        required_user_count += 1;
+                    }
                 }
-                if ((variadic or rest != null) and any_annotated and c.args.len < expected_user) {
-                    return compiler_errors.compileFailFmt(state, "Function '{s}' expected at least {d} arguments, got {d}", .{ name.?, expected_user, c.args.len });
+                if (!variadic and rest == null and any_annotated and c.args.len < required_user_count) {
+                    return compiler_errors.compileFailFmt(state, "Function '{s}' expected at least {d} arguments, got {d}", .{ name.?, required_user_count, c.args.len });
+                }
+                if ((variadic or rest != null) and any_annotated and c.args.len < required_user_count) {
+                    return compiler_errors.compileFailFmt(state, "Function '{s}' expected at least {d} arguments, got {d}", .{ name.?, required_user_count, c.args.len });
                 }
                 if (named_count > 0) {
                     const recv = try inferExprRec(state, env, ta, m.receiver);
@@ -3046,11 +3071,22 @@ fn inferCall(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, call_
                     }
                 }
             } else {
-                if (!variadic and rest == null and any_annotated and c.args.len != named_count) {
-                    return compiler_errors.compileFailFmt(state, "Function '{s}' expected {d} arguments, got {d}", .{ name.?, named_count, c.args.len });
+                const def = state.functions.get(name.?) orelse null;
+                const param_is_optional = if (def) |d| d.param_is_optional else &[_]bool{};
+                // Count required (non-optional) parameters for minimum arity check
+                var required_count: usize = 0;
+                for (params.items, 0..) |_, i| {
+                    if (i < param_is_optional.len and param_is_optional[i]) {
+                        // optional param - doesn't count toward required
+                    } else {
+                        required_count += 1;
+                    }
                 }
-                if ((variadic or rest != null) and any_annotated and c.args.len < named_count) {
-                    return compiler_errors.compileFailFmt(state, "Function '{s}' expected at least {d} arguments, got {d}", .{ name.?, named_count, c.args.len });
+                if (!variadic and rest == null and any_annotated and c.args.len < required_count) {
+                    return compiler_errors.compileFailFmt(state, "Function '{s}' expected at least {d} arguments, got {d}", .{ name.?, required_count, c.args.len });
+                }
+                if ((variadic or rest != null) and any_annotated and c.args.len < required_count) {
+                    return compiler_errors.compileFailFmt(state, "Function '{s}' expected at least {d} arguments, got {d}", .{ name.?, required_count, c.args.len });
                 }
                 const ncheck = @min(c.args.len, named_count);
                 var i: usize = 0;
@@ -3557,9 +3593,18 @@ fn checkFuncValueCall(
         }
         break :blk false;
     };
-    if (!f.variadic and any_annotated and c.args.len != named_count) {
+    // Count required (non-optional) parameters for minimum arity check
+    var required_count: usize = 0;
+    for (f.params, 0..) |_, i| {
+        if (f.param_is_optional.len > i and f.param_is_optional[i]) {
+            // optional param - doesn't count toward required
+        } else {
+            required_count += 1;
+        }
+    }
+    if (!f.variadic and any_annotated and c.args.len < required_count) {
         const d = try ownDisplay(state, fn_ty);
-        return compiler_errors.compileFailFmt(state, "Function value '{s}' expected {d} arguments, got {d}", .{ d, named_count, c.args.len });
+        return compiler_errors.compileFailFmt(state, "Function value '{s}' expected at least {d} arguments, got {d}", .{ d, required_count, c.args.len });
     }
     const ncheck = @min(c.args.len, named_count);
     var i: usize = 0;
@@ -4234,6 +4279,8 @@ fn checkFunction(
     };
     var params_buf: std.ArrayList(ir.Type) = .empty;
     defer params_buf.deinit(ta.allocator);
+    var param_is_optional_buf: std.ArrayList(bool) = .empty;
+    defer param_is_optional_buf.deinit(ta.allocator);
     var rest_ty: ?ir.Type = null;
     for (plist, 0..) |pnode, i| {
         var t: ir.Type = ir.TUnknown;
@@ -4274,6 +4321,11 @@ fn checkFunction(
             try env.define(pnode.name, t);
             continue;
         }
+
+        if (pnode.is_optional) {
+            t = try ta.unionType(&.{ t, ir.TNull });
+        }
+        try param_is_optional_buf.append(ta.allocator, pnode.is_optional);
         try params_buf.append(ta.allocator, t);
         try env.define(pnode.name, t);
     }
@@ -4282,6 +4334,9 @@ fn checkFunction(
         def_ptr.rest_ir = rest_ty;
         if (def_ptr.param_irs == null) {
             def_ptr.param_irs = try ta.allocator.dupe(ir.Type, params_buf.items);
+        }
+        if (def_ptr.param_is_optional.len == 0) {
+            def_ptr.param_is_optional = try ta.allocator.dupe(bool, param_is_optional_buf.items);
         }
         if (scanReturnFunctionTarget(state, f.body)) |rft| {
             def_ptr.return_fn_target = rft;
