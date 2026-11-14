@@ -99,8 +99,26 @@ pub const Switch = struct {
     loc: Location,
 };
 
+pub const ExternKind = enum { func, data };
+
+/// `@extern "c" @func name(params): ret;`
+/// `@extern "c" name: type;` (data form; parsed so tooling can see it, but
+/// rejected during registration because extern data symbols are unsupported).
 pub const Extern = struct {
+    /// Source name; module-qualified later.
     name: []const u8,
+    /// Untouched link symbol. Always the original, unqualified source name.
+    symbol: []const u8,
+    /// ABI string; only "c" is accepted during registration.
+    abi: []const u8,
+    kind: ExternKind,
+    /// Full signatures; parameter names and types are mandatory.
+    params: []Param,
+    /// null means `void`.
+    return_type: ?*Node = null,
+    /// Set only for the rejected data form.
+    data_type: ?*Node = null,
+    is_c_variadic: bool = false,
     is_public: bool = false,
     loc: Location,
 };

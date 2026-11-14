@@ -19,6 +19,32 @@ pub fn parseSource(allocator: std.mem.Allocator, source: []const u8) !ast.Docume
     return parser.parse(allocator, scan_res.tokens.items, "test.lls", source, null);
 }
 
+/// Parse source while collecting recoverable parser diagnostics instead of
+/// failing on the first error. Caller must call `deinit`.
+pub const Parsed = struct {
+    doc: ast.Document,
+    diagnostics: std.ArrayList(ast.Diagnostic),
+
+    pub fn deinit(self: *Parsed, allocator: std.mem.Allocator) void {
+        self.doc.deinit();
+        self.diagnostics.deinit(allocator);
+    }
+};
+
+pub fn parseSourceDetailed(allocator: std.mem.Allocator, source: []const u8) !Parsed {
+    var result: Parsed = .{
+        .doc = undefined,
+        .diagnostics = .empty,
+    };
+    errdefer result.diagnostics.deinit(allocator);
+
+    var scan_res = try scanSource(allocator, source);
+    defer scanner.deinitScanResult(&scan_res);
+
+    result.doc = try parser.parse(allocator, scan_res.tokens.items, "test.lls", source, &result.diagnostics);
+    return result;
+}
+
 pub const Analyzed = struct {
     doc: ast.Document,
     state: compiler.state_mod.CompilerState,

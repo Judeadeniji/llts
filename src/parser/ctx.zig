@@ -24,6 +24,9 @@ pub const Parser = struct {
     diagnostics: ?*std.ArrayList(ast.Diagnostic) = null,
     /// Inside a function declared `: type`, `return` takes a type expression.
     in_type_fn: bool = false,
+    /// Nesting depth of `{ ... }` blocks. File-scope-only declarations such as
+    /// `@extern` are rejected when this is non-zero.
+    block_depth: usize = 0,
 
     pub fn peek(self: *const Parser, step: usize) ?Token {
         const i = self.current + step;
@@ -101,7 +104,7 @@ pub const Parser = struct {
     pub fn failTok(self: *Parser, token: Token, comptime fmt: []const u8, args: anytype) ParseError {
         var msg_buf: [512]u8 = undefined;
         const message = std.fmt.bufPrint(&msg_buf, fmt, args) catch "parse error";
-        
+
         if (self.diagnostics) |diags| {
             diags.append(self.diag_allocator, .{
                 .line = token.line,

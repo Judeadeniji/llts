@@ -11,6 +11,8 @@ const Node = ast.Node;
 
 pub fn parseBlock(self: *Parser) ParseError!*Node {
     _ = try self.consume(.delimiter, "Expected '{'", "{");
+    self.block_depth += 1;
+    defer self.block_depth -= 1;
     var statements: std.ArrayList(*Node) = .empty;
     while (!self.isAtEnd() and !self.checkDelim("}")) {
         const s = stmt_mod.parseStatement(self);
