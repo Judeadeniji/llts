@@ -1,6 +1,32 @@
 const std = @import("std");
 const helpers = @import("helpers.zig");
 
+test "pipeline native execution: @const folds every literal type" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\@struct P { x: int; y: int; }
+        \\@const $f: f64 = 1.5;
+        \\@const $s = "hi";
+        \\@const $b: bool = true;
+        \\@const $arr = [1, 2, 3];
+        \\@const $st = P { x: 7, y: 8 };
+        \\pub @func main() {
+        \\    print(f, s, b, arr[1], st.y);
+        \\}
+    ;
+    try helpers.expectNativeStdout(allocator, src, "1.5 hi true 2 8\n");
+}
+
+test "pipeline native execution: folded const is emitted as a literal" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\@const $x = 2 + 3;
+        \\pub @func main() { print(x); }
+    ;
+    try helpers.expectEmitContains(allocator, src, "lls_g_x = 5;");
+    try helpers.expectNativeStdout(allocator, src, "5\n");
+}
+
 test "pipeline: string switch emits rt.arith.eqStr" {
     const allocator = std.testing.allocator;
     const src =

@@ -1779,19 +1779,45 @@ pub fn emitIndex(self: *Emitter, node: *ast_mod.Node, ix: *const ast_mod.Index) 
 
 pub fn emitSlice(self: *Emitter, node: *ast_mod.Node, ix: *const ast_mod.Index) ![]const u8 {
     const a = self.arena.allocator();
-    var obj_t = try self.valueType(ix.object);
-    var object_expr = try emitExpr(self, ix.object);
-    if (obj_t.kind == .pointer) {
-        const payload = obj_t.payload orelse return self.failAt(node, "native backend cannot determine the pointee type of '{s}'", .{obj_t.display});
+    const src_t = try self.valueType(ix.object);
+    var obj_t = src_t;
+    if (src_t.kind == .pointer) {
+        const payload = src_t.payload orelse return self.failAt(node, "native backend cannot determine the pointee type of '{s}'", .{src_t.display});
         obj_t = payload.*;
-        object_expr = try std.fmt.allocPrint(a, "({s}).*", .{object_expr});
     }
     if (obj_t.kind != .string and obj_t.kind != .slice and obj_t.kind != .array) {
         return self.failAt(node, "native backend cannot slice '{s}' yet", .{obj_t.display});
     }
+
+    // Slices are borrowed views, not copies. For an array lvalue, take the
+    // address of the original storage; for a `*[N]T`, slice the pointer
+    // directly. Only temporary array values (literals/call results) need a
+    // local copy.
+    const aliases_array = if (src_t.kind == .pointer)
+        obj_t.kind == .array
+    else
+        obj_t.kind == .array and Emitter.isPlaceNode(ix.object);
+
+    var object_expr: []const u8 = undefined;
+    var object_zig = obj_t.zig;
+    if (aliases_array) {
+        if (src_t.kind == .pointer) {
+            object_expr = try emitExpr(self, ix.object);
+            object_zig = src_t.zig;
+        } else {
+            object_expr = try emitAddressOf(self, node, ix.object);
+            object_zig = try std.fmt.allocPrint(a, "*{s}", .{obj_t.zig});
+        }
+    } else if (src_t.kind == .pointer) {
+        object_expr = try std.fmt.allocPrint(a, "({s}).*", .{try emitExpr(self, ix.object)});
+    } else {
+        object_expr = try emitExpr(self, ix.object);
+    }
+
     self.counter += 1;
     const id = self.counter;
     const obj_name = try std.fmt.allocPrint(a, "lls_slice_obj_{d}", .{id});
+    const label = try std.fmt.allocPrint(a, "lls_slice_{d}", .{id});
     const lo_name = try std.fmt.allocPrint(a, "lls_slice_lo_{d}", .{id});
     const hi_name = try std.fmt.allocPrint(a, "lls_slice_hi_{d}", .{id});
 
@@ -1801,25 +1827,24 @@ pub fn emitSlice(self: *Emitter, node: *ast_mod.Node, ix: *const ast_mod.Index) 
     else
         try std.fmt.allocPrint(a, "@as(i64, @intCast({s}.len))", .{obj_name});
 
-    // Slicing a local array value keeps the source mutability: `const arr`
-    // yields `*const [N]T` (a read-only view), while a mutable array must stay
-    // mutable so the resulting `[]T` is writable.
-    const obj_decl: []const u8 = if (obj_t.kind == .array and !obj_t.is_const) "var" else "const";
+    // Copying a temporary mutable array keeps its mutability; borrowed arrays
+    // are addressed above and must stay const bindings of the pointer.
+    const obj_decl: []const u8 = if (obj_t.kind == .array and !aliases_array and !obj_t.is_const) "var" else "const";
 
     return std.fmt.allocPrint(a,
-        \\blk: {{
+        \\{s}: {{
         \\    {s} {s}: {s} = {s};
         \\    const {s}: i64 = {s};
         \\    const {s}: i64 = {s};
         \\    if ({s} < 0 or {s} < {s} or {s} > @as(i64, @intCast({s}.len))) return rt.io.fail("Slice out of bounds: [{{d}}..{{d}}] (len {{d}})", .{{ {s}, {s}, @as(i64, @intCast({s}.len)) }});
-        \\    break :blk {s}[@intCast({s})..@intCast({s})];
+        \\    break :{s} {s}[@intCast({s})..@intCast({s})];
         \\}}
     , .{
-        obj_decl, obj_name, obj_t.zig, object_expr,
-        lo_name,  lo_code,  hi_name,   hi_code,
-        lo_name,  hi_name,  lo_name,   hi_name,
-        obj_name, lo_name,  hi_name,   obj_name,
-        obj_name, lo_name,  hi_name,
+        label,     obj_decl,  obj_name, object_zig, object_expr,
+        lo_name,   lo_code,   hi_name,  hi_code,
+        lo_name,   hi_name,   lo_name,  hi_name,
+        obj_name,  lo_name,   hi_name,  obj_name,
+        label,     obj_name,  lo_name,  hi_name,
     });
 }
 

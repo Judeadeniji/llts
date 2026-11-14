@@ -655,6 +655,14 @@ fn requireAssignAt(state: *state_mod.CompilerState, got: ir.Type, expected: ir.T
                 return;
             }
             if (widths.isNarrowing(got_w.?, exp_w.?)) {
+                // An exact constant that fits the target needs no cast: the
+                // value cannot lose anything, so `$x: i32 = -5;` is legal.
+                if (from) |node| {
+                    if (constIntFitsExpr(node, exp_w.?)) {
+                        try recordExprType(state, node, expected);
+                        return;
+                    }
+                }
                 if (state.strict) {
                     return compiler_errors.compileFailAt(
                         state,
@@ -775,17 +783,90 @@ fn isIntegerLiteral(node: *ast.Node) bool {
 fn intLiteralFits(node: *ast.Node, width: widths.Width) bool {
     if (node.* != .literal) return false;
     const lit = node.literal;
-    const n: i64 = switch (lit.literal_type) {
+    const text = switch (lit.literal_type) {
         .number => blk: {
-            if (std.mem.indexOfScalar(u8, lit.value, '.') != null) return false;
-            break :blk parseNumWithUnderscores(i64, lit.value, 10) orelse return false;
+            if (std.mem.indexOfAny(u8, lit.value, ".eE") != null) return false;
+            break :blk lit.value;
         },
-        .hex => parseNumWithUnderscores(i64, lit.value[2..], 16) orelse return false,
-        .octal => parseNumWithUnderscores(i64, lit.value[2..], 8) orelse return false,
-        .binary => parseNumWithUnderscores(i64, lit.value[2..], 2) orelse return false,
+        .hex => lit.value[2..],
+        .octal => lit.value[2..],
+        .binary => lit.value[2..],
         else => return false,
     };
+    const base: u8 = switch (lit.literal_type) {
+        .hex => 16,
+        .octal => 8,
+        .binary => 2,
+        else => 10,
+    };
+    if (parseNumWithUnderscores(i64, text, base)) |n| return widths.i64Fits(width, n);
+    // Values above `maxInt(i64)` (e.g. `u64` maxima) still fit unsigned targets.
+    const u = parseNumWithUnderscores(u64, text, base) orelse return false;
+    return switch (width.concrete()) {
+        .u8 => u <= std.math.maxInt(u8),
+        .u16 => u <= std.math.maxInt(u16),
+        .u32 => u <= std.math.maxInt(u32),
+        .u64 => true,
+        else => false,
+    };
+}
+
+/// Fold an integer expression made only of literals (`-5`, `2 + 3`, `0xFF`)
+/// so an exact constant can narrow to a smaller width without a cast.
+fn constIntFitsExpr(node: *ast.Node, width: widths.Width) bool {
+    const n = foldIntLiteralExpr(node) orelse return false;
     return widths.i64Fits(width, n);
+}
+
+fn foldIntLiteralExpr(node: *ast.Node) ?i64 {
+    switch (node.*) {
+        .literal => |lit| {
+            return switch (lit.literal_type) {
+                .number => blk: {
+                    if (std.mem.indexOfAny(u8, lit.value, ".eE") != null) break :blk null;
+                    break :blk parseNumWithUnderscores(i64, lit.value, 10);
+                },
+                .hex => parseNumWithUnderscores(i64, lit.value[2..], 16),
+                .octal => parseNumWithUnderscores(i64, lit.value[2..], 8),
+                .binary => parseNumWithUnderscores(i64, lit.value[2..], 2),
+                else => null,
+            };
+        },
+        .unary => |u| {
+            const v = foldIntLiteralExpr(u.arg) orelse return null;
+            if (std.mem.eql(u8, u.operator, "-")) {
+                if (v == std.math.minInt(i64)) return null;
+                return -v;
+            }
+            if (std.mem.eql(u8, u.operator, "+")) return v;
+            if (std.mem.eql(u8, u.operator, "~")) return ~v;
+            return null;
+        },
+        .binary => |b| {
+            const lhs = foldIntLiteralExpr(b.left) orelse return null;
+            const rhs = foldIntLiteralExpr(b.right) orelse return null;
+            const op = b.operator;
+            if (std.mem.eql(u8, op, "+")) {
+                const r = @addWithOverflow(lhs, rhs);
+                return if (r[1] != 0) null else r[0];
+            }
+            if (std.mem.eql(u8, op, "-")) {
+                const r = @subWithOverflow(lhs, rhs);
+                return if (r[1] != 0) null else r[0];
+            }
+            if (std.mem.eql(u8, op, "*")) {
+                const r = @mulWithOverflow(lhs, rhs);
+                return if (r[1] != 0) null else r[0];
+            }
+            if (std.mem.eql(u8, op, "/") or std.mem.eql(u8, op, "%")) {
+                if (rhs == 0) return null;
+                if (lhs == std.math.minInt(i64) and rhs == -1) return null;
+                return if (op[0] == '/') @divTrunc(lhs, rhs) else @rem(lhs, rhs);
+            }
+            return null;
+        },
+        else => return null,
+    }
 }
 
 /// True when `node` is an integer literal that fits in `u8` (for `@as(string, […])`).
@@ -1186,32 +1267,35 @@ fn resolveMethodSelfType(
     );
 }
 
+/// Recoverable receiver check: reports and returns `false` instead of aborting
+/// so the remaining arguments and calls are still checked.
 fn requireMethodReceiver(
     state: *state_mod.CompilerState,
     got: ir.Type,
     expected: ir.Type,
     method_name: []const u8,
     from: ?*ast.Node,
-) TypecheckError!void {
-    if (ir.involvesUnknown(got) or ir.involvesUnknown(expected)) return;
-    if (ir.isSubtype(got, expected)) return;
+) TypecheckError!bool {
+    if (ir.involvesUnknown(got) or ir.involvesUnknown(expected)) return true;
+    if (ir.isSubtype(got, expected)) return true;
     // Value receivers auto-& into *T; *T auto-deref into value receivers.
     if (expected == .ptr and got == .struct_) {
-        if (expected.ptr.* == .struct_ and std.mem.eql(u8, got.struct_, expected.ptr.*.struct_)) return;
+        if (expected.ptr.* == .struct_ and std.mem.eql(u8, got.struct_, expected.ptr.*.struct_)) return true;
     }
     if (got == .ptr and expected == .struct_) {
-        if (got.ptr.* == .struct_ and std.mem.eql(u8, got.ptr.*.struct_, expected.struct_)) return;
+        if (got.ptr.* == .struct_ and std.mem.eql(u8, got.ptr.*.struct_, expected.struct_)) return true;
     }
     if (ir.optionalPayload(got)) |payload| {
         return requireMethodReceiver(state, payload, expected, method_name, from);
     }
     const g = try ownDisplay(state, got);
     const e = try ownDisplay(state, expected);
-    return compiler_errors.compileFailFmt(
+    _ = compiler_errors.compileFailFmt(
         state,
         "Method '{s}' receiver: type '{s}' is not assignable to '{s}'",
         .{ method_name, g, e },
-    );
+    ) catch {};
+    return false;
 }
 
 fn resolveMethodCallee(
@@ -1576,6 +1660,59 @@ pub fn inferExpr(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, n
     return result;
 }
 
+/// True when the shared collector already holds a recorded error, meaning the
+/// rest of this typecheck can only produce cascades.
+pub fn hasCollectedErrors() bool {
+    const collector = @import("../../errors/collector.zig");
+    if (collector.getActive()) |c| return c.hasErrors();
+    return false;
+}
+
+fn collectedErrorCount() usize {
+    const collector = @import("../../errors/collector.zig");
+    if (collector.getActive()) |c| return c.errorCount();
+    return 0;
+}
+
+/// A child expression that failed to typecheck independently. `ok == false`
+/// means a diagnostic was already recorded; the type is `unknown` so callers
+/// can skip dependent checks instead of cascading.
+const Recovered = struct { ty: ir.Type = ir.TUnknown, ok: bool = true };
+
+/// Infer one expression, recovering from a reported `CompileError`.
+fn inferExprRec(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node: *ast.Node) TypecheckError!Recovered {
+    const t = inferExpr(state, env, ta, node) catch |err| switch (err) {
+        error.CompileError => return .{ .ty = ir.TUnknown, .ok = false },
+        else => |e| return e,
+    };
+    return .{ .ty = t, .ok = true };
+}
+
+/// `requireAssignFrom` for aggregate recovery: reports the mismatch and returns
+/// false instead of aborting the enclosing expression.
+fn assignRec(
+    state: *state_mod.CompilerState,
+    got: ir.Type,
+    expected: ir.Type,
+    ctx: []const u8,
+    from: ?*ast.Node,
+) TypecheckError!bool {
+    requireAssignFrom(state, got, expected, ctx, from) catch |err| switch (err) {
+        error.CompileError => return false,
+        else => |e| return e,
+    };
+    return true;
+}
+
+/// Run one statement, recovering from a reported `CompileError` so the next
+/// statement in the same block is still checked.
+fn checkStmtRec(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node: *ast.Node) TypecheckError!void {
+    _ = checkStmt(state, env, ta, node) catch |err| switch (err) {
+        error.CompileError => return,
+        else => |e| return e,
+    };
+}
+
 fn inferExprInner(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node: *ast.Node) TypecheckError!ir.Type {
     return switch (node.*) {
         .literal => |lit| try inferLiteral(ta, lit, env.prefer_literals),
@@ -1623,7 +1760,9 @@ fn inferUnaryExpr(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, 
         defer env.prefer_literals = prev;
         return try inferExpr(state, env, ta, u.arg);
     }
-    const t = try inferExpr(state, env, ta, u.arg);
+    const arg = try inferExprRec(state, env, ta, u.arg);
+    if (!arg.ok) return ir.TUnknown;
+    const t = arg.ty;
     if (std.mem.eql(u8, u.operator, "!")) return ir.TBool;
     if (std.mem.eql(u8, u.operator, "&")) {
         if (env.anyConstPlaceRoot(u.arg)) |name| {
@@ -1653,8 +1792,13 @@ fn inferBinaryExpr(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc,
             return ir.TBool;
         }
     }
-    const l = try inferExpr(state, env, ta, b.left);
-    const r = try inferExpr(state, env, ta, b.right);
+    // Both operands are inferred independently: `a + b` with two bad sides
+    // reports both instead of stopping at the left one.
+    const lr = try inferExprRec(state, env, ta, b.left);
+    const rr = try inferExprRec(state, env, ta, b.right);
+    if (!lr.ok or !rr.ok) return ir.TUnknown;
+    const l = lr.ty;
+    const r = rr.ty;
     const op = b.operator;
     if (l == .type_ or r == .type_) {
         return compiler_errors.compileFailFmt(state, "Operator '{s}' is not defined on 'type' values", .{op});
@@ -1726,7 +1870,9 @@ fn inferMemberExpr(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc,
             }
         }
     }
-    const obj = try inferExpr(state, env, ta, m.object);
+    const obj_rec = try inferExprRec(state, env, ta, m.object);
+    if (!obj_rec.ok) return ir.TUnknown;
+    const obj = obj_rec.ty;
     if (state.strict and ir.optionalPayload(obj) != null) {
         const d = try ownDisplay(state, obj);
         return compiler_errors.compileFailFmt(
@@ -1834,7 +1980,9 @@ fn inferMemberExpr(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc,
 }
 
 fn inferIndexExpr(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, idx: ast.Index) TypecheckError!ir.Type {
-    const obj_raw = try inferExpr(state, env, ta, idx.object);
+    const obj_rec = try inferExprRec(state, env, ta, idx.object);
+    if (!obj_rec.ok) return ir.TUnknown;
+    const obj_raw = obj_rec.ty;
     // Auto-deref `*T` / `?*T` so `p[i]` works like field access on `*Struct`.
     const obj = ir.peelForIndex(obj_raw);
     if (idx.is_slice) {
@@ -1847,7 +1995,8 @@ fn inferIndexExpr(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, 
             if (!ir.involvesUnknown(e)) try requireAssign(state, e, ir.TInt, "slice end");
         }
         if (obj == .array) {
-            return try ta.arrayType(obj.array.elem.*, null, obj.array.is_const);
+            const is_const_view = obj.array.is_const or env.anyConstPlaceRoot(idx.object) != null;
+            return try ta.arrayType(obj.array.elem.*, null, is_const_view);
         }
         if (!ir.involvesUnknown(obj) and obj != .unknown) {
             const d = try ownDisplay(state, obj_raw);
@@ -1928,7 +2077,9 @@ fn inferUnwrapExprType(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAl
 }
 
 fn inferAssignmentExpr(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, a: ast.Assignment) TypecheckError!ir.Type {
-    const val = try inferExpr(state, env, ta, a.right);
+    const val_rec = try inferExprRec(state, env, ta, a.right);
+    if (!val_rec.ok) return ir.TUnknown;
+    const val = val_rec.ty;
     try rejectTypeValue(state, val, "an assigned value");
     if (a.left.* == .primary) {
         if (env.isConstBinding(a.left.primary.name)) {
@@ -1946,7 +2097,9 @@ fn inferAssignmentExpr(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAl
         if (env.anyConstPlaceRoot(mem.object)) |obj_name| {
             return compiler_errors.compileFailFmt(state, "Cannot mutate field of constant '{s}'", .{obj_name});
         }
-        const obj = try inferExpr(state, env, ta, mem.object);
+        const obj_rec = try inferExprRec(state, env, ta, mem.object);
+        if (!obj_rec.ok) return ir.TUnknown;
+        const obj = obj_rec.ty;
         if (mem.property.* == .primary) {
             var field_obj = obj;
             if (field_obj == .defined) field_obj = field_obj.defined.underlying.*;
@@ -2042,6 +2195,9 @@ fn inferAssignmentExpr(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAl
         const i = try inferExpr(state, env, ta, start_node);
         if (!ir.involvesUnknown(i)) try requireAssign(state, i, ir.TInt, "index");
         if (obj_t == .array) {
+            if (obj_t.array.is_const) {
+                return compiler_errors.compileFailFmt(state, "Cannot mutate elements of a constant slice", .{});
+            }
             // Record the element type on the index node so editor features
             // (hover) and codegen can resolve the assignment target.
             try recordExprType(state, a.left, obj_t.array.elem.*);
@@ -2828,6 +2984,10 @@ fn inferCall(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, call_
 
         if (has_sig) {
             const named_count = params.items.len;
+            // Every argument is checked on its own: two bad arguments in one
+            // call produce two diagnostics, then the call yields `unknown`
+            // instead of a bogus return type.
+            var arg_failed = false;
             const any_annotated = blk: {
                 for (params.items) |p| {
                     if (p != .unknown) break :blk true;
@@ -2852,24 +3012,36 @@ fn inferCall(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, call_
                     return compiler_errors.compileFailFmt(state, "Function '{s}' expected at least {d} arguments, got {d}", .{ name.?, expected_user, c.args.len });
                 }
                 if (named_count > 0) {
-                    const recv_ty = try inferExpr(state, env, ta, m.receiver);
-                    try requireMethodReceiver(state, recv_ty, params.items[0], name.?, m.receiver);
+                    const recv = try inferExprRec(state, env, ta, m.receiver);
+                    if (recv.ok) {
+                        if (!try requireMethodReceiver(state, recv.ty, params.items[0], name.?, m.receiver)) arg_failed = true;
+                    } else arg_failed = true;
                 }
                 const ncheck = @min(c.args.len, if (named_count > 0) named_count - 1 else 0);
                 var i: usize = 0;
                 while (i < ncheck) : (i += 1) {
-                    const at = try inferExpr(state, env, ta, c.args[i]);
+                    const errors_before = collectedErrorCount();
+                    const at = try inferExprRec(state, env, ta, c.args[i]);
+                    if (!at.ok or collectedErrorCount() > errors_before) {
+                        arg_failed = true;
+                        continue;
+                    }
                     var ctx_buf: [96]u8 = undefined;
                     const ctx = std.fmt.bufPrint(&ctx_buf, "argument {d} of '{s}'", .{ i + 1, name.? }) catch "argument";
-                    try requireAssignFrom(state, at, params.items[i + 1], ctx, c.args[i]);
+                    if (!try assignRec(state, at.ty, params.items[i + 1], ctx, c.args[i])) arg_failed = true;
                 }
                 while (i < c.args.len) : (i += 1) {
-                    const at = try inferExpr(state, env, ta, c.args[i]);
+                    const errors_before = collectedErrorCount();
+                    const at = try inferExprRec(state, env, ta, c.args[i]);
+                    if (!at.ok or collectedErrorCount() > errors_before) {
+                        arg_failed = true;
+                        continue;
+                    }
                     if (rest) |r| {
                         if (r == .array and r.array.elem.* != .unknown) {
                             var ctx_buf: [96]u8 = undefined;
                             const ctx = std.fmt.bufPrint(&ctx_buf, "argument {d} of '{s}'", .{ i + 1, name.? }) catch "argument";
-                            try requireAssignFrom(state, at, r.array.elem.*, ctx, c.args[i]);
+                            if (!try assignRec(state, at.ty, r.array.elem.*, ctx, c.args[i])) arg_failed = true;
                         }
                     }
                 }
@@ -2883,22 +3055,33 @@ fn inferCall(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, call_
                 const ncheck = @min(c.args.len, named_count);
                 var i: usize = 0;
                 while (i < ncheck) : (i += 1) {
-                    const at = try inferExpr(state, env, ta, c.args[i]);
+                    const errors_before = collectedErrorCount();
+                    const at = try inferExprRec(state, env, ta, c.args[i]);
+                    if (!at.ok or collectedErrorCount() > errors_before) {
+                        arg_failed = true;
+                        continue;
+                    }
                     var ctx_buf: [96]u8 = undefined;
                     const ctx = std.fmt.bufPrint(&ctx_buf, "argument {d} of '{s}'", .{ i + 1, name.? }) catch "argument";
-                    try requireAssignFrom(state, at, params.items[i], ctx, c.args[i]);
+                    if (!try assignRec(state, at.ty, params.items[i], ctx, c.args[i])) arg_failed = true;
                 }
                 while (i < c.args.len) : (i += 1) {
-                    const at = try inferExpr(state, env, ta, c.args[i]);
+                    const errors_before = collectedErrorCount();
+                    const at = try inferExprRec(state, env, ta, c.args[i]);
+                    if (!at.ok or collectedErrorCount() > errors_before) {
+                        arg_failed = true;
+                        continue;
+                    }
                     if (rest) |r| {
                         if (r == .array and r.array.elem.* != .unknown) {
                             var ctx_buf: [96]u8 = undefined;
                             const ctx = std.fmt.bufPrint(&ctx_buf, "argument {d} of '{s}'", .{ i + 1, name.? }) catch "argument";
-                            try requireAssignFrom(state, at, r.array.elem.*, ctx, c.args[i]);
+                            if (!try assignRec(state, at.ty, r.array.elem.*, ctx, c.args[i])) arg_failed = true;
                         }
                     }
                 }
             }
+            if (arg_failed) return ir.TUnknown;
         } else {
             if (method) |m| _ = try inferExpr(state, env, ta, m.receiver);
             for (c.args) |a| _ = try inferExpr(state, env, ta, a);
@@ -2907,9 +3090,17 @@ fn inferCall(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, call_
     }
 
     // First-class / typed function value: `$f(…)` where `$f: @func(…)`.
-    const callee_ty = ir.peelDefined(try inferExpr(state, env, ta, c.callee));
+    const callee_rec = try inferExprRec(state, env, ta, c.callee);
+    if (!callee_rec.ok) {
+        for (c.args) |a| _ = try inferExprRec(state, env, ta, a);
+        return ir.TUnknown;
+    }
+    const callee_ty = ir.peelDefined(callee_rec.ty);
     if (callee_ty == .func) {
-        try checkFuncValueCall(state, env, ta, callee_ty, c);
+        _ = checkFuncValueCall(state, env, ta, callee_ty, c) catch |err| switch (err) {
+            error.CompileError => return ir.TUnknown,
+            else => |e| return e,
+        };
         return callee_ty.func.ret.*;
     }
     for (c.args) |a| _ = try inferExpr(state, env, ta, a);
@@ -3327,7 +3518,7 @@ fn inferGenericCall(
         }
         if (params.items.len > 0) {
             const recv_ty = try inferExpr(state, env, ta, recv);
-            try requireMethodReceiver(state, recv_ty, params.items[0], inst, recv);
+            _ = try requireMethodReceiver(state, recv_ty, params.items[0], inst, recv);
         }
     }
     // Type args may be implicit, so arguments line up with the instance's
@@ -3409,9 +3600,15 @@ fn inferArrayLiteral(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAllo
     if (a.elements.len == 0) return try ta.arrayType(ir.TUnknown, 0, false);
     var types: std.ArrayList(ir.Type) = .empty;
     defer types.deinit(ta.allocator);
+    var elem_failed = false;
     for (a.elements) |el| {
-        try types.append(ta.allocator, try inferExpr(state, env, ta, el));
+        const rec = try inferExprRec(state, env, ta, el);
+        if (!rec.ok) elem_failed = true;
+        try types.append(ta.allocator, if (rec.ok) rec.ty else ir.TUnknown);
     }
+    // Elements are already diagnosed individually; the literal has no usable
+    // element type for its parent to check against.
+    if (elem_failed) return ir.TUnknown;
 
     // `const […]` — always a deep tuple of element types (TS `as const` style).
     if (env.prefer_literals) return try ta.tupleType(types.items);
@@ -3495,7 +3692,8 @@ fn inferStructInit(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc,
         return compiler_errors.compileFailFmt(state, "Unknown struct '{s}'", .{bare});
     }
 
-    try checkInitAgainstStruct(state, env, ta, struct_name, init);
+    const fields_ok = try checkInitAgainstStruct(state, env, ta, struct_name, init);
+    if (!fields_ok) return ir.TUnknown;
     if (is_typedef) {
         return try from_ast.resolveNamedType(struct_name, state, ta);
     }
@@ -3503,31 +3701,54 @@ fn inferStructInit(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc,
 }
 
 /// Check `{ … }` field values against a named struct's fields (and, under
-/// `--strict`, that every non-optional field is provided).
+/// `--strict`, that every non-optional field is provided). Returns false when a
+/// field was already diagnosed, so the caller can stop trusting the value.
 fn checkInitAgainstStruct(
     state: *state_mod.CompilerState,
     env: *Env,
     ta: ir.TypeAlloc,
     struct_name: []const u8,
     init: ast.StructInit,
-) TypecheckError!void {
+) TypecheckError!bool {
+    var failed = false;
     for (init.fields) |field| {
         const expected = try fieldTypeFromStruct(state, ta, struct_name, field.name);
         if (expected == .unknown) {
             if (from_ast.lookupStruct(state, struct_name)) |def| {
                 if (def.types.get(field.name) == null) {
-                    return compiler_errors.compileFailFmt(state, "Unknown field '{s}' on '{s}'", .{ field.name, ir.cleanTypeName(struct_name) });
+                    compiler_errors.compileFailFmt(state, "Unknown field '{s}' on '{s}'", .{ field.name, ir.cleanTypeName(struct_name) }) catch {};
+                    failed = true;
+                    continue;
                 }
             }
         }
         // A nested `{ … }` takes the field's declared type instead of
         // inferring a structural shape of its own.
-        const got = (try inferInitAgainstType(state, env, ta, field.value, expected)) orelse
-            try inferExpr(state, env, ta, field.value);
+        const errors_before = collectedErrorCount();
+        const contextual = inferInitAgainstType(state, env, ta, field.value, expected) catch |err| switch (err) {
+            error.CompileError => {
+                failed = true;
+                continue;
+            },
+            else => |e| return e,
+        };
+        const got = if (contextual) |t| t else blk: {
+            const rec = try inferExprRec(state, env, ta, field.value);
+            if (!rec.ok) {
+                failed = true;
+                continue;
+            }
+            break :blk rec.ty;
+        };
+        if (collectedErrorCount() > errors_before) {
+            failed = true;
+            continue;
+        }
         var ctx_buf: [128]u8 = undefined;
         const ctx = std.fmt.bufPrint(&ctx_buf, "Field '{s}' of '{s}'", .{ field.name, ir.cleanTypeName(struct_name) }) catch "Field";
-        try requireAssignFrom(state, got, expected, ctx, field.value);
+        if (!try assignRec(state, got, expected, ctx, field.value)) failed = true;
     }
+    if (failed) return false;
     if (state.strict) {
         if (from_ast.lookupStruct(state, struct_name)) |def| {
             var it = def.types.iterator();
@@ -3545,16 +3766,18 @@ fn checkInitAgainstStruct(
                         }
                     }
                     if (!provided) {
-                        return compiler_errors.compileFailFmt(
+                        compiler_errors.compileFailFmt(
                             state,
                             "Missing required field '{s}' in initialization of '{s}'; provide it in the initializer or declare the field optional ('?T')",
                             .{ required_name, ir.cleanTypeName(struct_name) },
-                        );
+                        ) catch {};
+                        failed = true;
                     }
                 }
             }
         }
     }
+    return !failed;
 }
 
 /// `$p: { x: f64; y: f64; } = { x: 1.0, y: 2.0 };` — check the literal
@@ -3681,7 +3904,7 @@ fn inferInitAgainstType(
     const t: ?ir.Type = switch (peeled) {
         .struct_ => |name| blk: {
             if (from_ast.lookupStruct(state, name) == null) break :blk null;
-            try checkInitAgainstStruct(state, env, ta, name, init);
+            _ = try checkInitAgainstStruct(state, env, ta, name, init);
             break :blk peeled;
         },
         .shape => blk: {
@@ -3728,7 +3951,19 @@ fn checkStmt(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node:
             // Explicit `const expr` still enables deep literal typing.
             if (d.is_const and d.value.* == .literal) env.prefer_literals = true;
             defer env.prefer_literals = prev_lit;
-            const value_type = try inferExpr(state, env, ta, d.value);
+            const errors_before = collectedErrorCount();
+            const value_rec = try inferExprRec(state, env, ta, d.value);
+            // A nested failure (say a bad field inside a struct literal) already
+            // explains itself; checking the annotation against `unknown` would
+            // only add a cascade.
+            if (!value_rec.ok or collectedErrorCount() > errors_before) {
+                // Keep the name bound as `unknown` so later uses do not cascade
+                // into bogus "undeclared" diagnostics.
+                try env.define(d.name, ir.TUnknown);
+                if (d.is_const) try env.putConstName(d.name);
+                return null;
+            }
+            const value_type = value_rec.ty;
             try rejectTypeValue(state, value_type, "a variable's value");
             // Module-level names only: function locals sharing names like `path` / `args`
             // must not clobber `global_types` (breaks multi-module compile / emit).
@@ -4077,8 +4312,10 @@ fn checkFunction(
     }
 
     if (f.body.* == .block) {
+        // Statement-boundary recovery: one bad statement no longer hides the
+        // rest of the function body.
         for (f.body.block.statements) |s| {
-            _ = try checkStmt(state, &env, ta, s);
+            try checkStmtRec(state, &env, ta, s);
         }
     }
 
@@ -4541,17 +4778,18 @@ fn checkStructFieldTypes(state: *state_mod.CompilerState, env: *Env, ta: ir.Type
     const def = state.structs.getPtr(s.name) orelse return;
     var relayout = false;
     for (s.fields) |field| {
-        if (field.type_annotation) |ann| {
-            const has_call = from_ast.typeNodeHasCall(ann);
-            const t = if (has_call) try resolveDeclTypeNode(state, env, ta, ann) else try from_ast.typeFromAst(ann, state, ta);
-            try rejectTypeValue(state, t, "a struct field's type");
-            const disp = try ownDisplayQualified(state, t);
-            try def.types.put(field.name, disp);
-            try def.field_irs.put(state.allocator, field.name, t);
-            relayout = relayout or has_call;
-        } else if (state.strict) {
-            return compiler_errors.compileFailFmt(state, "Field '{s}' of struct '{s}' must have an explicit type annotation in strict mode; did you mean '{s}: int'?", .{ field.name, s.name, field.name });
-        }
+        // Field-boundary recovery: one unresolvable field keeps the rest of
+        // the struct (and the compile) going.
+        checkOneStructField(state, env, ta, s, def, field, &relayout) catch |err| switch (err) {
+            error.CompileError => {
+                // Leave the field as `unknown` rather than inheriting a stale
+                // or missing entry.
+                def.types.put(field.name, "unknown") catch {};
+                def.field_irs.put(state.allocator, field.name, ir.TUnknown) catch {};
+                continue;
+            },
+            else => |e| return e,
+        };
     }
     // The pre-typecheck layout pass saw type-returning fields as `unknown`.
     if (relayout) {
@@ -4564,6 +4802,28 @@ fn checkStructFieldTypes(state: *state_mod.CompilerState, env: *Env, ta: ir.Type
         def.offsets.deinit();
         def.offsets = laid.offsets;
         def.size = laid.size;
+    }
+}
+
+fn checkOneStructField(
+    state: *state_mod.CompilerState,
+    env: *Env,
+    ta: ir.TypeAlloc,
+    s: *const ast.StructDecl,
+    def: *state_mod.StructDef,
+    field: ast.StructField,
+    relayout: *bool,
+) TypecheckError!void {
+    if (field.type_annotation) |ann| {
+        const has_call = from_ast.typeNodeHasCall(ann);
+        const t = if (has_call) try resolveDeclTypeNode(state, env, ta, ann) else try from_ast.typeFromAst(ann, state, ta);
+        try rejectTypeValue(state, t, "a struct field's type");
+        const disp = try ownDisplayQualified(state, t);
+        try def.types.put(field.name, disp);
+        try def.field_irs.put(state.allocator, field.name, t);
+        relayout.* = relayout.* or has_call;
+    } else if (state.strict) {
+        compiler_errors.compileFailFmt(state, "Field '{s}' of struct '{s}' must have an explicit type annotation in strict mode; did you mean '{s}: int'?", .{ field.name, s.name, field.name }) catch {};
     }
 }
 
@@ -4723,6 +4983,23 @@ fn resolveSignatureTypes(state: *state_mod.CompilerState, env: *Env, ta: ir.Type
 
 /// Gradual typecheck: validate annotated returns/params when present; Unknown otherwise.
 pub fn typecheck(state: *state_mod.CompilerState, doc: *ast.Document) TypecheckError!void {
+    // Recovery reports into the shared collector instead of aborting at the
+    // first fault, so a direct caller (tooling, tests) needs one too — the
+    // alternative is a silent success after a fault was already printed.
+    const collector_mod = @import("../../errors/collector.zig");
+    const own_collector = collector_mod.getActive() == null;
+    var local_coll: collector_mod.Collector = undefined;
+    if (own_collector) {
+        local_coll = collector_mod.Collector.init(state.allocator, collector_mod.getDefaultCap());
+        collector_mod.setActive(&local_coll);
+    }
+    const coll = collector_mod.getActive().?;
+    defer if (own_collector) {
+        collector_mod.clearActive();
+        local_coll.deinit();
+    };
+    errdefer if (own_collector and coll.items.items.len > 0) coll.reportAll();
+
     // Mirrors the emission gate: if `emitBytecode` would never emit a function,
     // typechecking its body only costs time. Signatures, struct fields and
     // top-level statements are still checked in full — they feed callers.
@@ -4744,18 +5021,31 @@ pub fn typecheck(state: *state_mod.CompilerState, doc: *ast.Document) TypecheckE
     try resolveTypeDeclCalls(state, &decl_env, ta, doc);
 
     for (doc.statements) |s| {
-        if (s.* == .struct_decl) try checkStructFieldTypes(state, &decl_env, ta, &s.struct_decl);
+        if (s.* == .struct_decl) {
+            checkStructFieldTypes(state, &decl_env, ta, &s.struct_decl) catch |err| switch (err) {
+                error.CompileError => continue,
+                else => |e| return e,
+            };
+        }
     }
 
     for (doc.statements) |s| {
         if (s.* == .function_decl) {
             if (state.templates.contains(s.function_decl.name)) continue;
-            try resolveSignatureTypes(state, &decl_env, ta, &s.function_decl);
+            resolveSignatureTypes(state, &decl_env, ta, &s.function_decl) catch |err| switch (err) {
+                error.CompileError => continue,
+                else => |e| return e,
+            };
         } else if (s.* == .struct_decl) {
             // A generic struct's methods belong to its instances, not the template.
             if (s.struct_decl.params.len > 0) continue;
             for (s.struct_decl.methods) |m| {
-                if (m.* == .function_decl) try resolveSignatureTypes(state, &decl_env, ta, &m.function_decl);
+                if (m.* == .function_decl) {
+                    resolveSignatureTypes(state, &decl_env, ta, &m.function_decl) catch |err| switch (err) {
+                        error.CompileError => continue,
+                        else => |e| return e,
+                    };
+                }
             }
         }
     }
@@ -4775,7 +5065,10 @@ pub fn typecheck(state: *state_mod.CompilerState, doc: *ast.Document) TypecheckE
         if (s.* == .function_decl) {
             if (state.templates.contains(s.function_decl.name)) continue;
             if (reach) |*r| if (!r.isFunctionReachable(s.function_decl.name)) continue;
-            try checkFunction(state, ta, &s.function_decl, &top_consts, &decl_env.globals);
+            checkFunction(state, ta, &s.function_decl, &top_consts, &decl_env.globals) catch |err| switch (err) {
+                error.CompileError => continue,
+                else => |e| return e,
+            };
         } else if (s.* == .struct_decl) {
             if (s.struct_decl.params.len > 0) continue;
             for (s.struct_decl.methods) |m| {
@@ -4784,7 +5077,10 @@ pub fn typecheck(state: *state_mod.CompilerState, doc: *ast.Document) TypecheckE
                 // are checked, once the params are bound.
                 if (generics.isTemplate(&m.function_decl)) continue;
                 if (reach) |*r| if (!r.isFunctionReachable(m.function_decl.name)) continue;
-                try checkFunction(state, ta, &m.function_decl, &top_consts, &decl_env.globals);
+                checkFunction(state, ta, &m.function_decl, &top_consts, &decl_env.globals) catch |err| switch (err) {
+                    error.CompileError => continue,
+                    else => |e| return e,
+                };
             }
         }
     }
@@ -4822,7 +5118,7 @@ pub fn typecheck(state: *state_mod.CompilerState, doc: *ast.Document) TypecheckE
     for (doc.statements) |s| {
         switch (s.*) {
             .function_decl, .struct_decl, .enum_decl, .error_decl, .type_decl, .extern_decl => continue,
-            else => _ = try checkStmt(state, &env, ta, s),
+            else => try checkStmtRec(state, &env, ta, s),
         }
     }
 
@@ -4833,13 +5129,23 @@ pub fn typecheck(state: *state_mod.CompilerState, doc: *ast.Document) TypecheckE
         const saved_depth = state.instance_depth;
         state.instance_depth = p.depth;
         defer state.instance_depth = saved_depth;
-        resolveSignatureTypes(state, &decl_env, ta, f) catch |e| return instantiationFailed(p, e);
-        checkFunction(state, ta, f, &top_consts, &decl_env.globals) catch |e| return instantiationFailed(p, e);
+        resolveSignatureTypes(state, &decl_env, ta, f) catch |e| switch (e) {
+            error.CompileError => continue,
+            else => return instantiationFailed(p, e),
+        };
+        checkFunction(state, ta, f, &top_consts, &decl_env.globals) catch |e| switch (e) {
+            error.CompileError => continue,
+            else => return instantiationFailed(p, e),
+        };
     }
 
     // Instance methods nobody called were never typechecked; forget them before
     // reachability so a name in the call index cannot pull them in unchecking.
     generics.dropUnusedInstanceMethods(state);
+
+    // Recovered errors leave partially populated caches: the flow/range facts
+    // and the cache invariants only hold for a clean typecheck.
+    if (coll.hasErrors()) return error.CompileError;
 
     try recordControlFlowFacts(state, doc);
     try verifyTypeCaches(state);

@@ -840,6 +840,11 @@ const Ctx = struct {
                 }
             },
             .index => |ix| {
+                // A slice view borrows the backing aggregate, and the view is
+                // writable whenever the source is. The root must therefore be
+                // emitted as mutable storage even if the view itself is the
+                // only thing that writes through it.
+                if (ix.is_slice) try ctx.walkPlaceRootAssigned(ix.object);
                 try ctx.walkExpr(ix.object);
                 if (ix.index) |v| try ctx.walkExpr(v);
                 if (ix.end) |v| try ctx.walkExpr(v);

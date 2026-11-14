@@ -124,6 +124,31 @@ test "typecheck: closure with mutated capture" {
     try std.testing.expectEqual(true, info.captures[0].is_mutated);
 }
 
+test "typecheck: an exact constant narrows without a cast" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\pub @func main() {
+        \\    $a: i32 = -5;
+        \\    $b: i32 = 2 + 3;
+        \\    $c: u8 = 250;
+        \\    print(a, b, c);
+        \\}
+    ;
+    var analyzed = try helpers.analyzeSource(allocator, src, true);
+    defer analyzed.deinit();
+}
+
+test "typecheck: a constant that does not fit the target is still rejected" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\pub @func main() {
+        \\    $a: u8 = 256;
+        \\    print(a);
+        \\}
+    ;
+    try helpers.expectCompileFail(allocator, src);
+}
+
 test "typecheck: method with a type parameter before 'self' is rejected, not a crash" {
     const allocator = std.testing.allocator;
     const src =

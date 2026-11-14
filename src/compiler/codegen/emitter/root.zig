@@ -1022,6 +1022,27 @@ pub const Emitter = struct {
         _ = self.defer_scopes.pop();
     }
 
+    /// Drop scope state left behind by a failed item. Everything here is
+    /// arena-backed, so truncation is enough; the partial text already written
+    /// for the failed item is discarded by the caller.
+    pub fn truncateScopesTo(self: *Emitter, floor: usize) void {
+        self.scopes.shrinkRetainingCapacity(floor);
+        self.defer_scopes.shrinkRetainingCapacity(floor);
+    }
+
+    /// Clean slate between per-item emission attempts (functions, closures,
+    /// trampolines, globals).
+    pub fn resetItemState(self: *Emitter) void {
+        self.indent = 1;
+        self.scopes.clearRetainingCapacity();
+        self.defer_scopes.clearRetainingCapacity();
+        self.params.clearRetainingCapacity();
+        self.break_targets.clearRetainingCapacity();
+        self.loop_targets.clearRetainingCapacity();
+        self.switch_targets.clearRetainingCapacity();
+        self.infos.clearRetainingCapacity();
+    }
+
     pub fn pushScope(self: *Emitter) void {
         self.scopes.append(self.arena.allocator(), std.StringHashMap(*Binding).init(self.arena.allocator())) catch unreachable;
         self.defer_scopes.append(self.arena.allocator(), .empty) catch unreachable;

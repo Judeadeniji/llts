@@ -412,6 +412,29 @@ test "native execution: string slicing" {
     try expectNativeStdout(allocator, src, "hello\nworld\nhello\n");
 }
 
+test "native execution: slice views alias backing storage" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\@struct Bag { items: [3]i64; }
+        \\pub @func main() {
+        \\    $buffer = [1, 2, 3, 4, 5];
+        \\    $view = buffer[1..4];
+        \\    view[0] = 99;
+        \\    print(buffer[1], view[0]);
+        \\
+        \\    $copy = buffer;
+        \\    copy[0] = 7;
+        \\    print(buffer[0], copy[0]);
+        \\
+        \\    $bag = Bag { items: [10, 20, 30] };
+        \\    $items = bag.items[1..];
+        \\    items[0] = 55;
+        \\    print(bag.items[1], items[0]);
+        \\}
+    ;
+    try expectNativeStdout(allocator, src, "99 99\n1 7\n55 55\n");
+}
+
 test "native execution: bitwise, float arithmetic, and value @if capture" {
     const allocator = std.testing.allocator;
     const src =

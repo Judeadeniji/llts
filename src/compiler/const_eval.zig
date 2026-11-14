@@ -6,6 +6,7 @@ const from_ast = @import("typecheck/from_ast.zig");
 const path = @import("expr/path.zig");
 const emit = @import("emit.zig");
 const layout = @import("layout.zig");
+const widths = @import("widths.zig");
 
 const CompilerState = state_mod.CompilerState;
 
@@ -335,11 +336,54 @@ fn constValueToString(state: *CompilerState, val: ConstValue) anyerror!?[]const 
     };
 }
 
+/// Reject a folded scalar that does not fit `width`. Shared by both backends
+/// so `@const $x: u8 = ...` reports the same diagnostic in VM and native mode
+/// instead of trapping once the program runs.
+pub fn checkFitsWidth(state: *CompilerState, value: ConstValue, width: widths.Width) !void {
+    if (value != .i64) return;
+    if (width.isFloat()) return;
+    const n = value.i64;
+    if (widths.i64Fits(width, n)) return;
+    return compile_errors.compileFailFmt(
+        state,
+        "Integer overflow in constant expression: value {d} does not fit '{s}'",
+        .{ n, width.name() },
+    );
+}
+
+/// Report a folded integer overflow with the same detail (and the same
+/// wrapping-operator hint) the runtime trap uses, so a constant expression
+/// that overflows is as actionable as one that overflows at runtime.
+fn constOverflow(state: *CompilerState, op: []const u8) error{CompileError} {
+    const verb = if (std.mem.eql(u8, op, "+"))
+        "addition"
+    else if (std.mem.eql(u8, op, "-"))
+        "subtraction"
+    else if (std.mem.eql(u8, op, "*"))
+        "multiplication"
+    else if (std.mem.eql(u8, op, "/"))
+        "division"
+    else
+        "arithmetic";
+    if (std.mem.eql(u8, op, "/")) {
+        return compile_errors.compileFailFmt(
+            state,
+            "Integer overflow in constant expression: {s} exceeds 'i64'",
+            .{verb},
+        );
+    }
+    return compile_errors.compileFailFmt(
+        state,
+        "Integer overflow in constant expression: {s} exceeds 'i64'; did you mean '{s}%'?",
+        .{ verb, op },
+    );
+}
+
 pub fn evalBinaryOp(state: *CompilerState, op: []const u8, left_val: ConstValue, right_val: ConstValue) anyerror!?ConstValue {
     if (std.mem.eql(u8, op, "+")) {
         if (left_val == .i64 and right_val == .i64) {
             const r = @addWithOverflow(left_val.i64, right_val.i64);
-            if (r[1] != 0) return compile_errors.compileFailFmt(state, "Integer overflow in constant expression", .{});
+            if (r[1] != 0) return constOverflow(state, "+");
             return .{ .i64 = r[0] };
         }
         if (left_val == .f64 and right_val == .f64) return .{ .f64 = left_val.f64 + right_val.f64 };
@@ -356,7 +400,7 @@ pub fn evalBinaryOp(state: *CompilerState, op: []const u8, left_val: ConstValue,
     if (std.mem.eql(u8, op, "-")) {
         if (left_val == .i64 and right_val == .i64) {
             const r = @subWithOverflow(left_val.i64, right_val.i64);
-            if (r[1] != 0) return compile_errors.compileFailFmt(state, "Integer overflow in constant expression", .{});
+            if (r[1] != 0) return constOverflow(state, "-");
             return .{ .i64 = r[0] };
         }
         if (left_val == .f64 and right_val == .f64) return .{ .f64 = left_val.f64 - right_val.f64 };
@@ -369,7 +413,7 @@ pub fn evalBinaryOp(state: *CompilerState, op: []const u8, left_val: ConstValue,
     if (std.mem.eql(u8, op, "*")) {
         if (left_val == .i64 and right_val == .i64) {
             const r = @mulWithOverflow(left_val.i64, right_val.i64);
-            if (r[1] != 0) return compile_errors.compileFailFmt(state, "Integer overflow in constant expression", .{});
+            if (r[1] != 0) return constOverflow(state, "*");
             return .{ .i64 = r[0] };
         }
         if (left_val == .f64 and right_val == .f64) return .{ .f64 = left_val.f64 * right_val.f64 };
@@ -520,7 +564,7 @@ fn evalExprInner(state: *CompilerState, scope: ?*ComptimeScope, n: *ast.Node) an
             if (std.mem.eql(u8, u.operator, "-")) {
                 return switch (arg_val) {
                     .i64 => |v| blk: {
-                        if (v == std.math.minInt(i64)) return compile_errors.compileFailFmt(state, "Integer overflow in constant expression", .{});
+                        if (v == std.math.minInt(i64)) return compile_errors.compileFailFmt(state, "Integer overflow in constant expression: negation exceeds 'i64'", .{});
                         break :blk .{ .i64 = -v };
                     },
                     .f64 => |v| .{ .f64 = -v },
