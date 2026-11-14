@@ -2,25 +2,29 @@
 
 ## Goal
 
-Add field-level modifiers to LLTS `@struct` declarations: explicit defaults, readonly fields, and `pub`/`priv` visibility (with `pub` explicit and module-private as the default). Nullable fields (`?T`) already exist; this plan enforces that `?T` does **not** imply an implicit `null` default. Missing required keys in struct literals remain a compile error (already enforced in `--strict`).
+Add field-level modifiers to LLTS `@struct` declarations: explicit defaults, readonly fields, and `pub` visibility (module-private default). Nullable fields (`?T`) already exist; this plan enforces that `?T` does **not** imply an implicit `null` default. Missing required keys in struct literals remain a compile error (already enforced in `--strict`).
 
-These are data-only features — no inheritance, no `this`, no virtual dispatch, no access-modifier OOP.
+Data-only features — no inheritance, no `this`, no virtual dispatch, no access-modifier OOP.
 
-## Decisions
+## Decisions (all resolved)
 
-- **Visibility keyword:** `pub` is the only visibility modifier. Writing `pub` makes a field accessible from other modules; omitting it makes the field module-private. There is no `priv` keyword.
-- **Readonly keyword:** `readonly` precedes the field name. It is a compile-time immutability rule on the field; construction `S { x: ... }` still initializes it, but `s.x = ...` after construction is rejected.
-- **Defaults:** explicit `= <compile-time expr>` after the field type. `?T` does **not** default to `null`; a nullable field without a default is still required at construction.
-- **Missing key:** compile error (already in `--strict` via `checkInitAgainstStruct`). Fields with defaults are exempt from the missing-field error.
-- **Index signatures:** out of scope (key type undecided; maps are a separate future feature).
-- **Visibility boundary:** use struct-name qualification as proxy. Qualified (`mod::Name`) = cross-module access → reject non-`pub` fields. Unqualified (`Name`) = same module → allow all fields. No per-statement module tracking.
+| Decision | Resolution |
+|----------|-----------|
+| Visibility keyword | `pub` only; absence = module-private; no `priv` keyword |
+| Readonly keyword | `readonly` before field name; construction initializes, post-construction assignment rejected |
+| Defaults | `= <compile-time expr>` explicit; `?T` does not imply `null` |
+| Missing key | Compile error in `--strict`; defaulted fields exempt |
+| Visibility boundary | Compare struct-name module prefix vs `state.chunk.file`; cross-module + non-`pub` → error |
+| Default storage | Store `default: ?*Node` (AST pointer) in `FieldMetadata`; evaluate at emit time |
+| Index signatures | Out of scope |
+| Tests | Native Zig only (`tests/native.zig`, `tests/compile_fails/`, `tests/suite/parser_test.zig`); no TS tests |
 
 ## Syntax
 
 ```lls
 @struct Account {
-    pub id: i64;              # accessible from other modules
-    balance: f64 = 0.0;       # module-private (default), explicit default
+    pub id: i64;              # cross-module accessible
+    balance: f64 = 0.0;       # module-private, explicit default
     readonly created_at: i64; # module-private, set once at construction
     email: ?string = null;    # nullable, explicit default
     tag: ?string;             # nullable, required (no implicit null)
@@ -28,77 +32,68 @@ These are data-only features — no inheritance, no `this`, no virtual dispatch,
 
 pub @func main() {
     $a = Account { id: 1, created_at: 1234567890 };
-    # balance defaults to 0.0, email defaults to null, tag is required → error if omitted
     a.balance = 100.0;        # ok (same module)
-    # a.created_at = 999;     # error: readonly field
-    # $a2 = Account { id: 2 };# error: missing required field 'tag'
+    # a.created_at = 999;     # error: readonly
+    # $a2 = Account { id: 2 };# error: missing required 'tag'
 }
 ```
 
-Grammar additions (struct field declaration):
+Grammar:
 
 ```
-FieldDecl    ::= ("pub")? ("readonly")? Identifier ":" Type ("=" Expression)? ";"
+FieldDecl ::= ("pub")? ("readonly")? Identifier ":" Type ("=" Expression)? ";"
 ```
 
 ## Affected files
 
-| File | Role |
-|------|------|
-| `src/ast/stmt.zig` | `StructField` AST: add `is_public`, `is_readonly`, `default` |
-| `src/ast/clone.zig` | Deep-clone new `StructField` fields |
-| `src/parser/structs.zig` | Parse `pub`, `readonly`, `= default` on fields |
-| `src/compiler/state.zig` | `StructDef`: add `field_metadata` map; `FieldMetadata` struct |
-| `src/compiler/typecheck/root.zig` | `checkOneStructField`: validate defaults; `checkInitAgainstStruct`: skip missing-field error for defaulted fields; `inferMemberExpr`: visibility check |
-| `src/compiler/expr/assign.zig` | `assignMember`: reject assignment to readonly fields |
-| `src/compiler/expr/path.zig` | `currentModulePath`: already exists; visibility module boundary |
-| `src/compiler/codegen/emitter/root.zig` | `StructType.StructField`: add `is_readonly`, `default_zig`; `ensureStructType`: populate from metadata |
-| `src/compiler/codegen/emitter/stmt.zig` | `emitAssignment`: reject readonly field assignment (emitter assertion) |
-| `src/compiler/codegen/emitter/expr.zig` | `emitStructLiteral`: use default instead of `zeroValue` for missing defaulted fields |
-| `src/compiler/layout.zig` | No change (defaults don't affect layout) |
+| File | Change |
+|------|--------|
+| `src/ast/stmt.zig` | `StructField`: add `is_public`, `is_readonly`, `default: ?*Node` |
+| `src/ast/clone.zig` | Deep-clone `default` node |
+| `src/parser/structs.zig` | Parse `pub`, `readonly`, `= default` |
+| `src/compiler/state.zig` | `FieldMetadata` struct + `StructDef.field_metadata` map |
+| `src/compiler/typecheck/root.zig` | `checkOneStructField` (validate defaults); `checkInitAgainstStruct` (exempt defaulted fields); `inferMemberExpr` (visibility check) |
+| `src/compiler/expr/assign.zig` | `assignMember` (reject readonly assignment) |
+| `src/compiler/stmt/decl.zig` | Move `field_metadata` when `StructDef` is replaced |
+| `src/compiler/codegen/emitter/root.zig` | `StructType.StructField`: add `is_readonly`, `default_zig`; `ensureStructType` populate |
+| `src/compiler/codegen/emitter/stmt.zig` | `emitAssignment` readonly assertion |
+| `src/compiler/codegen/emitter/expr.zig` | `emitStructLiteral`: use default instead of `zeroValue` |
 | `tree-sitter-llts/grammar.js` | Update struct field rule |
-| `docs/types/user-defined.md` | Document new field syntax |
-| `docs/types/structs-vs-shapes.md` | Update field table if needed |
+| `docs/types/user-defined.md` | Document new syntax |
 | `TODO.MD` | Add remaining struct work |
 
 ## Architecture
 
 ### 1. AST (`src/ast/stmt.zig`)
 
-Extend `StructField`:
-
 ```zig
 pub const StructField = struct {
     name: []const u8,
     type_annotation: ?*Node,
-    is_public: bool = false,       # `pub` keyword present
-    is_readonly: bool = false,     # `readonly` keyword present
-    default: ?*Node = null,        # `= <expr>` default expression
+    is_public: bool = false,
+    is_readonly: bool = false,
+    default: ?*Node = null,
 };
 ```
 
-Update `src/ast/clone.zig` to deep-clone `default`.
+Clone `default` in `src/ast/clone.zig` (it's an arena-owned pointer; shallow copy of the pointer is fine).
 
 ### 2. Parser (`src/parser/structs.zig`)
 
-In `parseCompilerStruct`, before consuming the field name:
+In `parseCompilerStruct`, before consuming field name:
 
-1. Check if the next two tokens are `pub` followed by an identifier (not `:`). If so, consume `pub` and set `is_public = true`. Edge case: a field literally named `pub` — `pub` followed by `:` is a modifier; `pub` followed by another identifier is a field named `pub`.
-2. Check if the next token is `readonly` followed by `:`. If so, consume `readonly` and set `is_readonly = true`.
+1. If next token is `pub` and token after is an identifier (not `:`), consume `pub`, set `is_public = true`. Edge case: `pub pub: i64;` — `pub` followed by `:` is not a modifier.
+2. If next token is `readonly` and token after is `:`, consume `readonly`, set `is_readonly = true`.
 3. Consume field name, `:`, type.
-4. Optionally consume `=` then an expression (the default), then `;`.
-
-Store all three flags plus the default node in `ast.StructField`.
+4. Optionally consume `=` then expression, then `;`.
 
 ### 3. State (`src/compiler/state.zig`)
-
-Add:
 
 ```zig
 pub const FieldMetadata = struct {
     is_public: bool = false,
     is_readonly: bool = false,
-    default_display: []const u8 = "",  # LLTS source text of the default
+    default: ?*ast.Node = null,   // arena-owned; no deinit needed
 };
 
 pub const StructDef = struct {
@@ -111,42 +106,34 @@ pub const StructDef = struct {
 };
 ```
 
-`default_display` stores the LLTS source text so it can be re-emitted at emit time. Since defaults are compile-time constants, this text is simple enough to emit directly (literals, const references).
-
 ### 4. Typecheck — field declaration (`checkOneStructField`)
 
-In `src/compiler/typecheck/root.zig`, `checkOneStructField` (line 4727):
+In `typecheck/root.zig` `checkOneStructField` (line 4727):
 
-- If `field.default` is present, typecheck the default expression against the field's declared type using `inferInitAgainstType` / `assignRec`.
-- Reject defaults that are not compile-time constant expressions (literals, `@const` bindings, const-foldable calls). Use `const_eval.evalExpr` to validate const-ness; reject anything that doesn't evaluate to a constant.
-- Store `FieldMetadata { .is_public, .is_readonly, .default_display = <source text> }` in `def.field_metadata`.
+- If `field.default` present, validate with `const_eval.evalExpr(state, null, field.default)`. Return null → error `"Default expression must be constant"`.
+- Also typecheck default against field type via `assignRec`.
+- Store `FieldMetadata` in `def.field_metadata`.
 
-### 5. Typecheck — struct literal initialization (`checkInitAgainstStruct`)
+### 5. Typecheck — struct literal (`checkInitAgainstStruct`)
 
-In `checkInitAgainstStruct` (line 3625):
+In `typecheck/root.zig` `checkInitAgainstStruct` (line 3671):
 
-- In the strict-mode missing-field check (line 3671-3698), skip fields that have a default in `def.field_metadata`. A defaulted field is not "required".
-- The error message for missing required fields already mentions declaring the field optional (`?T`); add "or give it a default value".
+- Skip missing-field error for fields with `default` in `def.field_metadata`.
+- Update error message: "provide it in the initializer, declare the field optional ('?T'), or give it a default value".
 
-### 6. Typecheck — readonly assignment (`src/compiler/expr/assign.zig`)
+### 6. Typecheck — readonly assignment (`expr/assign.zig`)
 
-In `assignMember` (line 89), after resolving the field via `types.lookupStructField`:
+In `assignMember` (line 89), after `types.lookupStructField`:
+- If `def.field_metadata.get(field_name)?.is_readonly` → error `"Cannot assign to readonly field '{s}'"`.
 
-- Look up `info.def.field_metadata.get(field_name)`.
-- If `is_readonly` is true, reject with `"Cannot assign to readonly field '{s}'"`.
-- This check applies regardless of `arith` (compound or plain assignment).
+### 7. Typecheck — visibility (`inferMemberExpr` in `typecheck/root.zig`)
 
-### 7. Typecheck — field visibility (`inferMemberExpr` in `typecheck/root.zig`)
+When `ir.structNameOf(obj)` returns `sname` containing `::`:
+- Split `sname` on `::`; module prefix is the part before `::`.
+- Current module = `state.chunk.file`.
+- If `module_prefix != state.chunk.file` and `def.field_metadata.get(field_name)?.is_public == false` → error `"Field '{s}' is private to module '{s}'"`.
 
-When `ir.structNameOf(obj)` returns a struct name:
-
-- If `sname` contains `::`, the owning module is the prefix before `::`.
-- Determine current module path via `state.diag_path` (set during typecheck at line 1518) or `state.chunk.file`.
-- If `def.field_metadata.get(field_name)` has `is_public == false` and the struct's owning module differs from current module, reject with `"Field '{s}' is private to module '{s}'"`.
-
-### 8. Emitter — struct type (`src/compiler/codegen/emitter/root.zig`)
-
-Extend `StructType.StructField`:
+### 8. Emitter — struct type (`emitter/root.zig`)
 
 ```zig
 pub const StructField = struct {
@@ -156,120 +143,91 @@ pub const StructField = struct {
     vt: ValType,
     offset: i32,
     is_readonly: bool = false,
-    default_zig: []const u8 = "",  # pre-emitted Zig code for the default
+    default_zig: []const u8 = "",
 };
 ```
 
-In `ensureStructType` (line 286), after building each field, look up `def.field_metadata.get(seed.name)` and set `is_readonly` and `default_zig`.
+In `ensureStructType`, look up `def.field_metadata.get(seed.name)`; set `is_readonly`. Compute `default_zig` by evaluating `default` node with `const_eval.evalExpr(state, null, node)` and converting `ConstValue` to Zig text (pattern after `constValueZig` in `unit.zig`).
 
-`default_zig` is computed from `default_display`:
-- Numeric literal → emit as-is
-- String literal → emit via `zigString`
-- `true`/`false` → emit as-is
-- `null` → emit as `null`
-- Const reference → look up the const's value and emit it
-- Anything else → emitter diagnostic "unsupported default expression"
+### 9. Emitter — struct literal (`emitter/expr.zig`)
 
-### 9. Emitter — struct literal (`src/compiler/codegen/emitter/expr.zig`)
+In `emitStructLiteral` (line 1977), missing field: if `field.default_zig` non-empty, use it; else `zeroValue`.
 
-In `emitStructLiteral` (line 1977), when a field is not provided in `si.fields`:
+### 10. Emitter — readonly assertion (`emitter/stmt.zig`)
 
-- If `field.default_zig` is non-empty, use it instead of `zeroValue(self, field.vt)`.
-- Otherwise, use `zeroValue` as today.
+In `emitAssignment` member path, check `field.is_readonly` → diagnostic. Backstop for typecheck.
 
-### 10. Emitter — readonly assignment assertion (`src/compiler/codegen/emitter/stmt.zig`)
+### 11. `stmt/decl.zig` StructDef replacement
 
-In `emitAssignment` member path (line 62-77), check `field.is_readonly`. If true, emit a diagnostic `"Cannot assign to readonly field '{s}'"`. This is a backstop; typecheck should catch it first.
+When `StructDef` is replaced (line 387-399), move `field_metadata` from old to new (pointer-only map, no deinit needed).
 
-### 11. Layout
+### 12. Layout
 
-No change. Defaults do not affect field offsets or size. Nullable fields (`?T`) already occupy handle-sized storage (8 bytes) per `layout.zig`.
+No change.
 
 ## Implementation order
 
-1. AST fields + clone (`src/ast/stmt.zig`, `src/ast/clone.zig`)
-2. Parser (`src/parser/structs.zig`) — `pub`, `readonly`, `= default`
-3. State `FieldMetadata` + `StructDef.field_metadata` (`src/compiler/state.zig`)
-4. Typecheck field declaration validation (`checkOneStructField`)
-5. Typecheck missing-field exemption for defaulted fields (`checkInitAgainstStruct`)
-6. Typecheck readonly assignment rejection (`expr/assign.zig`)
-7. Typecheck visibility module boundary (`inferMemberExpr` in `typecheck/root.zig`)
-8. Emitter `StructField` metadata + `ensureStructType` population (`emitter/root.zig`)
-9. Emitter default substitution in `emitStructLiteral` (`emitter/expr.zig`)
-10. Emitter readonly assertion (`emitter/stmt.zig`)
-11. Tree-sitter grammar + regeneration
-12. Docs + TODO updates
+1. AST fields + clone
+2. Parser (`pub`, `readonly`, `= default`)
+3. State `FieldMetadata` + `StructDef.field_metadata`
+4. Typecheck field declaration validation
+5. Typecheck missing-field exemption for defaulted fields
+6. Typecheck readonly assignment rejection
+7. Typecheck visibility module boundary
+8. `stmt/decl.zig` field_metadata move on StructDef replace
+9. Emitter `StructField` metadata + `ensureStructType`
+10. Emitter default substitution in `emitStructLiteral`
+11. Emitter readonly assertion
+12. Tree-sitter grammar
+13. Docs + TODO
 
-## Validation — native Zig tests only (no TS tests)
-
-Run:
+## Validation — native Zig only
 
 ```sh
 zig build
 zig build test
 ```
 
-### Native tests (`tests/native.zig`)
+### `tests/native.zig`
 
-Add happy-path and compile-fail tests using `expectNativeEmitContains`, `expectCompileFail`, and `runNativeSource`.
+Happy paths (`expectNativeEmitContains`):
+- Default used when field omitted → `.balance = 0.0`
+- Readonly struct literal → `x` field emitted
 
-**Happy paths — emit:**
+Happy paths (`runNativeSource`):
+- Prints default value when field omitted
+- Prints readonly field value after construction
+- `?string = null` default → `true` when compared to null
 
-| Source | Expected emitted Zig substring |
-|--------|-------------------------------|
-| `@struct S { pub id: i64; balance: f64 = 0.0; } $s = S { id: 1 };` | `.balance = 0.0` |
-| `@struct S { readonly x: i64; } $s = S { x: 1 };` | struct literal with `x` field |
+Cross-module (`expectCompileFail` + positive):
+- Module A `pub @struct S { pub id: i64; secret: i64; }`; Module B `print(s.secret)` → error
+- Module B `print(s.id)` → compiles OK
 
-**Happy paths — run (`runNativeSource`):**
+Compile-fail (`expectCompileFail`):
+- Readonly assignment: `Cannot assign to readonly field 'x'`
+- Missing nullable field: `Missing required field 'email'`
+- Missing `?T` without default: `Missing required field 'tag'`
+- Non-const default: `Default expression must be constant`
 
-| Source | Expected stdout |
-|--------|----------------|
-| `@struct S { pub id: i64; balance: f64 = 0.0; } $s = S { id: 1 }; print(s.balance);` | `0` |
-| `@struct S { readonly x: i64; } $s = S { x: 1 }; print(s.x);` | `1` |
-| `@struct S { id: i64; email: ?string = null; } $s = S { id: 1 }; print(s.email == null);` | `true` |
+### `tests/compile_fails/*.lls`
 
-**Cross-module visibility (compile-fail via `expectCompileFail`):**
+`readonly_assign.lls`, `missing_nullable_field.lls`, `implicit_null_default.lls`, `non_const_default.lls`, `missing_defaulted_field_ok.lls` (positive — should compile)
 
-| Source | Expected error substring |
-|--------|-------------------------|
-| Module A `pub @struct S { pub id: i64; secret: i64; }`; Module B accesses `s.secret` | `Field 'secret' is private to module` |
-| Module A `pub @struct S { pub id: i64; secret: i64; }`; Module B accesses `s.id` | compiles OK |
+### `tests/suite/parser_test.zig`
 
-**Compile-fail fixtures:**
+- `pub f64;` → public field
+- `readonly f64;` → readonly field
+- `f64 = 5;` → default
+- `pub readonly f64 = 5;` → both
+- `pub pub: i64;` → field named `pub` (edge case)
 
-| Source | `# expect:` substring | `# mode:` |
-|--------|----------------------|-----------|
-| `@struct S { readonly x: i64; } $s = S { x: 1 }; s.x = 2;` | Cannot assign to readonly field 'x' | strict |
-| `@struct S { id: i64; email: ?string; } $s = S { id: 1 };` | Missing required field 'email' | strict |
-| `@struct S { id: i64; tag: ?string; } $s = S { id: 1 };` | Missing required field 'tag' | strict |
-| `@func f(): i64 { return 1; } @struct S { x: i64 = f(); }` | Default expression must be constant | strict |
-| `@struct S { pub id: i64; balance: f64; } $s = S { id: 1 };` (in strict, `balance` missing) | Missing required field 'balance' | strict |
-| `@struct S { id: i64; balance: f64 = 0.0; } $s = S { id: 1 };` (happy path — should compile) | — | strict |
+## Risks
 
-### Parser tests (`tests/suite/parser_test.zig`)
-
-- `pub f64;` field parses as public field
-- `readonly f64;` field parses as readonly field
-- `f64 = 5;` field parses with default
-- `pub readonly f64 = 5;` both modifiers
-- `@struct S { pub id: i64; balance: f64 = 0.0; }` full struct with modifiers
-- Field named `pub` (`pub pub: i64;` — `pub` followed by `:` is not a modifier since next token is `:`)
-
-## Risks / Constraints
-
-- **`default_display` re-emission:** Storing LLTS source text and re-emitting it at emit time is simple but limited to literal/const defaults. Non-const defaults should be rejected at typecheck with a clear error. Expand to full const-eval later if needed.
-- **Module ownership extraction:** The struct's qualified name (`mod::Name`) encodes the owning module. Parsing `::` to extract it is fragile but consistent with how modules already qualify names. An alternative is adding an `owning_module` field to `StructDef`; defer that decision to implementation.
-- **`StructDef` replacement:** In `stmt/decl.zig` line 387-399, the old `StructDef` is `fetchRemove`d and a new one is put. `field_metadata` must be moved from old to new (it's just string slices, no allocation needed) or rebuilt.
-- **`checkInitAgainstStruct` does not mutate `init.fields`:** defaults are checked but not injected into the AST. The emitter handles missing defaulted fields at emit time. No AST mutation needed.
-- **Existing struct tests:** All existing `@struct` tests must continue to pass. The new fields are optional; existing structs without `pub`/`readonly`/`default` behave identically (module-private fields, mutable, required).
-- **`--strict` missing-field check:** Already exists. Only change: defaulted fields are exempt. Non-defaulted `?T` fields remain required.
+- **`default_zig` re-emission:** `const_eval.evalExpr` at emit time must succeed (validated at typecheck). Const values from `state.const_values` (module-level `@const`) are accessible with `null` scope.
+- **Module boundary:** `state.chunk.file` is set in both `analyze` and `prepareForTypecheck`. Struct names are qualified with `moduleKey(path)` = path with `.lls` suffix; comparison `module_prefix == state.chunk.file` should match.
+- **`StructDef` replacement:** `field_metadata` contains arena-owned node pointers; move the map without deinit when replacing `StructDef`.
+- **Existing tests:** All existing `@struct` tests must pass; new fields are optional.
 
 ## Out of scope
 
-- Index signatures (any key type)
-- Field-level `priv` keyword (absence of `pub` already means private)
-- Implicit `null` default for `?T`
-- Non-const default expressions (beyond literals/const refs)
-- Structural shape field modifiers (shapes are a different feature)
-- Method visibility (methods follow struct-level `pub`)
-- TS/Bun test conversion — native Zig tests are the sole validation layer
+- Index signatures, `priv` keyword, implicit `null` default for `?T`, non-const defaults, shape field modifiers, method visibility, TS tests.

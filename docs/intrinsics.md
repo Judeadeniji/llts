@@ -17,7 +17,7 @@ Compiler intrinsics are built-in hooks recognized directly by the LLTS compiler 
 | [`@isError`](#iserror) | 1 | VM & Native | Runtime error inspection |
 | [`@addrOf`](#addrof) | 1 | VM & Native | Raw memory address of an aggregate |
 | [`@concat`](#concat) | 3 | VM & Native | String and byte span concatenation |
-| [`@extern`](#extern) | — | VM & Native | External C symbol binding declaration |
+| [`@extern`](#extern) | — | VM & Native | Records an external C symbol name (no signature yet) |
 | [`@new`](#new) | 2–3 | VM Only (Legacy) | Heap/arena allocation hook |
 
 ---
@@ -207,13 +207,14 @@ $greeting = @concat(0, "Hello, ", "World!");
 ## 7. External Interop
 
 ### `@extern`
-Declares an external C ABI symbol for linking:
+Records an external C ABI symbol name:
 
 ```lls
-@extern "c" @func puts(str: string): i32;
+@extern puts;
 ```
 
-- Binds foreign functions to be resolved during the native linking stage.
+- The declaration carries only the symbol name. There is no signature or call typing yet, so typed foreign calls are not supported.
+- Typed declarations and linking are planned in the C/Zig interop work (issue #30).
 
 ---
 
