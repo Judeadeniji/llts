@@ -17,7 +17,7 @@ Compiler intrinsics are built-in hooks recognized directly by the LLTS compiler 
 | [`@isError`](#iserror) | 1 | VM & Native | Runtime error inspection |
 | [`@addrOf`](#addrof) | 1 | VM & Native | Raw memory address of an aggregate |
 | [`@concat`](#concat) | 3 | VM & Native | String and byte span concatenation |
-| [`@extern`](#extern) | — | VM & Native | External C symbol binding declaration |
+| [`@extern`](#extern) | — | Native Only | External C symbol binding declaration |
 | [`@new`](#new) | 2–3 | VM Only (Legacy) | Heap/arena allocation hook |
 
 ---
@@ -207,13 +207,43 @@ $greeting = @concat(0, "Hello, ", "World!");
 ## 7. External Interop
 
 ### `@extern`
-Declares an external C ABI symbol for linking:
+Declares an external C function for linking. Extern declarations are file-scope only and are resolved by the native backend; the bytecode VM rejects them.
 
 ```lls
-@extern "c" @func puts(str: string): i32;
+pub @extern "c" @func puts(s: c_str): i32;
+@extern "c" @func getpid(): i32;
+@extern "c" @func strlen(s: c_str): usize;
+@extern "c" @func getenv(name: c_str): ?c_str;
+@extern "c" @func malloc(size: usize): ?*u8;
+@extern "c" @func free(ptr: ?*u8): void;
+@extern "c" @func printf(fmt: c_str, ...): i32;
+
+pub @func main() {
+    $n: i32 = printf("pid=%d\n", getpid());
+}
 ```
 
-- Binds foreign functions to be resolved during the native linking stage.
+- **Syntax:** `( "pub" )? "@extern" STRING "@func" IDENTIFIER "(" ExternParams? ")" ( ":" Type )? ";"`. An omitted return type means `void`.
+- **ABI:** the string is required and only `"c"` is supported.
+- **Parameters:** names and types are mandatory. `...` may appear only as the final parameter-list token, and at least one fixed parameter must precede it.
+- **Calling:** extern names are not values. They may only be called directly (including through a module import such as `lib.puts(...)`); passing one as a function value is an error.
+- **Linking:** the LLTS name is the link symbol; `pub` only controls module export. libc is linked by the native pipeline.
+- **Not supported yet:** extern data symbols, non-C ABIs, symbol aliasing, extern structs passed by value, and implicit `string` to `c_str` conversion.
+
+#### C type mapping
+
+| LLTS type | Emitted Zig |
+| --- | --- |
+| `i8`, `i16`, `i32`, `i64`, `u8`, `u16`, `u32`, `u64`, `isize`, `usize` | same |
+| `f32`, `f64` | same |
+| `void` | `void` |
+| `c_str` | `[*:0]const u8` |
+| `?c_str` | `?[*:0]const u8` |
+| `*T`, `?*T` | `*T`, `?*T` |
+
+`c_str` is a narrow, first-class type: it accepts string literals and other `c_str` values, works with optional unwrapping, null comparison, and `@if`, but does not support `len`, slicing, arithmetic, or printing. A `string`/slice is not implicitly converted to `c_str`; pass a `*u8` byte buffer where C expects mutable storage.
+
+Fixed arguments are checked against the declared C type. For variadic calls, trailing arguments follow the usual C default promotions: `i8`/`i16`/`u8`/`u16` and bools become `i32`, `f32` becomes `f64`, untyped integer literals become `i32`, and pointers/`c_str` pass through unchanged. Runtime `string` values and structs are rejected in variadic positions.
 
 ---
 

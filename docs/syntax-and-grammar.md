@@ -82,7 +82,7 @@ Directives handled intrinsically by the compiler front end:
 | `@error` | Closed typed error set declaration |
 | `@type` | Nominal, distinct type declaration |
 | `@alias` | Transparent type alias declaration |
-| `@extern` | External C symbol binding |
+| `@extern` | External C function binding (native only) |
 | `@const` | Immutable binding modifier |
 | `@if`, `@else` | Conditional branching and value expressions |
 | `@switch` | Pattern matching and value expressions |
@@ -251,7 +251,11 @@ ErrorDecl      ::= ( "pub" )? "@error" IDENTIFIER "{" IdentList? "}" ;
 IdentList      ::= IDENTIFIER ( "," IDENTIFIER )* ( "," )? ;
 
 TypeDecl       ::= ( "pub" )? ( "@type" | "@alias" ) IDENTIFIER "=" Type ";" ;
-ExternDecl     ::= ( "pub" )? "@extern" IDENTIFIER ";" ;
+ExternDecl     ::= ( "pub" )? "@extern" STRING ExternItem ;
+ExternItem     ::= "@func" IDENTIFIER "(" ExternParams? ")" ( ":" Type )? ";"
+                 | IDENTIFIER ":" Type ";" ;
+ExternParams   ::= ExternParam ( "," ExternParam )* ( "," "..." )? ;
+ExternParam    ::= IDENTIFIER ":" Type ;
 
 DeferStmt      ::= ( "defer" | "errdefer" ) Statement ;
 
