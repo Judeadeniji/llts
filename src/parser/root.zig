@@ -34,12 +34,14 @@ pub fn parse(
         .path = path,
         .source = source,
         .arena = doc.arena.allocator(),
+        .diag_allocator = allocator,
         .diagnostics = diagnostics_array,
     };
 
     doc.statements = try buildAst(&p);
     if (diagnostics_array) |diags| {
-        doc.diagnostics = diags.toOwnedSlice(allocator) catch &.{};
+        // Caller owns the list storage; messages live in the document arena.
+        doc.diagnostics = diags.items;
     }
     return doc;
 }

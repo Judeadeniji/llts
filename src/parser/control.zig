@@ -13,7 +13,22 @@ pub fn parseBlock(self: *Parser) ParseError!*Node {
     _ = try self.consume(.delimiter, "Expected '{'", "{");
     var statements: std.ArrayList(*Node) = .empty;
     while (!self.isAtEnd() and !self.checkDelim("}")) {
-        try statements.append(self.arena, try stmt_mod.parseStatement(self));
+        const s = stmt_mod.parseStatement(self);
+        if (s) |node| {
+            try statements.append(self.arena, node);
+        } else |err| {
+            if (err == error.ParseFailed) {
+                // Don't synchronize past `}` — leave it for parseBlock to
+                // consume so we don't report a spurious "Unclosed block".
+                if (self.checkDelim("}")) break;
+                self.synchronize();
+                continue;
+            }
+            return err;
+        }
+    }
+    if (self.isAtEnd() and !self.checkDelim("}")) {
+        return self.failMsg("Unclosed block: expected '}' before end of file");
     }
     _ = try self.consume(.delimiter, "Expected '}'", "}");
     const peek = self.peek(0);

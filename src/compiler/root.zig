@@ -18,6 +18,7 @@ pub const types = @import("typecheck/from_ast.zig");
 pub const from_ast = @import("typecheck/from_ast.zig");
 pub const ir = @import("typecheck/ir.zig");
 const compile_errors = @import("../errors/compile.zig");
+const collector_mod = @import("../errors/collector.zig");
 pub const unused = @import("unused.zig");
 const binding_facts = @import("analyze/binding_facts.zig");
 const range_facts = @import("analyze/range.zig");
@@ -70,6 +71,15 @@ pub fn analyze(
     try local_types.hoist(&state, doc.statements);
 
     try typecheck.typecheck(&state, doc);
+    // If the shared collector already has errors (recovered diagnostics), skip
+    // the whole-program post-checks so we don't cascade into spurious
+    // "undeclared"/reachability failures. Return the partially populated state;
+    // the caller gates emission on the collector.
+    if (collector_mod.getActive()) |c| {
+        if (c.hasErrors()) {
+            return state;
+        }
+    }
     try requireEntryMain(&state, doc);
     state.reachability = try reachability.compute(&state, doc);
     unused.detectAndWarn(&state, doc);

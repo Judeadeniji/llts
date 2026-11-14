@@ -222,7 +222,9 @@ test "didOpen publishes parse diagnostics" {
     try session.notify("textDocument/didOpen", params);
     const diag = try session.waitForDiagnostics();
     const diags = try Session.getDiagnostics(diag);
-    try std.testing.expectEqual(@as(usize, 1), diags.array.items.len);
+    // Multi-error collection: parse error (missing ';') + typecheck error
+    // (unknown function 'print') now both surface.
+    try std.testing.expectEqual(@as(usize, 2), diags.array.items.len);
     const first = diags.array.items[0];
     try std.testing.expect(first.object.get("message").?.string.len > 0);
     try std.testing.expectEqual(@as(i64, 1), first.object.get("severity").?.integer);

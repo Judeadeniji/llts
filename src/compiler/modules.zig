@@ -8,6 +8,7 @@ const parser = @import("../parser/root.zig");
 const CompilerState = state_mod.CompilerState;
 const ModuleError = error{ OutOfMemory, CompileError };
 const report = @import("../errors/report.zig");
+const compile_err = @import("../errors/compile.zig");
 
 fn reportImportStack(state: *CompilerState) void {
     // Print outermost → innermost so the `@import` chain reads like a call stack
@@ -351,7 +352,9 @@ fn loadModule(
     visited: *std.StringHashMap(void),
     import_loc: ast.Location,
 ) ModuleError!void {
-    const resolved = try resolvePath(state, doc.path, import_path);
+    const resolved = resolvePath(state, doc.path, import_path) catch {
+        return compile_err.compileFailAt(state, doc.path, import_loc.line, import_loc.column, "Unknown module '{s}'", .{import_path});
+    };
     try state.owned.append(state.allocator, resolved);
 
     const key = moduleKey(resolved);
@@ -462,7 +465,7 @@ fn resolvePath(state: *CompilerState, from: []const u8, import_path: []const u8)
     } else |_| {}
 
     state.allocator.free(joined);
-    return @import("../errors/compile.zig").compileFailFmt(state, "Unknown module '{s}'", .{import_path});
+    return error.CompileError;
 }
 
 /// Collapse `.` / `..` so diagnostics show `dir/leaf.lls` instead of `dir/././leaf.lls`.

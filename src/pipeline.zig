@@ -11,7 +11,9 @@ const zig_backend = @import("compiler/codegen/root.zig");
 const print_fmt = @import("vm/builtins/print.zig");
 const report = @import("errors/report.zig");
 const diag = @import("errors/diag.zig");
+const collector_mod = @import("errors/collector.zig");
 const io = @import("io/root.zig");
+const ast = @import("ast/root.zig");
 
 pub const RunOptions = struct {
     debug: bool = true,
@@ -20,6 +22,8 @@ pub const RunOptions = struct {
     /// Extra argv forwarded to `os.args()` as argv[1..] (argv[0] is the script path).
     script_args: []const []const u8 = &.{},
     max_memory_slots: usize = 1048576,
+    /// Maximum diagnostics collected before suppression (0 = unlimited).
+    max_errors: usize = 100,
 };
 
 pub const EmitZigOptions = struct {
@@ -41,6 +45,8 @@ pub const EmitZigOptions = struct {
     emit_mode: EmitMode = .bin,
     /// Additional arguments/options forwarded directly to `zig build-exe`.
     zig_args: []const []const u8 = &.{},
+    /// Maximum diagnostics collected before suppression (0 = unlimited).
+    max_errors: usize = 100,
 
     pub const EmitMode = enum {
         bin,
@@ -60,17 +66,59 @@ pub fn compileSource(
     source: []const u8,
     options: RunOptions,
 ) !chunk_mod.Chunk {
+    var coll = collector_mod.Collector.init(allocator, options.max_errors);
+    defer coll.deinit();
+    diag.reset();
+    collector_mod.setActive(&coll);
+    defer collector_mod.clearActive();
+
     var scan_result = try scanner.scan(allocator, source, path);
     defer scanner.deinitScanResult(&scan_result);
+    if (coll.hasErrors()) {
+        coll.reportAll();
+        return error.CompilationFailed;
+    }
 
-    var doc = try parser.parse(allocator, scan_result.tokens.items, path, source, null);
+    var parse_diags: std.ArrayList(ast.Diagnostic) = .empty;
+    defer parse_diags.deinit(allocator);
+    var doc = try parser.parse(allocator, scan_result.tokens.items, path, source, &parse_diags);
     defer doc.deinit();
 
-    return try compiler.compile(allocator, &doc, .{
+    // Copy parser diagnostics into the shared collector (path/source from the doc).
+    for (doc.diagnostics) |d| {
+        _ = coll.add(doc.path, doc.source, d.line, d.column, d.message, .err);
+    }
+    if (coll.hasErrors()) {
+        coll.reportAll();
+        return error.CompilationFailed;
+    }
+
+    // --- typecheck / analyze ----------------------------------------------
+    var state = compiler.analyze(allocator, &doc, .{
         .debug = options.debug,
         .strict = options.strict,
         .comptime_max_loop_iterations = options.comptime_max_loop_iterations,
-    });
+    }) catch |err| {
+        if (coll.hasErrors()) coll.reportAll();
+        return err;
+    };
+    // On success `analyze`'s errdefer did not run: we own `state` and must deinit it.
+
+    if (coll.hasErrors()) {
+        state.chunk.deinit();
+        compiler.state_mod.deinit(&state);
+        coll.reportAll();
+        return error.CompilationFailed;
+    }
+
+    // --- bytecode emit (unchanged) -----------------------------------------
+    const chunk = try compiler.emitBytecode(&state, &doc);
+    state.chunk.deinit();
+    compiler.state_mod.deinit(&state);
+
+    // Flush any recorded warnings on a clean compile.
+    if (coll.items.items.len > 0) coll.reportAll();
+    return chunk;
 }
 
 pub fn runChunk(
@@ -169,26 +217,57 @@ pub fn emitZigCode(
     writer: anytype,
     options: EmitZigOptions,
 ) !void {
+    var coll = collector_mod.Collector.init(allocator, options.max_errors);
+    defer coll.deinit();
+    diag.reset();
+    collector_mod.setActive(&coll);
+    defer collector_mod.clearActive();
+
     var scan_result = try scanner.scan(allocator, source, path);
     defer scanner.deinitScanResult(&scan_result);
+    if (coll.hasErrors()) {
+        coll.reportAll();
+        return error.CompilationFailed;
+    }
 
-    var doc = try parser.parse(allocator, scan_result.tokens.items, path, source, null);
+    var parse_diags: std.ArrayList(ast.Diagnostic) = .empty;
+    defer parse_diags.deinit(allocator);
+    var doc = try parser.parse(allocator, scan_result.tokens.items, path, source, &parse_diags);
     defer doc.deinit();
 
-    var state = try compiler.analyze(allocator, &doc, .{
+    for (doc.diagnostics) |d| {
+        _ = coll.add(doc.path, doc.source, d.line, d.column, d.message, .err);
+    }
+    if (coll.hasErrors()) {
+        coll.reportAll();
+        return error.CompilationFailed;
+    }
+
+    var state = compiler.analyze(allocator, &doc, .{
         .debug = options.debug,
         .strict = options.strict,
         .comptime_max_loop_iterations = options.comptime_max_loop_iterations,
-    });
-    defer {
+    }) catch |err| {
+        if (coll.hasErrors()) coll.reportAll();
+        return err;
+    };
+
+    if (coll.hasErrors()) {
         state.chunk.deinit();
         compiler.state_mod.deinit(&state);
+        coll.reportAll();
+        return error.CompilationFailed;
     }
 
     try zig_backend.emitRuntimeZig(allocator, &doc, &state, writer, .{
         .release = !options.debug,
         .runtime_path = options.runtime_path,
     });
+    state.chunk.deinit();
+    compiler.state_mod.deinit(&state);
+
+    // Flush any recorded warnings on a clean compile.
+    if (coll.items.items.len > 0) coll.reportAll();
 }
 
 /// Directory for zig's local cache when compiling a native unit.
