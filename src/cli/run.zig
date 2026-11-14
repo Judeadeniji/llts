@@ -32,6 +32,7 @@ pub fn execute(ctx: zli.CommandContext) !void {
 
     const max_memory = common.getMaxMemory(ctx.allocator, ctx);
     const comptime_iters = common.getComptimeMaxLoopIterations(ctx.allocator, ctx);
+    llts.collector.setDefaultCap(common.getMaxErrors(ctx.allocator, ctx));
 
     if (eval_code.len > 0) {
         const source = try pipeline.prepareEvalSource(ctx.allocator, eval_code);

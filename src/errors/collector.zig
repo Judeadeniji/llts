@@ -1,9 +1,8 @@
 const std = @import("std");
-const color = @import("../io/color.zig");
 const diag = @import("diag.zig");
-const io_out = @import("../io/out.zig");
+const render = @import("render.zig");
 
-pub const Severity = enum { err, warning };
+pub const Severity = render.Severity;
 
 /// A single recorded diagnostic. `path`/`source` are copied because compiler
 /// state (and its owned source buffers) may be torn down before diagnostics
@@ -18,12 +17,7 @@ pub const Diagnostic = struct {
     severity: Severity = .err,
 };
 
-pub const Frame = struct {
-    path: []const u8,
-    line: u32,
-    column: u32,
-    name: []const u8,
-};
+pub const Frame = render.Frame;
 
 pub const Collector = struct {
     allocator: std.mem.Allocator,
@@ -200,9 +194,8 @@ pub const Collector = struct {
         return n;
     }
 
-    /// Sort by path/line/column, dedupe, print each diagnostic, print a
-    /// summary line, print a suppressed-count note when capped, and call
-    /// `diag.markEmitted()`.
+    /// Sort by path/line/column, print each diagnostic, print a summary line,
+    /// print a suppressed-count note when capped, and call `diag.markEmitted()`.
     pub fn reportAll(self: *Collector) void {
         std.mem.sort(Diagnostic, self.items.items, {}, struct {
             fn lessThan(_: void, a: Diagnostic, b: Diagnostic) bool {
@@ -216,65 +209,30 @@ pub const Collector = struct {
         // `add` already dedupes via `seen`; sorting is enough for ordering.
         const err_count = self.errorCount();
 
+        var files: std.ArrayList([]const u8) = .empty;
+        defer files.deinit(self.allocator);
+        var first_path: []const u8 = "";
+        var first_line: u32 = 0;
+
         for (self.items.items) |d| {
-            const c_err = color.paint(color.bold ++ color.bright_red);
-            const c_arrow = color.paint(color.bold ++ color.bright_cyan);
-            const c_num = color.paint(color.blue);
-            const c_caret = color.paint(color.bold ++ color.bright_cyan);
-            const c_dim = color.paint(color.dim);
-            const c_name = color.paint(color.cyan);
-            const c_warn = color.paint(color.bold ++ color.bright_yellow);
-            const r = color.r();
-
-            if (d.severity == .warning) {
-                io_out.printStderr("{s}Warning{s}: {s}", .{c_warn, r, d.message});
-                io_out.printStderr("\n", .{});
-            } else {
-                io_out.printStderr("{s}Error{s}: {s}", .{c_err, r, d.message});
-                io_out.printStderr("\n", .{});
-            }
-            io_out.printStderr("  {s}-->{s} {s}:{d}:{d}\n", .{c_arrow, r, d.path, d.line, d.column});
-
-            var current: u32 = 1;
-            var start: usize = 0;
-            var i: usize = 0;
-            while (i <= d.source.len) : (i += 1) {
-                if (i == d.source.len or d.source[i] == '\n') {
-                    if (current == d.line) {
-                        const line_src = d.source[start..i];
-                        io_out.printStderr("   {s}{d}{s} | {s}\n", .{c_num, d.line, r, line_src});
-                        io_out.printStderr("     | ", .{});
-                        var c: u32 = 1;
-                        const col = if (d.column == 0) 1 else d.column;
-                        while (c < col) : (c += 1) io_out.printStderr(" ", .{});
-                        io_out.printStderr("{s}^{s}\n", .{c_caret, r});
+            if (d.path.len > 0) {
+                if (first_path.len == 0) {
+                    first_path = d.path;
+                    first_line = d.line;
+                }
+                var known = false;
+                for (files.items) |f| {
+                    if (std.mem.eql(u8, f, d.path)) {
+                        known = true;
                         break;
                     }
-                    current += 1;
-                    start = i + 1;
                 }
+                if (!known) files.append(self.allocator, d.path) catch {};
             }
-
-            for (d.frames.items) |f| {
-                io_out.printStderr("    {s}at{s} {s}{s}{s} ({s}:{d}:{d})\n", .{
-                    c_dim, r, c_name, f.name, r, f.path, f.line, f.column,
-                });
-            }
+            render.printDiagnostic(d.path, d.source, d.line, d.column, d.message, d.severity, d.frames.items);
         }
 
-        if (err_count > 0) {
-            io_out.printStderr("Compilation failed with {d} error{s}.\n", .{
-                err_count,
-                if (err_count == 1) "" else "s",
-            });
-        }
-        if (self.truncated > 0) {
-            io_out.printStderr("{d} further error{s} suppressed (--max-errors limit).\n", .{
-                self.truncated,
-                if (self.truncated == 1) "" else "s",
-            });
-        }
-
+        render.printSummary(err_count, files.items, first_path, first_line, self.truncated);
         diag.markEmitted();
     }
 
@@ -282,6 +240,18 @@ pub const Collector = struct {
         return diag.wasEmitted();
     }
 };
+
+/// Process-wide default cap, resolved once from `--max-errors` /
+/// `LLTS_MAX_ERRORS` by the CLI. `0` means unlimited.
+var default_cap: usize = 100;
+
+pub fn setDefaultCap(cap: usize) void {
+    default_cap = cap;
+}
+
+pub fn getDefaultCap() usize {
+    return default_cap;
+}
 
 var active: ?*Collector = null;
 

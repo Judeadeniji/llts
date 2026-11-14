@@ -1,6 +1,33 @@
 const std = @import("std");
 const helpers = @import("helpers.zig");
 
+test "pipeline native execution: @const folds every literal type" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\@struct P { x: int; y: int; }
+        \\@const $f: f64 = 1.5;
+        \\@const $s = "hi";
+        \\@const $b: bool = true;
+        \\@const $arr = [1, 2, 3];
+        \\@const $st = P { x: 7, y: 8 };
+        \\pub @func main() {
+        \\    print(f, s, b, arr[1], st.y);
+        \\}
+    ;
+    // `bool` is `u1`, so a boolean prints as its bit.
+    try helpers.expectNativeStdout(allocator, src, "1.5 hi 1 2 8\n");
+}
+
+test "pipeline native execution: folded const is emitted as a literal" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\@const $x = 2 + 3;
+        \\pub @func main() { print(x); }
+    ;
+    try helpers.expectEmitContains(allocator, src, "lls_g_x = 5;");
+    try helpers.expectNativeStdout(allocator, src, "5\n");
+}
+
 test "pipeline: string switch emits rt.arith.eqStr" {
     const allocator = std.testing.allocator;
     const src =
@@ -584,7 +611,7 @@ test "pipeline native execution: power and short-circuiting logical compound ass
         \\    print(f);
         \\}
     ;
-    try helpers.expectNativeStdout(allocator, src, "32\n0\nfalse\n1\ntrue\n1\n2\ntrue\n");
+    try helpers.expectNativeStdout(allocator, src, "32\n0\n0\n1\n1\n1\n2\n1\n");
 }
 
 test "pipeline native execution: compound assignments through struct fields" {
@@ -708,4 +735,72 @@ test "pipeline native execution: closure called through a struct field" {
         \\}
     ;
     try helpers.expectNativeStdout(allocator, src, "1\n2\n2\n0\n");
+}
+
+test "pipeline native execution: narrowing acceptance fixtures" {
+    const allocator = std.testing.allocator;
+    const cases = [_]struct { path: []const u8, expected: []const u8 }{
+        .{
+            .path = "tests/fixtures/narrowing_signed.lls",
+            .expected = "-128 -32768 -5 5 -10\n-128 127 -5 5 -10\n",
+        },
+        .{
+            .path = "tests/fixtures/narrowing_unsigned.lls",
+            .expected = "1 255 65535 4294967295 18446744073709551615 4294967295\n" ++
+                "255 255 4294967295 18446744073709551615\n",
+        },
+    };
+    for (cases) |case| {
+        const source = try std.fs.cwd().readFileAlloc(allocator, case.path, 1 << 20);
+        defer allocator.free(source);
+        try helpers.expectNativeStdout(allocator, source, case.expected);
+    }
+}
+
+test "pipeline native execution: optional parameters receive null when omitted" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\@func f(x: int, y?: int) {
+        \\    @if (y == null) { print(x); }
+        \\    @else { print(x + y); }
+        \\}
+        \\@func greet(name?: string) {
+        \\    @if (name == null) { print("stranger"); }
+        \\    @else { print(name); }
+        \\}
+        \\pub @func main() {
+        \\    f(1);
+        \\    f(2, 3);
+        \\    greet("Alice");
+        \\    greet();
+        \\}
+    ;
+    try helpers.expectNativeStdout(allocator, src, "1\n5\nAlice\nstranger\n");
+}
+
+test "pipeline emitter: optional params are nullable and omitted args pass null" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\@func f(x: int, y?: int) { print(x); }
+        \\pub @func main() { f(1); }
+    ;
+    const emitted = try helpers.emitZigString(allocator, src, true);
+    defer allocator.free(emitted);
+    try std.testing.expect(std.mem.indexOf(u8, emitted, "lls_arg_y: ?i64") != null);
+    try std.testing.expect(std.mem.indexOf(u8, emitted, "lls_fn_f(ctx, 1, null)") != null);
+}
+
+test "pipeline native execution: bool lowers to u1" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\pub @func main() {
+        \\    $b: bool = true;
+        \\    $c = b == false;
+        \\    print(b, c, !b, b && c, b || c);
+        \\    @if (1 == 1) { print("yes"); }
+        \\    $one: u1 = 1;
+        \\    print(one);
+        \\}
+    ;
+    try helpers.expectNativeStdout(allocator, src, "1 0 0 0 1\nyes\n1\n");
 }

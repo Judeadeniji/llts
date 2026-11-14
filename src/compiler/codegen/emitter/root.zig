@@ -595,7 +595,7 @@ pub const Emitter = struct {
                     .i16 => "i16",
                     .i32 => "i32",
                     .i64 => "i64",
-                    .u1 => "bool",
+                    .u1 => "u1",
                     .u8 => "u8",
                     .u16 => "u16",
                     .u32 => "u32",
@@ -1032,6 +1032,27 @@ pub const Emitter = struct {
     pub fn popScope(self: *Emitter) void {
         _ = self.scopes.pop();
         _ = self.defer_scopes.pop();
+    }
+
+    /// Drop scope state left behind by a failed item. Everything here is
+    /// arena-backed, so truncation is enough; the partial text already written
+    /// for the failed item is discarded by the caller.
+    pub fn truncateScopesTo(self: *Emitter, floor: usize) void {
+        self.scopes.shrinkRetainingCapacity(floor);
+        self.defer_scopes.shrinkRetainingCapacity(floor);
+    }
+
+    /// Clean slate between per-item emission attempts (functions, closures,
+    /// trampolines, globals).
+    pub fn resetItemState(self: *Emitter) void {
+        self.indent = 1;
+        self.scopes.clearRetainingCapacity();
+        self.defer_scopes.clearRetainingCapacity();
+        self.params.clearRetainingCapacity();
+        self.break_targets.clearRetainingCapacity();
+        self.loop_targets.clearRetainingCapacity();
+        self.switch_targets.clearRetainingCapacity();
+        self.infos.clearRetainingCapacity();
     }
 
     pub fn pushScope(self: *Emitter) void {

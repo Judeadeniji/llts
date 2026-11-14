@@ -4,7 +4,7 @@ const helpers = @import("helpers.zig");
 test "scanner: numbers and bases" {
     const allocator = std.testing.allocator;
     const src = "42 0x2A 0b101010 0o52 3.14159";
-    var res = try helpers.scanSource(allocator, src);
+    var res = try helpers.scanSource(allocator, src, null);
     defer helpers.scanner.deinitScanResult(&res);
 
     const tokens = res.tokens.items;
@@ -31,7 +31,7 @@ test "scanner: numbers and bases" {
 test "scanner: identifiers and registers" {
     const allocator = std.testing.allocator;
     const src = "foo _bar $reg $0 $my_val";
-    var res = try helpers.scanSource(allocator, src);
+    var res = try helpers.scanSource(allocator, src, null);
     defer helpers.scanner.deinitScanResult(&res);
 
     const tokens = res.tokens.items;
@@ -56,7 +56,7 @@ test "scanner: identifiers and registers" {
 test "scanner: compiler keywords vs language keywords" {
     const allocator = std.testing.allocator;
     const src = "@func @struct @enum @type @if @switch @for pub return defer errdefer";
-    var res = try helpers.scanSource(allocator, src);
+    var res = try helpers.scanSource(allocator, src, null);
     defer helpers.scanner.deinitScanResult(&res);
 
     const tokens = res.tokens.items;
@@ -99,7 +99,7 @@ test "scanner: compiler keywords vs language keywords" {
 test "scanner: strings and escape characters" {
     const allocator = std.testing.allocator;
     const src = "\"hello\\nworld\" \"tab\\tseparated\" \"escaped\\\"quote\"";
-    var res = try helpers.scanSource(allocator, src);
+    var res = try helpers.scanSource(allocator, src, null);
     defer helpers.scanner.deinitScanResult(&res);
 
     const tokens = res.tokens.items;
@@ -118,7 +118,7 @@ test "scanner: strings and escape characters" {
 test "scanner: operators and delimiters" {
     const allocator = std.testing.allocator;
     const src = "+ - * / % +% -% *% & | ^ ~ << >> == != < <= > >= && || ! ? .. ... -> =>";
-    var res = try helpers.scanSource(allocator, src);
+    var res = try helpers.scanSource(allocator, src, null);
     defer helpers.scanner.deinitScanResult(&res);
 
     const tokens = res.tokens.items;

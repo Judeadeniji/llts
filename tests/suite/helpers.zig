@@ -8,15 +8,15 @@ pub const compiler = llts.compiler;
 pub const pipeline = llts.pipeline;
 
 /// Scan source into tokens. Caller must call `deinitScanResult(&result)`.
-pub fn scanSource(allocator: std.mem.Allocator, source: []const u8) !scanner.ScanResult {
-    return scanner.scan(allocator, source, "test.lls");
+pub fn scanSource(allocator: std.mem.Allocator, source: []const u8, filename: ?[]const u8) !scanner.ScanResult {
+    return scanner.scan(allocator, source, filename orelse "test.lls");
 }
 
 /// Parse source into an AST document. Caller must call `doc.deinit()`.
-pub fn parseSource(allocator: std.mem.Allocator, source: []const u8) !ast.Document {
-    var scan_res = try scanSource(allocator, source);
+pub fn parseSource(allocator: std.mem.Allocator, source: []const u8, filename: ?[]const u8) !ast.Document {
+    var scan_res = try scanSource(allocator, source, filename);
     defer scanner.deinitScanResult(&scan_res);
-    return parser.parse(allocator, scan_res.tokens.items, "test.lls", source, null);
+    return parser.parse(allocator, scan_res.tokens.items, filename orelse "test.lls", source, null);
 }
 
 /// Parse source while collecting recoverable parser diagnostics instead of
@@ -58,8 +58,8 @@ pub const Analyzed = struct {
 
 /// Run compiler frontend analysis (typecheck, reachability, binding facts).
 /// Caller must call `analyzed.deinit()`.
-pub fn analyzeSource(allocator: std.mem.Allocator, source: []const u8, strict: bool) !Analyzed {
-    var doc = try parseSource(allocator, source);
+pub fn analyzeSource(allocator: std.mem.Allocator, source: []const u8, filename: ?[]const u8, strict: bool) !Analyzed {
+    var doc = try parseSource(allocator, source, filename);
     errdefer doc.deinit();
 
     const state = try compiler.analyze(allocator, &doc, .{
@@ -71,7 +71,7 @@ pub fn analyzeSource(allocator: std.mem.Allocator, source: []const u8, strict: b
 
 /// Verify that analyzing this source produces a compiler / typecheck error.
 pub fn expectCompileFail(allocator: std.mem.Allocator, source: []const u8) !void {
-    var doc = parseSource(allocator, source) catch {
+    var doc = parseSource(allocator, source, null) catch {
         // Parsing failed — that is also a valid compile-time rejection
         return;
     };

@@ -10,7 +10,7 @@ test "parser: variable and constant declarations" {
         \\@const $MAX = 100;
         \\pub @func main() {}
     ;
-    var doc = try helpers.parseSource(allocator, src);
+    var doc = try helpers.parseSource(allocator, src, null);
     defer doc.deinit();
 
     try std.testing.expectEqual(@as(usize, 4), doc.statements.len);
@@ -42,7 +42,7 @@ test "parser: struct declaration with fields and methods" {
         \\}
         \\pub @func main() {}
     ;
-    var doc = try helpers.parseSource(allocator, src);
+    var doc = try helpers.parseSource(allocator, src, null);
     defer doc.deinit();
 
     try std.testing.expect(doc.statements.len >= 2);
@@ -63,7 +63,7 @@ test "parser: enum and error declarations" {
         \\@error FileError { NotFound, AccessDenied }
         \\pub @func main() {}
     ;
-    var doc = try helpers.parseSource(allocator, src);
+    var doc = try helpers.parseSource(allocator, src, null);
     defer doc.deinit();
 
     try std.testing.expect(doc.statements.len >= 3);
@@ -93,7 +93,7 @@ test "parser: control flow (@if, @switch, @for)" {
         \\    }
         \\}
     ;
-    var doc = try helpers.parseSource(allocator, src);
+    var doc = try helpers.parseSource(allocator, src, null);
     defer doc.deinit();
 
     try std.testing.expectEqual(@as(usize, 1), doc.statements.len);
@@ -112,7 +112,7 @@ test "parser: anonymous @func expression and nested @func" {
         \\    @func inner(y: int): int { return y * 2; }
         \\}
     ;
-    var doc = try helpers.parseSource(allocator, src);
+    var doc = try helpers.parseSource(allocator, src, null);
     defer doc.deinit();
 
     try std.testing.expectEqual(@as(usize, 1), doc.statements.len);
@@ -134,7 +134,7 @@ test "parser: anonymous @func expression and nested @func" {
 test "parser: syntax error produces failure" {
     const allocator = std.testing.allocator;
     const invalid_src = "pub @func main( {"; // unclosed paren
-    const res = helpers.parseSource(allocator, invalid_src);
+    const res = helpers.parseSource(allocator, invalid_src, null);
     try std.testing.expectError(error.ParseFailed, res);
 }
 

@@ -10,7 +10,7 @@ test "compiler: reachability marks only called functions reachable" {
         \\    print(used());
         \\}
     ;
-    var analyzed = try helpers.analyzeSource(allocator, src, true);
+    var analyzed = try helpers.analyzeSource(allocator, src, null, true);
     defer analyzed.deinit();
 
     const reach = analyzed.state.reachability orelse return error.MissingReachability;
@@ -30,7 +30,7 @@ test "compiler: binding facts track read, assigned, and reassigned" {
         \\    _ = y;
         \\}
     ;
-    var analyzed = try helpers.analyzeSource(allocator, src, true);
+    var analyzed = try helpers.analyzeSource(allocator, src, null, true);
     defer analyzed.deinit();
 
     try std.testing.expect(analyzed.state.binding_facts.count() > 0);

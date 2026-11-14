@@ -146,6 +146,7 @@ pub fn build(b: *std.Build) void {
         }),
     });
     const run_lsp_unit = b.addRunArtifact(lsp_unit_tests);
+    run_lsp_unit.setCwd(b.path("."));
 
     const runtime_tests = b.addTest(.{
         .root_module = b.createModule(.{

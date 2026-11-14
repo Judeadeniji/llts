@@ -23,7 +23,8 @@ pub const RunOptions = struct {
     script_args: []const []const u8 = &.{},
     max_memory_slots: usize = 1048576,
     /// Maximum diagnostics collected before suppression (0 = unlimited).
-    max_errors: usize = 100,
+    /// `null` uses the process default (`--max-errors` / `LLTS_MAX_ERRORS`).
+    max_errors: ?usize = null,
 };
 
 pub const EmitZigOptions = struct {
@@ -46,7 +47,8 @@ pub const EmitZigOptions = struct {
     /// Additional arguments/options forwarded directly to `zig build-exe`.
     zig_args: []const []const u8 = &.{},
     /// Maximum diagnostics collected before suppression (0 = unlimited).
-    max_errors: usize = 100,
+    /// `null` uses the process default (`--max-errors` / `LLTS_MAX_ERRORS`).
+    max_errors: ?usize = null,
 
     pub const EmitMode = enum {
         bin,
@@ -66,7 +68,7 @@ pub fn compileSource(
     source: []const u8,
     options: RunOptions,
 ) !chunk_mod.Chunk {
-    var coll = collector_mod.Collector.init(allocator, options.max_errors);
+    var coll = collector_mod.Collector.init(allocator, options.max_errors orelse collector_mod.getDefaultCap());
     defer coll.deinit();
     diag.reset();
     collector_mod.setActive(&coll);
@@ -111,8 +113,14 @@ pub fn compileSource(
         return error.CompilationFailed;
     }
 
-    // --- bytecode emit (unchanged) -----------------------------------------
-    const chunk = try compiler.emitBytecode(&state, &doc);
+    // --- bytecode emit -----------------------------------------------------
+    // Emitting can still fail (const evaluation, unsupported constructs), and
+    // those faults are recorded in the collector rather than printed, so this
+    // path must flush them too or the CLI only reports `CompileError`.
+    const chunk = compiler.emitBytecode(&state, &doc) catch |err| {
+        if (coll.items.items.len > 0) coll.reportAll();
+        return err;
+    };
     state.chunk.deinit();
     compiler.state_mod.deinit(&state);
 
@@ -217,7 +225,7 @@ pub fn emitZigCode(
     writer: anytype,
     options: EmitZigOptions,
 ) !void {
-    var coll = collector_mod.Collector.init(allocator, options.max_errors);
+    var coll = collector_mod.Collector.init(allocator, options.max_errors orelse collector_mod.getDefaultCap());
     defer coll.deinit();
     diag.reset();
     collector_mod.setActive(&coll);
@@ -259,15 +267,23 @@ pub fn emitZigCode(
         return error.CompilationFailed;
     }
 
-    try zig_backend.emitRuntimeZig(allocator, &doc, &state, writer, .{
+    zig_backend.emitRuntimeZig(allocator, &doc, &state, writer, .{
         .release = !options.debug,
         .runtime_path = options.runtime_path,
-    });
+    }) catch |err| {
+        state.chunk.deinit();
+        compiler.state_mod.deinit(&state);
+        if (coll.items.items.len > 0) coll.reportAll();
+        return err;
+    };
     state.chunk.deinit();
     compiler.state_mod.deinit(&state);
 
-    // Flush any recorded warnings on a clean compile.
+    // The emitter recovers per declaration, so it can return success while
+    // diagnostics are pending. Flush them, and never let a caller write the
+    // (now partial) Zig unit or invoke `zig`.
     if (coll.items.items.len > 0) coll.reportAll();
+    if (coll.hasErrors()) return error.CompilationFailed;
 }
 
 /// Directory for zig's local cache when compiling a native unit.

@@ -40,6 +40,11 @@ pub fn compileDeclaration(state: *CompilerState, decl: *const ast.Declaration) !
         emit.noteLoc(state, decl.loc.line, decl.loc.column, decl.loc.path);
         const evaluated = try const_eval.evalExpr(state, null, decl.value);
         if (evaluated) |cval| {
+            // The folder computes in i64; an annotated declaration can still be
+            // too narrow for the result. Check every integer width here so the
+            // fault is a compile diagnostic naming that width instead of a
+            // backend trap at run time.
+            try checkConstFitsDeclaredWidth(state, decl, cval);
             comptime_value = cval;
             // Store under the declared spelling only; `evalExpr` normalizes the
             // leading `$` on lookup, so a single entry serves both forms.
@@ -187,6 +192,19 @@ pub fn compileDeclaration(state: *CompilerState, decl: *const ast.Declaration) !
             try state.ready_global_consts.put(decl.name, {});
         }
     }
+}
+
+/// Reject a folded constant that does not fit the declaration's integer width
+/// (`@const $x: u8 = a + 10` where the fold lands above 255).
+fn checkConstFitsDeclaredWidth(
+    state: *CompilerState,
+    decl: *const ast.Declaration,
+    cval: const_eval.ConstValue,
+) !void {
+    const ta = decl.type_annotation orelse return;
+    if (ta.* != .primary or ta.primary.kind != .identifier) return;
+    const w = widths.fromName(ta.primary.name) orelse return;
+    try const_eval.checkFitsWidth(state, cval, w);
 }
 
 fn typesAssignable(state: *CompilerState, got: []const u8, expected: []const u8) bool {

@@ -58,7 +58,7 @@ pub fn typeFromAst(node: ?*ast.Node, state: ?*state_mod.CompilerState, ta: ir.Ty
                 try params.append(ta.allocator, try typeFromAst(p, state, ta));
             }
             const ret = if (f.return_type) |rt| try typeFromAst(rt, state, ta) else ir.TUnknown;
-            break :blk try ta.funcType(params.items, ret, f.is_variadic);
+            break :blk try ta.funcType(params.items, ret, f.is_variadic, &.{});
         },
         .shape_type => |s| blk: {
             var fields: std.ArrayList(ir.ShapeField) = .empty;
@@ -758,7 +758,8 @@ fn parseFuncDisplayType(
         }
     }
     const ret = if (parts.ret) |r| try parseDisplayType(state, ta, r, cycle) else ir.TUnknown;
-    return try ta.funcType(params.items, ret, variadic);
+    // Display types (`@func(T, U): R`) carry no optional-parameter markers.
+    return try ta.funcType(params.items, ret, variadic, &.{});
 }
 
 fn resolveImportedType(node: *ast.Node, state: ?*state_mod.CompilerState, ta: ir.TypeAlloc) FromAstError!ir.Type {

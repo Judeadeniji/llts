@@ -12,6 +12,7 @@ pub fn execute(ctx: zli.CommandContext) !void {
     const out_val = ctx.flag("output", []const u8);
     const out_path: ?[]const u8 = if (out_val.len > 0) out_val else null;
     const comptime_iters = common.getComptimeMaxLoopIterations(ctx.allocator, ctx);
+    llts.collector.setDefaultCap(common.getMaxErrors(ctx.allocator, ctx));
 
     if (llts.serialize.isBytecodePath(file)) {
         common.failExit("Cannot dump bytecode from a .llb file; use a .lls source", .{});

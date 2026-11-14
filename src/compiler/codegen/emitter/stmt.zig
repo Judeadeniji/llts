@@ -229,7 +229,9 @@ pub fn emitBoolCondition(self: *Emitter, node: *ast_mod.Node, what: []const u8) 
     if (t.kind != .bool) {
         return self.failAt(node, "{s} condition must be boolean, got '{s}'", .{ what, t.display });
     }
-    return expr_mod.emitExpr(self, node);
+    const code = try expr_mod.emitExpr(self, node);
+    // `bool` lowers to `u1`; Zig needs a real `bool` in a condition.
+    return std.fmt.allocPrint(self.arena.allocator(), "(({s}) != 0)", .{code});
 }
 
 pub fn emitBreak(self: *Emitter, node: *ast_mod.Node, b: *const ast_mod.Break) !void {
@@ -362,7 +364,9 @@ pub fn emitCondition(self: *Emitter, node: *ast_mod.Node) ![]const u8 {
     if (t.kind != .bool) {
         return self.failAt(node, "@if condition must be boolean, got '{s}'", .{t.display});
     }
-    return expr_mod.emitExpr(self, node);
+    const code = try expr_mod.emitExpr(self, node);
+    // `bool` lowers to `u1`; Zig needs a real `bool` in a condition.
+    return std.fmt.allocPrint(self.arena.allocator(), "(({s}) != 0)", .{code});
 }
 
 pub fn emitContinue(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Continue) !void {

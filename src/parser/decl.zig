@@ -276,6 +276,7 @@ pub fn parseParamsList(self: *Parser) ParseError!ParamsResult {
 
     var params: std.ArrayList(ast.Param) = .empty;
     var is_variadic = false;
+    var seen_optional = false;
 
     while (true) {
         const is_rest = self.checkDelim("...");
@@ -285,6 +286,17 @@ pub fn parseParamsList(self: *Parser) ParseError!ParamsResult {
         }
 
         const name = try self.consume(.identifier, "Expected parameter name", null);
+        var is_optional = false;
+        if (self.checkDelim("?")) {
+            _ = self.advance();
+            is_optional = true;
+            seen_optional = true;
+        }
+
+        if (seen_optional and !is_optional and !is_rest) {
+            return self.failTok(name, "Required parameter '{s}' cannot follow optional parameter", .{name.value});
+        }
+
         var type_node: ?*Node = null;
         if (self.checkDelim(":")) {
             _ = self.advance();
@@ -295,6 +307,7 @@ pub fn parseParamsList(self: *Parser) ParseError!ParamsResult {
             .name = try self.dupe(name.value),
             .type_annotation = type_node,
             .is_rest = is_rest,
+            .is_optional = is_optional,
             .loc = self.locOf(name),
         });
 

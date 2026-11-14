@@ -110,6 +110,13 @@ pub const max_memory = zli.Flag{
     .default_value = .{ .String = "" },
 };
 
+pub const max_errors = zli.Flag{
+    .name = "max-errors",
+    .description = "Max collected compile errors before suppressing the rest (default 100, 0 = unlimited, env LLTS_MAX_ERRORS)",
+    .type = .String,
+    .default_value = .{ .String = "" },
+};
+
 pub const comptime_max_loop_iterations = zli.Flag{
     .name = "comptime-max-loop-iterations",
     .description = "Max loop iterations in constant evaluation (default 100000, env LLTS_COMPTIME_MAX_LOOP_ITERATIONS)",
@@ -149,6 +156,7 @@ pub fn addCompileFlags(cmd: *zli.Command) !void {
     try cmd.addFlag(zig_bin);
     try cmd.addFlag(runtime_path);
     try cmd.addFlag(comptime_max_loop_iterations);
+    try cmd.addFlag(max_errors);
 }
 
 pub fn addRunFlags(cmd: *zli.Command) !void {
@@ -163,4 +171,5 @@ pub fn addEmitZigFlags(cmd: *zli.Command) !void {
     try cmd.addFlag(strict);
     try cmd.addFlag(runtime_path);
     try cmd.addFlag(comptime_max_loop_iterations);
+    try cmd.addFlag(max_errors);
 }

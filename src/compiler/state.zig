@@ -115,6 +115,7 @@ pub const FunctionDef = struct {
     param_irs: ?[]const ir.Type = null,
     rest_ir: ?ir.Type = null,
     is_variadic: bool = false,
+    param_is_optional: []bool = &.{},
     return_fn_target: ?[]const u8 = null,
     closure_ids: std.ArrayList(u32) = .empty,
 };

@@ -24,7 +24,11 @@ pub fn emitBinary(self: *Emitter, node: *ast_mod.Node, b: *const ast_mod.Binary)
             return self.failAt(node, "logical '{s}' requires boolean operands", .{op});
         }
         const zig_op = if (std.mem.eql(u8, op, "&&")) "and" else "or";
-        return std.fmt.allocPrint(a, "({s} {s} {s})", .{ try emitExpr(self, b.left), zig_op, try emitExpr(self, b.right) });
+        // `bool` is `u1`, so the operands are bits and the result is the bit
+        // of the Zig boolean combination.
+        return std.fmt.allocPrint(a, "@intFromBool(({s} != 0) {s} ({s} != 0))", .{
+            try emitExpr(self, b.left), zig_op, try emitExpr(self, b.right),
+        });
     }
 
     if (std.mem.eql(u8, op, "+") and (try isStringy(self, b.left) or try isStringy(self, b.right) or try isStringBufferPtr(self, b.left) or try isStringBufferPtr(self, b.right))) {
@@ -122,14 +126,28 @@ fn emitCallArguments(
         const total = if (is_variadic and plist.len > 0) plist.len - 1 else plist.len;
         break :blk if (total > param_offset) total - param_offset else 0;
     };
+    const param_is_optional = if (def) |d| d.param_is_optional else &[_]bool{};
 
     if (!is_variadic) {
+        var provided_count: usize = 0;
         for (args, 0..) |arg, i| {
             const param_vt = calleeParamValType(self, func_name, i + param_offset);
             if (param_vt) |pt| {
                 try args_buf.append(a, try emitValueCoerced(self, arg, pt));
             } else {
                 try args_buf.append(a, try emitExpr(self, arg));
+            }
+            provided_count += 1;
+        }
+        // Fill missing trailing optional params with null
+        while (provided_count < named_param_count) {
+            const opt_idx = provided_count + param_offset;
+            if (opt_idx < param_is_optional.len and param_is_optional[opt_idx]) {
+                try args_buf.append(a, "null");
+                provided_count += 1;
+            } else {
+                // Required param not provided - should have been caught by typecheck
+                break;
             }
         }
         return;
@@ -330,20 +348,20 @@ pub fn emitCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) any
                 const id = self.counter;
                 const res_name = try std.fmt.allocPrint(a, "lls_iseres_{d}", .{id});
                 return std.fmt.allocPrint(a,
-                    \\blk: {{
+                    \\@intFromBool(blk: {{
                     \\    const {s}: {s} = {s};
                     \\    break :blk switch ({s}) {{ .ok => false, .err => true }};
-                    \\}}
+                    \\}})
                 , .{ res_name, t.zig, try emitExpr(self, c.args[0]), res_name });
             }
             const has_effects = exprHasEffects(c.args[0]);
             if (t.kind == .error_value) {
-                if (!has_effects) return "true";
-                return std.fmt.allocPrint(a, "blk: {{ _ = {s}; break :blk true; }}", .{try emitExpr(self, c.args[0])});
+                if (!has_effects) return "1";
+                return std.fmt.allocPrint(a, "@intFromBool(blk: {{ _ = {s}; break :blk true; }})", .{try emitExpr(self, c.args[0])});
             }
-            if (t.kind == .void or t.kind == .null_value) return "false";
-            if (!has_effects) return "false";
-            return std.fmt.allocPrint(a, "blk: {{ _ = {s}; break :blk false; }}", .{try emitExpr(self, c.args[0])});
+            if (t.kind == .void or t.kind == .null_value) return "0";
+            if (!has_effects) return "0";
+            return std.fmt.allocPrint(a, "@intFromBool(blk: {{ _ = {s}; break :blk false; }})", .{try emitExpr(self, c.args[0])});
         }
         if (std.mem.eql(u8, intrinsic, "@new")) {
             return self.failAt(
@@ -771,6 +789,13 @@ fn emitMethodCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) !
 
 pub fn emitComparison(self: *Emitter, node: *ast_mod.Node, b: *const ast_mod.Binary) ![]const u8 {
     const a = self.arena.allocator();
+    const raw = try emitComparisonBool(self, node, b);
+    // `bool` is an alias for `u1`: comparisons evaluate to the bit.
+    return std.fmt.allocPrint(a, "@intFromBool({s})", .{raw});
+}
+
+fn emitComparisonBool(self: *Emitter, node: *ast_mod.Node, b: *const ast_mod.Binary) ![]const u8 {
+    const a = self.arena.allocator();
     const op = b.operator;
     if (self.state.type_eq_folds.get(b.left)) |same| {
         return if (same) "true" else "false";
@@ -819,10 +844,11 @@ pub fn emitComparison(self: *Emitter, node: *ast_mod.Node, b: *const ast_mod.Bin
             return if (negate) std.fmt.allocPrint(a, "(!{s})", .{base}) else base;
         }
         if (lt.kind == .bool and rt.kind == .bool) {
-            const base = try std.fmt.allocPrint(a, "rt.arith.eqBool({s}, {s})", .{
-                try emitExpr(self, b.left), try emitExpr(self, b.right),
+            // Both sides are `u1` bits, so compare them directly.
+            const base = try std.fmt.allocPrint(a, "({s} {s} {s})", .{
+                try emitExpr(self, b.left), if (negate) "!=" else "==", try emitExpr(self, b.right),
             });
-            return if (negate) std.fmt.allocPrint(a, "(!{s})", .{base}) else base;
+            return base;
         }
         if (lt.kind == .int and rt.kind == .int) {
             const base = try std.fmt.allocPrint(a, "rt.arith.eqI64({s}, {s})", .{
@@ -1320,7 +1346,8 @@ pub fn emitLiteral(self: *Emitter, node: *ast_mod.Node, lit: ast_mod.Literal) ![
     _ = node;
     switch (lit.literal_type) {
         .string => return self.zigString(lit.value),
-        .boolean => return lit.value,
+        // `bool` lowers to `u1`: the literal is its bit.
+        .boolean => return if (std.mem.eql(u8, lit.value, "true")) "1" else "0",
         .number, .hex, .octal, .binary => return lit.value,
         .null => return "null",
     }
@@ -1382,13 +1409,14 @@ pub fn emitUnary(self: *Emitter, node: *ast_mod.Node, u: *const ast_mod.Unary) !
     const t = try self.valueType(u.arg);
     if (t.may_error) {
         return self.failAt(u.arg, "error-union value must be handled with '?' first", .{});
-    }
-    if (std.mem.eql(u8, u.operator, "!")) {
-        if (t.kind != .bool) {
-            return self.failAt(node, "'!' requires a boolean operand, got '{s}'", .{t.display});
+    }        if (std.mem.eql(u8, u.operator, "!")) {
+            if (t.kind != .bool) {
+                return self.failAt(node, "'!' requires a boolean operand, got '{s}'", .{t.display});
+            }
+            // `bool` lowers to `u1`: negate in Zig's boolean domain, then take
+            // the bit back.
+            return std.fmt.allocPrint(a, "@intFromBool(!(({s}) != 0))", .{try emitExpr(self, u.arg)});
         }
-        return std.fmt.allocPrint(a, "(!{s})", .{try emitExpr(self, u.arg)});
-    }
     if (std.mem.eql(u8, u.operator, "-")) {
         if (t.kind == .float) {
             const fn_name = if (std.mem.eql(u8, t.zig, "f32")) "negF32" else "negF64";
@@ -1433,8 +1461,37 @@ pub fn emitValueCoercedMode(self: *Emitter, node: *ast_mod.Node, target: ValType
 /// (`$b: B = a;`) would otherwise look like it already has the target type.
 /// The place's storage type is what the emitted Zig actually holds.
 pub fn emitDeclaredValue(self: *Emitter, node: *ast_mod.Node, target: ValType) anyerror![]const u8 {
-    const src = try placeStorageType(self, node);
+    var src = try placeStorageType(self, node);
+    // The checker retypes an initializer to the annotation when an exact
+    // constant is accepted into a narrower width. Arithmetic (`-128`, `2 + 3`)
+    // still lowers to i64, so derive the storage type from the lowering — not
+    // the retyped node — and let the coercion insert the narrowing cast.
+    if (src == null and isIntArithmeticNode(node) and (target.kind == .int or target.kind == .bool)) {
+        src = try self.valTypeOfIR(node, ir.TI64);
+    }
     return emitValueCoercedFrom(self, node, src, target, false);
+}
+
+/// Integer expression shapes that lower to i64 arithmetic rather than to a
+/// value of the retyped node's width.
+fn isIntArithmeticNode(node: *ast_mod.Node) bool {
+    return switch (node.*) {
+        .unary => |u| std.mem.eql(u8, u.operator, "-") or std.mem.eql(u8, u.operator, "+") or std.mem.eql(u8, u.operator, "~"),
+        .binary => |b| blk: {
+            const ops = [_][]const u8{ "+", "-", "*", "/", "%", "**", "&", "|", "^", "<<", ">>" };
+            for (ops) |op| if (std.mem.eql(u8, b.operator, op)) break :blk true;
+            break :blk false;
+        },
+        else => false,
+    };
+}
+
+fn isNumberLiteralNode(node: *ast_mod.Node) bool {
+    if (node.* != .literal) return false;
+    return switch (node.literal.literal_type) {
+        .number, .hex, .binary, .octal => true,
+        else => false,
+    };
 }
 
 fn emitValueCoercedFrom(self: *Emitter, node: *ast_mod.Node, src_override: ?ValType, target: ValType, force: bool) anyerror![]const u8 {
@@ -1520,6 +1577,10 @@ fn emitValueCoercedFrom(self: *Emitter, node: *ast_mod.Node, src_override: ?ValT
     // Literals are already polymorphic; the surrounding declaration,
     // assignment, return, print, or @as supplies the concrete type.
     if (node.* == .literal and !isNullLiteral(node)) {
+        // `u1` lowers to `u1`: a numeric literal is the bit, not a boolean.
+        if (target.kind == .bool and isNumberLiteralNode(node)) {
+            return std.fmt.allocPrint(a, "@intFromBool({s} != 0)", .{code});
+        }
         if (target.kind == .array and node.literal.literal_type == .string) {
             return std.fmt.allocPrint(a, "{s}.*", .{code});
         }
@@ -1554,6 +1615,11 @@ fn emitValueCoercedFrom(self: *Emitter, node: *ast_mod.Node, src_override: ?ValT
     if (src.kind == target.kind and src.zig.len == target.zig.len and
         std.mem.eql(u8, src.zig, target.zig))
     {
+        // `u1` lowers to `u1`, but an integer literal still needs the
+        // comparison that turns the bit into a boolean.
+        if (target.kind == .bool and isNumberLiteralNode(node)) {
+            return std.fmt.allocPrint(a, "@intFromBool({s} != 0)", .{code});
+        }
         return code;
     }
     if (target.kind == .func and src.kind == .func) return code;
@@ -1578,9 +1644,13 @@ fn emitValueCoercedFrom(self: *Emitter, node: *ast_mod.Node, src_override: ?ValT
         return std.fmt.allocPrint(a, "@as({s}, @intFromFloat({s}))", .{ target.zig, code });
     }
     if (target.kind == .void and src.kind == .void) return code;
-    if (target.kind == .bool and src.kind == .bool) return code;
+    if (target.kind == .bool and src.kind == .bool) {
+        // `u1` lowers to `u1`: a numeric literal is the bit itself.
+        if (isNumberLiteralNode(node)) return std.fmt.allocPrint(a, "@intFromBool({s} != 0)", .{code});
+        return code;
+    }
     if (target.kind == .bool and src.kind == .int) {
-        return std.fmt.allocPrint(a, "({s} != 0)", .{code});
+        return std.fmt.allocPrint(a, "@intFromBool({s} != 0)", .{code});
     }
     if (target.kind == .string and src.kind == .string) return code;
     if (target.kind == .string and isByteSliceType(src)) return code;
@@ -1892,19 +1962,45 @@ pub fn emitIndex(self: *Emitter, node: *ast_mod.Node, ix: *const ast_mod.Index) 
 
 pub fn emitSlice(self: *Emitter, node: *ast_mod.Node, ix: *const ast_mod.Index) ![]const u8 {
     const a = self.arena.allocator();
-    var obj_t = try self.valueType(ix.object);
-    var object_expr = try emitExpr(self, ix.object);
-    if (obj_t.kind == .pointer) {
-        const payload = obj_t.payload orelse return self.failAt(node, "native backend cannot determine the pointee type of '{s}'", .{obj_t.display});
+    const src_t = try self.valueType(ix.object);
+    var obj_t = src_t;
+    if (src_t.kind == .pointer) {
+        const payload = src_t.payload orelse return self.failAt(node, "native backend cannot determine the pointee type of '{s}'", .{src_t.display});
         obj_t = payload.*;
-        object_expr = try std.fmt.allocPrint(a, "({s}).*", .{object_expr});
     }
     if (obj_t.kind != .string and obj_t.kind != .slice and obj_t.kind != .array) {
         return self.failAt(node, "native backend cannot slice '{s}' yet", .{obj_t.display});
     }
+
+    // Slices are borrowed views, not copies. For an array lvalue, take the
+    // address of the original storage; for a `*[N]T`, slice the pointer
+    // directly. Only temporary array values (literals/call results) need a
+    // local copy.
+    const aliases_array = if (src_t.kind == .pointer)
+        obj_t.kind == .array
+    else
+        obj_t.kind == .array and Emitter.isPlaceNode(ix.object);
+
+    var object_expr: []const u8 = undefined;
+    var object_zig = obj_t.zig;
+    if (aliases_array) {
+        if (src_t.kind == .pointer) {
+            object_expr = try emitExpr(self, ix.object);
+            object_zig = src_t.zig;
+        } else {
+            object_expr = try emitAddressOf(self, node, ix.object);
+            object_zig = try std.fmt.allocPrint(a, "*{s}", .{obj_t.zig});
+        }
+    } else if (src_t.kind == .pointer) {
+        object_expr = try std.fmt.allocPrint(a, "({s}).*", .{try emitExpr(self, ix.object)});
+    } else {
+        object_expr = try emitExpr(self, ix.object);
+    }
+
     self.counter += 1;
     const id = self.counter;
     const obj_name = try std.fmt.allocPrint(a, "lls_slice_obj_{d}", .{id});
+    const label = try std.fmt.allocPrint(a, "lls_slice_{d}", .{id});
     const lo_name = try std.fmt.allocPrint(a, "lls_slice_lo_{d}", .{id});
     const hi_name = try std.fmt.allocPrint(a, "lls_slice_hi_{d}", .{id});
 
@@ -1914,25 +2010,24 @@ pub fn emitSlice(self: *Emitter, node: *ast_mod.Node, ix: *const ast_mod.Index) 
     else
         try std.fmt.allocPrint(a, "@as(i64, @intCast({s}.len))", .{obj_name});
 
-    // Slicing a local array value keeps the source mutability: `const arr`
-    // yields `*const [N]T` (a read-only view), while a mutable array must stay
-    // mutable so the resulting `[]T` is writable.
-    const obj_decl: []const u8 = if (obj_t.kind == .array and !obj_t.is_const) "var" else "const";
+    // Copying a temporary mutable array keeps its mutability; borrowed arrays
+    // are addressed above and must stay const bindings of the pointer.
+    const obj_decl: []const u8 = if (obj_t.kind == .array and !aliases_array and !obj_t.is_const) "var" else "const";
 
     return std.fmt.allocPrint(a,
-        \\blk: {{
+        \\{s}: {{
         \\    {s} {s}: {s} = {s};
         \\    const {s}: i64 = {s};
         \\    const {s}: i64 = {s};
         \\    if ({s} < 0 or {s} < {s} or {s} > @as(i64, @intCast({s}.len))) return rt.io.fail("Slice out of bounds: [{{d}}..{{d}}] (len {{d}})", .{{ {s}, {s}, @as(i64, @intCast({s}.len)) }});
-        \\    break :blk {s}[@intCast({s})..@intCast({s})];
+        \\    break :{s} {s}[@intCast({s})..@intCast({s})];
         \\}}
     , .{
-        obj_decl, obj_name, obj_t.zig, object_expr,
-        lo_name,  lo_code,  hi_name,   hi_code,
-        lo_name,  hi_name,  lo_name,   hi_name,
-        obj_name, lo_name,  hi_name,   obj_name,
-        obj_name, lo_name,  hi_name,
+        label,     obj_decl,  obj_name, object_zig, object_expr,
+        lo_name,   lo_code,   hi_name,  hi_code,
+        lo_name,   hi_name,   lo_name,  hi_name,
+        obj_name,  lo_name,   hi_name,  obj_name,
+        label,     obj_name,  lo_name,  hi_name,
     });
 }
 

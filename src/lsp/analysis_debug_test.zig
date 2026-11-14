@@ -115,11 +115,11 @@ test "hover: enum/error decl-site variants and error-set formatting" {
 
 test "position lookup ignores statements inlined from imported modules" {
     const allocator = std.testing.allocator;
-    // The `$std` import makes resolveImports splice module statements (with
+    // The `$mod` import makes resolveImports splice module statements (with
     // the module's own path/lines) into doc.statements; position lookups in
     // *this* document must not match them.
     const src =
-        \\@const $std = @import("std/index");
+        \\@const $mod = @import("tests/fixtures/mod.lls");
         \\
         \\@struct P {
         \\    x: i64;

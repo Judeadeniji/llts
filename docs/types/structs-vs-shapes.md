@@ -362,7 +362,17 @@ error for both structs and shapes:
 @type P = { x: i64; };
 @const $ORIGIN: P = { x: 1 };
 
-ORIGIN.x = 2; # compile error: cannot mutate field of constant
+ORIGIN.x = 2; # compile error: Cannot mutate field of constant 'ORIGIN'
+```
+
+Deep immutability also covers array fields. A slice of a `@const` aggregate is a read-only view:
+
+```lls
+@struct Bag { items: [3]i64; }
+@const $B = Bag { items: [1, 2, 3] };
+
+$view = B.items[1..]; # allowed: read-only view
+view[0] = 9;          # compile error: Cannot mutate elements of a constant slice
 ```
 
 ### Pointers

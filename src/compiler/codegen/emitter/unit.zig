@@ -6,6 +6,8 @@ const ir = @import("../../typecheck/ir.zig");
 const root_mod = @import("root.zig");
 const stmt_mod = @import("stmt.zig");
 const expr_mod = @import("expr.zig");
+const const_eval_mod = @import("../../const_eval.zig");
+const widths_mod = @import("../../widths.zig");
 const Emitter = root_mod.Emitter;
 const ValType = root_mod.ValType;
 const Binding = root_mod.Binding;
@@ -204,7 +206,16 @@ pub fn emitFunctions(self: *Emitter) !void {
 
     for (names.items) |name| {
         const def = self.state.functions.get(name) orelse continue;
-        try emitFunction(self, name, def);
+        // Declaration-boundary recovery: an unsupported function is reported
+        // and the rest are still emitted (the output is discarded anyway when
+        // any diagnostic was recorded).
+        emitFunction(self, name, def) catch |err| switch (err) {
+            error.CompileError => {
+                self.resetItemState();
+                continue;
+            },
+            else => |e| return e,
+        };
     }
 }
 
@@ -263,7 +274,13 @@ pub fn emitClosures(self: *Emitter) !void {
             }
         }
         const info = info_opt orelse continue;
-        try emitSingleClosure(self, info);
+        emitSingleClosure(self, info) catch |err| switch (err) {
+            error.CompileError => {
+                self.resetItemState();
+                continue;
+            },
+            else => |e| return e,
+        };
     }
 }
 
@@ -388,42 +405,48 @@ fn emitSingleClosure(self: *Emitter, info: state_mod.ClosureInfo) !void {
 }
 
 pub fn emitTrampolines(self: *Emitter) !void {
-    const a = self.arena.allocator();
     var it = self.trampolines_needed.keyIterator();
     while (it.next()) |fn_name_ptr| {
-        const fn_name = fn_name_ptr.*;
-        const def = self.state.functions.get(fn_name) orelse continue;
-        if (def.node.* != .function_decl) continue;
-        const f = &def.node.function_decl;
-        const params = switch (f.params.*) {
-            .params => |p| p.params,
-            else => continue,
+        emitTrampoline(self, fn_name_ptr.*) catch |err| switch (err) {
+            error.CompileError => continue,
+            else => |e| return e,
         };
-        const ret = try functionReturnType(self, fn_name, def);
-        const zig_fn = try self.fnName(fn_name);
-
-        try self.writer.print("fn lls_trampoline_{s}(ctx: *rt.Context, _: ?*anyopaque", .{zig_fn});
-        var arg_names: std.ArrayList([]const u8) = .empty;
-        for (params, 0..) |p, i| {
-            var p_vt: ?ValType = null;
-            if (p.type_annotation) |ann| {
-                const p_ir = from_ast.typeFromAst(ann, self.state, self.state.typeAlloc()) catch null;
-                if (p_ir) |pir| p_vt = try self.valTypeOfIR(def.node, pir);
-            }
-            const p_zig = if (p_vt) |pv| pv.zig else "i64";
-            const arg_name = try std.fmt.allocPrint(a, "arg_{d}", .{i});
-            try arg_names.append(a, arg_name);
-            try self.writer.print(", {s}: {s}", .{ arg_name, p_zig });
-        }
-        try self.writer.print(") anyerror!{s} {{\n", .{ret.zig});
-        const joined_args = try std.mem.join(a, ", ", arg_names.items);
-        if (joined_args.len == 0) {
-            try self.writer.print("    return try {s}(ctx);\n", .{zig_fn});
-        } else {
-            try self.writer.print("    return try {s}(ctx, {s});\n", .{ zig_fn, joined_args });
-        }
-        try self.writer.writeAll("}\n\n");
     }
+}
+
+fn emitTrampoline(self: *Emitter, fn_name: []const u8) !void {
+    const a = self.arena.allocator();
+    const def = self.state.functions.get(fn_name) orelse return;
+    if (def.node.* != .function_decl) return;
+    const f = &def.node.function_decl;
+    const params = switch (f.params.*) {
+        .params => |p| p.params,
+        else => return,
+    };
+    const ret = try functionReturnType(self, fn_name, def);
+    const zig_fn = try self.fnName(fn_name);
+
+    try self.writer.print("fn lls_trampoline_{s}(ctx: *rt.Context, _: ?*anyopaque", .{zig_fn});
+    var arg_names: std.ArrayList([]const u8) = .empty;
+    for (params, 0..) |p, i| {
+        var p_vt: ?ValType = null;
+        if (p.type_annotation) |ann| {
+            const p_ir = from_ast.typeFromAst(ann, self.state, self.state.typeAlloc()) catch null;
+            if (p_ir) |pir| p_vt = try self.valTypeOfIR(def.node, pir);
+        }
+        const p_zig = if (p_vt) |pv| pv.zig else "i64";
+        const arg_name = try std.fmt.allocPrint(a, "arg_{d}", .{i});
+        try arg_names.append(a, arg_name);
+        try self.writer.print(", {s}: {s}", .{ arg_name, p_zig });
+    }
+    try self.writer.print(") anyerror!{s} {{\n", .{ret.zig});
+    const joined_args = try std.mem.join(a, ", ", arg_names.items);
+    if (joined_args.len == 0) {
+        try self.writer.print("    return try {s}(ctx);\n", .{zig_fn});
+    } else {
+        try self.writer.print("    return try {s}(ctx, {s});\n", .{ zig_fn, joined_args });
+    }
+    try self.writer.writeAll("}\n\n");
 }
 
 pub fn emitGlobalDecls(self: *Emitter) !void {
@@ -439,9 +462,10 @@ pub fn emitGlobalDecls(self: *Emitter) !void {
     for (names.items) |name| {
         const g = self.globals.get(name).?;
         if (g.fn_key != null or g.module_path != null) continue;
-        const vt = try self.valTypeFor(g.node, g.ir_type, g.display);
-        try self.requireValueType(g.node, vt);
-        try self.writer.print("var {s}: {s} = {s};\n", .{ g.zig_name, vt.zig, try zeroValue(self, vt) });
+        emitGlobalDecl(self, g) catch |err| switch (err) {
+            error.CompileError => continue,
+            else => |e| return e,
+        };
     }
     if (self.globals.count() > 0) try self.writer.writeAll("\n");
 }
@@ -483,6 +507,9 @@ pub fn emitExternDecls(self: *Emitter) !void {
     if (emitted) try self.writer.writeAll("\n");
 }
 
+fn emitGlobalDecl(self: *Emitter, g: *Global) !void {
+}
+
 pub fn emitTopLevel(self: *Emitter) !void {
     self.cur_ret = .{ .display = "void", .clean = "void", .kind = .void, .zig = "void" };
     self.current_trace_func = null;
@@ -493,30 +520,133 @@ pub fn emitTopLevel(self: *Emitter) !void {
     try self.writer.writeAll("ctx.setSite(0);\n");
     try emitClosureEnvLocals(self, self.state.top_level_closure_ids.items);
     self.pushScope();
+    const scope_floor = self.scopes.items.len;
     for (self.doc.statements) |s| {
         if (s.* == .function_decl or s.* == .struct_decl or s.* == .enum_decl or
             s.* == .error_decl or s.* == .type_decl or s.* == .extern_decl) continue;
         if (self.reach) |r| {
             if (!r.shouldEmitTopLevel(self.doc, s)) continue;
         }
-        if (s.* == .declaration) {
-            const d = &s.declaration;
-            if (root_mod.isImportDecl(d)) continue;
-            const g = self.globals.get(d.name) orelse {
-                return self.failAt(s, "native backend does not support this top-level declaration", .{});
-            };
-            if (g.fn_key != null or g.module_path != null) continue;
-            try stmt_mod.emitLineMarker(self, s);
-            const vt = try self.valTypeFor(s, g.ir_type, g.display);
-            const code = try expr_mod.emitDeclaredValue(self, d.value, vt);
-            try self.writeIndent();
-            try self.writer.print("{s} = {s};\n", .{ g.zig_name, code });
-            continue;
-        }
-        try stmt_mod.emitStmt(self, s);
+        // Statement-boundary recovery: keep emitting later top-level
+        // statements after one fails.
+        emitTopLevelStatement(self, s) catch |err| switch (err) {
+            error.CompileError => {
+                self.truncateScopesTo(scope_floor);
+                self.indent = 1;
+                continue;
+            },
+            else => |e| return e,
+        };
     }
     self.popScope();
     try self.writer.writeAll("}\n\n");
+}
+
+fn emitTopLevelStatement(self: *Emitter, s: *ast_mod.Node) !void {
+    if (s.* == .declaration) {
+        const d = &s.declaration;
+        if (root_mod.isImportDecl(d)) return;
+        const g = self.globals.get(d.name) orelse {
+            return self.failAt(s, "native backend does not support this top-level declaration", .{});
+        };
+        if (g.fn_key != null or g.module_path != null) return;
+        // Fold `@const` initializers so static faults (overflow, out-of-range
+        // indexes) fail here, with the same diagnostics the bytecode backend
+        // reports, instead of trapping once the built binary runs.
+        if (d.is_const and try foldConst(self, d, s)) return;
+        try stmt_mod.emitLineMarker(self, s);
+        const vt = try self.valTypeFor(s, g.ir_type, g.display);
+        const code = try expr_mod.emitDeclaredValue(self, d.value, vt);
+        try self.writeIndent();
+        try self.writer.print("{s} = {s};\n", .{ g.zig_name, code });
+        return;
+    }
+    try stmt_mod.emitStmt(self, s);
+}
+
+/// Emit a `@const` declaration as its folded value. Returns false when the
+/// initializer is not statically evaluable (or its shape cannot be written as
+/// a Zig literal), leaving the normal expression path in charge.
+fn foldConst(self: *Emitter, d: *const ast_mod.Declaration, node: *ast_mod.Node) !bool {
+    const cval = (try const_eval_mod.evalExpr(self.state, null, d.value)) orelse return false;
+    const g = self.globals.get(d.name) orelse return false;
+    if (d.type_annotation) |ta| {
+        if (ta.* == .primary and ta.primary.kind == .identifier) {
+            if (widths_mod.fromName(ta.primary.name)) |w| {
+                try const_eval_mod.checkFitsWidth(self.state, cval, w);
+            }
+        }
+    }
+    const vt = try self.valTypeFor(node, g.ir_type, g.display);
+    const text = (try constValueZig(self, node, vt, cval)) orelse return false;
+    // Later constants can reference this one (`@const $b = a + 1;`).
+    self.state.const_values.put(d.name, cval) catch {};
+    try stmt_mod.emitLineMarker(self, node);
+    try self.writeIndent();
+    try self.writer.print("{s} = {s};\n", .{ g.zig_name, text });
+    return true;
+}
+
+/// Render a folded constant as Zig source, using `vt` for struct field names
+/// and omitted-field defaults. Returns null for values the native backend
+/// should keep building at run time (pointers, error values, nested structs of
+/// unknown layout).
+fn constValueZig(self: *Emitter, node: *ast_mod.Node, vt: ValType, value: const_eval_mod.ConstValue) anyerror!?[]const u8 {
+    const a = self.arena.allocator();
+    switch (value) {
+        .null => return "null",
+        // `bool` lowers to `u1`: a folded boolean is its bit.
+        .bool => |b| return if (b) "1" else "0",
+        .i64 => |n| return try std.fmt.allocPrint(a, "{d}", .{n}),
+        .f64 => |f| {
+            if (!std.math.isFinite(f)) return null;
+            const text = try std.fmt.allocPrint(a, "{d}", .{f});
+            // Zig needs a float-looking literal for float targets.
+            if (std.mem.indexOfAny(u8, text, ".eE") == null) {
+                return try std.fmt.allocPrint(a, "{s}.0", .{text});
+            }
+            return text;
+        },
+        .string => |s| return try self.zigString(s),
+        .enum_variant => |ev| {
+            if (vt.kind != .int) return null;
+            return try std.fmt.allocPrint(a, "{d}", .{ev.tag});
+        },
+        .array => |arr| return try constAggregateZig(self, node, vt, arr.elements.items),
+        .tuple => |items| return try constAggregateZig(self, node, vt, items),
+        .struct_val => |sv| {
+            if (vt.kind != .struct_) return null;
+            const info = try self.ensureStructType(node, vt.display);
+            var parts: std.ArrayList([]const u8) = .empty;
+            for (info.fields) |field| {
+                const text = if (sv.fields.get(field.name)) |fv|
+                    (try constValueZig(self, node, field.vt, fv)) orelse return null
+                else
+                    try zeroValue(self, field.vt);
+                try parts.append(a, try std.fmt.allocPrint(a, ".{s} = {s}", .{ field.zig_name, text }));
+            }
+            const joined = try std.mem.join(a, ", ", parts.items);
+            return try std.fmt.allocPrint(a, ".{{ {s} }}", .{joined});
+        },
+    }
+}
+
+fn constAggregateZig(
+    self: *Emitter,
+    node: *ast_mod.Node,
+    vt: ValType,
+    items: []const const_eval_mod.ConstValue,
+) anyerror!?[]const u8 {
+    const a = self.arena.allocator();
+    var parts: std.ArrayList([]const u8) = .empty;
+    for (items) |item| {
+        const elem_vt: ValType = if (vt.elem) |e| e.* else .{ .display = "", .clean = "", .kind = .other, .zig = "" };
+        const text = (try constValueZig(self, node, elem_vt, item)) orelse return null;
+        try parts.append(a, text);
+    }
+    if (parts.items.len == 0) return ".{}";
+    const joined = try std.mem.join(a, ", ", parts.items);
+    return try std.fmt.allocPrint(a, ".{{ {s} }}", .{joined});
 }
 
 pub fn functionReturnType(self: *Emitter, name: []const u8, def: state_mod.FunctionDef) !ValType {
@@ -583,6 +713,13 @@ pub fn prepareFunction(
         if (p.is_rest and ir_type != null) {
             display = try ir.displayTypeQualifiedAlloc(a, ir_type.?);
         }
+        // An optional param (`x?: T`) is `?T` in the body and in the Zig
+        // signature, so omitted calls can pass `null`.
+        if (p.is_optional and ir_type != null and ir.optionalPayload(ir_type.?) == null) {
+            const ta = self.state.typeAlloc();
+            ir_type = try ta.unionType(&.{ ir_type.?, ir.TNull });
+            display = try ir.displayTypeQualifiedAlloc(a, ir_type.?);
+        }
         const vt = try self.valTypeFor(f.params, ir_type, display);
         try self.requireValueType(f.params, vt);
         const b = try a.create(Binding);
@@ -618,7 +755,7 @@ pub fn zeroValue(self: *Emitter, t: ValType) ![]const u8 {
     return switch (t.kind) {
         .int => "0",
         .float => "0.0",
-        .bool => "false",
+        .bool => "0",
         .string => "\"\"",
         .optional, .null_value => "null",
         .struct_, .union_, .array, .slice, .pointer, .func => "undefined",

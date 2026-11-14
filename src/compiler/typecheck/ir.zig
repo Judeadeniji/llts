@@ -65,7 +65,7 @@ pub const Type = union(enum) {
     /// Go-style distinct `@type Name = T` (aliases unwrap and never appear here).
     defined: struct { name: []const u8, underlying: *Type },
     /// `@func(T, U): R` — first-class function type (structural).
-    func: struct { params: []Type, ret: *Type, variadic: bool },
+    func: struct { params: []Type, ret: *Type, variadic: bool, param_is_optional: []bool },
     /// `{ field: T; … }` anonymous object shape (structural).
     shape: []ShapeField,
     /// `@error Name` closed error set.
@@ -176,11 +176,13 @@ pub const TypeAlloc = struct {
         return .{ .defined = .{ .name = name, .underlying = up } };
     }
 
-    pub fn funcType(self: TypeAlloc, params: []const Type, ret: Type, variadic: bool) !Type {
+    pub fn funcType(self: TypeAlloc, params: []const Type, ret: Type, variadic: bool, param_is_optional: []bool) !Type {
         const ps = try self.allocator.alloc(Type, params.len);
         @memcpy(ps, params);
         const rp = try self.allocType(ret);
-        return .{ .func = .{ .params = ps, .ret = rp, .variadic = variadic } };
+        const opt = try self.allocator.alloc(bool, param_is_optional.len);
+        @memcpy(opt, param_is_optional);
+        return .{ .func = .{ .params = ps, .ret = rp, .variadic = variadic, .param_is_optional = opt } };
     }
 
     pub fn shapeType(self: TypeAlloc, fields: []const ShapeField) !Type {
@@ -1151,7 +1153,7 @@ pub fn parseDisplayType(ta: TypeAlloc, s_in: []const u8) !Type {
             }
         }
         const ret = if (parts.ret) |r| try parseDisplayType(ta, r) else TUnknown;
-        return try ta.funcType(params.items, ret, variadic);
+        return try ta.funcType(params.items, ret, variadic, &.{});
     }
     // Historical display used "int" / "byte".
     if (std.mem.eql(u8, s, "int") or std.mem.eql(u8, s, "number")) return TI64;

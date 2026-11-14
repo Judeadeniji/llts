@@ -1,0 +1,8 @@
+# expect: Integer overflow in constant expression: value 128 does not fit 'i8'
+# mode: strict
+@const $a: i8 = 127;
+@const $b: i8 = a + 1;
+
+pub @func main() {
+    print(b);
+}

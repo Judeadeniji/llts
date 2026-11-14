@@ -59,7 +59,28 @@ pub fn analyze(
     state.diag_path = doc.path;
     _ = try state.chunk.addSource(doc.path, doc.source);
 
+    // Recovery reports into the shared collector instead of aborting at the
+    // first fault, so analysis needs a collector even when the caller did not
+    // install one (tests, embedding). With our own collector we print at the
+    // end and turn the recorded errors into a failure; the CLI installs its
+    // own and does both outside `analyze`.
+    const own_collector = collector_mod.getActive() == null;
+    var local_coll: collector_mod.Collector = undefined;
+    if (own_collector) {
+        local_coll = collector_mod.Collector.init(allocator, collector_mod.getDefaultCap());
+        collector_mod.setActive(&local_coll);
+    }
+    const coll = collector_mod.getActive().?;
+    defer if (own_collector) {
+        collector_mod.clearActive();
+        local_coll.deinit();
+    };
+    errdefer if (own_collector and coll.items.items.len > 0) coll.reportAll();
+
     try modules.resolveImports(&state, doc);
+    // A failed import is recorded and left as an empty namespace; typechecking
+    // past it could only produce "unknown member" cascades.
+    if (coll.hasErrors()) return error.CompileError;
     try registerStructNames(&state, doc);
     try registerFunctions(&state, doc);
     try registerModuleDecls(&state, doc);
@@ -72,15 +93,11 @@ pub fn analyze(
     try local_types.hoist(&state, doc.statements);
 
     try typecheck.typecheck(&state, doc);
-    // If the shared collector already has errors (recovered diagnostics), skip
-    // the whole-program post-checks so we don't cascade into spurious
+    // If the collector already has errors (recovered diagnostics), skip the
+    // whole-program post-checks so we don't cascade into spurious
     // "undeclared"/reachability failures. Return the partially populated state;
     // the caller gates emission on the collector.
-    if (collector_mod.getActive()) |c| {
-        if (c.hasErrors()) {
-            return state;
-        }
-    }
+    if (coll.hasErrors()) return error.CompileError;
     try requireEntryMain(&state, doc);
     state.reachability = try reachability.compute(&state, doc);
     unused.detectAndWarn(&state, doc);

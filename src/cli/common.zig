@@ -26,6 +26,20 @@ pub fn getMaxMemory(allocator: std.mem.Allocator, ctx: zli.CommandContext) usize
     return 1048576;
 }
 
+/// Maximum collected compile errors before suppressing the rest.
+/// `0` means unlimited; defaults to 100.
+pub fn getMaxErrors(allocator: std.mem.Allocator, ctx: zli.CommandContext) usize {
+    const flag_val = ctx.flag("max-errors", []const u8);
+    if (flag_val.len > 0) {
+        if (std.fmt.parseInt(usize, flag_val, 10)) |v| return v else |_| {}
+    }
+    if (std.process.getEnvVarOwned(allocator, "LLTS_MAX_ERRORS")) |env_val| {
+        defer allocator.free(env_val);
+        if (std.fmt.parseInt(usize, env_val, 10)) |v| return v else |_| {}
+    } else |_| {}
+    return 100;
+}
+
 pub fn getComptimeMaxLoopIterations(allocator: std.mem.Allocator, ctx: zli.CommandContext) ?usize {
     const flag_val = ctx.flag("comptime-max-loop-iterations", []const u8);
     if (flag_val.len > 0) {

@@ -13,6 +13,7 @@ pub fn execute(ctx: zli.CommandContext) !void {
     const out_path: ?[]const u8 = if (out_val.len > 0) out_val else null;
     const runtime_path = common.getRuntimePath(ctx);
     const comptime_iters = common.getComptimeMaxLoopIterations(ctx.allocator, ctx);
+    llts.collector.setDefaultCap(common.getMaxErrors(ctx.allocator, ctx));
 
     if (llts.serialize.isBytecodePath(file)) {
         common.failExit("Cannot emit Zig from a .llb file; use a .lls source", .{});

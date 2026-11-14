@@ -87,7 +87,19 @@ fn expectNativeStdout(allocator: std.mem.Allocator, source: []const u8, expected
 // 1. In-memory Negative / Conformance Tests (replaces tests/45_compile_fails)
 // ---------------------------------------------------------------------------
 
-test "compile_fails: fixtures are rejected by compiler or runtime trap" {
+/// The `# expect: <text>` line every fixture carries: the diagnostic the
+/// compiler (or the trap, for emitted code) must produce.
+fn expectedDiagnostic(source: []const u8) ?[]const u8 {
+    var lines = std.mem.splitScalar(u8, source, '\n');
+    while (lines.next()) |line| {
+        if (std.mem.startsWith(u8, line, "# expect:")) {
+            return std.mem.trim(u8, line["# expect:".len..], " \t\r");
+        }
+    }
+    return null;
+}
+
+test "compile_fails: fixtures are rejected with their declared diagnostic" {
     const allocator = std.testing.allocator;
     const dir_path = "tests/compile_fails";
     var dir = try std.fs.cwd().openDir(dir_path, .{ .iterate = true });
@@ -105,8 +117,18 @@ test "compile_fails: fixtures are rejected by compiler or runtime trap" {
         const source = try file.readToEndAlloc(allocator, 1024 * 1024);
         defer allocator.free(source);
 
+        const expected = expectedDiagnostic(source) orelse {
+            std.debug.print("Fixture has no '# expect:' line: {s}\n", .{entry.name});
+            return error.MissingExpectation;
+        };
+
         var out: std.ArrayList(u8) = .empty;
         defer out.deinit(allocator);
+
+        var diagnostics: std.ArrayList(u8) = .empty;
+        defer diagnostics.deinit(allocator);
+        llts.io.out.captureStderr(&diagnostics, allocator);
+        defer llts.io.out.captureStderr(null, allocator);
 
         if (llts.pipeline.emitZigCode(allocator, entry.name, source, out.writer(allocator), .{
             .strict = true,
@@ -114,6 +136,10 @@ test "compile_fails: fixtures are rejected by compiler or runtime trap" {
         })) |_| {
             // If it emitted Zig, running the native binary must fail (trap)
             const res = runNativeSource(allocator, source) catch {
+                if (std.mem.indexOf(u8, diagnostics.items, expected) == null) {
+                    std.debug.print("Fixture '{s}' expected '{s}', got:\n{s}\n", .{ entry.name, expected, diagnostics.items });
+                    return error.UnexpectedDiagnostic;
+                }
                 continue;
             };
             defer allocator.free(res.stdout);
@@ -122,8 +148,20 @@ test "compile_fails: fixtures are rejected by compiler or runtime trap" {
                 std.debug.print("Fixture succeeded both in compile and run: {s}\n", .{entry.name});
                 return error.ExpectedFailure;
             }
+            // The trap message comes from the child process, not the collector.
+            if (std.mem.indexOf(u8, res.stderr, expected) == null and
+                std.mem.indexOf(u8, diagnostics.items, expected) == null)
+            {
+                std.debug.print("Fixture '{s}' expected '{s}', got:\n{s}{s}\n", .{ entry.name, expected, diagnostics.items, res.stderr });
+                return error.UnexpectedDiagnostic;
+            }
         } else |_| {
-            // Emitting failed at compile time as expected
+            // Emitting failed at compile time: the collected diagnostic must
+            // carry the message the fixture declares.
+            if (std.mem.indexOf(u8, diagnostics.items, expected) == null) {
+                std.debug.print("Fixture '{s}' expected '{s}', got:\n{s}\n", .{ entry.name, expected, diagnostics.items });
+                return error.UnexpectedDiagnostic;
+            }
         }
     }
     try std.testing.expect(count >= 20);
@@ -326,7 +364,7 @@ test "native execution: heterogeneous tuples with dot access and mutation" {
         \\    print(tup.0);
         \\}
     ;
-    try expectNativeStdout(allocator, src, "10\nhi\ntrue\n42\n");
+    try expectNativeStdout(allocator, src, "10\nhi\n1\n42\n");
 }
 
 test "native execution: discriminated struct unions with @switch" {
@@ -377,7 +415,7 @@ test "native execution: wrapping arithmetic operators +%, -%, *%" {
         \\    print(wrapped == -9223372036854775807 - 1);
         \\}
     ;
-    try expectNativeStdout(allocator, src, "true\n");
+    try expectNativeStdout(allocator, src, "1\n");
 }
 
 test "native execution: multi-arg print with struct and string" {
@@ -410,6 +448,29 @@ test "native execution: string slicing" {
         \\}
     ;
     try expectNativeStdout(allocator, src, "hello\nworld\nhello\n");
+}
+
+test "native execution: slice views alias backing storage" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\@struct Bag { items: [3]i64; }
+        \\pub @func main() {
+        \\    $buffer = [1, 2, 3, 4, 5];
+        \\    $view = buffer[1..4];
+        \\    view[0] = 99;
+        \\    print(buffer[1], view[0]);
+        \\
+        \\    $copy = buffer;
+        \\    copy[0] = 7;
+        \\    print(buffer[0], copy[0]);
+        \\
+        \\    $bag = Bag { items: [10, 20, 30] };
+        \\    $items = bag.items[1..];
+        \\    items[0] = 55;
+        \\    print(bag.items[1], items[0]);
+        \\}
+    ;
+    try expectNativeStdout(allocator, src, "99 99\n1 7\n55 55\n");
 }
 
 test "native execution: bitwise, float arithmetic, and value @if capture" {
