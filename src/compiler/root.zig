@@ -890,6 +890,7 @@ fn registerExterns(state: *state_mod.CompilerState, doc: *ast.Document) !void {
             .is_c_variadic = ext.is_c_variadic,
             .is_public = ext.is_public,
             .loc = ext.loc,
+            .node = s,
         };
 
         var it = state.externs.valueIterator();

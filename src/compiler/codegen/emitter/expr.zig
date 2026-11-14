@@ -189,11 +189,124 @@ fn emitCallArguments(
     try args_buf.append(a, rest_slice);
 }
 
+fn externIsBytePtr(t: ir.Type) bool {
+    const p = ir.peelDefined(t);
+    return p == .ptr and ir.peelDefined(p.ptr.*) == .u8;
+}
+
+fn isStringLiteralExpr(node: *ast_mod.Node) bool {
+    return node.* == .literal and node.literal.literal_type == .string;
+}
+
+fn isIntLiteralExpr(node: *ast_mod.Node) bool {
+    if (isIntLiteral(node)) return true;
+    return node.* == .unary and std.mem.eql(u8, node.unary.operator, "-") and isIntLiteral(node.unary.arg);
+}
+
+fn emitExternBytePtrArg(self: *Emitter, arg: *ast_mod.Node) ![]const u8 {
+    const a = self.arena.allocator();
+    if (isNullLiteral(arg)) return "null";
+    const at = try self.valueType(arg);
+    if (at.kind == .pointer) return emitExpr(self, arg);
+    if (at.kind == .string or at.kind == .slice or at.kind == .array) {
+        const code = try emitExpr(self, arg);
+        return std.fmt.allocPrint(a, "@constCast(&({s})[0])", .{code});
+    }
+    return emitExpr(self, arg);
+}
+
+fn emitExternFixedArg(self: *Emitter, node: *ast_mod.Node, arg: *ast_mod.Node, ct: state_mod.CType) ![]const u8 {
+    switch (ct) {
+        .scalar => {
+            const target = try self.externCTypeValType(node, ct);
+            return emitStrongCoercion(self, arg, target);
+        },
+        .c_str, .optional_c_str => return emitExpr(self, arg),
+        .ptr => |t| {
+            if (externIsBytePtr(t)) return emitExternBytePtrArg(self, arg);
+            return emitExpr(self, arg);
+        },
+        .optional_ptr => |payload| {
+            if (externIsBytePtr(payload)) return emitExternBytePtrArg(self, arg);
+            return emitExpr(self, arg);
+        },
+    }
+}
+
+fn emitExternVararg(self: *Emitter, node: *ast_mod.Node, arg: *ast_mod.Node) ![]const u8 {
+    const a = self.arena.allocator();
+    if (isNullLiteral(arg)) return "@as(?*anyopaque, null)";
+    if (isStringLiteralExpr(arg)) return emitExpr(self, arg);
+    const code = try emitExpr(self, arg);
+    if (isIntLiteralExpr(arg)) return std.fmt.allocPrint(a, "@as(i32, {s})", .{code});
+
+    const at = try self.valueType(arg);
+    if (at.may_error) {
+        return self.failAt(node, "native backend cannot pass an error union as an extern variadic argument", .{});
+    }
+    switch (at.kind) {
+        .int => {
+            const w = at.width orelse {
+                return self.failAt(node, "native backend cannot promote extern variadic type '{s}'", .{at.display});
+            };
+            return switch (w) {
+                .i8, .i16, .u8, .u16 => std.fmt.allocPrint(a, "@as(i32, @intCast({s}))", .{code}),
+                .i32, .u32, .i64, .u64, .isize, .usize => code,
+                else => code,
+            };
+        },
+        .float => {
+            const w = at.width orelse return code;
+            if (w == .f32) return std.fmt.allocPrint(a, "@as(f64, @floatCast({s}))", .{code});
+            return code;
+        },
+        .bool => return std.fmt.allocPrint(a, "@as(i32, @intFromBool({s}))", .{code}),
+        .pointer => return code,
+        .optional => {
+            const payload = at.payload orelse {
+                return self.failAt(node, "native backend cannot pass optional extern variadic type '{s}'", .{at.display});
+            };
+            if (payload.kind == .pointer) return code;
+            return self.failAt(node, "native backend cannot pass optional extern variadic type '{s}'", .{at.display});
+        },
+        .string, .slice, .array => {
+            return self.failAt(node, "cannot pass runtime string or slice '{s}' as an extern variadic argument; pass a string literal or c_str", .{at.display});
+        },
+        else => return self.failAt(node, "native backend cannot pass '{s}' as an extern variadic argument", .{at.display}),
+    }
+}
+
+fn emitExternCall(
+    self: *Emitter,
+    node: *ast_mod.Node,
+    c: *const ast_mod.Call,
+    source_name: []const u8,
+) ![]const u8 {
+    const a = self.arena.allocator();
+    const ext = self.state.externs.get(source_name) orelse {
+        return self.failAt(node, "native backend cannot resolve extern '{s}'", .{source_name});
+    };
+    var args: std.ArrayList([]const u8) = .empty;
+    for (c.args, 0..) |arg, i| {
+        if (i < ext.params.len) {
+            try args.append(a, try emitExternFixedArg(self, node, arg, ext.params[i].ctype));
+        } else {
+            try args.append(a, try emitExternVararg(self, node, arg));
+        }
+    }
+    const symbol = try self.zigIdentifier(ext.symbol);
+    return std.fmt.allocPrint(a, "{s}({s})", .{ symbol, try std.mem.join(a, ", ", args.items) });
+}
+
 pub fn emitCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) anyerror![]const u8 {
     const a = self.arena.allocator();
 
     if (self.state.type_call_results.get(node)) |disp| {
         return self.zigString(disp);
+    }
+
+    if (self.state.extern_calls.get(node)) |extern_name| {
+        return emitExternCall(self, node, c, extern_name);
     }
 
     if (c.callee.* == .primary and std.mem.startsWith(u8, c.callee.primary.name, "@")) {

@@ -438,3 +438,71 @@ test "native execution: bitwise, float arithmetic, and value @if capture" {
     ;
     try expectNativeStdout(allocator, src, "1 7 5 16 8\n5 2\nhas val 42\n99\n");
 }
+
+test "emitter: extern declarations and direct C calls" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\pub @extern "c" @func puts(s: c_str): i32;
+        \\@extern "c" @func printf(fmt: c_str, ...): i32;
+        \\@extern "c" @func getenv(name: c_str): ?c_str;
+        \\pub @func main() {
+        \\    $r: i32 = puts("hello");
+        \\    $v: i32 = printf("%d\n", 42);
+        \\    $e: ?c_str = getenv("PATH");
+        \\}
+    ;
+    try expectNativeEmitContains(allocator, src, "extern fn puts(s: [*:0]const u8) i32;");
+    try expectNativeEmitContains(allocator, src, "extern fn printf(fmt: [*:0]const u8, ...) i32;");
+    try expectNativeEmitContains(allocator, src, "extern fn getenv(name: [*:0]const u8) ?[*:0]const u8;");
+    try expectNativeEmitContains(allocator, src, "puts(\"hello\")");
+    try expectNativeEmitContains(allocator, src, "printf(\"%d\\n\", @as(i32, 42))");
+}
+
+test "native execution: extern calls, C returns, and variadic promotion" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\pub @extern "c" @func printf(fmt: c_str, ...): i32;
+        \\@extern "c" @func strlen(s: c_str): usize;
+        \\@extern "c" @func getpid(): i32;
+        \\@extern "c" @func malloc(size: usize): ?*u8;
+        \\@extern "c" @func free(p: ?*u8): void;
+        \\pub @func main() {
+        \\    $n: usize = strlen("hello");
+        \\    print(n);
+        \\    $pid: i32 = getpid();
+        \\    print(pid > 0);
+        \\    $p: ?*u8 = malloc(8);
+        \\    free(p);
+        \\    printf("hello %s %d\n", "world", 42);
+        \\    $f: f32 = 1.5;
+        \\    printf("f=%f\n", f);
+        \\    $a: i8 = @as(i8, -5);
+        \\    $b: u8 = @as(u8, 7);
+        \\    printf("i=%d u=%d b=%d\n", a, b, true);
+        \\}
+    ;
+    try expectNativeStdout(allocator, src, "5\ntrue\nhello world 42\nf=1.500000\ni=-5 u=7 b=1\n");
+}
+
+test "native execution: extern byte buffer and optional c_str" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\pub @extern "c" @func printf(fmt: c_str, ...): i32;
+        \\@extern "c" @func getenv(name: c_str): ?c_str;
+        \\@extern "c" @func memset(p: *u8, c: i32, n: usize): ?*u8;
+        \\pub @func main() {
+        \\    $buf: [4]u8 = [0, 0, 0, 0];
+        \\    _ = memset(buf, 65, 4);
+        \\    printf("%c%c%c%c\n", buf[0], buf[1], buf[2], buf[3]);
+        \\    $env: ?c_str = getenv("PATH");
+        \\    @if (env) |v| {
+        \\        $zero: usize = 0;
+        \\        printf("env=%d\n", strlen(v) > zero);
+        \\    } @else {
+        \\        print("missing");
+        \\    }
+        \\}
+        \\@extern "c" @func strlen(s: c_str): usize;
+    ;
+    try expectNativeStdout(allocator, src, "AAAA\nenv=1\n");
+}

@@ -446,6 +446,43 @@ pub fn emitGlobalDecls(self: *Emitter) !void {
     if (self.globals.count() > 0) try self.writer.writeAll("\n");
 }
 
+pub fn emitExternDecls(self: *Emitter) !void {
+    const a = self.arena.allocator();
+    var infos: std.ArrayList(*const state_mod.ExternInfo) = .empty;
+    var it = self.state.externs.valueIterator();
+    while (it.next()) |info| try infos.append(a, info);
+    std.mem.sort(*const state_mod.ExternInfo, infos.items, {}, struct {
+        fn lessThan(_: void, lhs: *const state_mod.ExternInfo, rhs: *const state_mod.ExternInfo) bool {
+            const by_symbol = std.mem.order(u8, lhs.symbol, rhs.symbol);
+            if (by_symbol != .eq) return by_symbol == .lt;
+            return std.mem.lessThan(u8, lhs.source_name, rhs.source_name);
+        }
+    }.lessThan);
+
+    var seen = std.StringHashMap(void).init(a);
+    var emitted = false;
+    for (infos.items) |info| {
+        if (seen.contains(info.symbol)) continue;
+        try seen.put(info.symbol, {});
+        emitted = true;
+
+        const symbol = try self.zigIdentifier(info.symbol);
+        try self.writer.print("extern fn {s}(", .{symbol});
+        for (info.params, 0..) |param, i| {
+            if (i > 0) try self.writer.writeAll(", ");
+            const param_vt = try self.externCTypeValType(info.node, param.ctype);
+            try self.writer.print("{s}: {s}", .{ try self.zigIdentifier(param.name), param_vt.zig });
+        }
+        if (info.is_c_variadic) {
+            if (info.params.len > 0) try self.writer.writeAll(", ");
+            try self.writer.writeAll("...");
+        }
+        const ret_vt = try self.externCTypeValType(info.node, info.ret);
+        try self.writer.print(") {s};\n", .{ret_vt.zig});
+    }
+    if (emitted) try self.writer.writeAll("\n");
+}
+
 pub fn emitTopLevel(self: *Emitter) !void {
     self.cur_ret = .{ .display = "void", .clean = "void", .kind = .void, .zig = "void" };
     self.current_trace_func = null;

@@ -15,7 +15,7 @@ pub const CType = union(enum) {
     optional_c_str,
     /// `*T`; the stored type is the full `ir.ptr`.
     ptr: ir.Type,
-    /// `?*T`; the stored type is the pointer payload (not the optional union).
+    /// `?*T`; the stored type is the full `ir.ptr` (not the optional union).
     optional_ptr: ir.Type,
 };
 
@@ -35,6 +35,8 @@ pub const ExternInfo = struct {
     is_c_variadic: bool,
     is_public: bool,
     loc: ast.Location,
+    /// The `extern_decl` statement, retained for emitter diagnostics and type mapping.
+    node: *ast.Node,
 };
 
 pub fn cTypeEquals(a: CType, b: CType) bool {
