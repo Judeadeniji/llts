@@ -30,8 +30,12 @@ pub const ExternInfo = struct {
     /// Untouched link symbol.
     symbol: []const u8,
     abi: []const u8,
+    kind: ast.ExternKind,
     params: []ExternParam,
+    /// Function return type; `void` for data symbols.
     ret: CType,
+    /// C type of a data symbol.
+    data_type: ?CType = null,
     is_c_variadic: bool,
     is_public: bool,
     loc: ast.Location,
@@ -492,10 +496,18 @@ pub const CompilerState = struct {
         return .{ .allocator = self.type_arena.allocator() };
     }
 
-    /// Runtime builtins and native externs are terminal callables: they have no
-    /// LLTS body to typecheck, reach, or emit.
+    /// Runtime builtins and native extern functions are terminal callables: they
+    /// have no LLTS body to typecheck, reach, or emit.
     pub fn isNativeCallable(self: *const CompilerState, name: []const u8) bool {
-        return self.native_globals.contains(name) or self.externs.contains(name);
+        if (self.native_globals.contains(name)) return true;
+        const ext = self.externs.get(name) orelse return false;
+        return ext.kind == .func;
+    }
+
+    /// True when `name` is a native extern data symbol.
+    pub fn isExternData(self: *const CompilerState, name: []const u8) bool {
+        const ext = self.externs.get(name) orelse return false;
+        return ext.kind == .data;
     }
 };
 

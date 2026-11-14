@@ -1,0 +1,5 @@
+pub @const $lib = @import("./extern_private_lib.lls");
+
+pub @func main() {
+    lib.optind = 55;
+}

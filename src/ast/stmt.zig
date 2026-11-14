@@ -103,8 +103,7 @@ pub const Switch = struct {
 pub const ExternKind = enum { func, data };
 
 /// `@extern "c" @func name(params): ret;`
-/// `@extern "c" name: type;` (data form; parsed so tooling can see it, but
-/// rejected during registration because extern data symbols are unsupported).
+/// `@extern "c" name: type;` (data form).
 pub const Extern = struct {
     /// Source name; module-qualified later.
     name: []const u8,
@@ -117,7 +116,7 @@ pub const Extern = struct {
     params: []Param,
     /// null means `void`.
     return_type: ?*Node = null,
-    /// Set only for the rejected data form.
+    /// Set only for the data form.
     data_type: ?*Node = null,
     is_c_variadic: bool = false,
     is_public: bool = false,

@@ -835,13 +835,23 @@ fn externNameConflicts(state: *state_mod.CompilerState, name: []const u8) bool {
 }
 
 fn externSignaturesEqual(a: state_mod.ExternInfo, b: state_mod.ExternInfo) bool {
-    if (a.is_c_variadic != b.is_c_variadic) return false;
-    if (a.params.len != b.params.len) return false;
-    if (!state_mod.cTypeEquals(a.ret, b.ret)) return false;
-    for (a.params, b.params) |ap, bp| {
-        if (!state_mod.cTypeEquals(ap.ctype, bp.ctype)) return false;
+    if (a.kind != b.kind) return false;
+    switch (a.kind) {
+        .func => {
+            if (a.is_c_variadic != b.is_c_variadic) return false;
+            if (a.params.len != b.params.len) return false;
+            if (!state_mod.cTypeEquals(a.ret, b.ret)) return false;
+            for (a.params, b.params) |ap, bp| {
+                if (!state_mod.cTypeEquals(ap.ctype, bp.ctype)) return false;
+            }
+            return true;
+        },
+        .data => {
+            const at = a.data_type orelse return false;
+            const bt = b.data_type orelse return false;
+            return state_mod.cTypeEquals(at, bt);
+        },
     }
-    return true;
 }
 
 /// Validate and register native `@extern` declarations. Runs after modules are
@@ -871,39 +881,47 @@ fn registerExterns(state: *state_mod.CompilerState, doc: *ast.Document) !void {
         if (!std.mem.eql(u8, ext.abi, "c")) {
             return fail(state, path, line, column, "Unsupported extern ABI '{s}'; only \"c\" is supported", .{ext.abi});
         }
-        if (ext.kind == .data) {
-            return fail(state, path, line, column, "Extern data symbols are not supported yet ('{s}')", .{ext.symbol});
-        }
         if (std.mem.eql(u8, ext.symbol, "main")) {
             return fail(state, path, line, column, "Extern symbol 'main' is reserved for the program entry point", .{});
         }
         if (externNameConflicts(state, ext.name)) {
             return fail(state, path, line, column, "Extern '{s}' conflicts with an existing declaration", .{ext.name});
         }
-        if (ext.is_c_variadic and ext.params.len == 0) {
-            return fail(state, path, line, column, "Variadic extern function '{s}' requires at least one fixed parameter", .{ext.name});
-        }
-
-        const params = try state.allocator.alloc(state_mod.ExternParam, ext.params.len);
-        errdefer state.allocator.free(params);
-        for (ext.params, 0..) |param, i| {
-            for (ext.params[0..i]) |prev| {
-                if (std.mem.eql(u8, prev.name, param.name)) {
-                    return fail(state, path, line, column, "Duplicate parameter name '{s}' in extern declaration '{s}'", .{ param.name, ext.name });
+        var params: []state_mod.ExternParam = &.{};
+        var ret: state_mod.CType = .{ .scalar = ir.TVoid };
+        var data_type: ?state_mod.CType = null;
+        switch (ext.kind) {
+            .func => {
+                if (ext.is_c_variadic and ext.params.len == 0) {
+                    return fail(state, path, line, column, "Variadic extern function '{s}' requires at least one fixed parameter", .{ext.name});
                 }
-            }
-            params[i] = .{
-                .name = param.name,
-                .ctype = try from_ast.resolveExternCType(state, param.type_annotation, false, loc),
-            };
+                params = try state.allocator.alloc(state_mod.ExternParam, ext.params.len);
+                errdefer state.allocator.free(params);
+                for (ext.params, 0..) |param, i| {
+                    for (ext.params[0..i]) |prev| {
+                        if (std.mem.eql(u8, prev.name, param.name)) {
+                            return fail(state, path, line, column, "Duplicate parameter name '{s}' in extern declaration '{s}'", .{ param.name, ext.name });
+                        }
+                    }
+                    params[i] = .{
+                        .name = param.name,
+                        .ctype = try from_ast.resolveExternCType(state, param.type_annotation, .parameter, loc),
+                    };
+                }
+                ret = try from_ast.resolveExternCType(state, ext.return_type, .return_type, loc);
+            },
+            .data => {
+                data_type = try from_ast.resolveExternCType(state, ext.data_type, .data, loc);
+            },
         }
-        const ret = try from_ast.resolveExternCType(state, ext.return_type, true, loc);
         const info = state_mod.ExternInfo{
             .source_name = ext.name,
             .symbol = ext.symbol,
             .abi = ext.abi,
+            .kind = ext.kind,
             .params = params,
             .ret = ret,
+            .data_type = data_type,
             .is_c_variadic = ext.is_c_variadic,
             .is_public = ext.is_public,
             .loc = ext.loc,

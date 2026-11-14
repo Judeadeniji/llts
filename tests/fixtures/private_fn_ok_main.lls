@@ -1,0 +1,5 @@
+pub @const $lib = @import("./private_fn_lib.lls");
+
+pub @func main() {
+    print(lib.visible());
+}

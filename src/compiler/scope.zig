@@ -119,7 +119,8 @@ pub fn resolveVariable(state: *CompilerState, name: []const u8) !void {
         state.global_vars.contains(name) or
         state.global_consts.contains(name) or
         state.functions.contains(name) or
-        state.isNativeCallable(name))
+        state.isNativeCallable(name) or
+        state.isExternData(name))
     {
         // Variable is known
     } else {

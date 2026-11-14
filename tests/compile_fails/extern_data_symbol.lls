@@ -1,2 +1,2 @@
-@extern "c" errno: i32;
+@extern "c" errno: string;
 pub @func main() {}

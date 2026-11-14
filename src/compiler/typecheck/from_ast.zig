@@ -160,11 +160,31 @@ fn externTypeDisplay(state: *state_mod.CompilerState, node: *ast.Node, t: ir.Typ
     return (typeAstToDisplay(node, state) catch null) orelse ir.displayType(t);
 }
 
+/// Where an extern C type appears; controls `void` and missing-type handling.
+pub const ExternTypeRole = enum { parameter, return_type, data };
+
+/// Convert a registered C type back to IR (data reads, emitter binding types).
+pub fn externCTypeToIr(ta: ir.TypeAlloc, ct: state_mod.CType) !ir.Type {
+    return switch (ct) {
+        .scalar => |t| t,
+        .c_str => ir.TCStr,
+        .optional_c_str => blk: {
+            var arms = [_]ir.Type{ ir.TCStr, ir.TNull };
+            break :blk try ta.unionType(&arms);
+        },
+        .ptr => |t| t,
+        .optional_ptr => |t| blk: {
+            var arms = [_]ir.Type{ t, ir.TNull };
+            break :blk try ta.unionType(&arms);
+        },
+    };
+}
+
 fn ctypeFromIr(
     state: *state_mod.CompilerState,
     node: *ast.Node,
     t: ir.Type,
-    is_return: bool,
+    role: ExternTypeRole,
     loc: ast.Location,
 ) FromAstError!state_mod.CType {
     if (ir.optionalPayload(t)) |payload| {
@@ -200,8 +220,11 @@ fn ctypeFromIr(
         return .{ .ptr = t };
     }
     if (t == .void) {
-        if (is_return) return .{ .scalar = t };
-        return externFail(state, loc, "Extern parameters cannot have type 'void'", .{});
+        return switch (role) {
+            .return_type => .{ .scalar = t },
+            .parameter => externFail(state, loc, "Extern parameters cannot have type 'void'", .{}),
+            .data => externFail(state, loc, "Extern data symbols cannot have type 'void'", .{}),
+        };
     }
     if (isExternScalar(t)) return .{ .scalar = t };
     return externFail(
@@ -212,20 +235,23 @@ fn ctypeFromIr(
     );
 }
 
-/// Resolve and validate one extern parameter/return type.
+/// Resolve and validate one extern parameter/return/data type.
 pub fn resolveExternCType(
     state: *state_mod.CompilerState,
     node: ?*ast.Node,
-    is_return: bool,
+    role: ExternTypeRole,
     loc: ast.Location,
 ) FromAstError!state_mod.CType {
     const n = node orelse {
-        if (is_return) return .{ .scalar = ir.TVoid };
-        return externFail(state, loc, "Extern parameters require an explicit type", .{});
+        return switch (role) {
+            .return_type => .{ .scalar = ir.TVoid },
+            .parameter => externFail(state, loc, "Extern parameters require an explicit type", .{}),
+            .data => externFail(state, loc, "Extern data symbols require an explicit type", .{}),
+        };
     };
     try checkExternTypeSyntax(state, n, loc);
     const t = try typeFromAst(n, state, state.typeAlloc());
-    return ctypeFromIr(state, n, t, is_return, loc);
+    return ctypeFromIr(state, n, t, role, loc);
 }
 
 /// Intrinsics whose result is a `type` value.

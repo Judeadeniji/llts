@@ -593,7 +593,8 @@ fn requireKnownIdentifier(state: *CompilerState, env: *typecheck_root.Env, node:
     if (node.* != .primary or node.primary.kind != .identifier) return;
     const name = node.primary.name;
     if (env.lookup(name) != null) return;
-    if (state.externs.contains(name)) {
+    if (state.externs.get(name)) |ext| {
+        if (ext.kind == .data) return;
         return compile_errors.compileFailFmt(state, "extern function '{s}' can only be called directly", .{ir.cleanTypeName(name)});
     }
     if (state.global_vars.contains(name) or state.global_consts.contains(name) or
@@ -674,7 +675,10 @@ fn tryResolveNameOfDecl(state: *CompilerState, node: *ast.Node) ?[]const u8 {
             if (state.global_consts.contains(name)) return name;
             if (state.functions.contains(name)) return name;
             if (state.native_globals.contains(name)) return name;
-            if (state.externs.contains(name)) return null;
+            if (state.externs.get(name)) |ext| {
+                if (ext.kind == .data) return name;
+                return null;
+            }
             // Type declarations used as expressions.
             if (state.structs.contains(name)) return name;
             if (state.enums.contains(name)) return name;
@@ -775,7 +779,9 @@ pub fn tryTypeCastCall(state: *CompilerState, c: *const ast.Call) !?*ast.Node {
 fn isCallableName(state: *CompilerState, name: []const u8) bool {
     if (state.functions.contains(name)) return true;
     if (state.chunk.functions.contains(name)) return true;
-    if (state.externs.contains(name)) return true;
+    if (state.externs.get(name)) |ext| {
+        if (ext.kind == .func) return true;
+    }
     if (state.native_globals.contains(name)) return true;
     return false;
 }

@@ -1,0 +1,14 @@
+@extern "c" @func getpid(): i32;
+@extern "c" optind: i32;
+
+pub @func ownPid(): i32 {
+    return getpid();
+}
+
+pub @func ownOptind(): i32 {
+    return optind;
+}
+
+pub @func setOptind(value: i32) {
+    optind = value;
+}

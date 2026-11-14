@@ -491,18 +491,29 @@ pub fn emitExternDecls(self: *Emitter) !void {
         emitted = true;
 
         const symbol = try self.zigIdentifier(info.symbol);
-        try self.writer.print("extern fn {s}(", .{symbol});
-        for (info.params, 0..) |param, i| {
-            if (i > 0) try self.writer.writeAll(", ");
-            const param_vt = try self.externCTypeValType(info.node, param.ctype);
-            try self.writer.print("{s}: {s}", .{ try self.zigIdentifier(param.name), param_vt.zig });
+        switch (info.kind) {
+            .func => {
+                try self.writer.print("extern fn {s}(", .{symbol});
+                for (info.params, 0..) |param, i| {
+                    if (i > 0) try self.writer.writeAll(", ");
+                    const param_vt = try self.externCTypeValType(info.node, param.ctype);
+                    try self.writer.print("{s}: {s}", .{ try self.zigIdentifier(param.name), param_vt.zig });
+                }
+                if (info.is_c_variadic) {
+                    if (info.params.len > 0) try self.writer.writeAll(", ");
+                    try self.writer.writeAll("...");
+                }
+                const ret_vt = try self.externCTypeValType(info.node, info.ret);
+                try self.writer.print(") {s};\n", .{ret_vt.zig});
+            },
+            .data => {
+                const dt = info.data_type orelse {
+                    return self.failAt(info.node, "native backend cannot represent extern data '{s}'", .{info.symbol});
+                };
+                const data_vt = try self.externCTypeValType(info.node, dt);
+                try self.writer.print("extern var {s}: {s};\n", .{ symbol, data_vt.zig });
+            },
         }
-        if (info.is_c_variadic) {
-            if (info.params.len > 0) try self.writer.writeAll(", ");
-            try self.writer.writeAll("...");
-        }
-        const ret_vt = try self.externCTypeValType(info.node, info.ret);
-        try self.writer.print(") {s};\n", .{ret_vt.zig});
     }
     if (emitted) try self.writer.writeAll("\n");
 }

@@ -1078,8 +1078,11 @@ fn lookupModuleDeclExact(state: *state_mod.CompilerState, ta: ir.TypeAlloc, mod_
 
     var qbuf: [512]u8 = undefined;
     const q = std.fmt.bufPrint(&qbuf, "{s}::{s}", .{ mod_path, member }) catch return null;
-    if (state.externs.contains(q)) {
-        return compiler_errors.compileFailFmt(state, "extern function '{s}' can only be called directly", .{ir.cleanTypeName(q)});
+    if (state.externs.get(q)) |ext| {
+        return switch (ext.kind) {
+            .data => try externCTypeToIr(ta, ext.data_type.?),
+            .func => compiler_errors.compileFailFmt(state, "extern function '{s}' can only be called directly", .{ir.cleanTypeName(q)}),
+        };
     }
     if (preferredGlobalIr(state, q)) |t| return t;
     if (state.chunk.exports.contains(q) or state.global_vars.contains(q) or state.global_consts.contains(q)) {
@@ -1753,8 +1756,11 @@ fn inferExprInner(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, 
 fn inferPrimaryExpr(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, p: ast.Primary) TypecheckError!ir.Type {
     if (p.kind == .identifier or p.kind == .register) {
         if (env.lookup(p.name)) |t| return t;
-        if (state.externs.contains(p.name)) {
-            return compiler_errors.compileFailFmt(state, "extern function '{s}' can only be called directly", .{ir.cleanTypeName(p.name)});
+        if (state.externs.get(p.name)) |ext| {
+            return switch (ext.kind) {
+                .data => try externCTypeToIr(ta, ext.data_type.?),
+                .func => compiler_errors.compileFailFmt(state, "extern function '{s}' can only be called directly", .{ir.cleanTypeName(p.name)}),
+            };
         }
         if (state.global_type_irs.get(p.name)) |gt| {
             if (gt != .unknown) return gt;
@@ -1900,10 +1906,13 @@ fn inferMemberExpr(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc,
         if (ir.structNameOf(obj)) |sname| {
             if (std.mem.startsWith(u8, sname, "module:")) {
                 const mod_path = sname["module:".len..];
+                const mod_display = if (m.object.* == .primary) m.object.primary.name else mod_path;
+                if (!path.moduleMemberIsExported(state, mod_path, m.property.primary.name)) {
+                    return compiler_errors.compileFailFmt(state, "'{s}' has no export '{s}'", .{ mod_display, m.property.primary.name });
+                }
                 if (try resolveModuleMemberType(state, ta, mod_path, m.property.primary.name)) |mt| {
                     return mt;
                 }
-                const mod_display = if (m.object.* == .primary) m.object.primary.name else mod_path;
                 return compiler_errors.compileFailFmt(state, "'{s}' has no export '{s}'", .{ mod_display, m.property.primary.name });
             }
             if (from_ast.lookupStruct(state, sname)) |def| {
@@ -2103,6 +2112,12 @@ fn inferAssignmentExpr(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAl
         // the variable (`x = null` inside `if (x != null)`).
         if (env.lookupDeclared(a.left.primary.name)) |existing| {
             try requireAssignFrom(state, val, existing, "assignment", a.right);
+        } else if (state.externs.get(a.left.primary.name)) |ext| {
+            if (ext.kind == .data) {
+                const target = try externCTypeToIr(ta, ext.data_type.?);
+                try requireAssignFrom(state, val, target, "assignment to extern data symbol", a.right);
+                try recordExprType(state, a.left, target);
+            }
         }
     } else if (a.left.* == .member) {
         const mem = a.left.member;
@@ -2140,10 +2155,16 @@ fn inferAssignmentExpr(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAl
             } else if (ir.structNameOf(obj)) |sname| {
                 if (std.mem.startsWith(u8, sname, "module:")) {
                     const mod_path = sname["module:".len..];
+                    const mod_display = if (mem.object.* == .primary) mem.object.primary.name else mod_path;
+                    if (!path.moduleMemberIsExported(state, mod_path, mem.property.primary.name)) {
+                        return compiler_errors.compileFailFmt(state, "'{s}' has no export '{s}'", .{ mod_display, mem.property.primary.name });
+                    }
                     // A module may write another module's exported *mutable*
                     // global (`internal.defaultOutput = bridge`); everything
                     // else reachable through the namespace is read-only.
-                    if (path.moduleMemberIsMutableGlobal(state, mod_path, mem.property.primary.name)) {
+                    if (path.moduleMemberIsMutableGlobal(state, mod_path, mem.property.primary.name) or
+                        path.moduleMemberIsExternData(state, mod_path, mem.property.primary.name))
+                    {
                         if (try resolveModuleMemberType(state, ta, mod_path, mem.property.primary.name)) |mt| {
                             try recordExprType(state, a.left, mt);
                             try requireAssignFrom(state, val, mt, "assignment to field", a.right);
@@ -3013,6 +3034,9 @@ fn inferExternCall(
     name: []const u8,
     ext: *const state_mod.ExternInfo,
 ) TypecheckError!ir.Type {
+    if (ext.kind == .data) {
+        return compiler_errors.compileFailFmt(state, "extern data symbol '{s}' is not callable", .{ir.cleanTypeName(name)});
+    }
     if (ext.is_c_variadic) {
         if (c.args.len < ext.params.len) {
             return compiler_errors.compileFailFmt(
@@ -3051,6 +3075,15 @@ fn inferCall(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, call_
     }
 
     if (resolveCalleeName(state, c)) |callee_name| {
+        if (c.callee.* == .member and c.callee.member.property.* == .primary) {
+            const mem = &c.callee.member;
+            if (path.tryResolveStaticPath(state, mem.object) catch null) |mod_path| {
+                if (!path.moduleMemberIsExported(state, mod_path, mem.property.primary.name)) {
+                    const mod_display = if (mem.object.* == .primary) mem.object.primary.name else mod_path;
+                    return compiler_errors.compileFailFmt(state, "'{s}' has no export '{s}'", .{ mod_display, mem.property.primary.name });
+                }
+            }
+        }
         if (state.externs.getPtr(callee_name)) |ext| {
             return try inferExternCall(state, env, ta, call_node, c, callee_name, ext);
         }

@@ -72,6 +72,50 @@ fn runNativeSource(allocator: std.mem.Allocator, source: []const u8) !struct { s
     return .{ .stdout = stdout, .stderr = stderr, .code = code };
 }
 
+const NativeFileResult = struct { stdout: []u8, stderr: []u8, code: u8 };
+
+fn runNativeFile(allocator: std.mem.Allocator, path: []const u8) !NativeFileResult {
+    var child = std.process.Child.init(&.{ "zig-out/bin/llts", "run", path }, allocator);
+    child.stdout_behavior = .Pipe;
+    child.stderr_behavior = .Pipe;
+    try child.spawn();
+    const stdout = try child.stdout.?.readToEndAlloc(allocator, 1024 * 1024);
+    errdefer allocator.free(stdout);
+    const stderr = try child.stderr.?.readToEndAlloc(allocator, 1024 * 1024);
+    errdefer allocator.free(stderr);
+    const term = try child.wait();
+    const code: u8 = switch (term) {
+        .Exited => |c| @intCast(c),
+        else => 1,
+    };
+    return .{ .stdout = stdout, .stderr = stderr, .code = code };
+}
+
+fn expectNativeFileFailure(allocator: std.mem.Allocator, path: []const u8, needle: []const u8) !void {
+    const res = try runNativeFile(allocator, path);
+    defer allocator.free(res.stdout);
+    defer allocator.free(res.stderr);
+    if (res.code == 0) {
+        std.debug.print("Expected native compile failure for {s}, got success:\n{s}\n", .{ path, res.stdout });
+        return error.ExpectedCompileFailure;
+    }
+    if (std.mem.indexOf(u8, res.stderr, needle) == null) {
+        std.debug.print("Expected stderr to contain '{s}', got:\n{s}\n", .{ needle, res.stderr });
+        return error.UnexpectedDiagnostic;
+    }
+}
+
+fn expectNativeFileStdout(allocator: std.mem.Allocator, path: []const u8, expected_stdout: []const u8) !void {
+    const res = try runNativeFile(allocator, path);
+    defer allocator.free(res.stdout);
+    defer allocator.free(res.stderr);
+    if (res.code != 0) {
+        std.debug.print("Native run failed with code {d}:\n{s}\n", .{ res.code, res.stderr });
+        return error.NativeRunFailed;
+    }
+    try std.testing.expectEqualStrings(expected_stdout, res.stdout);
+}
+
 fn expectNativeStdout(allocator: std.mem.Allocator, source: []const u8, expected_stdout: []const u8) !void {
     const res = try runNativeSource(allocator, source);
     defer allocator.free(res.stdout);
@@ -592,4 +636,56 @@ test "native execution: imported pub extern links its bare symbol" {
         return error.NativeRunFailed;
     }
     try std.testing.expectEqualStrings("from-module\n", stdout);
+}
+
+test "emitter: extern data symbols emit mutable extern vars" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\@extern "c" optind: i32;
+        \\pub @func main() {
+        \\    $a: i32 = optind;
+        \\    optind = a + 1;
+        \\}
+    ;
+    try expectNativeEmitContains(allocator, src, "extern var optind: i32;");
+    try expectNativeEmitContains(allocator, src, "optind = ");
+}
+
+test "native execution: extern data reads and writes" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\@extern "c" optind: i32;
+        \\pub @func main() {
+        \\    print(@nameOf(optind));
+        \\    print(@sizeOf(@typeOf(optind)));
+        \\    optind = 123;
+        \\    $x: i32 = optind;
+        \\    print(x);
+        \\}
+    ;
+    try expectNativeStdout(allocator, src, "optind\n4\n123\n");
+}
+
+test "native execution: imported extern data reads and writes" {
+    try expectNativeFileStdout(std.testing.allocator, "tests/fixtures/extern_data_main.lls", "41\n42\n");
+}
+
+test "native compile: private extern function is not a module export" {
+    try expectNativeFileFailure(std.testing.allocator, "tests/fixtures/extern_private_fn_main.lls", "has no export 'getpid'");
+}
+
+test "native compile: private extern data is not a module export" {
+    try expectNativeFileFailure(std.testing.allocator, "tests/fixtures/extern_private_data_main.lls", "has no export 'optind'");
+}
+
+test "native compile: private functions are not module exports" {
+    try expectNativeFileFailure(std.testing.allocator, "tests/fixtures/private_fn_main.lls", "has no export 'hidden'");
+}
+
+test "native execution: public wrappers can use private functions" {
+    try expectNativeFileStdout(std.testing.allocator, "tests/fixtures/private_fn_ok_main.lls", "7\n");
+}
+
+test "native execution: public wrappers can use private externs" {
+    try expectNativeFileStdout(std.testing.allocator, "tests/fixtures/extern_private_ok_main.lls", "true\n55\n");
 }

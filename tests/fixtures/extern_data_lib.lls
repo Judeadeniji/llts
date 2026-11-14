@@ -1,0 +1,6 @@
+pub @extern "c" optind: i32;
+
+pub @func increment(): i32 {
+    optind = optind + 1;
+    return optind;
+}

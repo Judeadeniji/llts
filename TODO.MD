@@ -184,7 +184,8 @@ Discrepancies where current documentation in `docs/` differs from compiler capab
 - [x] **`@const` enforcement** — reassignment is a compile / runtime error.
 - [x] **`@const` initializers** — compile-time constant expressions only.
 - [x] **Native C extern functions** — `@extern "c" @func` with fixed signatures, `c_str`/`?c_str`, pointers, and variadic calls. VM rejects extern declarations.
-- [ ] **Extern completeness** — extern data symbols, link-symbol aliases (`@extern "c" @func puts as "puts"` or similar), and non-C ABIs (`stdcall`, `sysv`, `win64`, `zig`). Extern structs passed by value and implicit `string`→`c_str` conversion remain unplanned until a C layout model exists.
+- [x] **Native C extern data symbols** — `@extern "c" name: Type;` emits mutable `extern var` bindings, supports reads/writes and module-qualified access, and is rejected by the VM.
+- [ ] **Extern completeness** — link-symbol aliases (`@extern "c" @func puts as "puts"` or similar) and non-C ABIs (`stdcall`, `sysv`, `win64`, `zig`). Extern structs passed by value and implicit `string`→`c_str` conversion remain unplanned until a C layout model exists.
 
 ### P2 — Standard Library
 
