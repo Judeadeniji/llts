@@ -517,6 +517,26 @@ test "native execution: slice views alias backing storage" {
     try expectNativeStdout(allocator, src, "99 99\n1 7\n55 55\n");
 }
 
+test "native execution: borrowed slices may be returned from caller storage" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\@func tail(a: *[3]i64): []i64 {
+        \\    return a[1..];
+        \\}
+        \\@func id(a: []i64): []i64 {
+        \\    return a;
+        \\}
+        \\pub @func main() {
+        \\    $buffer = [1, 2, 3];
+        \\    $rest = tail(&buffer);
+        \\    print(rest[0], rest[1]);
+        \\    $same = id(buffer[0..]);
+        \\    print(same[0], same[2]);
+        \\}
+    ;
+    try expectNativeStdout(allocator, src, "2 3\n1 3\n");
+}
+
 test "native execution: bitwise, float arithmetic, and value @if capture" {
     const allocator = std.testing.allocator;
     const src =

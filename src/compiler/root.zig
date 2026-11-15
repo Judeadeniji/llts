@@ -21,6 +21,7 @@ const compile_errors = @import("../errors/compile.zig");
 const collector_mod = @import("../errors/collector.zig");
 pub const unused = @import("unused.zig");
 const binding_facts = @import("analyze/binding_facts.zig");
+const escape_facts = @import("analyze/escape.zig");
 const range_facts = @import("analyze/range.zig");
 
 pub const CompileOptions = struct {
@@ -102,6 +103,7 @@ pub fn analyze(
     state.reachability = try reachability.compute(&state, doc);
     unused.detectAndWarn(&state, doc);
     try binding_facts.analyze(&state, doc);
+    try escape_facts.analyze(&state, doc);
     try range_facts.analyze(&state, doc);
 
     return state;

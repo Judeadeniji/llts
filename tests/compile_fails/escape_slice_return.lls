@@ -1,0 +1,10 @@
+# expect: value escapes its frame region
+@func bad(): []i64 {
+    $a = [1, 2, 3];
+    return a[0..];
+}
+
+pub @func main() {
+    $s = bad();
+    print(s[0]);
+}
