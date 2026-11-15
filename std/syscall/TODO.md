@@ -103,7 +103,7 @@ which entries below are marked `[!]`.
 10. **Resolved enum members and imported extern types** were fixed on this
     branch and are prerequisites for the modules above.
 
-## Descriptors and basic I/O (`file.lls`)
+## Descriptors and basic I/O (`io.lls`)
 
 - `[x]` `read`
 - `[x]` `write`
