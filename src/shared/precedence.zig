@@ -4,6 +4,9 @@ const ops = @import("ops.zig");
 pub const PRECEDENCE = struct {
     pub fn of(op: []const u8) i32 {
         // C / Zig-ish: logical → bitwise → compare → shift → arith → power
+        // Range binds looser than every non-assignment binary operator so bounds
+        // can be ordinary expressions: `0..n + 1` is `0..(n + 1)`, not `(0..n) + 1`.
+        if (std.mem.eql(u8, op, "..")) return 1;
         if (ops.isAssignOp(op)) return 1;
         // `??` has lower precedence than `||` so that `a || b ?? c` parses
         // as `(a || b) ?? c` — matching C#, JavaScript, and Swift conventions.
@@ -23,7 +26,6 @@ pub const PRECEDENCE = struct {
             std.mem.eql(u8, op, "%") or std.mem.eql(u8, op, "**") or
             std.mem.eql(u8, op, "*%")) return 12;
         if (std.mem.eql(u8, op, "^")) return 13;
-        if (std.mem.eql(u8, op, "..")) return 14;
         return -1;
     }
 };

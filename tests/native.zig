@@ -290,6 +290,43 @@ test "native execution: arithmetic, loops, and conditions" {
     try expectNativeStdout(allocator, src, "6\n");
 }
 
+test "native execution: range bounds accept expressions" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\@func twice(x: int): int { return x * 2; }
+        \\pub @func main() {
+        \\    $n = 2;
+        \\    @for (1..n + 1) |i| {
+        \\        print(i);
+        \\    }
+        \\    @for (n - 1..twice(n) + 1) |i| {
+        \\        print(i);
+        \\    }
+        \\    $s = "abcdef";
+        \\    print(s[n - 2..n + 1]);
+        \\}
+    ;
+    try expectNativeStdout(allocator, src, "1\n2\n1\n2\n3\n4\nabc\n");
+}
+
+test "native execution: comptime range bounds accept expressions" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\@func factorial(n: i64): i64 {
+        \\    $result = 1;
+        \\    @for (1..n + 1) |i| {
+        \\        result = result * i;
+        \\    }
+        \\    return result;
+        \\}
+        \\@const $FACT_5 = @comptime factorial(5);
+        \\pub @func main() {
+        \\    print(FACT_5);
+        \\}
+    ;
+    try expectNativeStdout(allocator, src, "120\n");
+}
+
 test "native execution: defer and errdefer LIFO execution" {
     const allocator = std.testing.allocator;
     const src =
