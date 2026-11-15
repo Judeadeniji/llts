@@ -1817,6 +1817,9 @@ pub fn containsStruct(t: ValType) bool {
 pub fn resolveMemberField(self: *Emitter, node: *ast_mod.Node, m: *const ast_mod.Member) !?MemberTarget {
     if (m.property.* != .primary) return null;
     if (m.object.* == .primary and self.state.error_sets.contains(m.object.primary.name)) return null;
+    // `mod.CONST` / `mod.Type` are static paths, not fields of a value; the
+    // caller emits them through the qualified global binding.
+    if ((path_mod.tryResolveStaticPath(self.state, node) catch null) != null) return null;
     // `Enum` / `lib.Enum` names a type, and `Enum.Variant` / `lib.Enum.Variant`
     // is a constant, not a field-bearing value.
     if (from_ast.resolveEnumName(self.state, node) != null) return null;
