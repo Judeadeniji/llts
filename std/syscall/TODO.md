@@ -178,15 +178,15 @@ designed now.
 
 - `[x]` `getpid` as `process_id`
 - `[x]` `exit`, `abort`
-- `[ ]` `getppid`
-- `[ ]` `getuid`, `geteuid`, `getgid`, `getegid`
-- `[ ]` `setuid`, `seteuid`, `setgid`, `setegid`
-- `[ ]` `setreuid`, `setregid`, `setresuid`, `setresgid`
+- `[x]` `getppid`
+- `[x]` `getuid`, `geteuid`, `getgid`, `getegid`
+- `[x]` `setuid`, `seteuid`, `setgid`, `setegid`
+- `[x]` `setreuid`, `setregid`, `setresuid`, `setresgid`
 - `[ ]` `getresuid`, `getresgid`
 - `[ ]` `getgroups`, `setgroups`, `initgroups`, `getgrouplist`
-- `[ ]` `getsid`, `setsid`, `getpgid`, `setpgid`, `getpgrp`, `setpgrp`
+- `[x]` `getsid`, `setsid`, `getpgid`, `setpgid`, `getpgrp`, `setpgrp`
 - `[!]` `getlogin`, `getlogin_r` (blocker 7)
-- `[ ]` `daemon`
+- `[x]` `daemon`
 - `[ ]` `_exit` is not planned; `exit` is the public path
 
 ## Process creation and exec (`process.lls`)
@@ -199,9 +199,9 @@ designed now.
 - `[!]` `posix_spawn`, `posix_spawnp` (callback/attr structs)
 - `[ ]` `wait`, `waitpid`, `wait3`, `wait4`, `waitid` (status is an
   out-parameter; needs blocker 5 or an array workaround)
-- `[ ]` `pause`
-- `[ ]` `sleep`, `usleep`, `ualarm`, `alarm`
-- `[ ]` `sched_yield`
+- `[x]` `pause`
+- `[x]` `sleep`, `usleep`, `alarm`
+- `[x]` `sched_yield`
 
 ## Signals (`signal.lls`)
 
