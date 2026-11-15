@@ -14,4 +14,5 @@
 
 pub @const $core = @import("std/syscall/core");
 pub @const $io = @import("std/syscall/io");
+pub @const $dir = @import("std/syscall/dir");
 pub @const $process = @import("std/syscall/process");

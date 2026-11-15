@@ -1,0 +1,48 @@
+@const $sys = @import("std/syscall");
+
+pub @func main() {
+    $dir_path = ".tmpdir/native_dir_test";
+    $sub_path = ".tmpdir/native_dir_test/sub";
+    $file_path = ".tmpdir/native_dir_test/file.txt";
+    $hl_path = ".tmpdir/native_dir_test/hardlink.txt";
+    $ren_path = ".tmpdir/native_dir_test/renamed.txt";
+
+    # mkdir & mkdirat
+    sys.dir.mkdir(dir_path, sys.dir.DEFAULT_DIR_MODE)?;
+    sys.dir.mkdirat(sys.dir.AT_FDCWD, sub_path, sys.dir.DEFAULT_DIR_MODE)?;
+    print("mkdir-ok");
+
+    # write file
+    $f = sys.io.open_write(file_path)?;
+    sys.io.write_all(f, "dir-test-data")?;
+    sys.io.close(f)?;
+
+    # access checks
+    sys.dir.access(file_path, @as(i32, sys.dir.AccessMode.Exists))?;
+    sys.dir.access(file_path, @as(i32, sys.dir.AccessMode.Read))?;
+    sys.dir.eaccess(file_path, @as(i32, sys.dir.AccessMode.Read))?;
+    sys.dir.euidaccess(file_path, @as(i32, sys.dir.AccessMode.Read))?;
+    sys.dir.faccessat(sys.dir.AT_FDCWD, file_path, @as(i32, sys.dir.AccessMode.Exists), 0)?;
+    print("access-ok");
+
+    # hardlink
+    sys.dir.link(file_path, hl_path)?;
+    $f_hl = sys.io.open_read(hl_path)?;
+    $buf: [16]u8 = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    $n = sys.io.read(f_hl, buf[..])?;
+    sys.io.close(f_hl)?;
+    print(n); # 13
+
+    # rename
+    sys.dir.rename(file_path, ren_path)?;
+    $f_ren = sys.io.open_read(ren_path)?;
+    sys.io.close(f_ren)?;
+    print("rename-ok");
+
+    # cleanup
+    sys.dir.unlink(hl_path)?;
+    sys.dir.unlink(ren_path)?;
+    sys.dir.unlinkat(sys.dir.AT_FDCWD, sub_path, sys.dir.AT_REMOVEDIR)?;
+    sys.dir.rmdir(dir_path)?;
+    print("cleanup-ok");
+}

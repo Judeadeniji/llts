@@ -777,3 +777,7 @@ test "native execution: imported extern signatures naming module-local types" {
 test "native execution: syscall io pipe, pread, pwrite, fcntl, dup, truncate" {
     try expectNativeFileStdout(std.testing.allocator, "tests/fixtures/syscall_io_ops_main.lls", "7\n112\n4\n52\n2\n65\n0\n65\n5\n1\n");
 }
+
+test "native execution: syscall dir mkdir, access, link, rename, rmdir" {
+    try expectNativeFileStdout(std.testing.allocator, "tests/fixtures/syscall_dir_ops_main.lls", "mkdir-ok\naccess-ok\n13\nrename-ok\ncleanup-ok\n");
+}

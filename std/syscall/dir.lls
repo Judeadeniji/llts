@@ -1,0 +1,252 @@
+# Directory operations, links, and filesystem navigation.
+
+@const $c = @import("std/syscall/c");
+@const $core = @import("std/syscall/core");
+
+pub @const $PATH_CAPACITY: usize = c.PATH_CAPACITY;
+pub @const $DEFAULT_DIR_MODE: i32 = 493; # 0755
+
+pub @const $AT_FDCWD: core.Fd = @as(core.Fd, c.AT_FDCWD);
+pub @const $AT_SYMLINK_NOFOLLOW: i32 = c.AT_SYMLINK_NOFOLLOW;
+pub @const $AT_REMOVEDIR: i32 = c.AT_REMOVEDIR;
+pub @const $AT_EACCESS: i32 = c.AT_EACCESS;
+
+# Accessibility check modes for `access` and `faccessat`.
+pub @enum AccessMode {
+    Exists = 0,
+    Execute = 1,
+    Write = 2,
+    Read = 4,
+}
+
+pub @func access_bits(modes: []AccessMode): i32 {
+    $bits: i32 = 0;
+    @for (modes) |m| {
+        bits = bits | @as(i32, m);
+    }
+    return bits;
+}
+
+# Create a new directory named `path` with permission bits `mode`.
+pub @func mkdir(path: string, mode: i32): void | core.SyscallError {
+    @if (@as(usize, len(path)) >= PATH_CAPACITY) {
+        return core.SyscallError.NameTooLong;
+    }
+    $buf = c.path_buffer(path);
+    defer c.free(buf);
+    @if (c.mkdir(buf, mode) != 0) {
+        return core.last_error();
+    }
+}
+
+# Create a new directory relative to directory file descriptor `dirfd`.
+pub @func mkdirat(dirfd: core.Fd, path: string, mode: i32): void | core.SyscallError {
+    @if (@as(usize, len(path)) >= PATH_CAPACITY) {
+        return core.SyscallError.NameTooLong;
+    }
+    $buf = c.path_buffer(path);
+    defer c.free(buf);
+    @if (c.mkdirat(@as(i32, dirfd), buf, mode) != 0) {
+        return core.last_error();
+    }
+}
+
+# Remove an empty directory named `path`.
+pub @func rmdir(path: string): void | core.SyscallError {
+    @if (@as(usize, len(path)) >= PATH_CAPACITY) {
+        return core.SyscallError.NameTooLong;
+    }
+    $buf = c.path_buffer(path);
+    defer c.free(buf);
+    @if (c.rmdir(buf) != 0) {
+        return core.last_error();
+    }
+}
+
+# Delete a name from the filesystem.
+pub @func unlink(path: string): void | core.SyscallError {
+    @if (@as(usize, len(path)) >= PATH_CAPACITY) {
+        return core.SyscallError.NameTooLong;
+    }
+    $buf = c.path_buffer(path);
+    defer c.free(buf);
+    @if (c.unlink(buf) != 0) {
+        return core.last_error();
+    }
+}
+
+# Delete a name relative to directory file descriptor `dirfd`. Pass `AT_REMOVEDIR`
+# in `flags` to remove a directory.
+pub @func unlinkat(dirfd: core.Fd, path: string, flags: i32): void | core.SyscallError {
+    @if (@as(usize, len(path)) >= PATH_CAPACITY) {
+        return core.SyscallError.NameTooLong;
+    }
+    $buf = c.path_buffer(path);
+    defer c.free(buf);
+    @if (c.unlinkat(@as(i32, dirfd), buf, flags) != 0) {
+        return core.last_error();
+    }
+}
+
+# Create a hard link `newpath` pointing to existing file `oldpath`.
+pub @func link(oldpath: string, newpath: string): void | core.SyscallError {
+    @if (@as(usize, len(oldpath)) >= PATH_CAPACITY || @as(usize, len(newpath)) >= PATH_CAPACITY) {
+        return core.SyscallError.NameTooLong;
+    }
+    $b_old = c.path_buffer(oldpath);
+    defer c.free(b_old);
+    $b_new = c.path_buffer(newpath);
+    defer c.free(b_new);
+    @if (c.link(b_old, b_new) != 0) {
+        return core.last_error();
+    }
+}
+
+# Create a hard link relative to directory file descriptors.
+pub @func linkat(olddirfd: core.Fd, oldpath: string, newdirfd: core.Fd, newpath: string, flags: i32): void | core.SyscallError {
+    @if (@as(usize, len(oldpath)) >= PATH_CAPACITY || @as(usize, len(newpath)) >= PATH_CAPACITY) {
+        return core.SyscallError.NameTooLong;
+    }
+    $b_old = c.path_buffer(oldpath);
+    defer c.free(b_old);
+    $b_new = c.path_buffer(newpath);
+    defer c.free(b_new);
+    @if (c.linkat(@as(i32, olddirfd), b_old, @as(i32, newdirfd), b_new, flags) != 0) {
+        return core.last_error();
+    }
+}
+
+# Create a symbolic link `linkpath` pointing to `target`.
+pub @func symlink(target: string, linkpath: string): void | core.SyscallError {
+    @if (@as(usize, len(target)) >= PATH_CAPACITY || @as(usize, len(linkpath)) >= PATH_CAPACITY) {
+        return core.SyscallError.NameTooLong;
+    }
+    $b_target = c.path_buffer(target);
+    defer c.free(b_target);
+    $b_link = c.path_buffer(linkpath);
+    defer c.free(b_link);
+    @if (c.symlink(b_target, b_link) != 0) {
+        return core.last_error();
+    }
+}
+
+# Create a symbolic link relative to directory file descriptor `newdirfd`.
+pub @func symlinkat(target: string, newdirfd: core.Fd, linkpath: string): void | core.SyscallError {
+    @if (@as(usize, len(target)) >= PATH_CAPACITY || @as(usize, len(linkpath)) >= PATH_CAPACITY) {
+        return core.SyscallError.NameTooLong;
+    }
+    $b_target = c.path_buffer(target);
+    defer c.free(b_target);
+    $b_link = c.path_buffer(linkpath);
+    defer c.free(b_link);
+    @if (c.symlinkat(b_target, @as(i32, newdirfd), b_link) != 0) {
+        return core.last_error();
+    }
+}
+
+# Rename a file or directory from `oldpath` to `newpath`.
+pub @func rename(oldpath: string, newpath: string): void | core.SyscallError {
+    @if (@as(usize, len(oldpath)) >= PATH_CAPACITY || @as(usize, len(newpath)) >= PATH_CAPACITY) {
+        return core.SyscallError.NameTooLong;
+    }
+    $b_old = c.path_buffer(oldpath);
+    defer c.free(b_old);
+    $b_new = c.path_buffer(newpath);
+    defer c.free(b_new);
+    @if (c.rename(b_old, b_new) != 0) {
+        return core.last_error();
+    }
+}
+
+# Rename a file or directory relative to directory file descriptors.
+pub @func renameat(olddirfd: core.Fd, oldpath: string, newdirfd: core.Fd, newpath: string): void | core.SyscallError {
+    @if (@as(usize, len(oldpath)) >= PATH_CAPACITY || @as(usize, len(newpath)) >= PATH_CAPACITY) {
+        return core.SyscallError.NameTooLong;
+    }
+    $b_old = c.path_buffer(oldpath);
+    defer c.free(b_old);
+    $b_new = c.path_buffer(newpath);
+    defer c.free(b_new);
+    @if (c.renameat(@as(i32, olddirfd), b_old, @as(i32, newdirfd), b_new) != 0) {
+        return core.last_error();
+    }
+}
+
+# Change the current working directory to `path`.
+pub @func chdir(path: string): void | core.SyscallError {
+    @if (@as(usize, len(path)) >= PATH_CAPACITY) {
+        return core.SyscallError.NameTooLong;
+    }
+    $buf = c.path_buffer(path);
+    defer c.free(buf);
+    @if (c.chdir(buf) != 0) {
+        return core.last_error();
+    }
+}
+
+# Change the current working directory to open directory `fd`.
+pub @func fchdir(fd: core.Fd): void | core.SyscallError {
+    @if (c.fchdir(@as(i32, fd)) != 0) {
+        return core.last_error();
+    }
+}
+
+# Change the root directory of the calling process to `path`.
+pub @func chroot(path: string): void | core.SyscallError {
+    @if (@as(usize, len(path)) >= PATH_CAPACITY) {
+        return core.SyscallError.NameTooLong;
+    }
+    $buf = c.path_buffer(path);
+    defer c.free(buf);
+    @if (c.chroot(buf) != 0) {
+        return core.last_error();
+    }
+}
+
+# Check user's permissions for the file at `path`.
+pub @func access(path: string, mode: i32): void | core.SyscallError {
+    @if (@as(usize, len(path)) >= PATH_CAPACITY) {
+        return core.SyscallError.NameTooLong;
+    }
+    $buf = c.path_buffer(path);
+    defer c.free(buf);
+    @if (c.access(buf, mode) != 0) {
+        return core.last_error();
+    }
+}
+
+# Check accessibility of `path` relative to directory descriptor `dirfd`.
+pub @func faccessat(dirfd: core.Fd, path: string, mode: i32, flags: i32): void | core.SyscallError {
+    @if (@as(usize, len(path)) >= PATH_CAPACITY) {
+        return core.SyscallError.NameTooLong;
+    }
+    $buf = c.path_buffer(path);
+    defer c.free(buf);
+    @if (c.faccessat(@as(i32, dirfd), buf, mode, flags) != 0) {
+        return core.last_error();
+    }
+}
+
+# Check effective user permissions for the file at `path`.
+pub @func eaccess(path: string, mode: i32): void | core.SyscallError {
+    @if (@as(usize, len(path)) >= PATH_CAPACITY) {
+        return core.SyscallError.NameTooLong;
+    }
+    $buf = c.path_buffer(path);
+    defer c.free(buf);
+    @if (c.eaccess(buf, mode) != 0) {
+        return core.last_error();
+    }
+}
+
+# Check effective user permissions (alias for `eaccess`).
+pub @func euidaccess(path: string, mode: i32): void | core.SyscallError {
+    @if (@as(usize, len(path)) >= PATH_CAPACITY) {
+        return core.SyscallError.NameTooLong;
+    }
+    $buf = c.path_buffer(path);
+    defer c.free(buf);
+    @if (c.euidaccess(buf, mode) != 0) {
+        return core.last_error();
+    }
+}
