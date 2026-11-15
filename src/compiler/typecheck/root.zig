@@ -2076,8 +2076,11 @@ fn inferTryExprType(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc
                 return compiler_errors.compileFailFmt(state, "'?' operator used on non-error-union type '{s}'", .{d});
             }
         }
+        // `main` reports a propagated error by exiting non-zero, so `?` is
+        // allowed there even when its return type is annotated `void`.
+        const in_main = if (env.current_fn) |name| std.mem.eql(u8, name, "main") else false;
         if (env.annotated_return) |ar| {
-            if (!ir.allowsError(ar)) {
+            if (!in_main and !ir.allowsError(ar)) {
                 const d = try ownDisplay(state, ar);
                 return compiler_errors.compileFailFmt(state, "Cannot use '?' here: enclosing function return type '{s}' does not allow error", .{d});
             }
@@ -4647,7 +4650,7 @@ fn checkFunction(
             if (state.functions.get(f.name)) |def| ret_ir = def.return_ir;
         }
         if (ret_ir) |rt| {
-            if (!ir.isVoid(rt) and !ir.isNever(rt) and !nodeAlwaysReturns(f.body)) {
+            if (!ir.isVoidSuccess(rt) and !ir.isNever(rt) and !nodeAlwaysReturns(f.body)) {
                 // Point at the fall-through path: the last statement of the body
                 // (or the declaration when the body is empty).
                 var end_line: u32 = f.loc.line;
@@ -5104,7 +5107,15 @@ fn seedDeclEnv(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, doc
     var git = state.global_type_irs.iterator();
     while (git.next()) |e| {
         const k = e.key_ptr.*;
-        if (std.mem.startsWith(u8, k, "$")) continue;
+        if (std.mem.startsWith(u8, k, "$")) {
+            // Import aliases are stored under `$name` but spelled without the
+            // sigil at use sites (`c.PATH_CAPACITY`).
+            const v = e.value_ptr.*;
+            if (v == .struct_ and std.mem.startsWith(u8, v.struct_, "module:")) {
+                try env.globals.put(k[1..], v);
+            }
+            continue;
+        }
         if (e.value_ptr.* == .unknown) continue;
         try env.globals.put(k, e.value_ptr.*);
     }
@@ -5265,6 +5276,23 @@ pub fn typecheck(state: *state_mod.CompilerState, doc: *ast.Document) TypecheckE
     try seedDeclEnv(state, &decl_env, ta, doc);
     try resolveTypeDeclCalls(state, &decl_env, ta, doc);
 
+    // Annotated top-level types are known before any initializer runs. Record
+    // them up front so a module constant used by an earlier initializer (for
+    // example `$PATH_CAPACITY: usize = c.PATH_CAPACITY;`) resolves even though
+    // the exported declaration is visited later in the statement list.
+    for (doc.statements) |s| {
+        if (s.* != .declaration) continue;
+        const d = &s.declaration;
+        const ann = d.type_annotation orelse continue;
+        if (state.global_type_irs.contains(d.name)) continue;
+        const t = if (from_ast.typeNodeHasCall(ann))
+            resolveDeclTypeNode(state, &decl_env, ta, ann) catch continue
+        else
+            from_ast.typeFromAst(ann, state, ta) catch continue;
+        if (t == .unknown or t == .void or t == .never or t == .type_ or t == .error_) continue;
+        try state.global_type_irs.put(d.name, t);
+    }
+
     for (doc.statements) |s| {
         if (s.* == .struct_decl) {
             checkStructFieldTypes(state, &decl_env, ta, &s.struct_decl) catch |err| switch (err) {
@@ -5355,7 +5383,13 @@ pub fn typecheck(state: *state_mod.CompilerState, doc: *ast.Document) TypecheckE
 
     while (git.next()) |e| {
         const k = e.key_ptr.*;
-        if (std.mem.startsWith(u8, k, "$")) continue;
+        if (std.mem.startsWith(u8, k, "$")) {
+            const v = e.value_ptr.*;
+            if (v == .struct_ and std.mem.startsWith(u8, v.struct_, "module:")) {
+                try env.globals.put(k[1..], v);
+            }
+            continue;
+        }
         if (e.value_ptr.* == .unknown) continue;
         try env.globals.put(k, e.value_ptr.*);
     }

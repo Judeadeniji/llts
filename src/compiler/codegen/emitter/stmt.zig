@@ -468,6 +468,13 @@ pub fn emitReturnValue(self: *Emitter, node: *ast_mod.Node, value: *ast_mod.Node
     _ = node;
     const a = self.arena.allocator();
     const src = try self.valueType(value);
+    // `return <never expr>;` is an explicit non-returning path: emit the call
+    // itself. There is no value to bind and no cleanup to run afterwards.
+    if (src.kind == .never) {
+        try self.writeIndent();
+        try self.writer.print("{s};\n", .{try expr_mod.emitExpr(self, value)});
+        return;
+    }
     self.counter += 1;
     const id = self.counter;
     const tmp = try std.fmt.allocPrint(a, "lls_ret_{d}", .{id});
@@ -557,8 +564,14 @@ pub fn emitExprStatement(self: *Emitter, node: *ast_mod.Node) !void {
     const t = try self.valueType(node);
     const code = try expr_mod.emitExpr(self, node);
     try self.writeIndent();
-    if (t.kind == .void) {
-        try self.writer.print("{s};\n", .{code});
+    if (t.kind == .void or t.kind == .never) {
+        // `?` expands to a labeled block expression; a bare block statement
+        // must not be followed by a semicolon in Zig.
+        if (node.* == .try_expr) {
+            try self.writer.print("_ = {s};\n", .{code});
+        } else {
+            try self.writer.print("{s};\n", .{code});
+        }
     } else {
         try self.writer.print("_ = {s};\n", .{code});
     }

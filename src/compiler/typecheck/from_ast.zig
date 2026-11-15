@@ -12,8 +12,12 @@ pub const FromAstError = error{ OutOfMemory, CompileError, Overflow, InvalidChar
 pub const CType = state_mod.CType;
 
 fn rejectForbiddenUnionArms(state: ?*state_mod.CompilerState, left: ir.Type, right: ir.Type) FromAstError!void {
+    const has_error = ir.isErrorArm(left) or ir.isErrorArm(right);
     for ([_]ir.Type{ left, right }) |arm| {
         if (!ir.isForbiddenUnionArm(arm)) continue;
+        // `void | E` is the error-union spelling for a fallible operation with
+        // no success value. `void` on its own is still not a union arm.
+        if (arm == .void and has_error) continue;
         const d = ir.displayType(arm);
         if (state) |st| {
             return compile_error.compileFailFmt(st, "'{s}' cannot appear in a union (or optional); '{s}' is not a value-carrying union arm", .{ d, d });
@@ -224,6 +228,15 @@ fn ctypeFromIr(
             .return_type => .{ .scalar = t },
             .parameter => externFail(state, loc, "Extern parameters cannot have type 'void'", .{}),
             .data => externFail(state, loc, "Extern data symbols cannot have type 'void'", .{}),
+        };
+    }
+    // A C function that never returns (exit, abort, _Exit, …) maps to Zig
+    // `noreturn`, so wrappers can declare `: never` instead of `: void`.
+    if (t == .never) {
+        return switch (role) {
+            .return_type => .{ .scalar = t },
+            .parameter => externFail(state, loc, "Extern parameters cannot have type 'never'", .{}),
+            .data => externFail(state, loc, "Extern data symbols cannot have type 'never'", .{}),
         };
     }
     if (isExternScalar(t)) return .{ .scalar = t };
@@ -578,15 +591,20 @@ pub fn parseDisplayType(
         var arms: std.ArrayList(ir.Type) = .empty;
         defer arms.deinit(ta.allocator);
         for (union_parts) |part| {
-            const arm = try parseDisplayType(state, ta, part, cycle);
-            if (ir.isForbiddenUnionArm(arm)) {
-                if (state) |st| {
-                    const d = ir.displayType(arm);
-                    return compile_error.compileFailFmt(st, "'{s}' cannot appear in a union (or optional); '{s}' is not a value-carrying union arm", .{ d, d });
-                }
-                return error.CompileError;
+            try arms.append(ta.allocator, try parseDisplayType(state, ta, part, cycle));
+        }
+        var has_error = false;
+        for (arms.items) |arm| {
+            if (ir.isErrorArm(arm)) has_error = true;
+        }
+        for (arms.items) |arm| {
+            if (!ir.isForbiddenUnionArm(arm)) continue;
+            if (arm == .void and has_error) continue;
+            if (state) |st| {
+                const d = ir.displayType(arm);
+                return compile_error.compileFailFmt(st, "'{s}' cannot appear in a union (or optional); '{s}' is not a value-carrying union arm", .{ d, d });
             }
-            try arms.append(ta.allocator, arm);
+            return error.CompileError;
         }
         return try ta.unionType(arms.items);
     }
@@ -1614,12 +1632,16 @@ pub fn resolveEnumName(state: *state_mod.CompilerState, node: *ast.Node) ?[]cons
             return null;
         },
         .member => |m| {
-            if (m.object.* != .primary or m.property.* != .primary) return null;
-            const alias = m.object.primary.name;
-            const short = m.property.primary.name;
-            var buf: [256]u8 = undefined;
-            const dotted = std.fmt.bufPrint(&buf, "{s}.{s}", .{ alias, short }) catch return null;
-            const q = expr_path.resolveModuleType(state, dotted) catch return null;
+            if (m.object.* == .primary and m.property.* == .primary) {
+                const alias = m.object.primary.name;
+                const short = m.property.primary.name;
+                var buf: [256]u8 = undefined;
+                const dotted = std.fmt.bufPrint(&buf, "{s}.{s}", .{ alias, short }) catch return null;
+                const q = expr_path.resolveModuleType(state, dotted) catch return null;
+                if (state.enums.contains(q)) return q;
+            }
+            // Nested module path (`lib.mod.Tok`).
+            const q = (expr_path.tryResolveStaticPath(state, node) catch null) orelse return null;
             if (state.enums.contains(q)) return q;
             return null;
         },

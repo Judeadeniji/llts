@@ -39,6 +39,7 @@ pub const ValKind = enum {
     bool,
     string,
     void,
+    never,
     other,
     struct_,
     union_,
@@ -626,6 +627,10 @@ pub const Emitter = struct {
                 vt.kind = .void;
                 vt.zig = "void";
             },
+            .never => {
+                vt.kind = .never;
+                vt.zig = "noreturn";
+            },
             .func => |f| {
                 vt.kind = .func;
                 const ret_vt = (try self.valTypeFromIR(node, f.ret.*)) orelse return null;
@@ -1153,6 +1158,23 @@ pub const Emitter = struct {
         if (isSizeOfCall(node)) return try self.valTypeOfIR(node, ir.TI64);
         if (self.recordedType(node)) |t| {
             if (try self.valTypeFromIR(node, t)) |vt| return vt;
+        }
+        // Module-qualified enum values (`lib.Color.Green`) are resolved by the
+        // checker but may not carry a recorded expression type here; resolve
+        // the parent enum directly so emission does not depend on that record.
+        if (node.* == .member) {
+            if (from_ast.resolveEnumName(self.state, node.member.object)) |ename| {
+                if (try self.valTypeFromIR(node, .{ .enum_ = ename })) |vt| return vt;
+            }
+            // Imported module globals (`lib.CAPACITY`) are emitted under their
+            // qualified key; read their type from the collected global.
+            if (node.member.property.* == .primary) {
+                if (path_mod.tryResolveStaticPath(self.state, node) catch null) |import_key| {
+                    if (self.globals.get(import_key)) |g| {
+                        if (g.ir_type != null) return try self.valTypeFor(node, g.ir_type, g.display);
+                    }
+                }
+            }
         }
         // Assignment targets (an identifier on the left of `+=`, for example)
         // carry no recorded expression type; their runtime type is the

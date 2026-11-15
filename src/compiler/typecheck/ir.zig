@@ -917,6 +917,29 @@ pub fn allowsError(t: Type) bool {
     };
 }
 
+/// True when a type carries no success payload: `void`, or an error union whose
+/// only non-error arm is `void` (`void | E`). Such a function may fall off the
+/// end of its body and is emitted as `.{ .ok = {} }`.
+pub fn isVoidSuccess(t: Type) bool {
+    const p = peelDefined(t);
+    if (p == .void) return true;
+    if (p != .union_) return false;
+    var has_error = false;
+    var has_void = false;
+    for (p.union_) |arm| {
+        if (isErrorArm(arm)) {
+            has_error = true;
+            continue;
+        }
+        if (peelDefined(arm) == .void) {
+            has_void = true;
+            continue;
+        }
+        return false;
+    }
+    return has_error and has_void;
+}
+
 pub fn unwrapError(ta: TypeAlloc, t: Type) !Type {
     return switch (t) {
         .error_, .error_set, .error_lit => TNever,
@@ -1013,9 +1036,16 @@ pub fn parseDisplayType(ta: TypeAlloc, s_in: []const u8) !Type {
         var arms: std.ArrayList(Type) = .empty;
         defer arms.deinit(ta.allocator);
         for (union_parts) |part| {
-            const arm = try parseDisplayType(ta, part);
-            if (isForbiddenUnionArm(arm)) return error.CompileError;
-            try arms.append(ta.allocator, arm);
+            try arms.append(ta.allocator, try parseDisplayType(ta, part));
+        }
+        var has_error = false;
+        for (arms.items) |arm| {
+            if (isErrorArm(arm)) has_error = true;
+        }
+        for (arms.items) |arm| {
+            if (!isForbiddenUnionArm(arm)) continue;
+            if (arm == .void and has_error) continue;
+            return error.CompileError;
         }
         return try ta.unionType(arms.items);
     }

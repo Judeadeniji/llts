@@ -1817,13 +1817,16 @@ pub fn containsStruct(t: ValType) bool {
 pub fn resolveMemberField(self: *Emitter, node: *ast_mod.Node, m: *const ast_mod.Member) !?MemberTarget {
     if (m.property.* != .primary) return null;
     if (m.object.* == .primary and self.state.error_sets.contains(m.object.primary.name)) return null;
+    // `Enum` / `lib.Enum` names a type, and `Enum.Variant` / `lib.Enum.Variant`
+    // is a constant, not a field-bearing value.
+    if (from_ast.resolveEnumName(self.state, node) != null) return null;
+    if (from_ast.resolveEnumName(self.state, m.object) != null) return null;
     const field_name = m.property.primary.name;
     const obj_t = try self.valueType(m.object);
     const info = (try self.structInfoForValType(m.object, obj_t)) orelse return null;
     const index = info.field_index.get(field_name) orelse {
         return self.failAt(m.property, "native backend cannot resolve field '{s}'", .{field_name});
     };
-    _ = node;
     return .{ .info = info, .index = index };
 }
 
@@ -1870,6 +1873,21 @@ pub fn emitMember(self: *Emitter, node: *ast_mod.Node, m: *const ast_mod.Member)
                 return std.fmt.allocPrint(a, "rt.err.make({s})", .{try self.zigString(member_name)});
             }
             return self.failAt(node, "native backend cannot resolve error member '{s}'", .{member_name});
+        }
+    }
+    // Module-qualified enum value (`lib.Color.Green`).
+    if (m.property.* == .primary) {
+        if (from_ast.resolveEnumName(self.state, m.object)) |ename| {
+            if (self.state.enums.get(ename)) |ed| {
+                const variant = m.property.primary.name;
+                if (ed.string_values) |values| {
+                    if (values.get(variant)) |s| return self.zigString(s);
+                }
+                const value = ed.variants.get(variant) orelse {
+                    return self.failAt(node, "native backend cannot resolve enum variant '{s}'", .{variant});
+                };
+                return std.fmt.allocPrint(a, "{d}", .{value});
+            }
         }
     }
     if (m.property.* == .primary) {

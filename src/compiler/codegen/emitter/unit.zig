@@ -147,7 +147,7 @@ pub fn emitFunction(self: *Emitter, name: []const u8, def: state_mod.FunctionDef
     // Parameters: copy mutable ones into locals; silence unread ones.
     for (self.params.items) |p| {
         const b = self.scopes.items[0].get(p.name).?;
-        const needs_var = b.reassigned or (b.assigned and p.kind != .pointer and p.kind != .slice);
+        const needs_var = b.reassigned or (b.assigned and p.kind != .pointer and p.kind != .slice and p.kind != .string);
         if (needs_var) {
             b.zig_name = try self.localName(p.name);
             try self.writeIndent();
@@ -360,7 +360,7 @@ fn emitSingleClosure(self: *Emitter, info: state_mod.ClosureInfo) !void {
     // Parameters: copy mutable ones into locals; silence unread ones.
     for (self.params.items) |p| {
         const b = self.scopes.items[0].get(p.name).?;
-        const needs_var = b.reassigned or (b.assigned and p.kind != .pointer and p.kind != .slice);
+        const needs_var = b.reassigned or (b.assigned and p.kind != .pointer and p.kind != .slice and p.kind != .string);
         if (needs_var) {
             b.zig_name = try self.localName(p.name);
             try self.writeIndent();
