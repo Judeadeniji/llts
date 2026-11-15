@@ -40,7 +40,7 @@ Keep related calls together; one module per area rather than one file per call.
 |---|---|
 | `std/syscall.lls` | Public facade, shared types, enums, errors, stdio constants |
 | `std/syscall/c.lls` | Raw externs and C ABI helpers (internal) |
-| `std/syscall/file.lls` | Descriptors, open flags, read/write/seek, dup, sync, truncate |
+| `std/syscall/io.lls` | Descriptors, open flags, read/write/seek, dup, sync, truncate, pipe |
 | `std/syscall/stat.lls` | `stat` family, permissions, ownership, timestamps |
 | `std/syscall/dir.lls` | `mkdir`, directory iteration, cwd |
 | `std/syscall/process.lls` | Identity, fork/exec/wait, sessions, priority |
@@ -111,32 +111,32 @@ which entries below are marked `[!]`.
 - `[x]` `close`
 - `[x]` `seek` (`lseek`)
 - `[x]` `ftruncate` as `truncate_file`
-- `[ ]` `pread`, `pwrite`
+- `[x]` `pread`, `pwrite`
 - `[ ]` `readv`, `writev`, `preadv`, `pwritev`, `preadv2`, `pwritev2` (`[!]`
   `iovec` layout)
-- `[ ]` `truncate`
-- `[ ]` `fsync`, `fdatasync`, `sync`, `syncfs`
-- `[ ]` `dup`, `dup2`, `dup3`
-- `[ ]` `sendfile`, `copy_file_range`
-- `[ ]` `fallocate`, `posix_fallocate`, `posix_fadvise`
-- `[ ]` `close_range`, `closefrom`
-- `[ ]` `fcntl` (`F_GETFD`, `F_SETFD`, `F_GETFL`, `F_SETFL`, `F_DUPFD`,
+- `[x]` `truncate`
+- `[x]` `fsync`, `fdatasync`, `sync`, `syncfs`
+- `[x]` `dup`, `dup2`, `dup3`
+- `[x]` `pipe`, `pipe2`
+- `[x]` `sendfile`, `copy_file_range`
+- `[x]` `fallocate`, `posix_fallocate`, `posix_fadvise`
+- `[x]` `close_range`, `closefrom`
+- `[x]` `fcntl` (`F_GETFD`, `F_SETFD`, `F_GETFL`, `F_SETFL`, `F_DUPFD`,
   `F_DUPFD_CLOEXEC`, `F_GETPIPE_SZ`, `F_SETPIPE_SZ`; record locks are under
   locking)
 - `[ ]` `ioctl` (fixed-arity request wrappers only; request structs need
   blocker 1)
-- `[ ]` `getdtablesize`
+- `[x]` `getdtablesize` (as `descriptor_table_size`)
 - `[ ]` `vhangup`, `revoke`, `profil`
 
-## Opening and creation (`file.lls`)
+## Opening and creation (`io.lls`)
 
 - `[x]` `open_read`, `open_write`, `open_append`, `create`
-- `[ ]` general `open(path, Access, []OpenFlag, []Permission)` (the private
-  `open_with` already implements the mechanism)
-- `[ ]` `openat`
-- `[ ]` `creat`
-- `[ ]` `open64`, `openat64` (alias; no separate wrapper)
-- `[ ]` `mkstemp`, `mkostemp`, `mkdtemp` (libc helpers over `open`/`mkdir`)
+- `[x]` general `open(path, flags, mode)`
+- `[x]` `openat` (with `AT_FDCWD`)
+- `[x]` `creat`
+- `[x]` `open64`, `openat64` (alias; no separate wrapper)
+- `[!]` `mkstemp`, `mkostemp`, `mkdtemp` (libc helpers over `open`/`mkdir`; blocker 7)
 - `[ ]` `shm_open`, `shm_unlink`
 
 ## File metadata (`stat.lls`)
@@ -248,10 +248,10 @@ designed now.
 - `[ ]` `memfd_create`
 - `[ ]` `shm_open`, `shm_unlink` (also listed under opening)
 
-## Pipes and vector I/O (`file.lls`)
+## Pipes and vector I/O (`io.lls`)
 
-- `[ ]` `pipe`, `pipe2` (pass a pointer to a `[2]i32` local)
-- `[ ]` `dup`, `dup2`, `dup3`
+- `[x]` `pipe`, `pipe2` (pass a pointer to a struct / PipeFds)
+- `[x]` `dup`, `dup2`, `dup3`
 
 ## Sockets (`socket.lls`)
 
@@ -335,7 +335,7 @@ need caller buffers and `**` out-pointers.
   `sched_setscheduler`, `sched_rr_get_interval` (struct layout)
 - `[!]` `sched_getaffinity`, `sched_setaffinity` (`cpu_set_t` layout)
 
-## Advisory locking (`file.lls`)
+## Advisory locking (`io.lls`)
 
 - `[ ]` `flock`
 - `[!]` `fcntl` record locks (`F_GETLK`, `F_SETLK`, `F_SETLKW`; `struct flock`
@@ -400,7 +400,7 @@ stdlib modules:
 
 1. Unblock C layout (blocker 1) and add `@sizeOf` agreement (blocker 2); this
    unlocks stat, time, polling, sockets, terminals, users, resources.
-2. `file.lls`: `pread`/`pwrite`, `ftruncate`, `fsync`, `dup`, `pipe`, `fcntl`
+2. `io.lls`: `pread`/`pwrite`, `ftruncate`, `fsync`, `dup`, `pipe`, `fcntl`
    basics, `mkdir`/`rmdir`/`rename`/`link`, `chdir`/`getcwd`.
 3. `time.lls` with `time`, `clock_gettime`, `nanosleep`.
 4. `process.lls`: identity, `waitpid`, `getrlimit`, `sysconf`.
