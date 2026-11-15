@@ -156,15 +156,15 @@ designed now.
 ## Paths, links and permissions (`dir.lls`)
 
 - `[x]` `unlink`
-- `[ ]` `unlinkat`, `rmdir`
-- `[ ]` `link`, `linkat`, `symlink`, `symlinkat`
-- `[ ]` `rename`, `renameat` (`renameat2` is raw-only)
-- `[ ]` `mkdir`, `mkdirat`
-- `[ ]` `chdir`, `fchdir`
+- `[x]` `unlinkat`, `rmdir`
+- `[x]` `link`, `linkat`, `symlink`, `symlinkat`
+- `[x]` `rename`, `renameat` (`renameat2` is raw-only)
+- `[x]` `mkdir`, `mkdirat`
+- `[x]` `chdir`, `fchdir`
 - `[!]` `getcwd`, `getwd`, `get_current_dir_name` (blocker 7)
-- `[ ]` `chroot`
-- `[ ]` `access`, `faccessat`, `eaccess`, `euidaccess`
-- `[ ]` `realpath` (blocker 7)
+- `[x]` `chroot`
+- `[x]` `access`, `faccessat`, `eaccess`, `euidaccess`
+- `[!]` `realpath` (blocker 7)
 
 ## Directories (`dir.lls`)
 
