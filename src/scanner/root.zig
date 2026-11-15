@@ -99,7 +99,8 @@ fn scanNext(self: *ctx.Scanner) ScanError!void {
     }
     if (ch == '$') {
         try scanRegister(self);
-        if (self.peek(0) == '.') try scanMemberExpression(self);
+        // `..` is a range / slice separator, not member access.
+        if (self.peek(0) == '.' and self.peek(1) != '.') try scanMemberExpression(self);
         return;
     }
     if (ch == '@') {
@@ -112,7 +113,8 @@ fn scanNext(self: *ctx.Scanner) ScanError!void {
     }
     if (ctx.isAlpha(ch)) {
         try scanIdentifierOrKeyword(self);
-        if (self.peek(0) == '.') try scanMemberExpression(self);
+        // `..` is a range / slice separator, not member access.
+        if (self.peek(0) == '.' and self.peek(1) != '.') try scanMemberExpression(self);
         return;
     }
     if (ch == '.' and self.peek(1) == '.' and self.peek(2) == '.') {
