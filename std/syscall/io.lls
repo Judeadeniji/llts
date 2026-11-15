@@ -199,9 +199,8 @@ pub @func truncate(path: string, length: i64): void | core.SyscallError {
         return core.SyscallError.NameTooLong;
     }
     $buf = c.path_buffer(path);
-    $rc = c.truncate(buf, length);
-    c.free(buf);
-    @if (rc != 0) {
+    defer c.free(buf);
+    @if (c.truncate(buf, length) != 0) {
         return core.last_error();
     }
 }
@@ -374,8 +373,8 @@ pub @func open(path: string, flags: i32, mode: i32): core.Fd | core.SyscallError
         return core.SyscallError.NameTooLong;
     }
     $buf = c.path_buffer(path);
+    defer c.free(buf);
     $raw = c.open(buf, flags, mode);
-    c.free(buf);
     @if (raw < @as(i32, 0)) {
         return core.last_error();
     }
@@ -388,8 +387,8 @@ pub @func openat(dirfd: core.Fd, path: string, flags: i32, mode: i32): core.Fd |
         return core.SyscallError.NameTooLong;
     }
     $buf = c.path_buffer(path);
+    defer c.free(buf);
     $raw = c.openat(@as(i32, dirfd), buf, flags, mode);
-    c.free(buf);
     @if (raw < @as(i32, 0)) {
         return core.last_error();
     }
@@ -438,9 +437,8 @@ pub @func unlink(path: string): void | core.SyscallError {
         return core.SyscallError.NameTooLong;
     }
     $buf = c.path_buffer(path);
-    $result = c.unlink(buf);
-    c.free(buf);
-    @if (result != 0) {
+    defer c.free(buf);
+    @if (c.unlink(buf) != 0) {
         return core.last_error();
     }
 }
