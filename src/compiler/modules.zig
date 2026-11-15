@@ -586,6 +586,12 @@ fn qualifyNode(
                 try state.owned.append(state.allocator, q);
                 break :blk q;
             };
+            // Signature types may name module-local types (`*CBuffer`).
+            for (e.params) |*p| {
+                if (p.type_annotation) |ta| rewriteRefs(ta, local_map);
+            }
+            if (e.return_type) |rt| rewriteRefs(rt, local_map);
+            if (e.data_type) |dt| rewriteRefs(dt, local_map);
             if (e.is_public) try state.chunk.exports.put(e.name, {});
         },
         .struct_decl => |*st| {

@@ -748,3 +748,7 @@ test "native execution: public wrappers can use private functions" {
 test "native execution: public wrappers can use private externs" {
     try expectNativeFileStdout(std.testing.allocator, "tests/fixtures/extern_private_ok_main.lls", "1\n55\n");
 }
+
+test "native execution: imported extern signatures naming module-local types" {
+    try expectNativeFileStdout(std.testing.allocator, "tests/fixtures/syscall_extern_main.lls", "7\n");
+}

@@ -1,0 +1,5 @@
+@const $lib = @import("./syscall_extern_lib.lls");
+
+pub @func main() {
+    print(lib.roundTrip());
+}

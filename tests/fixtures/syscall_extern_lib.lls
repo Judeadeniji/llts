@@ -1,0 +1,21 @@
+# Fixture: extern signatures that name types local to the imported module.
+
+pub @struct Handle {
+    value: i32;
+}
+
+pub @struct ErrnoCell {
+    value: i32;
+}
+
+pub @extern "c" @func malloc(size: usize): *Handle;
+pub @extern "c" @func free(p: *Handle): void;
+pub @extern "c" @func __errno_location(): *ErrnoCell;
+
+pub @func roundTrip(): i32 {
+    $p = malloc(@as(usize, 4));
+    p.value = 7;
+    $value = p.value;
+    free(p);
+    return value;
+}
