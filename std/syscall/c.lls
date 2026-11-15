@@ -112,21 +112,37 @@ pub @extern "c" @func euidaccess(path: *CBuffer, mode: i32): i32;
 
 pub @extern "c" @func isatty(fd: i32): i32;
 pub @extern "c" @func getpid(): i32;
+pub @extern "c" @func getppid(): i32;
+pub @extern "c" @func getuid(): u32;
+pub @extern "c" @func geteuid(): u32;
+pub @extern "c" @func getgid(): u32;
+pub @extern "c" @func getegid(): u32;
 
-pub @extern "c" @func malloc(size: usize): *CBuffer;
+pub @extern "c" @func setuid(uid: u32): i32;
+pub @extern "c" @func seteuid(euid: u32): i32;
+pub @extern "c" @func setgid(gid: u32): i32;
+pub @extern "c" @func setegid(egid: u32): i32;
+pub @extern "c" @func setreuid(ruid: u32, euid: u32): i32;
+pub @extern "c" @func setregid(rgid: u32, egid: u32): i32;
+pub @extern "c" @func setresuid(ruid: u32, euid: u32, suid: u32): i32;
+pub @extern "c" @func setresgid(rgid: u32, egid: u32, sgid: u32): i32;
+
+pub @extern "c" @func getsid(pid: i32): i32;
+pub @extern "c" @func setsid(): i32;
+pub @extern "c" @func getpgid(pid: i32): i32;
+pub @extern "c" @func setpgid(pid: i32, pgid: i32): i32;
+pub @extern "c" @func getpgrp(): i32;
+pub @extern "c" @func setpgrp(): i32;
+
+pub @extern "c" @func daemon(nochdir: i32, noclose: i32): i32;
+
+pub @extern "c" @func pause(): i32;
+pub @extern "c" @func sleep(seconds: u32): u32;
+pub @extern "c" @func usleep(usec: u32): i32;
+pub @extern "c" @func alarm(seconds: u32): u32;
+pub @extern "c" @func sched_yield(): i32;
+
+pub @extern "c" @func malloc(size: usize): ?*CBuffer;
 pub @extern "c" @func free(p: *CBuffer): void;
 
 pub @extern "c" @func __errno_location(): *ErrnoCell;
-
-# Copy an LLTS string into a NUL-terminated malloc buffer for C path arguments.
-# The caller must free the result; keeping it off the stack also keeps the
-# pointer valid for the whole libc call.
-pub @func path_buffer(path: string): *CBuffer {
-    $n: i64 = len(path);
-    $buf = malloc(PATH_CAPACITY);
-    @for (0..n) |i| {
-        buf.bytes[i] = path[i];
-    }
-    buf.bytes[n] = 0;
-    return buf;
-}

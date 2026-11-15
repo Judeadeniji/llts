@@ -1,9 +1,12 @@
-# Process identity and termination.
+# Process identity, credentials, sessions, and termination.
 
 @const $c = @import("std/syscall/c");
 @const $core = @import("std/syscall/core");
 
 pub @alias ExitCode = core.ExitCode;
+pub @alias Pid = core.Pid;
+pub @alias Uid = core.Uid;
+pub @alias Gid = core.Gid;
 
 # Terminate the process with `code`. Does not return: deferred LLTS cleanup is
 # not run, matching C `exit`.
@@ -16,6 +19,231 @@ pub @func abort(): never {
     c.abort();
 }
 
+# Return the process ID of the calling process.
 pub @func process_id(): core.Pid {
     return @as(core.Pid, c.getpid());
+}
+
+# Alias for `process_id`.
+pub @func getpid(): core.Pid {
+    return process_id();
+}
+
+# Return the process ID of the parent of the calling process.
+pub @func parent_process_id(): core.Pid {
+    return @as(core.Pid, c.getppid());
+}
+
+# Alias for `parent_process_id`.
+pub @func getppid(): core.Pid {
+    return parent_process_id();
+}
+
+# Return the real user ID of the calling process.
+pub @func user_id(): core.Uid {
+    return @as(core.Uid, c.getuid());
+}
+
+# Alias for `user_id`.
+pub @func getuid(): core.Uid {
+    return user_id();
+}
+
+# Return the effective user ID of the calling process.
+pub @func effective_user_id(): core.Uid {
+    return @as(core.Uid, c.geteuid());
+}
+
+# Alias for `effective_user_id`.
+pub @func geteuid(): core.Uid {
+    return effective_user_id();
+}
+
+# Return the real group ID of the calling process.
+pub @func group_id(): core.Gid {
+    return @as(core.Gid, c.getgid());
+}
+
+# Alias for `group_id`.
+pub @func getgid(): core.Gid {
+    return group_id();
+}
+
+# Return the effective group ID of the calling process.
+pub @func effective_group_id(): core.Gid {
+    return @as(core.Gid, c.getegid());
+}
+
+# Alias for `effective_group_id`.
+pub @func getegid(): core.Gid {
+    return effective_group_id();
+}
+
+# Set the real, effective, and saved user IDs of the calling process.
+pub @func setuid(uid: core.Uid): void | core.SyscallError {
+    @if (c.setuid(@as(u32, uid)) != 0) {
+        return core.last_error();
+    }
+}
+
+# Set the effective user ID of the calling process.
+pub @func seteuid(euid: core.Uid): void | core.SyscallError {
+    @if (c.seteuid(@as(u32, euid)) != 0) {
+        return core.last_error();
+    }
+}
+
+# Set the real, effective, and saved group IDs of the calling process.
+pub @func setgid(gid: core.Gid): void | core.SyscallError {
+    @if (c.setgid(@as(u32, gid)) != 0) {
+        return core.last_error();
+    }
+}
+
+# Set the effective group ID of the calling process.
+pub @func setegid(egid: core.Gid): void | core.SyscallError {
+    @if (c.setegid(@as(u32, egid)) != 0) {
+        return core.last_error();
+    }
+}
+
+# Set real and effective user IDs. Passing -1 (as u32) leaves that ID unchanged.
+pub @func setreuid(ruid: core.Uid, euid: core.Uid): void | core.SyscallError {
+    @if (c.setreuid(@as(u32, ruid), @as(u32, euid)) != 0) {
+        return core.last_error();
+    }
+}
+
+# Set real and effective group IDs. Passing -1 (as u32) leaves that ID unchanged.
+pub @func setregid(rgid: core.Gid, egid: core.Gid): void | core.SyscallError {
+    @if (c.setregid(@as(u32, rgid), @as(u32, egid)) != 0) {
+        return core.last_error();
+    }
+}
+
+# Set real, effective, and saved user IDs. Passing -1 leaves that ID unchanged.
+pub @func setresuid(ruid: core.Uid, euid: core.Uid, suid: core.Uid): void | core.SyscallError {
+    @if (c.setresuid(@as(u32, ruid), @as(u32, euid), @as(u32, suid)) != 0) {
+        return core.last_error();
+    }
+}
+
+# Set real, effective, and saved group IDs. Passing -1 leaves that ID unchanged.
+pub @func setresgid(rgid: core.Gid, egid: core.Gid, sgid: core.Gid): void | core.SyscallError {
+    @if (c.setresgid(@as(u32, rgid), @as(u32, egid), @as(u32, sgid)) != 0) {
+        return core.last_error();
+    }
+}
+
+# Return the session ID of the process `pid` (or calling process if `pid == 0`).
+pub @func session_id(pid: core.Pid): core.Pid | core.SyscallError {
+    $raw = c.getsid(@as(i32, pid));
+    @if (raw < @as(i32, 0)) {
+        return core.last_error();
+    }
+    return @as(core.Pid, raw);
+}
+
+# Alias for `session_id`.
+pub @func getsid(pid: core.Pid): core.Pid | core.SyscallError {
+    return session_id(pid);
+}
+
+# Create a new session if the calling process is not a process group leader.
+# Returns the new session ID.
+pub @func create_session(): core.Pid | core.SyscallError {
+    $raw = c.setsid();
+    @if (raw < @as(i32, 0)) {
+        return core.last_error();
+    }
+    return @as(core.Pid, raw);
+}
+
+# Alias for `create_session`.
+pub @func setsid(): core.Pid | core.SyscallError {
+    return create_session();
+}
+
+# Return the process group ID of the process `pid` (or calling process if `pid == 0`).
+pub @func process_group(pid: core.Pid): core.Pid | core.SyscallError {
+    $raw = c.getpgid(@as(i32, pid));
+    @if (raw < @as(i32, 0)) {
+        return core.last_error();
+    }
+    return @as(core.Pid, raw);
+}
+
+# Alias for `process_group`.
+pub @func getpgid(pid: core.Pid): core.Pid | core.SyscallError {
+    return process_group(pid);
+}
+
+# Set the process group ID of process `pid` to `pgid`.
+pub @func set_process_group(pid: core.Pid, pgid: core.Pid): void | core.SyscallError {
+    @if (c.setpgid(@as(i32, pid), @as(i32, pgid)) != 0) {
+        return core.last_error();
+    }
+}
+
+# Alias for `set_process_group`.
+pub @func setpgid(pid: core.Pid, pgid: core.Pid): void | core.SyscallError {
+    return set_process_group(pid, pgid);
+}
+
+# Return the process group of the calling process.
+pub @func getpgrp(): core.Pid {
+    return @as(core.Pid, c.getpgrp());
+}
+
+# Set the process group of the calling process.
+pub @func setpgrp(): void | core.SyscallError {
+    @if (c.setpgrp() != 0) {
+        return core.last_error();
+    }
+}
+
+# Run the calling process in the background as a daemon.
+pub @func daemon(nochdir: bool, noclose: bool): void | core.SyscallError {
+    $c_nochdir: i32 = @if (nochdir) { break @as(i32, 1); } @else { break @as(i32, 0); };
+    $c_noclose: i32 = @if (noclose) { break @as(i32, 1); } @else { break @as(i32, 0); };
+    @if (c.daemon(c_nochdir, c_noclose) != 0) {
+        return core.last_error();
+    }
+}
+
+# Sleep for `seconds` seconds or until a non-ignored signal arrives.
+# Returns zero if the requested time has elapsed, or the unslept seconds.
+pub @func sleep(seconds: u32): u32 {
+    return c.sleep(seconds);
+}
+
+# Suspend execution for `usec` microseconds.
+pub @func usleep(usec: u32): void | core.SyscallError {
+    @if (c.usleep(usec) != 0) {
+        return core.last_error();
+    }
+}
+
+# Set an alarm clock for delivery of a SIGALRM signal in `seconds` seconds.
+# Returns the remaining seconds of any previous alarm.
+pub @func alarm(seconds: u32): u32 {
+    return c.alarm(seconds);
+}
+
+# Suspend the calling process until a signal is delivered. Always returns Interrupted.
+pub @func pause(): void | core.SyscallError {
+    _ = c.pause();
+    return core.last_error();
+}
+
+# Yield processor control to another runnable process.
+pub @func yield_now(): void | core.SyscallError {
+    @if (c.sched_yield() != 0) {
+        return core.last_error();
+    }
+}
+
+# Alias for `yield_now`.
+pub @func sched_yield(): void | core.SyscallError {
+    return yield_now();
 }

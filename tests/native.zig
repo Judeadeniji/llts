@@ -781,3 +781,7 @@ test "native execution: syscall io pipe, pread, pwrite, fcntl, dup, truncate" {
 test "native execution: syscall dir mkdir, access, link, rename, rmdir" {
     try expectNativeFileStdout(std.testing.allocator, "tests/fixtures/syscall_dir_ops_main.lls", "mkdir-ok\naccess-ok\n13\nrename-ok\ncleanup-ok\n");
 }
+
+test "native execution: syscall process id, credentials, pgrp, sid, yield, sleep" {
+    try expectNativeFileStdout(std.testing.allocator, "tests/fixtures/syscall_process_ops_main.lls", "pid-ok\nppid-ok\nuid-ok\ngid-ok\npgrp-ok\nsid-ok\nyield-sleep-ok\nalarm-ok\n");
+}

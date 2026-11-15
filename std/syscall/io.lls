@@ -195,10 +195,7 @@ pub @func truncate_file(fd: core.Fd, length: i64): void | core.SyscallError {
 
 # Set the size of the named file. A larger `length` extends the file with zero bytes.
 pub @func truncate(path: string, length: i64): void | core.SyscallError {
-    @if (@as(usize, len(path)) >= PATH_CAPACITY) {
-        return core.SyscallError.NameTooLong;
-    }
-    $buf = c.path_buffer(path);
+    $buf = core.path_buffer(path)?;
     defer c.free(buf);
     @if (c.truncate(buf, length) != 0) {
         return core.last_error();
@@ -369,10 +366,7 @@ pub @func copy_file_range(in_fd: core.Fd, out_fd: core.Fd, count: usize): usize 
 
 # Open a file at `path` with raw `flags` and `mode`.
 pub @func open(path: string, flags: i32, mode: i32): core.Fd | core.SyscallError {
-    @if (@as(usize, len(path)) >= PATH_CAPACITY) {
-        return core.SyscallError.NameTooLong;
-    }
-    $buf = c.path_buffer(path);
+    $buf = core.path_buffer(path)?;
     defer c.free(buf);
     $raw = c.open(buf, flags, mode);
     @if (raw < @as(i32, 0)) {
@@ -383,10 +377,7 @@ pub @func open(path: string, flags: i32, mode: i32): core.Fd | core.SyscallError
 
 # Open a file relative to directory file descriptor `dirfd` (or `AT_FDCWD`).
 pub @func openat(dirfd: core.Fd, path: string, flags: i32, mode: i32): core.Fd | core.SyscallError {
-    @if (@as(usize, len(path)) >= PATH_CAPACITY) {
-        return core.SyscallError.NameTooLong;
-    }
-    $buf = c.path_buffer(path);
+    $buf = core.path_buffer(path)?;
     defer c.free(buf);
     $raw = c.openat(@as(i32, dirfd), buf, flags, mode);
     @if (raw < @as(i32, 0)) {
@@ -433,10 +424,7 @@ pub @func close(fd: core.Fd): void | core.SyscallError {
 
 # Remove a file.
 pub @func unlink(path: string): void | core.SyscallError {
-    @if (@as(usize, len(path)) >= PATH_CAPACITY) {
-        return core.SyscallError.NameTooLong;
-    }
-    $buf = c.path_buffer(path);
+    $buf = core.path_buffer(path)?;
     defer c.free(buf);
     @if (c.unlink(buf) != 0) {
         return core.last_error();

@@ -1,0 +1,48 @@
+@const $sys = @import("std/syscall");
+
+pub @func main() {
+    $pid = sys.process.process_id();
+    $pid2 = sys.process.getpid();
+    @if (pid > @as(sys.core.Pid, 0) && pid == pid2) {
+        print("pid-ok");
+    }
+
+    $ppid = sys.process.parent_process_id();
+    $ppid2 = sys.process.getppid();
+    @if (ppid > @as(sys.core.Pid, 0) && ppid == ppid2) {
+        print("ppid-ok");
+    }
+
+    $uid = sys.process.user_id();
+    $euid = sys.process.effective_user_id();
+    @if (uid == sys.process.getuid() && euid == sys.process.geteuid()) {
+        print("uid-ok");
+    }
+
+    $gid = sys.process.group_id();
+    $egid = sys.process.effective_group_id();
+    @if (gid == sys.process.getgid() && egid == sys.process.getegid()) {
+        print("gid-ok");
+    }
+
+    $pgrp = sys.process.getpgrp();
+    $pgid = sys.process.process_group(0)?;
+    @if (pgrp > @as(sys.core.Pid, 0) && pgrp == pgid) {
+        print("pgrp-ok");
+    }
+
+    $sid = sys.process.session_id(0)?;
+    @if (sid > @as(sys.core.Pid, 0)) {
+        print("sid-ok");
+    }
+
+    # yield and sleep
+    sys.process.yield_now()?;
+    sys.process.usleep(1000)?;
+    print("yield-sleep-ok");
+
+    # alarm test (setting to 0 cancels any alarm and returns old)
+    $prev_alarm = sys.process.alarm(0);
+    _ = prev_alarm;
+    print("alarm-ok");
+}

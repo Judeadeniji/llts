@@ -13,6 +13,12 @@ pub @type Fd = i32;
 # A process identifier.
 pub @type Pid = i32;
 
+# A user identifier.
+pub @type Uid = u32;
+
+# A group identifier.
+pub @type Gid = u32;
+
 # The descriptors every process starts with.
 pub @enum Stdio {
     Stdin,
@@ -95,6 +101,26 @@ pub @func last_error(): SyscallError {
 
 pub @func stdio_fd(stream: Stdio): Fd {
     return @as(Fd, stream);
+}
+
+# Copy an LLTS string into a NUL-terminated malloc buffer for C path arguments.
+# Returns `OutOfMemory` if allocation fails, or `NameTooLong` if the path
+# exceeds `c.PATH_CAPACITY`.
+pub @func path_buffer(path: string): *c.CBuffer | SyscallError {
+    $n: i64 = len(path);
+    @if (@as(usize, n) >= c.PATH_CAPACITY) {
+        return SyscallError.NameTooLong;
+    }
+    $raw = c.malloc(c.PATH_CAPACITY);
+    @if (raw == null) {
+        return SyscallError.OutOfMemory;
+    }
+    $buf = raw.?;
+    @for (0..n) |i| {
+        buf.bytes[i] = path[i];
+    }
+    buf.bytes[n] = 0;
+    return buf;
 }
 
 
