@@ -1,0 +1,109 @@
+# Shared syscall types and errno mapping.
+#
+# Area modules (`file`, `process`, …) import this for `Fd`, `Pid`, the closed
+# error set, and the `last_error` helper; `std/syscall` re-exports it so callers
+# can name the same types.
+
+@const $c = @import("std/syscall/c");
+
+# An open file descriptor. Use the `STDIN`/`STDOUT`/`STDERR` constants for the
+# three inherited descriptors.
+pub @type Fd = i32;
+
+# A process identifier.
+pub @type Pid = i32;
+
+# The descriptors every process starts with.
+pub @enum Stdio {
+    Stdin,
+    Stdout,
+    Stderr,
+}
+
+# Conventional process exit codes.
+pub @enum ExitCode {
+    Success = 0,
+    Failure = 1,
+    Usage = 2,
+}
+
+# Failures reported by the syscall wrappers. The set is closed: every failing
+# wrapper returns one of these variants, so callers can match exhaustively.
+pub @error SyscallError {
+    AccessDenied,
+    AlreadyExists,
+    BadFileDescriptor,
+    BrokenPipe,
+    Busy,
+    FileNotFound,
+    FileTooLarge,
+    InputOutput,
+    Interrupted,
+    InvalidArgument,
+    IsDirectory,
+    NameTooLong,
+    NoSpace,
+    NotADirectory,
+    NotTerminal,
+    OutOfMemory,
+    Overflow,
+    PermissionDenied,
+    ReadOnlyFileSystem,
+    TimedOut,
+    TooManyOpenFiles,
+    TooManySymbolicLinks,
+    WouldBlock,
+    Unknown,
+}
+
+# Map a libc `errno` value to the closed error set. The numeric codes are Linux
+# values; they are confined to this one function.
+pub @func error_from_errno(code: i32): SyscallError {
+    return @switch (code) {
+        1 => { break SyscallError.PermissionDenied; },
+        2 => { break SyscallError.FileNotFound; },
+        4 => { break SyscallError.Interrupted; },
+        5 => { break SyscallError.InputOutput; },
+        9 => { break SyscallError.BadFileDescriptor; },
+        11 => { break SyscallError.WouldBlock; },
+        12 => { break SyscallError.OutOfMemory; },
+        13 => { break SyscallError.AccessDenied; },
+        16 => { break SyscallError.Busy; },
+        17 => { break SyscallError.AlreadyExists; },
+        20 => { break SyscallError.NotADirectory; },
+        21 => { break SyscallError.IsDirectory; },
+        22 => { break SyscallError.InvalidArgument; },
+        23, 24 => { break SyscallError.TooManyOpenFiles; },
+        25 => { break SyscallError.NotTerminal; },
+        27 => { break SyscallError.FileTooLarge; },
+        28 => { break SyscallError.NoSpace; },
+        30 => { break SyscallError.ReadOnlyFileSystem; },
+        32 => { break SyscallError.BrokenPipe; },
+        36 => { break SyscallError.NameTooLong; },
+        40 => { break SyscallError.TooManySymbolicLinks; },
+        75 => { break SyscallError.Overflow; },
+        110 => { break SyscallError.TimedOut; },
+        @else => { break SyscallError.Unknown; },
+    };
+}
+
+# The error reported by the most recent failing libc call.
+pub @func last_error(): SyscallError {
+    $cell = c.__errno_location();
+    return error_from_errno(cell.value);
+}
+
+pub @func stdio_fd(stream: Stdio): Fd {
+    return @as(Fd, stream);
+}
+
+
+# @comptime type inference should work properly without casting or annotation
+# pub @const $STDIN: Fd = @comptime stdio_fd(Stdio.Stdin);
+# pub @const $STDOUT: Fd = @comptime stdio_fd(Stdio.Stdout);
+# pub @const $STDERR: Fd = @comptime stdio_fd(Stdio.Stderr);
+
+
+pub @const $STDIN = stdio_fd(Stdio.Stdin);
+pub @const $STDOUT = stdio_fd(Stdio.Stdout);
+pub @const $STDERR = stdio_fd(Stdio.Stderr);

@@ -1,0 +1,168 @@
+# File descriptors, paths, and file contents.
+
+@const $c = @import("std/syscall/c");
+@const $core = @import("std/syscall/core");
+
+@const $PATH_CAPACITY: usize = c.PATH_CAPACITY;
+@const $DEFAULT_FILE_MODE: i32 = 420; # 0644
+
+# Requested access for `open`-style calls (the low two bits of the C flags).
+@enum Access {
+    ReadOnly = 0,
+    WriteOnly = 1,
+    ReadWrite = 2,
+}
+
+# Additional open flags. Pass the ones you need to `open_with`.
+@enum OpenFlag {
+    Create = 64,
+    Exclusive = 128,
+    Truncate = 512,
+    Append = 1024,
+}
+
+# Permission bits for `create`.
+@enum Permission {
+    OwnerRead = 256,
+    OwnerWrite = 128,
+    OwnerExecute = 64,
+    GroupRead = 32,
+    GroupWrite = 16,
+    GroupExecute = 8,
+    OtherRead = 4,
+    OtherWrite = 2,
+    OtherExecute = 1,
+}
+
+# Origin used by `seek`.
+@enum SeekWhence {
+    Set = 0,
+    Current = 1,
+    End = 2,
+}
+
+@func permission_bits(permissions: []Permission): i32 {
+    $bits: i32 = 0;
+    @for (permissions) |permission| {
+        bits = bits | @as(i32, permission);
+    }
+    return bits;
+}
+
+# Read up to `len(buf)` bytes. Returns the number of bytes read, which is `0`
+# only at end of file.
+pub @func read(fd: core.Fd, buf: []u8): usize | core.SyscallError {
+    $count: usize = @as(usize, len(buf));
+    @if (count == 0) {
+        return count;
+    }
+    $n = c.read(@as(i32, fd), buf, count);
+    @if (n < @as(isize, 0)) {
+        return core.last_error();
+    }
+    return @as(usize,n);
+}
+
+# Write up to `len(data)` bytes. Returns the number actually written; callers
+# that need everything written should use `write_all`.
+pub @func write(fd: core.Fd, data: []const u8): usize | core.SyscallError {
+    $count: usize = @as(usize, len(data));
+    @if (count == 0) {
+        return count;
+    }
+    $n = c.write(@as(i32, fd), data, count);
+    @if (n < @as(isize, 0)) {
+        return core.last_error();
+    }
+    return @as(usize, n);
+}
+
+# Write `data` completely, retrying short writes.
+pub @func write_all(fd: core.Fd, data: []const u8): void | core.SyscallError {
+    $total: i64 = 0;
+    $size: i64 = len(data);
+    @for (total < size) {
+        $written = write(fd, data[total..size])?;
+        @if (written == 0) {
+            return core.SyscallError.BrokenPipe;
+        }
+        total = total + @as(i64, written);
+    }
+}
+
+pub @func is_terminal(fd: core.Fd): bool {
+    return c.isatty(@as(i32, fd)) != 0;
+}
+
+# Move the file offset. Returns the resulting absolute offset.
+pub @func seek(fd: core.Fd, offset: i64, whence: SeekWhence): i64 | core.SyscallError {
+    $result = c.lseek(@as(i32, fd), offset, @as(i32, whence));
+    @if (result < @as(i64, 0)) {
+        return core.last_error();
+    }
+    return result;
+}
+
+# Set the size of the open file referred to by `fd`. A larger `length` extends
+# the file with zero bytes.
+pub @func truncate_file(fd: core.Fd, length: i64): void | core.SyscallError {
+    @if (c.ftruncate(@as(i32, fd), length) != 0) {
+        return core.last_error();
+    }
+}
+
+@func open_with(path: string, flags: i32, mode: i32): core.Fd | core.SyscallError {
+    @if (@as(usize, len(path)) >= PATH_CAPACITY) {
+        return core.SyscallError.NameTooLong;
+    }
+    $buf = c.path_buffer(path);
+    $raw = c.open(buf, flags, mode);
+    c.free(buf);
+    @if (raw < @as(i32, 0)) {
+        return core.last_error();
+    }
+    return @as(core.Fd, raw);
+}
+
+# Open an existing file for reading.
+pub @func open_read(path: string): core.Fd | core.SyscallError {
+    return open_with(path, @as(i32, Access.ReadOnly), 0);
+}
+
+# Open for writing, creating the file if needed and truncating it.
+pub @func open_write(path: string): core.Fd | core.SyscallError {
+    $flags = @as(i32, Access.WriteOnly) | @as(i32, OpenFlag.Create) | @as(i32, OpenFlag.Truncate);
+    return open_with(path, flags, DEFAULT_FILE_MODE);
+}
+
+# Open for appending, creating the file if needed.
+pub @func open_append(path: string): core.Fd | core.SyscallError {
+    $flags = @as(i32, Access.WriteOnly) | @as(i32, OpenFlag.Create) | @as(i32, OpenFlag.Append);
+    return open_with(path, flags, DEFAULT_FILE_MODE);
+}
+
+# Create a file that must not already exist, with explicit permissions.
+pub @func create(path: string, permissions: []Permission): core.Fd | core.SyscallError {
+    $flags = @as(i32, Access.WriteOnly) | @as(i32, OpenFlag.Create) | @as(i32, OpenFlag.Exclusive);
+    return open_with(path, flags, permission_bits(permissions));
+}
+
+# Close a descriptor. Safe to call on any descriptor returned by `open*`.
+pub @func close(fd: core.Fd): void | core.SyscallError {
+    @if (c.close(@as(i32, fd)) != 0) {
+        return core.last_error();
+    }
+}
+
+# Remove a file.
+pub @func unlink(path: string): void | core.SyscallError {
+    @if (@as(usize, len(path)) >= PATH_CAPACITY) {
+        return core.SyscallError.NameTooLong;
+    }
+    $buf = c.path_buffer(path);
+    $result = c.unlink(buf);
+    c.free(buf);
+    @if (result != 0) {
+        return core.last_error();
+    }
+}

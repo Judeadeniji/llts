@@ -3,16 +3,16 @@
 pub @func main() {
     $path = ".tmpdir/llts_syscall_test.dat";
 
-    $file = sys.open_write(path)?;
-    sys.write_all(file, "hello libc")?;
-    sys.close(file)?;
+    $file = sys.io.open_write(path)?;
+    sys.io.write_all(file, "hello libc")?;
+    sys.io.close(file)?;
 
-    $input = sys.open_read(path)?;
-    $offset = sys.seek(input, 6, sys.SeekWhence.Set)?;
+    $input = sys.io.open_read(path)?;
+    $offset = sys.io.seek(input, 6, sys.io.SeekWhence.Set)?;
     $buf: [4]u8 = [0, 0, 0, 0];
-    $n = sys.read(input, buf[..])?;
-    sys.close(input)?;
-    sys.unlink(path)?;
+    $n = sys.io.read(input, buf[..])?;
+    sys.io.close(input)?;
+    sys.io.unlink(path)?;
 
     print(offset);
     print(n);

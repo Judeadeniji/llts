@@ -1,0 +1,21 @@
+# Process identity and termination.
+
+@const $c = @import("std/syscall/c");
+@const $core = @import("std/syscall/core");
+
+pub @alias ExitCode = core.ExitCode;
+
+# Terminate the process with `code`. Does not return: deferred LLTS cleanup is
+# not run, matching C `exit`.
+pub @func exit(code: ExitCode): never {
+    c.exit(@as(i32, code));
+}
+
+# Abort the process (SIGABRT). Does not return.
+pub @func abort(): never {
+    c.abort();
+}
+
+pub @func process_id(): core.Pid {
+    return @as(core.Pid, c.getpid());
+}

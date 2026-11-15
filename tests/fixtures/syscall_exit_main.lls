@@ -1,7 +1,7 @@
 @const $sys = @import("std/syscall");
 
 @func quit(): never {
-    sys.exit(sys.ExitCode.Usage);
+    sys.process.exit(sys.core.ExitCode.Usage);
 }
 
 pub @func main() {
