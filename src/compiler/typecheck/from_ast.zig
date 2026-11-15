@@ -198,9 +198,6 @@ fn ctypeFromIr(
             if (inner == .ptr) {
                 return externFail(state, loc, "Pointer-to-pointer extern types are not supported", .{});
             }
-            if (inner == .struct_) {
-                return externFail(state, loc, "Optional pointer to struct '{s}' is not supported in extern signatures", .{ir.displayType(inner)});
-            }
             if (!isExternPointee(inner)) {
                 return externFail(state, loc, "Unsupported C type '{s}' in extern signature", .{externTypeDisplay(state, node, t)});
             }
