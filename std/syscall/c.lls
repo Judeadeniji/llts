@@ -1,12 +1,71 @@
 # Raw C ABI extern declarations (internal to syscall library).
 # Do not import directly outside this library; use `std/syscall` wrappers.
+#
+# Signatures below were checked against the platform C headers:
+#   int     close(int fd);
+#   ssize_t read(int fd, void *buf, size_t count);
+#   ssize_t write(int fd, const void *buf, size_t count);
+#   off_t   lseek(int fd, off_t offset, int whence);
+#   int     ftruncate(int fd, off_t length);
+#   int     open(const char *path, int flags, ... /* mode_t mode */);
+#   int     unlink(const char *path);
+#   int     isatty(int fd);
+#   pid_t   getpid(void);
+#   void   *malloc(size_t size);
+#   void    free(void *ptr);
+#   int    *__errno_location(void);
+#   void    exit(int status) __attribute__((noreturn));
+#   void    abort(void) __attribute__((noreturn));
+#
+# On the supported LP64 targets: size_t = ssize_t = off_t = 64 bits (usize /
+# isize / i64 below), pid_t = mode_t = 32 bits. C `void *`/`const void *`
+# parameters are spelled with byte pointers because LLTS has no `void` pointer;
+# they are ABI-identical. `open`'s variadic `mode_t` is passed as an `i32`
+# (same 32-bit slot; the wrappers only pass permission bits).
 
-pub @extern "c" @func exit(status: i32): void;
-pub @extern "c" @func _Exit(status: i32): void;
-pub @extern "c" @func abort(): void;
+# Pointer-sized scratch type for NUL-terminated paths. C sees a `char *`; LLTS
+# sees a struct so the wrappers can index bytes without exposing `c_str`.
+pub @const $PATH_CAPACITY: usize = 4096;
 
-pub @extern "c" @func getenv(name: c_str): ?c_str;
+pub @struct CBuffer {
+    bytes: [4096]u8;
+}
+
+# `errno` lives behind a per-thread pointer; a one-field struct lets the
+# wrappers read it without making `*i32` part of the language surface.
+pub @struct ErrnoCell {
+    value: i32;
+}
+
+pub @extern "c" @func exit(status: i32): never;
+pub @extern "c" @func abort(): never;
 
 pub @extern "c" @func read(fd: i32, buf: *u8, count: usize): isize;
 pub @extern "c" @func write(fd: i32, buf: *u8, count: usize): isize;
 pub @extern "c" @func close(fd: i32): i32;
+pub @extern "c" @func lseek(fd: i32, offset: i64, whence: i32): i64;
+pub @extern "c" @func ftruncate(fd: i32, length: i64): i32;
+
+pub @extern "c" @func open(path: *CBuffer, flags: i32, mode: i32): i32;
+pub @extern "c" @func unlink(path: *CBuffer): i32;
+
+pub @extern "c" @func isatty(fd: i32): i32;
+pub @extern "c" @func getpid(): i32;
+
+pub @extern "c" @func malloc(size: usize): *CBuffer;
+pub @extern "c" @func free(p: *CBuffer): void;
+
+pub @extern "c" @func __errno_location(): *ErrnoCell;
+
+# Copy an LLTS string into a NUL-terminated malloc buffer for C path arguments.
+# The caller must free the result; keeping it off the stack also keeps the
+# pointer valid for the whole libc call.
+pub @func path_buffer(path: string): *CBuffer {
+    $n: i64 = len(path);
+    $buf = malloc(PATH_CAPACITY);
+    @for (0..n) |i| {
+        buf.bytes[i] = path[i];
+    }
+    buf.bytes[n] = 0;
+    return buf;
+}

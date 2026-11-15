@@ -1,0 +1,23 @@
+@const $sys = @import("std/syscall");
+
+pub @func main() {
+    $path = ".tmpdir/llts_syscall_truncate.dat";
+
+    $file = sys.open_write(path)?;
+    sys.write_all(file, "abcdef")?;
+    sys.truncate_file(file, 3)?;
+    sys.close(file)?;
+
+    $input = sys.open_read(path)?;
+    $size = sys.seek(input, 0, sys.SeekWhence.End)?;
+    _ = sys.seek(input, 0, sys.SeekWhence.Set)?;
+    $buf: [8]u8 = [0, 0, 0, 0, 0, 0, 0, 0];
+    $n = sys.read(input, buf[..])?;
+    sys.close(input)?;
+    sys.unlink(path)?;
+
+    print(size);
+    print(n);
+    print(@as(i64, buf[2]));
+    print(@as(i64, buf[3]));
+}

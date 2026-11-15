@@ -1,0 +1,14 @@
+@const $sys = @import("std/syscall");
+
+pub @func main() {
+    $missing = sys.open_read(".tmpdir/llts_syscall_missing.txt");
+    @if (@isError(missing)) {
+        print("open-failed");
+    } @else {
+        print("unexpected-open");
+    }
+
+    $buf: [4]u8 = [0, 0, 0, 0];
+    $empty = sys.read(sys.STDIN, buf[0..0])?;
+    print(empty);
+}

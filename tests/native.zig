@@ -749,6 +749,27 @@ test "native execution: public wrappers can use private externs" {
     try expectNativeFileStdout(std.testing.allocator, "tests/fixtures/extern_private_ok_main.lls", "1\n55\n");
 }
 
+test "native execution: syscall file write, seek, read, unlink" {
+    try expectNativeFileStdout(std.testing.allocator, "tests/fixtures/syscall_file_main.lls", "6\n4\n108\n99\n");
+}
+
+test "native execution: syscall truncate_file shrinks an open file" {
+    try expectNativeFileStdout(std.testing.allocator, "tests/fixtures/syscall_truncate_main.lls", "3\n3\n99\n0\n");
+}
+
+test "native execution: syscall errors are values and empty reads return zero" {
+    try expectNativeFileStdout(std.testing.allocator, "tests/fixtures/syscall_errors_main.lls", "open-failed\n0\n");
+}
+
+test "native execution: never-returning exit sets the process status" {
+    const allocator = std.testing.allocator;
+    const res = try runNativeFile(allocator, "tests/fixtures/syscall_exit_main.lls");
+    defer allocator.free(res.stdout);
+    defer allocator.free(res.stderr);
+    try std.testing.expectEqual(@as(u8, 2), res.code);
+    try std.testing.expectEqualStrings("", res.stdout);
+}
+
 test "native execution: imported extern signatures naming module-local types" {
     try expectNativeFileStdout(std.testing.allocator, "tests/fixtures/syscall_extern_main.lls", "7\n");
 }

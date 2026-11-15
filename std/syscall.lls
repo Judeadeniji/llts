@@ -1,32 +1,281 @@
 # Syscall library: LLTS wrappers over platform C ABI primitives.
 # Raw extern declarations live in `std/syscall/c`; public API is exposed through wrappers.
+#
+# Public functions take LLTS types only: `string`, slices, nominal `Fd`/`Pid`
+# types, and enums for access modes, flags, permissions, and exit codes.
 
 @const $c = @import("std/syscall/c");
 
-pub @func exit(status: i32) {
-    c.exit(status);
+@const $PATH_CAPACITY: usize = c.PATH_CAPACITY;
+@const $DEFAULT_FILE_MODE: i32 = 420; # 0644
+
+# An open file descriptor. Use the `STDIN`/`STDOUT`/`STDERR` constants for the
+# three inherited descriptors; `open*` returns one for an opened file.
+@type Fd = i32;
+
+# A process identifier.
+@type Pid = i32;
+
+# The descriptors every process starts with.
+@enum Stdio {
+    Stdin,
+    Stdout,
+    Stderr,
 }
 
-pub @func _Exit(status: i32) {
-    c._Exit(status);
+# Requested access for `open`-style calls (the low two bits of the C flags).
+@enum Access {
+    ReadOnly = 0,
+    WriteOnly = 1,
+    ReadWrite = 2,
 }
 
-pub @func abort() {
+# Additional open flags. Pass the ones you need to `open_with`.
+@enum OpenFlag {
+    Create = 64,
+    Exclusive = 128,
+    Truncate = 512,
+    Append = 1024,
+}
+
+# Permission bits for `create`.
+@enum Permission {
+    OwnerRead = 256,
+    OwnerWrite = 128,
+    OwnerExecute = 64,
+    GroupRead = 32,
+    GroupWrite = 16,
+    GroupExecute = 8,
+    OtherRead = 4,
+    OtherWrite = 2,
+    OtherExecute = 1,
+}
+
+# Origin used by `seek`.
+@enum SeekWhence {
+    Set = 0,
+    Current = 1,
+    End = 2,
+}
+
+# Conventional process exit codes.
+@enum ExitCode {
+    Success = 0,
+    Failure = 1,
+    Usage = 2,
+}
+
+# Failures reported by the syscall wrappers. The set is closed: every failing
+# wrapper returns one of these variants, so callers can match exhaustively.
+@error SyscallError {
+    AccessDenied,
+    AlreadyExists,
+    BadFileDescriptor,
+    BrokenPipe,
+    Busy,
+    FileNotFound,
+    FileTooLarge,
+    InputOutput,
+    Interrupted,
+    InvalidArgument,
+    IsDirectory,
+    NameTooLong,
+    NoSpace,
+    NotADirectory,
+    NotTerminal,
+    OutOfMemory,
+    Overflow,
+    PermissionDenied,
+    ReadOnlyFileSystem,
+    TimedOut,
+    TooManyOpenFiles,
+    TooManySymbolicLinks,
+    WouldBlock,
+    Unknown,
+}
+
+# Map a libc `errno` value to the closed error set. The numeric codes are Linux
+# values; they are confined to this one function.
+@func error_from_errno(code: i32): SyscallError {
+    return @switch (code) {
+        1 => { break SyscallError.PermissionDenied; },
+        2 => { break SyscallError.FileNotFound; },
+        4 => { break SyscallError.Interrupted; },
+        5 => { break SyscallError.InputOutput; },
+        9 => { break SyscallError.BadFileDescriptor; },
+        11 => { break SyscallError.WouldBlock; },
+        12 => { break SyscallError.OutOfMemory; },
+        13 => { break SyscallError.AccessDenied; },
+        16 => { break SyscallError.Busy; },
+        17 => { break SyscallError.AlreadyExists; },
+        20 => { break SyscallError.NotADirectory; },
+        21 => { break SyscallError.IsDirectory; },
+        22 => { break SyscallError.InvalidArgument; },
+        23, 24 => { break SyscallError.TooManyOpenFiles; },
+        25 => { break SyscallError.NotTerminal; },
+        27 => { break SyscallError.FileTooLarge; },
+        28 => { break SyscallError.NoSpace; },
+        30 => { break SyscallError.ReadOnlyFileSystem; },
+        32 => { break SyscallError.BrokenPipe; },
+        36 => { break SyscallError.NameTooLong; },
+        40 => { break SyscallError.TooManySymbolicLinks; },
+        75 => { break SyscallError.Overflow; },
+        110 => { break SyscallError.TimedOut; },
+        @else => { break SyscallError.Unknown; },
+    };
+}
+
+# The error reported by the most recent failing libc call.
+@func last_error(): SyscallError {
+    $cell = c.__errno_location();
+    return error_from_errno(cell.value);
+}
+
+@func permission_bits(permissions: []Permission): i32 {
+    $bits: i32 = 0;
+    @for (permissions) |permission| {
+        bits = bits | @as(i32, permission);
+    }
+    return bits;
+}
+
+@func stdio_fd(stream: Stdio): Fd {
+    return @as(Fd, @as(i32, stream));
+}
+
+pub @const $STDIN = stdio_fd(Stdio.Stdin);
+pub @const $STDOUT = stdio_fd(Stdio.Stdout);
+pub @const $STDERR = stdio_fd(Stdio.Stderr);
+
+# Terminate the process with `code`. Does not return: deferred LLTS cleanup is
+# not run, matching C `exit`.
+pub @func exit(code: ExitCode): never {
+    c.exit(@as(i32, code));
+}
+
+# Abort the process (SIGABRT). Does not return.
+pub @func abort(): never {
     c.abort();
 }
 
-pub @func getenv(name: c_str): ?c_str {
-    return c.getenv(name);
+pub @func process_id(): Pid {
+    return @as(Pid, c.getpid());
 }
 
-pub @func read(fd: i32, buf: *u8, count: usize): isize {
-    return c.read(fd, buf, count);
+# Read up to `len(buf)` bytes. Returns the number of bytes read, which is `0`
+# only at end of file.
+pub @func read(fd: Fd, buf: []u8): usize | SyscallError {
+    $count: usize = @as(usize, len(buf));
+    @if (count == 0) {
+        return count;
+    }
+    $n = c.read(@as(i32, fd), buf, count);
+    @if (n < @as(isize, 0)) {
+        return last_error();
+    }
+    return @as(usize, n);
 }
 
-pub @func write(fd: i32, buf: *u8, count: usize): isize {
-    return c.write(fd, buf, count);
+# Write up to `len(data)` bytes. Returns the number actually written; callers
+# that need everything written should use `write_all`.
+pub @func write(fd: Fd, data: []const u8): usize | SyscallError {
+    $count: usize = @as(usize, len(data));
+    @if (count == 0) {
+        return count;
+    }
+    $n = c.write(@as(i32, fd), data, count);
+    @if (n < @as(isize, 0)) {
+        return last_error();
+    }
+    return @as(usize, n);
 }
 
-pub @func close(fd: i32): i32 {
-    return c.close(fd);
+# Write `data` completely, retrying short writes.
+pub @func write_all(fd: Fd, data: []const u8): void | SyscallError {
+    $total: i64 = 0;
+    $size: i64 = len(data);
+    @for (total < size) {
+        $written = write(fd, data[total..size])?;
+        @if (written == 0) {
+            return SyscallError.BrokenPipe;
+        }
+        total = total + @as(i64, written);
+    }
+}
+
+pub @func is_terminal(fd: Fd): bool {
+    return c.isatty(@as(i32, fd)) != 0;
+}
+
+# Move the file offset. Returns the resulting absolute offset.
+pub @func seek(fd: Fd, offset: i64, whence: SeekWhence): i64 | SyscallError {
+    $result = c.lseek(@as(i32, fd), offset, @as(i32, whence));
+    @if (result < @as(i64, 0)) {
+        return last_error();
+    }
+    return result;
+}
+
+# Set the size of the open file referred to by `fd`. A larger `length` extends
+# the file with zero bytes.
+pub @func truncate_file(fd: Fd, length: i64): void | SyscallError {
+    @if (c.ftruncate(@as(i32, fd), length) != 0) {
+        return last_error();
+    }
+}
+
+@func open_with(path: string, flags: i32, mode: i32): Fd | SyscallError {
+    @if (@as(usize, len(path)) >= PATH_CAPACITY) {
+        return SyscallError.NameTooLong;
+    }
+    $buf = c.path_buffer(path);
+    $raw = c.open(buf, flags, mode);
+    c.free(buf);
+    @if (raw < @as(i32, 0)) {
+        return last_error();
+    }
+    return @as(Fd, raw);
+}
+
+# Open an existing file for reading.
+pub @func open_read(path: string): Fd | SyscallError {
+    return open_with(path, @as(i32, Access.ReadOnly), 0);
+}
+
+# Open for writing, creating the file if needed and truncating it.
+pub @func open_write(path: string): Fd | SyscallError {
+    $flags = @as(i32, Access.WriteOnly) | @as(i32, OpenFlag.Create) | @as(i32, OpenFlag.Truncate);
+    return open_with(path, flags, DEFAULT_FILE_MODE);
+}
+
+# Open for appending, creating the file if needed.
+pub @func open_append(path: string): Fd | SyscallError {
+    $flags = @as(i32, Access.WriteOnly) | @as(i32, OpenFlag.Create) | @as(i32, OpenFlag.Append);
+    return open_with(path, flags, DEFAULT_FILE_MODE);
+}
+
+# Create a file that must not already exist, with explicit permissions.
+pub @func create(path: string, permissions: []Permission): Fd | SyscallError {
+    $flags = @as(i32, Access.WriteOnly) | @as(i32, OpenFlag.Create) | @as(i32, OpenFlag.Exclusive);
+    return open_with(path, flags, permission_bits(permissions));
+}
+
+# Close a descriptor. Safe to call on any descriptor returned by `open*`.
+pub @func close(fd: Fd): void | SyscallError {
+    @if (c.close(@as(i32, fd)) != 0) {
+        return last_error();
+    }
+}
+
+# Remove a file.
+pub @func unlink(path: string): void | SyscallError {
+    @if (@as(usize, len(path)) >= PATH_CAPACITY) {
+        return SyscallError.NameTooLong;
+    }
+    $buf = c.path_buffer(path);
+    $result = c.unlink(buf);
+    c.free(buf);
+    @if (result != 0) {
+        return last_error();
+    }
 }

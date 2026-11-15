@@ -1,0 +1,21 @@
+@const $sys = @import("std/syscall");
+
+pub @func main() {
+    $path = ".tmpdir/llts_syscall_test.dat";
+
+    $file = sys.open_write(path)?;
+    sys.write_all(file, "hello libc")?;
+    sys.close(file)?;
+
+    $input = sys.open_read(path)?;
+    $offset = sys.seek(input, 6, sys.SeekWhence.Set)?;
+    $buf: [4]u8 = [0, 0, 0, 0];
+    $n = sys.read(input, buf[..])?;
+    sys.close(input)?;
+    sys.unlink(path)?;
+
+    print(offset);
+    print(n);
+    print(@as(i64, buf[0]));
+    print(@as(i64, buf[3]));
+}
