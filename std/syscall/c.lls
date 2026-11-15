@@ -37,17 +37,78 @@ pub @struct ErrnoCell {
     value: i32;
 }
 
+pub @struct PipeFds {
+    read_fd: i32;
+    write_fd: i32;
+}
+
 pub @extern "c" @func exit(status: i32): never;
 pub @extern "c" @func abort(): never;
 
 pub @extern "c" @func read(fd: i32, buf: *u8, count: usize): isize;
 pub @extern "c" @func write(fd: i32, buf: *u8, count: usize): isize;
+pub @extern "c" @func pread(fd: i32, buf: *u8, count: usize, offset: i64): isize;
+pub @extern "c" @func pwrite(fd: i32, buf: *u8, count: usize, offset: i64): isize;
 pub @extern "c" @func close(fd: i32): i32;
 pub @extern "c" @func lseek(fd: i32, offset: i64, whence: i32): i64;
 pub @extern "c" @func ftruncate(fd: i32, length: i64): i32;
+pub @extern "c" @func truncate(path: *CBuffer, length: i64): i32;
+
+pub @extern "c" @func fsync(fd: i32): i32;
+pub @extern "c" @func fdatasync(fd: i32): i32;
+pub @extern "c" @func sync(): void;
+pub @extern "c" @func syncfs(fd: i32): i32;
+
+pub @extern "c" @func dup(oldfd: i32): i32;
+pub @extern "c" @func dup2(oldfd: i32, newfd: i32): i32;
+pub @extern "c" @func dup3(oldfd: i32, newfd: i32, flags: i32): i32;
+
+pub @extern "c" @func pipe(pipefd: *PipeFds): i32;
+pub @extern "c" @func pipe2(pipefd: *PipeFds, flags: i32): i32;
+
+pub @extern "c" @func posix_fadvise(fd: i32, offset: i64, len: i64, advice: i32): i32;
+pub @extern "c" @func posix_fallocate(fd: i32, offset: i64, len: i64): i32;
+pub @extern "c" @func fallocate(fd: i32, mode: i32, offset: i64, len: i64): i32;
+
+pub @extern "c" @func close_range(first: u32, last: u32, flags: u32): i32;
+pub @extern "c" @func closefrom(lowfd: i32): void;
+
+pub @extern "c" @func fcntl(fd: i32, cmd: i32, arg: i64): i64;
+pub @extern "c" @func getdtablesize(): i32;
+
+pub @extern "c" @func sendfile(out_fd: i32, in_fd: i32, offset: ?*i64, count: usize): isize;
+pub @extern "c" @func copy_file_range(fd_in: i32, off_in: ?*i64, fd_out: i32, off_out: ?*i64, len: usize, flags: u32): isize;
+
+pub @const $AT_FDCWD: i32 = -100;
+pub @const $AT_SYMLINK_NOFOLLOW: i32 = 256;
+pub @const $AT_REMOVEDIR: i32 = 512;
+pub @const $AT_EACCESS: i32 = 512;
 
 pub @extern "c" @func open(path: *CBuffer, flags: i32, mode: i32): i32;
+pub @extern "c" @func openat(dirfd: i32, path: *CBuffer, flags: i32, mode: i32): i32;
 pub @extern "c" @func unlink(path: *CBuffer): i32;
+pub @extern "c" @func unlinkat(dirfd: i32, path: *CBuffer, flags: i32): i32;
+
+pub @extern "c" @func mkdir(path: *CBuffer, mode: i32): i32;
+pub @extern "c" @func mkdirat(dirfd: i32, path: *CBuffer, mode: i32): i32;
+pub @extern "c" @func rmdir(path: *CBuffer): i32;
+
+pub @extern "c" @func link(oldpath: *CBuffer, newpath: *CBuffer): i32;
+pub @extern "c" @func linkat(olddirfd: i32, oldpath: *CBuffer, newdirfd: i32, newpath: *CBuffer, flags: i32): i32;
+pub @extern "c" @func symlink(target: *CBuffer, linkpath: *CBuffer): i32;
+pub @extern "c" @func symlinkat(target: *CBuffer, newdirfd: i32, linkpath: *CBuffer): i32;
+
+pub @extern "c" @func rename(oldpath: *CBuffer, newpath: *CBuffer): i32;
+pub @extern "c" @func renameat(olddirfd: i32, oldpath: *CBuffer, newdirfd: i32, newpath: *CBuffer): i32;
+
+pub @extern "c" @func chdir(path: *CBuffer): i32;
+pub @extern "c" @func fchdir(fd: i32): i32;
+pub @extern "c" @func chroot(path: *CBuffer): i32;
+
+pub @extern "c" @func access(path: *CBuffer, mode: i32): i32;
+pub @extern "c" @func faccessat(dirfd: i32, path: *CBuffer, mode: i32, flags: i32): i32;
+pub @extern "c" @func eaccess(path: *CBuffer, mode: i32): i32;
+pub @extern "c" @func euidaccess(path: *CBuffer, mode: i32): i32;
 
 pub @extern "c" @func isatty(fd: i32): i32;
 pub @extern "c" @func getpid(): i32;

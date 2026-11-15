@@ -773,3 +773,7 @@ test "native execution: never-returning exit sets the process status" {
 test "native execution: imported extern signatures naming module-local types" {
     try expectNativeFileStdout(std.testing.allocator, "tests/fixtures/syscall_extern_main.lls", "7\n");
 }
+
+test "native execution: syscall io pipe, pread, pwrite, fcntl, dup, truncate" {
+    try expectNativeFileStdout(std.testing.allocator, "tests/fixtures/syscall_io_ops_main.lls", "7\n112\n4\n52\n2\n65\n0\n65\n5\n1\n");
+}

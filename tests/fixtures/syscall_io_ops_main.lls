@@ -1,0 +1,63 @@
+@const $sys = @import("std/syscall");
+
+pub @func main() {
+    # Pipe round-trip
+    $p = sys.io.pipe()?;
+    _ = sys.io.write(p.write, "pipe-ok")?;
+    $pbuf: [16]u8 = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    $pn = sys.io.read(p.read, pbuf[..])?;
+    sys.io.close(p.read)?;
+    sys.io.close(p.write)?;
+    print(pn); # 7
+    print(pbuf[0]); # 112 ('p')
+
+    # Pipe2 with flags
+    $p2 = sys.io.pipe2(@as(i32, sys.io.OpenFlag.CloExec))?;
+    sys.io.close(p2.read)?;
+    sys.io.close(p2.write)?;
+
+    # File pread, pwrite, fcntl, dup
+    $path = ".tmpdir/native_test_io_ops.txt";
+    $rw = @as(i32, sys.io.Access.ReadWrite) | @as(i32, sys.io.OpenFlag.Create) | @as(i32, sys.io.OpenFlag.Truncate);
+    $fd = sys.io.open(path, rw, 420)?;
+    sys.io.write_all(fd, "0123456789")?;
+
+    $fbuf: [4]u8 = [0, 0, 0, 0];
+    $pr = sys.io.pread(fd, fbuf[..], 4)?;
+    print(pr); # 4
+    print(fbuf[0]); # 52 ('4')
+
+    $pw = sys.io.pwrite(fd, "AB", 4)?;
+    print(pw); # 2
+    _ = sys.io.pread(fd, fbuf[..], 4)?;
+    print(fbuf[0]); # 65 ('A')
+
+    # fcntl GetFd
+    $fd_flag = sys.io.fcntl(fd, sys.io.FcntlCmd.GetFd, 0)?;
+    print(fd_flag); # 0
+
+    # dup
+    $d = sys.io.dup(fd)?;
+    _ = sys.io.pread(d, fbuf[..], 4)?;
+    print(fbuf[0]); # 65 ('A')
+    sys.io.close(d)?;
+    sys.io.close(fd)?;
+
+    # truncate by path
+    sys.io.truncate(path, 5)?;
+    $rfd = sys.io.open_read(path)?;
+    $rbuf: [16]u8 = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    $rlen = sys.io.read(rfd, rbuf[..])?;
+    sys.io.close(rfd)?;
+    print(rlen); # 5
+
+    # openat with AT_FDCWD
+    $at_fd = sys.io.openat(sys.io.AT_FDCWD, path, rw, 420)?;
+    sys.io.write_all(at_fd, "at_ok")?;
+    sys.io.close(at_fd)?;
+    sys.io.unlink(path)?;
+
+    # descriptor_table_size
+    $dts = sys.io.descriptor_table_size();
+    print(dts > @as(i32, 0)); # 1
+}

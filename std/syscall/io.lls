@@ -3,26 +3,30 @@
 @const $c = @import("std/syscall/c");
 @const $core = @import("std/syscall/core");
 
-@const $PATH_CAPACITY: usize = c.PATH_CAPACITY;
-@const $DEFAULT_FILE_MODE: i32 = 420; # 0644
+pub @const $PATH_CAPACITY: usize = c.PATH_CAPACITY;
+pub @const $DEFAULT_FILE_MODE: i32 = 420; # 0644
+pub @const $AT_FDCWD: core.Fd = @as(core.Fd, c.AT_FDCWD);
 
 # Requested access for `open`-style calls (the low two bits of the C flags).
-@enum Access {
+pub @enum Access {
     ReadOnly = 0,
     WriteOnly = 1,
     ReadWrite = 2,
 }
 
-# Additional open flags. Pass the ones you need to `open_with`.
-@enum OpenFlag {
+# Additional open flags. Pass the ones you need to `open`.
+pub @enum OpenFlag {
     Create = 64,
     Exclusive = 128,
     Truncate = 512,
     Append = 1024,
+    NonBlock = 2048,
+    Directory = 65536,
+    CloExec = 524288,
 }
 
-# Permission bits for `create`.
-@enum Permission {
+# Permission bits for `create` and `creat`.
+pub @enum Permission {
     OwnerRead = 256,
     OwnerWrite = 128,
     OwnerExecute = 64,
@@ -35,16 +39,68 @@
 }
 
 # Origin used by `seek`.
-@enum SeekWhence {
+pub @enum SeekWhence {
     Set = 0,
     Current = 1,
     End = 2,
 }
 
-@func permission_bits(permissions: []Permission): i32 {
+# Advice values for `posix_fadvise`.
+pub @enum Advice {
+    Normal = 0,
+    Random = 1,
+    Sequential = 2,
+    WillNeed = 3,
+    DontNeed = 4,
+    NoReuse = 5,
+}
+
+# Commands for `fcntl`.
+pub @enum FcntlCmd {
+    DupFd = 0,
+    GetFd = 1,
+    SetFd = 2,
+    GetFl = 3,
+    SetFl = 4,
+    DupFdCloExec = 1030,
+    SetPipeSz = 1031,
+    GetPipeSz = 1032,
+}
+
+# File descriptor flags (for `FcntlCmd.SetFd`).
+pub @enum FdFlag {
+    CloExec = 1,
+}
+
+# Mode flags for `fallocate`.
+pub @enum FallocateMode {
+    KeepSize = 1,
+    PunchHole = 2,
+    NoHideStales = 4,
+    CollapseRange = 8,
+    ZeroRange = 16,
+    InsertRange = 32,
+    UnshareRange = 64,
+}
+
+# A unidirectional data channel returned by `pipe` and `pipe2`.
+pub @struct Pipe {
+    read: core.Fd;
+    write: core.Fd;
+}
+
+pub @func permission_bits(permissions: []Permission): i32 {
     $bits: i32 = 0;
     @for (permissions) |permission| {
         bits = bits | @as(i32, permission);
+    }
+    return bits;
+}
+
+pub @func open_flags(access: Access, flags: []OpenFlag): i32 {
+    $bits: i32 = @as(i32, access);
+    @for (flags) |flag| {
+        bits = bits | @as(i32, flag);
     }
     return bits;
 }
@@ -60,7 +116,20 @@ pub @func read(fd: core.Fd, buf: []u8): usize | core.SyscallError {
     @if (n < @as(isize, 0)) {
         return core.last_error();
     }
-    return @as(usize,n);
+    return @as(usize, n);
+}
+
+# Read up to `len(buf)` bytes starting at `offset` without changing the file offset.
+pub @func pread(fd: core.Fd, buf: []u8, offset: i64): usize | core.SyscallError {
+    $count: usize = @as(usize, len(buf));
+    @if (count == 0) {
+        return count;
+    }
+    $n = c.pread(@as(i32, fd), buf, count, offset);
+    @if (n < @as(isize, 0)) {
+        return core.last_error();
+    }
+    return @as(usize, n);
 }
 
 # Write up to `len(data)` bytes. Returns the number actually written; callers
@@ -71,6 +140,19 @@ pub @func write(fd: core.Fd, data: []const u8): usize | core.SyscallError {
         return count;
     }
     $n = c.write(@as(i32, fd), data, count);
+    @if (n < @as(isize, 0)) {
+        return core.last_error();
+    }
+    return @as(usize, n);
+}
+
+# Write up to `len(data)` bytes starting at `offset` without changing the file offset.
+pub @func pwrite(fd: core.Fd, data: []const u8, offset: i64): usize | core.SyscallError {
+    $count: usize = @as(usize, len(data));
+    @if (count == 0) {
+        return count;
+    }
+    $n = c.pwrite(@as(i32, fd), data, count, offset);
     @if (n < @as(isize, 0)) {
         return core.last_error();
     }
@@ -111,7 +193,183 @@ pub @func truncate_file(fd: core.Fd, length: i64): void | core.SyscallError {
     }
 }
 
-@func open_with(path: string, flags: i32, mode: i32): core.Fd | core.SyscallError {
+# Set the size of the named file. A larger `length` extends the file with zero bytes.
+pub @func truncate(path: string, length: i64): void | core.SyscallError {
+    @if (@as(usize, len(path)) >= PATH_CAPACITY) {
+        return core.SyscallError.NameTooLong;
+    }
+    $buf = c.path_buffer(path);
+    $rc = c.truncate(buf, length);
+    c.free(buf);
+    @if (rc != 0) {
+        return core.last_error();
+    }
+}
+
+# Flush modified in-core data and metadata of `fd` to permanent storage.
+pub @func fsync(fd: core.Fd): void | core.SyscallError {
+    @if (c.fsync(@as(i32, fd)) != 0) {
+        return core.last_error();
+    }
+}
+
+# Flush modified in-core data (excluding certain metadata) of `fd` to permanent storage.
+pub @func fdatasync(fd: core.Fd): void | core.SyscallError {
+    @if (c.fdatasync(@as(i32, fd)) != 0) {
+        return core.last_error();
+    }
+}
+
+# Commit all filesystem caches to disk.
+pub @func sync(): void {
+    c.sync();
+}
+
+# Flush filesystem caches containing the open file referred to by `fd`.
+pub @func syncfs(fd: core.Fd): void | core.SyscallError {
+    @if (c.syncfs(@as(i32, fd)) != 0) {
+        return core.last_error();
+    }
+}
+
+# Duplicate an open file descriptor, returning the lowest-numbered unused descriptor.
+pub @func dup(oldfd: core.Fd): core.Fd | core.SyscallError {
+    $raw = c.dup(@as(i32, oldfd));
+    @if (raw < @as(i32, 0)) {
+        return core.last_error();
+    }
+    return @as(core.Fd, raw);
+}
+
+# Duplicate `oldfd` onto `newfd`, closing `newfd` first if necessary.
+pub @func dup2(oldfd: core.Fd, newfd: core.Fd): core.Fd | core.SyscallError {
+    $raw = c.dup2(@as(i32, oldfd), @as(i32, newfd));
+    @if (raw < @as(i32, 0)) {
+        return core.last_error();
+    }
+    return @as(core.Fd, raw);
+}
+
+# Duplicate `oldfd` onto `newfd` with flags (e.g. `OpenFlag.CloExec`).
+pub @func dup3(oldfd: core.Fd, newfd: core.Fd, flags: i32): core.Fd | core.SyscallError {
+    $raw = c.dup3(@as(i32, oldfd), @as(i32, newfd), flags);
+    @if (raw < @as(i32, 0)) {
+        return core.last_error();
+    }
+    return @as(core.Fd, raw);
+}
+
+# Create a unidirectional data channel.
+pub @func pipe(): Pipe | core.SyscallError {
+    $fds = c.PipeFds { read_fd: 0, write_fd: 0 };
+    $rc = c.pipe(&fds);
+    @if (rc != 0) {
+        return core.last_error();
+    }
+    return Pipe {
+        read: @as(core.Fd, fds.read_fd),
+        write: @as(core.Fd, fds.write_fd),
+    };
+}
+
+# Create a pipe with flags (e.g. `OpenFlag.CloExec` / `OpenFlag.NonBlock`).
+pub @func pipe2(flags: i32): Pipe | core.SyscallError {
+    $fds = c.PipeFds { read_fd: 0, write_fd: 0 };
+    $rc = c.pipe2(&fds, flags);
+    @if (rc != 0) {
+        return core.last_error();
+    }
+    return Pipe {
+        read: @as(core.Fd, fds.read_fd),
+        write: @as(core.Fd, fds.write_fd),
+    };
+}
+
+# Declare an intended access pattern for file data.
+pub @func posix_fadvise(fd: core.Fd, offset: i64, length: i64, advice: Advice): void | core.SyscallError {
+    $err = c.posix_fadvise(@as(i32, fd), offset, length, @as(i32, advice));
+    @if (err != 0) {
+        return core.error_from_errno(err);
+    }
+}
+
+# Ensure that space is allocated for the file region.
+pub @func posix_fallocate(fd: core.Fd, offset: i64, length: i64): void | core.SyscallError {
+    $err = c.posix_fallocate(@as(i32, fd), offset, length);
+    @if (err != 0) {
+        return core.error_from_errno(err);
+    }
+}
+
+# Manipulate space allocated to a file (Linux-specific).
+pub @func fallocate(fd: core.Fd, mode: i32, offset: i64, length: i64): void | core.SyscallError {
+    @if (c.fallocate(@as(i32, fd), mode, offset, length) != 0) {
+        return core.last_error();
+    }
+}
+
+# Close all file descriptors from `first` to `last` inclusive.
+pub @func close_range(first: u32, last: u32, flags: u32): void | core.SyscallError {
+    @if (c.close_range(first, last, flags) != 0) {
+        return core.last_error();
+    }
+}
+
+# Close all open file descriptors greater than or equal to `lowfd`.
+pub @func closefrom(lowfd: core.Fd): void {
+    c.closefrom(@as(i32, lowfd));
+}
+
+# Close all open file descriptors greater than or equal to `lowfd`.
+pub @func close_from(lowfd: core.Fd): void {
+    c.closefrom(@as(i32, lowfd));
+}
+
+# Perform control operations on the file descriptor `fd`.
+pub @func fcntl(fd: core.Fd, cmd: FcntlCmd, arg: i64): i64 | core.SyscallError {
+    $result = c.fcntl(@as(i32, fd), @as(i32, cmd), arg);
+    @if (result < @as(i64, 0)) {
+        return core.last_error();
+    }
+    return result;
+}
+
+# Return the maximum number of files a process can open.
+pub @func descriptor_table_size(): i32 {
+    return c.getdtablesize();
+}
+
+# Alias for `descriptor_table_size`.
+pub @func getdtablesize(): i32 {
+    return c.getdtablesize();
+}
+
+# Transfer up to `count` bytes between file descriptors inside the kernel.
+pub @func sendfile(out_fd: core.Fd, in_fd: core.Fd, count: usize): usize | core.SyscallError {
+    @if (count == 0) {
+        return count;
+    }
+    $n = c.sendfile(@as(i32, out_fd), @as(i32, in_fd), null, count);
+    @if (n < @as(isize, 0)) {
+        return core.last_error();
+    }
+    return @as(usize, n);
+}
+
+# Copy up to `count` bytes between file descriptors without transferring data to user space.
+pub @func copy_file_range(in_fd: core.Fd, out_fd: core.Fd, count: usize): usize | core.SyscallError {
+    @if (count == 0) {
+        return count;
+    }
+    $n = c.copy_file_range(@as(i32, in_fd), null, @as(i32, out_fd), null, count, 0);
+    @if (n < @as(isize, 0)) {
+        return core.last_error();
+    }
+    return @as(usize, n);
+}
+
+# Open a file at `path` with raw `flags` and `mode`.
+pub @func open(path: string, flags: i32, mode: i32): core.Fd | core.SyscallError {
     @if (@as(usize, len(path)) >= PATH_CAPACITY) {
         return core.SyscallError.NameTooLong;
     }
@@ -124,27 +382,47 @@ pub @func truncate_file(fd: core.Fd, length: i64): void | core.SyscallError {
     return @as(core.Fd, raw);
 }
 
+# Open a file relative to directory file descriptor `dirfd` (or `AT_FDCWD`).
+pub @func openat(dirfd: core.Fd, path: string, flags: i32, mode: i32): core.Fd | core.SyscallError {
+    @if (@as(usize, len(path)) >= PATH_CAPACITY) {
+        return core.SyscallError.NameTooLong;
+    }
+    $buf = c.path_buffer(path);
+    $raw = c.openat(@as(i32, dirfd), buf, flags, mode);
+    c.free(buf);
+    @if (raw < @as(i32, 0)) {
+        return core.last_error();
+    }
+    return @as(core.Fd, raw);
+}
+
+# Create a new file or rewrite an existing one.
+pub @func creat(path: string, mode: i32): core.Fd | core.SyscallError {
+    $flags = @as(i32, Access.WriteOnly) | @as(i32, OpenFlag.Create) | @as(i32, OpenFlag.Truncate);
+    return open(path, flags, mode);
+}
+
 # Open an existing file for reading.
 pub @func open_read(path: string): core.Fd | core.SyscallError {
-    return open_with(path, @as(i32, Access.ReadOnly), 0);
+    return open(path, @as(i32, Access.ReadOnly), 0);
 }
 
 # Open for writing, creating the file if needed and truncating it.
 pub @func open_write(path: string): core.Fd | core.SyscallError {
     $flags = @as(i32, Access.WriteOnly) | @as(i32, OpenFlag.Create) | @as(i32, OpenFlag.Truncate);
-    return open_with(path, flags, DEFAULT_FILE_MODE);
+    return open(path, flags, DEFAULT_FILE_MODE);
 }
 
 # Open for appending, creating the file if needed.
 pub @func open_append(path: string): core.Fd | core.SyscallError {
     $flags = @as(i32, Access.WriteOnly) | @as(i32, OpenFlag.Create) | @as(i32, OpenFlag.Append);
-    return open_with(path, flags, DEFAULT_FILE_MODE);
+    return open(path, flags, DEFAULT_FILE_MODE);
 }
 
 # Create a file that must not already exist, with explicit permissions.
 pub @func create(path: string, permissions: []Permission): core.Fd | core.SyscallError {
     $flags = @as(i32, Access.WriteOnly) | @as(i32, OpenFlag.Create) | @as(i32, OpenFlag.Exclusive);
-    return open_with(path, flags, permission_bits(permissions));
+    return open(path, flags, permission_bits(permissions));
 }
 
 # Close a descriptor. Safe to call on any descriptor returned by `open*`.
