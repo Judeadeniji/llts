@@ -1816,6 +1816,7 @@ pub fn containsStruct(t: ValType) bool {
 
 pub fn resolveMemberField(self: *Emitter, node: *ast_mod.Node, m: *const ast_mod.Member) !?MemberTarget {
     if (m.property.* != .primary) return null;
+    if (from_ast.resolveErrorSetName(self.state, m.object) != null) return null;
     if (m.object.* == .primary and self.state.error_sets.contains(m.object.primary.name)) return null;
     // `mod.CONST` / `mod.Type` are static paths, not fields of a value; the
     // caller emits them through the qualified global binding.
@@ -1890,6 +1891,15 @@ pub fn emitMember(self: *Emitter, node: *ast_mod.Node, m: *const ast_mod.Member)
                     return self.failAt(node, "native backend cannot resolve enum variant '{s}'", .{variant});
                 };
                 return std.fmt.allocPrint(a, "{d}", .{value});
+            }
+        }
+        if (from_ast.resolveErrorSetName(self.state, m.object)) |esname| {
+            if (self.state.error_sets.get(esname)) |ed| {
+                const member_name = m.property.primary.name;
+                if (ed.variants.contains(member_name)) {
+                    return std.fmt.allocPrint(a, "rt.err.make({s})", .{try self.zigString(member_name)});
+                }
+                return self.failAt(node, "native backend cannot resolve error member '{s}'", .{member_name});
             }
         }
     }

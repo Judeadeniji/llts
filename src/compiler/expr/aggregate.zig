@@ -498,7 +498,19 @@ fn compileErrorVariant(state: *CompilerState, mem: *const ast.Member) !bool {
     const esname = types.resolveErrorSetName(state, mem.object) orelse return false;
     const ed = state.error_sets.get(esname) orelse return false;
 
-    if (std.mem.indexOf(u8, esname, "::") != null and mem.object.* == .member) {
+    // Module-qualified error set member access requires a public export.
+    if (path.tryResolveStaticPath(state, mem.object) catch null) |static_path| {
+        if (std.mem.indexOf(u8, static_path, "::") != null and !state.chunk.exports.contains(static_path)) {
+            const mod_name = if (mem.object.* == .member and mem.object.member.object.* == .primary)
+                mem.object.member.object.primary.name
+            else if (mem.object.* == .primary)
+                mem.object.primary.name
+            else
+                "Module";
+            const short = if (std.mem.lastIndexOf(u8, static_path, "::")) |idx| static_path[idx + 2 ..] else static_path;
+            return compiler_errors.compileFailFmt(state, "'{s}' has no export '{s}'", .{ mod_name, short });
+        }
+    } else if (std.mem.indexOf(u8, esname, "::") != null and mem.object.* == .member) {
         if (!state.chunk.exports.contains(esname)) {
             const mod_name = if (mem.object.member.object.* == .primary)
                 mem.object.member.object.primary.name
@@ -525,7 +537,18 @@ fn compileEnumVariant(state: *CompilerState, mem: *const ast.Member) !bool {
     const ed = state.enums.get(ename) orelse return false;
 
     // Module-qualified enum access requires a public export.
-    if (std.mem.indexOf(u8, ename, "::") != null and mem.object.* == .member) {
+    if (path.tryResolveStaticPath(state, mem.object) catch null) |static_path| {
+        if (std.mem.indexOf(u8, static_path, "::") != null and !state.chunk.exports.contains(static_path)) {
+            const mod_name = if (mem.object.* == .member and mem.object.member.object.* == .primary)
+                mem.object.member.object.primary.name
+            else if (mem.object.* == .primary)
+                mem.object.primary.name
+            else
+                "Module";
+            const short = if (std.mem.lastIndexOf(u8, static_path, "::")) |idx| static_path[idx + 2 ..] else static_path;
+            return compiler_errors.compileFailFmt(state, "'{s}' has no export '{s}'", .{ mod_name, short });
+        }
+    } else if (std.mem.indexOf(u8, ename, "::") != null and mem.object.* == .member) {
         if (!state.chunk.exports.contains(ename)) {
             const mod_name = if (mem.object.member.object.* == .primary)
                 mem.object.member.object.primary.name

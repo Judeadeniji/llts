@@ -1095,17 +1095,11 @@ fn lookupModuleDeclExact(state: *state_mod.CompilerState, ta: ir.TypeAlloc, mod_
     if (preferredGlobalIr(state, q)) |t| return t;
     if (state.chunk.exports.contains(q) or state.global_vars.contains(q) or state.global_consts.contains(q)) {
         if (try funcTypeOfName(state, ta, q)) |ft| return ft;
-        if (state.structs.contains(q)) return ir.Type{ .struct_ = q };
-        if (state.enums.contains(q)) return ir.Type{ .enum_ = q };
-        if (state.error_sets.contains(q)) return ir.Type{ .error_set = q };
-        if (state.typedefs.contains(q)) return try from_ast.resolveTypedefType(state, ta, q);
+        if (state.structs.contains(q) or state.enums.contains(q) or state.error_sets.contains(q) or state.typedefs.contains(q)) return ir.TType;
         return ir.TUnknown;
     }
     if (try funcTypeOfName(state, ta, q)) |ft| return ft;
-    if (state.structs.contains(q)) return ir.Type{ .struct_ = q };
-    if (state.enums.contains(q)) return ir.Type{ .enum_ = q };
-    if (state.error_sets.contains(q)) return ir.Type{ .error_set = q };
-    if (state.typedefs.contains(q)) return try from_ast.resolveTypedefType(state, ta, q);
+    if (state.structs.contains(q) or state.enums.contains(q) or state.error_sets.contains(q) or state.typedefs.contains(q)) return ir.TType;
     if (state.native_globals.contains(member)) return ir.TUnknown;
     return null;
 }
@@ -1401,6 +1395,7 @@ fn fnParamTypes(state: *state_mod.CompilerState, ta: ir.TypeAlloc, func_name: []
     for (plist, 0..) |pnode, i| {
         var t: ir.Type = ir.TUnknown;
         if (pnode.type_annotation) |ann| {
+            noteDiag(state, ann);
             t = try from_ast.typeFromAst(ann, state, ta);
         } else if (state.strict) {
             const is_method_self = (method_struct != null and i == 0 and std.mem.eql(u8, pnode.name, "self"));
@@ -1776,6 +1771,9 @@ fn inferPrimaryExpr(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc
         if (try funcTypeOfName(state, ta, p.name)) |ft| return ft;
         if (state.templates.contains(p.name)) {
             return compiler_errors.compileFailFmt(state, "Generic function '{s}' cannot be used as a value; call it with type arguments", .{ir.cleanTypeName(p.name)});
+        }
+        if (state.structs.contains(p.name) or state.enums.contains(p.name) or state.error_sets.contains(p.name) or state.typedefs.contains(p.name)) {
+            return ir.TType;
         }
     }
     return ir.TUnknown;
@@ -2639,6 +2637,7 @@ fn inferFunctionDeclExpr(
     for (plist, 0..) |pnode, i| {
         var t: ir.Type = ir.TUnknown;
         if (pnode.type_annotation) |ann| {
+            noteDiag(state, ann);
             t = try from_ast.typeFromAst(ann, state, ta);
         } else if (state.strict) {
             return compiler_errors.compileFailFmt(
@@ -4429,7 +4428,14 @@ fn checkFunction(
     env.top_consts = top_consts;
     env.current_fn = f.name;
 
-    const annotated: ?ir.Type = if (f.return_type) |rt| try from_ast.typeFromAst(rt, state, ta) else null;
+    if (f.loc.line > 0) state.diag_line = f.loc.line;
+    if (f.loc.column > 0) state.diag_column = f.loc.column;
+    if (f.loc.path.len > 0) state.diag_path = f.loc.path;
+
+    const annotated: ?ir.Type = if (f.return_type) |rt| blk: {
+        noteDiag(state, rt);
+        break :blk try from_ast.typeFromAst(rt, state, ta);
+    } else null;
     if (annotated) |a| {
         if (a == .null) {
             return compiler_errors.compileFailFmt(state, "Function return type cannot be 'null'; use 'void' for no result, or '?T' / 'T | null' for optional absence", .{});
@@ -4478,6 +4484,7 @@ fn checkFunction(
     for (plist, 0..) |pnode, i| {
         var t: ir.Type = ir.TUnknown;
         if (pnode.type_annotation) |ann| {
+            noteDiag(state, ann);
             t = try from_ast.typeFromAst(ann, state, ta);
         } else if (state.strict) {
             var is_method_self = false;
@@ -5107,15 +5114,7 @@ fn seedDeclEnv(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, doc
     var git = state.global_type_irs.iterator();
     while (git.next()) |e| {
         const k = e.key_ptr.*;
-        if (std.mem.startsWith(u8, k, "$")) {
-            // Import aliases are stored under `$name` but spelled without the
-            // sigil at use sites (`c.PATH_CAPACITY`).
-            const v = e.value_ptr.*;
-            if (v == .struct_ and std.mem.startsWith(u8, v.struct_, "module:")) {
-                try env.globals.put(k[1..], v);
-            }
-            continue;
-        }
+        if (std.mem.startsWith(u8, k, "$")) continue;
         if (e.value_ptr.* == .unknown) continue;
         try env.globals.put(k, e.value_ptr.*);
     }
@@ -5220,12 +5219,14 @@ fn resolveSignatureTypes(state: *state_mod.CompilerState, env: *Env, ta: ir.Type
         if (generics.isTypeParam(p)) continue;
         var t: ir.Type = ir.TUnknown;
         if (p.type_annotation) |ann| {
+            noteDiag(state, ann);
             t = if (from_ast.typeNodeHasCall(ann)) try resolveDeclTypeNode(state, env, ta, ann) else try from_ast.typeFromAst(ann, state, ta);
             try rejectTypeValue(state, t, "a parameter type");
         }
         try env.define(p.name, t);
     }
     if (f.return_type) |rt| {
+        noteDiag(state, rt);
         if (from_ast.typeNodeHasCall(rt)) {
             const t = try resolveDeclTypeNode(state, env, ta, rt);
             try rejectTypeValue(state, t, "a return type");
@@ -5275,23 +5276,6 @@ pub fn typecheck(state: *state_mod.CompilerState, doc: *ast.Document) TypecheckE
     while (nit.next()) |n| try decl_env.globals.put(n.*, ir.TUnknown);
     try seedDeclEnv(state, &decl_env, ta, doc);
     try resolveTypeDeclCalls(state, &decl_env, ta, doc);
-
-    // Annotated top-level types are known before any initializer runs. Record
-    // them up front so a module constant used by an earlier initializer (for
-    // example `$PATH_CAPACITY: usize = c.PATH_CAPACITY;`) resolves even though
-    // the exported declaration is visited later in the statement list.
-    for (doc.statements) |s| {
-        if (s.* != .declaration) continue;
-        const d = &s.declaration;
-        const ann = d.type_annotation orelse continue;
-        if (state.global_type_irs.contains(d.name)) continue;
-        const t = if (from_ast.typeNodeHasCall(ann))
-            resolveDeclTypeNode(state, &decl_env, ta, ann) catch continue
-        else
-            from_ast.typeFromAst(ann, state, ta) catch continue;
-        if (t == .unknown or t == .void or t == .never or t == .type_ or t == .error_) continue;
-        try state.global_type_irs.put(d.name, t);
-    }
 
     for (doc.statements) |s| {
         if (s.* == .struct_decl) {

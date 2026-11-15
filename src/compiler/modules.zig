@@ -229,6 +229,15 @@ fn loadImportsInTree(
                     error.CompileError => return,
                     else => |e| return e,
                 };
+                // A public import re-exports the module under the importing
+                // module's namespace (`@const $file = @import(...)`).
+                if (d.is_public) {
+                    if (current_module) |parent| {
+                        const exp_key = try std.fmt.allocPrint(state.allocator, "{s}::{s}", .{ parent, d.name });
+                        try state.owned.append(state.allocator, exp_key);
+                        try state.chunk.exports.put(exp_key, {});
+                    }
+                }
             } else {
                 if (d.type_annotation) |ta| try loadImportsInTree(state, doc, ta, current_module, out, visited);
                 try loadImportsInTree(state, doc, d.value, current_module, out, visited);

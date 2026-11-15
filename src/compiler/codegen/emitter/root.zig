@@ -1166,6 +1166,9 @@ pub const Emitter = struct {
             if (from_ast.resolveEnumName(self.state, node.member.object)) |ename| {
                 if (try self.valTypeFromIR(node, .{ .enum_ = ename })) |vt| return vt;
             }
+            if (from_ast.resolveErrorSetName(self.state, node.member.object)) |esname| {
+                if (try self.valTypeFromIR(node, .{ .error_set = esname })) |vt| return vt;
+            }
             // Imported module globals (`lib.CAPACITY`) are emitted under their
             // qualified key; read their type from the collected global.
             if (node.member.property.* == .primary) {

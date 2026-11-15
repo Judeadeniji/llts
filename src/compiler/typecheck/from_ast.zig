@@ -481,7 +481,7 @@ pub fn resolveNamedType(name: []const u8, state: ?*state_mod.CompilerState, ta: 
         if (st.enums.contains(name)) return .{ .enum_ = name };
         if (st.structs.contains(name)) return .{ .struct_ = name };
         if (st.struct_templates.contains(name)) return missingTypeArgs(st, name);
-        return compile_error.compileFailFmt(st, "Unknown type '{s}'", .{name});
+        return compile_error.compileFailFmt(st, "Unknown type '{s}'", .{ir.cleanTypeName(name)});
     }
     return t;
 }
@@ -1623,12 +1623,62 @@ pub fn isStringyType(t: ?[]const u8) bool {
     return std.mem.startsWith(u8, s, "[") and (std.mem.endsWith(u8, s, "]byte") or std.mem.endsWith(u8, s, "]u8"));
 }
 
+pub fn peelTypedefToEnum(state: *state_mod.CompilerState, name: []const u8) ?[]const u8 {
+    if (state.enums.contains(name)) return name;
+    if (state.typedefs.get(name)) |td| {
+        if (td.ir) |ir_ty| {
+            if (ir_ty == .enum_) return ir_ty.enum_;
+        }
+        if (td.underlying.len > 0 and !std.mem.eql(u8, td.underlying, name)) {
+            if (peelTypedefToEnum(state, td.underlying)) |en| return en;
+        }
+    }
+    if (std.mem.indexOf(u8, name, "::") == null) {
+        if (findTypedefKey(state, name)) |k| {
+            if (state.typedefs.get(k)) |td| {
+                if (td.ir) |ir_ty| {
+                    if (ir_ty == .enum_) return ir_ty.enum_;
+                }
+                if (td.underlying.len > 0 and !std.mem.eql(u8, td.underlying, k)) {
+                    if (peelTypedefToEnum(state, td.underlying)) |en| return en;
+                }
+            }
+        }
+    }
+    return null;
+}
+
+pub fn peelTypedefToErrorSet(state: *state_mod.CompilerState, name: []const u8) ?[]const u8 {
+    if (state.error_sets.contains(name)) return name;
+    if (state.typedefs.get(name)) |td| {
+        if (td.ir) |ir_ty| {
+            if (ir_ty == .error_set) return ir_ty.error_set;
+        }
+        if (td.underlying.len > 0 and !std.mem.eql(u8, td.underlying, name)) {
+            if (peelTypedefToErrorSet(state, td.underlying)) |es| return es;
+        }
+    }
+    if (std.mem.indexOf(u8, name, "::") == null) {
+        if (findTypedefKey(state, name)) |k| {
+            if (state.typedefs.get(k)) |td| {
+                if (td.ir) |ir_ty| {
+                    if (ir_ty == .error_set) return ir_ty.error_set;
+                }
+                if (td.underlying.len > 0 and !std.mem.eql(u8, td.underlying, k)) {
+                    if (peelTypedefToErrorSet(state, td.underlying)) |es| return es;
+                }
+            }
+        }
+    }
+    return null;
+}
+
 /// If `node` names an enum type (`Tok` or `lib.Tok`), return the (possibly module-qualified) enum name.
 pub fn resolveEnumName(state: *state_mod.CompilerState, node: *ast.Node) ?[]const u8 {
     switch (node.*) {
         .primary => |p| {
             if (p.kind != .identifier and p.kind != .register) return null;
-            if (state.enums.contains(p.name)) return p.name;
+            if (peelTypedefToEnum(state, p.name)) |en| return en;
             return null;
         },
         .member => |m| {
@@ -1638,11 +1688,11 @@ pub fn resolveEnumName(state: *state_mod.CompilerState, node: *ast.Node) ?[]cons
                 var buf: [256]u8 = undefined;
                 const dotted = std.fmt.bufPrint(&buf, "{s}.{s}", .{ alias, short }) catch return null;
                 const q = expr_path.resolveModuleType(state, dotted) catch return null;
-                if (state.enums.contains(q)) return q;
+                if (peelTypedefToEnum(state, q)) |en| return en;
             }
             // Nested module path (`lib.mod.Tok`).
             const q = (expr_path.tryResolveStaticPath(state, node) catch null) orelse return null;
-            if (state.enums.contains(q)) return q;
+            if (peelTypedefToEnum(state, q)) |en| return en;
             return null;
         },
         else => return null,
@@ -1654,17 +1704,21 @@ pub fn resolveErrorSetName(state: *state_mod.CompilerState, node: *ast.Node) ?[]
     switch (node.*) {
         .primary => |p| {
             if (p.kind != .identifier and p.kind != .register) return null;
-            if (state.error_sets.contains(p.name)) return p.name;
+            if (peelTypedefToErrorSet(state, p.name)) |es| return es;
             return null;
         },
         .member => |m| {
-            if (m.object.* != .primary or m.property.* != .primary) return null;
-            const alias = m.object.primary.name;
-            const short = m.property.primary.name;
-            var buf: [256]u8 = undefined;
-            const dotted = std.fmt.bufPrint(&buf, "{s}.{s}", .{ alias, short }) catch return null;
-            const q = expr_path.resolveModuleType(state, dotted) catch return null;
-            if (state.error_sets.contains(q)) return q;
+            if (m.object.* == .primary and m.property.* == .primary) {
+                const alias = m.object.primary.name;
+                const short = m.property.primary.name;
+                var buf: [256]u8 = undefined;
+                const dotted = std.fmt.bufPrint(&buf, "{s}.{s}", .{ alias, short }) catch return null;
+                const q = expr_path.resolveModuleType(state, dotted) catch return null;
+                if (peelTypedefToErrorSet(state, q)) |es| return es;
+            }
+            // Nested module path (`sys.core.SyscallError`).
+            const q = (expr_path.tryResolveStaticPath(state, node) catch null) orelse return null;
+            if (peelTypedefToErrorSet(state, q)) |es| return es;
             return null;
         },
         else => return null,
