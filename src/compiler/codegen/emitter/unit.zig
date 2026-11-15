@@ -486,6 +486,9 @@ pub fn emitExternDecls(self: *Emitter) !void {
     var seen = std.StringHashMap(void).init(a);
     var emitted = false;
     for (infos.items) |info| {
+        if (self.reach) |r| {
+            if (!r.isExternReachable(info.symbol)) continue;
+        }
         if (seen.contains(info.symbol)) continue;
         try seen.put(info.symbol, {});
         emitted = true;

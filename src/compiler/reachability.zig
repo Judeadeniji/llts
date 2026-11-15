@@ -13,15 +13,21 @@ const CompilerState = state_mod.CompilerState;
 pub const Result = struct {
     functions: std.StringHashMap(void),
     globals: std.StringHashMap(void),
+    externs: std.StringHashMap(void),
     allocator: std.mem.Allocator,
 
     pub fn deinit(self: *Result) void {
         self.functions.deinit();
         self.globals.deinit();
+        self.externs.deinit();
     }
 
     pub fn isFunctionReachable(self: *const Result, name: []const u8) bool {
         return self.functions.contains(name);
+    }
+
+    pub fn isExternReachable(self: *const Result, name: []const u8) bool {
+        return self.externs.contains(name);
     }
 
     pub fn shouldEmitTopLevel(self: *const Result, doc: *ast.Document, node: *ast.Node) bool {
@@ -43,6 +49,7 @@ pub fn compute(state: *CompilerState, doc: *ast.Document) !Result {
     var result: Result = .{
         .functions = std.StringHashMap(void).init(state.allocator),
         .globals = std.StringHashMap(void).init(state.allocator),
+        .externs = std.StringHashMap(void).init(state.allocator),
         .allocator = state.allocator,
     };
 
@@ -309,6 +316,21 @@ fn noteGlobalRead(state: *CompilerState, name: []const u8, result: *Result) !voi
             try result.globals.put(name, {});
         }
     }
+    if (state.isExternData(name)) {
+        if (state.externs.get(name)) |ext| {
+            try result.externs.put(ext.symbol, {});
+        } else {
+            try result.externs.put(name, {});
+        }
+    }
+}
+
+fn noteExternRef(state: *CompilerState, name: []const u8, result: *Result) !void {
+    if (state.externs.get(name)) |ext| {
+        try result.externs.put(ext.symbol, {});
+    } else {
+        try result.externs.put(name, {});
+    }
 }
 
 fn selfReceiverTypeName(state: *CompilerState, full_name: []const u8) ?[]const u8 {
@@ -336,7 +358,19 @@ fn noteCall(
     work: *std.ArrayList([]const u8),
 ) !void {
     if (try resolveCallTarget(state, callee)) |name| {
-        if (state.isNativeCallable(name)) return;
+        if (state.isNativeCallable(name)) {
+            try noteExternRef(state, name, result);
+            return;
+        }
+        // Module-qualified extern names like "std/syscall/c.lls::__errno_location":
+        // externs are keyed by bare source name, so check the part after the last "::".
+        if (std.mem.lastIndexOf(u8, name, "::")) |idx| {
+            const bare = name[idx + 2 ..];
+            if (state.isNativeCallable(bare)) {
+                try noteExternRef(state, bare, result);
+                return;
+            }
+        }
         var targets = try expandCallTargets(state, name);
         defer targets.deinit(state.allocator);
         for (targets.items) |target| try enqueueFunction(result, work, target);
@@ -408,9 +442,13 @@ fn noteCall(
             } else if (types.resolveType(state, mem.object)) |type_name| {
                 try enqueueMethodTargets(state, result, work, type_name, prop);
             } else {
-                var targets = try expandCallTargets(state, prop);
-                defer targets.deinit(state.allocator);
-                for (targets.items) |target| try enqueueFunction(result, work, target);
+                if (state.isNativeCallable(prop)) {
+                    try noteExternRef(state, prop, result);
+                } else {
+                    var targets = try expandCallTargets(state, prop);
+                    defer targets.deinit(state.allocator);
+                    for (targets.items) |target| try enqueueFunction(result, work, target);
+                }
             }
         }
     }
