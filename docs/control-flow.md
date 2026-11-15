@@ -179,6 +179,14 @@ Range loops iterate over an integer interval. The upper bound is **exclusive**:
 }
 ```
 
+Both bounds accept ordinary expressions; the upper bound is evaluated once before the loop starts:
+
+```lls
+@for (1..n + 1) |i| {
+    print(i);
+}
+```
+
 ### 2. Condition Loops (While-style)
 Passing a boolean condition turns `@for` into a condition loop:
 

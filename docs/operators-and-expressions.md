@@ -216,22 +216,23 @@ Variables are updated using `=` or compound assignment operators:
 
 ## Precedence & Associativity Hierarchy
 
-The LLTS grammar defines 14 distinct precedence levels, evaluated from highest (14) to lowest (1):
+The LLTS grammar defines 14 binary precedence levels, plus prefix and postfix operators that bind tighter than any binary operator. The table below runs from highest (16) to lowest (1):
 
 | Level | Operators | Associativity | Description |
 |:---:|:---|:---:|:---|
-| **14** | `..` | None | Range constructor |
-| **13** | `.field`, `.0`, `[i]`, `()`, `.?`, `?` | Left-to-right | Postfix calls, indexing, member access, unwraps |
-| **12** | `-`, `!`, `~`, `&`, `const` | Right-to-left | Prefix unary operators |
-| **11** | `^`, `**` | Right-to-left | Exponentiation (power) |
-| **10** | `*`, `/`, `%`, `*%` | Left-to-right | Multiplicative & wrapping multiplication |
-| **9** | `+`, `-`, `+%`, `-%` | Left-to-right | Additive & wrapping addition/subtraction |
-| **8** | `<<`, `>>` | Left-to-right | Bitwise shift operators |
-| **7** | `&` | Left-to-right | Bitwise AND |
-| **6** | `~` | Left-to-right | Bitwise XOR |
-| **5** | `\|` | Left-to-right | Bitwise OR |
-| **4** | `<`, `<=`, `>`, `>=`, `==`, `!=` | Left-to-right | Relational & equality comparisons |
-| **3** | `&&` | Left-to-right | Logical AND (short-circuiting) |
-| **2** | `\|\|`, `??` | Left-to-right | Logical OR & null-coalescing |
-| **1** | `\|>` | Left-to-right | Pipe operator |
-| **0** | `=`, `+=`, `-=`, `*=`, `/=`, etc. | Right-to-left | Assignment and compound assignments |
+| **16** | `.field`, `.0`, `[i]`, `()`, `.?`, `?` | Left-to-right | Postfix calls, indexing, member access, unwraps |
+| **15** | `-`, `!`, `~`, `&`, `const` | Right-to-left | Prefix unary operators |
+| **14** | `^`, `**` | Right-to-left | Exponentiation (power) |
+| **13** | `*`, `/`, `%`, `*%` | Left-to-right | Multiplicative & wrapping multiplication |
+| **12** | `+`, `-`, `+%`, `-%`, `\|>` | Left-to-right | Additive, wrapping addition/subtraction, pipe |
+| **11** | `<<`, `>>` | Left-to-right | Bitwise shift operators |
+| **10** | `<`, `<=`, `>`, `>=` | Left-to-right | Relational comparisons |
+| **9** | `==`, `!=` | Left-to-right | Equality comparisons |
+| **8** | `&` | Left-to-right | Bitwise AND |
+| **7** | `~` | Left-to-right | Bitwise XOR |
+| **6** | `\|` | Left-to-right | Bitwise OR |
+| **5** | `&&` | Left-to-right | Logical AND (short-circuiting) |
+| **4** | `\|\|` | Left-to-right | Logical OR (short-circuiting) |
+| **3** | `??` | Left-to-right | Null-coalescing |
+| **2** | `..` | None | Range constructor (bounds are ordinary expressions) |
+| **1** | `=`, `+=`, `-=`, `*=`, `/=`, etc. | Right-to-left | Assignment and compound assignments |

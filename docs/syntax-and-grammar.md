@@ -179,19 +179,19 @@ LLTS defines 14 levels of binary operator precedence (from lowest binding to hig
 | Level | Operators | Associativity | Description | Example |
 | :---: | :--- | :---: | :--- | :--- |
 | **1** | `=`, `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `\|=`, `~=`, `<<=`, `>>=` | Right | Assignment & Compound Assignment | `x += 5` |
-| **2** | `??` | Left | Null-Coalescing | `name ?? "Default"` |
-| **3** | `\|\|` | Left | Logical OR (short-circuiting) | `is_valid \|\| fallback` |
-| **4** | `&&` | Left | Logical AND (short-circuiting) | `x > 0 && y > 0` |
-| **5** | `\|` | Left | Bitwise OR | `flags \| 0x01` |
-| **6** | `~` | Left | Bitwise XOR (binary) | `mask ~ 0xFF` |
-| **7** | `&` | Left | Bitwise AND | `val & 0x0F` |
-| **8** | `==`, `!=` | Left | Equality & Inequality | `status == 200` |
-| **9** | `<`, `<=`, `>`, `>=` | Left | Relational Comparisons | `age >= 18` |
-| **10** | `<<`, `>>` | Left | Bitwise Shifts (arithmetic) | `val << 2` |
-| **11** | `+`, `-`, `\|>`, `+%`, `-%` | Left | Addition, Subtraction, Pipe, Wrapping Add/Sub | `a + b`, `x \|> f()` |
-| **12** | `*`, `/`, `%`, `**`, `*%` | Left | Multiplication, Division, Modulo, Power, Wrapping Mul | `w * h`, `a % b` |
-| **13** | `^` | Right | Exponentiation (power) | `2 ^ 8` |
-| **14** | `..` | Non-assoc | Range operator | `0..limit` |
+| **2** | `..` | Non-assoc | Range operator (bounds are ordinary expressions) | `0..n + 1` |
+| **3** | `??` | Left | Null-Coalescing | `name ?? "Default"` |
+| **4** | `\|\|` | Left | Logical OR (short-circuiting) | `is_valid \|\| fallback` |
+| **5** | `&&` | Left | Logical AND (short-circuiting) | `x > 0 && y > 0` |
+| **6** | `\|` | Left | Bitwise OR | `flags \| 0x01` |
+| **7** | `~` | Left | Bitwise XOR (binary) | `mask ~ 0xFF` |
+| **8** | `&` | Left | Bitwise AND | `val & 0x0F` |
+| **9** | `==`, `!=` | Left | Equality & Inequality | `status == 200` |
+| **10** | `<`, `<=`, `>`, `>=` | Left | Relational Comparisons | `age >= 18` |
+| **11** | `<<`, `>>` | Left | Bitwise Shifts (arithmetic) | `val << 2` |
+| **12** | `+`, `-`, `\|>`, `+%`, `-%` | Left | Addition, Subtraction, Pipe, Wrapping Add/Sub | `a + b`, `x \|> f()` |
+| **13** | `*`, `/`, `%`, `**`, `*%` | Left | Multiplication, Division, Modulo, Power, Wrapping Mul | `w * h`, `a % b` |
+| **14** | `^` | Right | Exponentiation (power) | `2 ^ 8` |
 
 ### Prefix Operators
 Prefix operators bind tighter than any binary operator:
