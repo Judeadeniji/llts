@@ -1,0 +1,12 @@
+# Raw C ABI extern declarations (internal to syscall library).
+# Do not import directly outside this library; use `std/syscall` wrappers.
+
+pub @extern "c" @func exit(status: i32): void;
+pub @extern "c" @func _Exit(status: i32): void;
+pub @extern "c" @func abort(): void;
+
+pub @extern "c" @func getenv(name: c_str): ?c_str;
+
+pub @extern "c" @func read(fd: i32, buf: *u8, count: usize): isize;
+pub @extern "c" @func write(fd: i32, buf: *u8, count: usize): isize;
+pub @extern "c" @func close(fd: i32): i32;

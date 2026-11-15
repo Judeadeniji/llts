@@ -599,6 +599,8 @@ test "native execution: extern byte buffer and optional c_str" {
         \\    $buf: [4]u8 = [0, 0, 0, 0];
         \\    _ = memset(buf, 65, 4);
         \\    printf("%c%c%c%c\n", buf[0], buf[1], buf[2], buf[3]);
+        \\    $lit: c_str = "x";
+        \\    printf("lit=%d\n", strlen(lit));
         \\    $env: ?c_str = getenv("PATH");
         \\    @if (env) |v| {
         \\        $zero: usize = 0;
@@ -609,7 +611,7 @@ test "native execution: extern byte buffer and optional c_str" {
         \\}
         \\@extern "c" @func strlen(s: c_str): usize;
     ;
-    try expectNativeStdout(allocator, src, "AAAA\nenv=1\n");
+    try expectNativeStdout(allocator, src, "AAAA\nlit=1\nenv=1\n");
 }
 
 test "native execution: imported pub extern links its bare symbol" {

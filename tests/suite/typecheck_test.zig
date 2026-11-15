@@ -405,6 +405,8 @@ test "extern: typechecks fixed calls, C returns, and variadic arguments" {
         \\    $v: i32 = printf("%d\n", 42, true, "suffix", 1.5);
         \\    $p: ?*u8 = malloc(8);
         \\    $h: ?c_str = getenv("HOME");
+        \\    $c: c_str = "literal c string";
+        \\    _ = puts(c);
         \\    $buf: [4]u8 = [1, 2, 3, 4];
         \\    $w: isize = write(1, "abc", 3);
         \\    $w2: isize = write(1, buf, 4);
@@ -412,7 +414,7 @@ test "extern: typechecks fixed calls, C returns, and variadic arguments" {
     ;
     var analyzed = try helpers.analyzeSource(allocator, src, null, true);
     defer analyzed.deinit();
-    try std.testing.expectEqual(@as(usize, 6), analyzed.state.extern_calls.count());
+    try std.testing.expectEqual(@as(usize, 7), analyzed.state.extern_calls.count());
 }
 
 test "extern: call typechecking rejects arity, types, and value uses" {
@@ -429,6 +431,9 @@ test "extern: call typechecking rejects arity, types, and value uses" {
         ,
         \\@extern "c" @func f(s: c_str): void;
         \\pub @func main() { $s: string = "x"; f(s); }
+        ,
+        \\@extern "c" @func f(s: c_str): void;
+        \\pub @func main() { $s: string = "x"; $v: c_str = s; }
         ,
         \\@extern "c" @func f(p: *u8): void;
         \\pub @func main() { f(null); }

@@ -1,0 +1,32 @@
+# Syscall library: LLTS wrappers over platform C ABI primitives.
+# Raw extern declarations live in `std/syscall/c`; public API is exposed through wrappers.
+
+@const $c = @import("std/syscall/c");
+
+pub @func exit(status: i32) {
+    c.exit(status);
+}
+
+pub @func _Exit(status: i32) {
+    c._Exit(status);
+}
+
+pub @func abort() {
+    c.abort();
+}
+
+pub @func getenv(name: c_str): ?c_str {
+    return c.getenv(name);
+}
+
+pub @func read(fd: i32, buf: *u8, count: usize): isize {
+    return c.read(fd, buf, count);
+}
+
+pub @func write(fd: i32, buf: *u8, count: usize): isize {
+    return c.write(fd, buf, count);
+}
+
+pub @func close(fd: i32): i32 {
+    return c.close(fd);
+}

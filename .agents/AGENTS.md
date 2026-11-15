@@ -28,6 +28,7 @@ This is where language design gets tricky. Some features look like standard libr
 ## 4. Coding Guidelines
 
 * **Zig Imports:** NEVER inline Zig imports (e.g., do not write `@import("some/module.zig").func()`). Always declare imports as top-level constants at the beginning of the file (e.g., `const module = @import("some/module.zig");`) and use the constant.
+* **Temporary Directory:** Use `./.tmpdir` over tmpfs in this project (including overriding it for Zig when running commands, e.g. via `TMPDIR=./.tmpdir` or Zig's equivalent cache/temp settings). Do not rely on system `/tmp` or tmpfs-backed temp locations.
 
 ## 5. Compiler Authority (Non-Negotiable)
 

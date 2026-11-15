@@ -544,6 +544,14 @@ fn requireAssignAt(state: *state_mod.CompilerState, got: ir.Type, expected: ir.T
         }
         return;
     }
+    // String literals are compile-time NUL-terminated C strings when assigned
+    // directly to c_str; runtime strings remain rejected.
+    if (from) |node| {
+        if (ir.peelDefined(expected) == .c_str and node.* == .literal and node.literal.literal_type == .string) {
+            try recordExprType(state, node, expected);
+            return;
+        }
+    }
     // int_lit as the expected type means a mutable variable whose type was inferred
     // from an integer literal without annotation (e.g. `$b = 20`).  Unlike its role
     // as a singleton in `@const` / switch patterns, here it acts as a "flexible
