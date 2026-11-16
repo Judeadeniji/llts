@@ -356,10 +356,6 @@ test "extern: registration rejects invalid declarations" {
         \\@extern "c" @func f(x: i32 | error): void;
         \\pub @func main() {}
         ,
-        \\@struct S { x: i32; }
-        \\@extern "c" @func f(x: ?*S): void;
-        \\pub @func main() {}
-        ,
         \\@extern "c" @func f(x: **u8): void;
         \\pub @func main() {}
         ,
@@ -400,6 +396,8 @@ test "extern: typechecks fixed calls, C returns, and variadic arguments" {
         \\@extern "c" @func malloc(size: usize): ?*u8;
         \\@extern "c" @func getenv(name: c_str): ?c_str;
         \\@extern "c" @func write(fd: i32, buf: *u8, n: usize): isize;
+        \\@struct S { x: i32; }
+        \\@extern "c" @func draw(p: ?*S): void;
         \\pub @func main() {
         \\    $r: i32 = puts("hello");
         \\    $v: i32 = printf("%d\n", 42, true, "suffix", 1.5);

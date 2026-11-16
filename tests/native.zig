@@ -749,6 +749,10 @@ test "native execution: public wrappers can use private externs" {
     try expectNativeFileStdout(std.testing.allocator, "tests/fixtures/extern_private_ok_main.lls", "1\n55\n");
 }
 
+test "native execution: extern signatures accept optional struct pointers" {
+    try expectNativeFileStdout(std.testing.allocator, "tests/fixtures/extern_optional_struct_ptr_main.lls", "");
+}
+
 test "native execution: syscall file write, seek, read, unlink" {
     try expectNativeFileStdout(std.testing.allocator, "tests/fixtures/syscall_file_main.lls", "6\n4\n108\n99\n");
 }
@@ -804,4 +808,8 @@ test "native execution: syscall term, sysconf, priority, hardware info, getrando
 
 test "native execution: syscall umask, getresuid, getresgid, mremap, getauxval, ftok" {
     try expectNativeFileStdout(std.testing.allocator, "tests/fixtures/syscall_misc_ops_main.lls", "umask-ok\nresuid-ok\nresgid-ok\nmremap-ok\nauxval-ok\nftok-ok\n");
+}
+
+test "native execution: syscall c extern struct ABI layout, sizeOf, and alignOf" {
+    try expectNativeFileStdout(std.testing.allocator, "tests/fixtures/syscall_extern_struct_main.lls", "16\n8\n144\n8\n8\n4\n60\n4\n16\n8\n16\n8\n16\n2\nstat-call-ok\n");
 }
