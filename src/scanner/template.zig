@@ -52,9 +52,7 @@ pub fn scanTemplate(self: *ctx.Scanner) ctx.ScanError!void {
         if (c != ' ' and c != '\t') {
             self.line = open_line;
             self.column = open_col;
-            return fail(
-                self,
-                error.TemplateFence,
+            return fail(self, error.TemplateFence,
                 \\expected a newline after the opening ```
                 \\
                 \\help: a template literal is fenced across lines:
@@ -72,9 +70,7 @@ pub fn scanTemplate(self: *ctx.Scanner) ctx.ScanError!void {
     if (self.peek(0) == null) {
         self.line = open_line;
         self.column = open_col;
-        return fail(
-            self,
-            error.UnterminatedTemplate,
+        return fail(self, error.UnterminatedTemplate,
             \\unterminated template literal
             \\
             \\help: close the template with ``` on its own line:
@@ -121,9 +117,7 @@ pub fn scanTemplate(self: *ctx.Scanner) ctx.ScanError!void {
     if (!found_close) {
         self.line = open_line;
         self.column = open_col;
-        return fail(
-            self,
-            error.UnterminatedTemplate,
+        return fail(self, error.UnterminatedTemplate,
             \\unterminated template literal
             \\
             \\help: every opening ``` needs a closing ``` on its own line:
@@ -230,9 +224,7 @@ fn splitTemplateParts(
             if (depth != 0 or i >= body.len) {
                 self.line = hole_pos.line;
                 self.column = hole_pos.column;
-                return fail(
-                    self,
-                    error.UnterminatedTemplate,
+                return fail(self, error.UnterminatedTemplate,
                     \\unterminated `${…}` interpolation
                     \\
                     \\help: close every interpolation with `}`:

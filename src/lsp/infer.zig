@@ -132,13 +132,13 @@ pub fn formatType(allocator: std.mem.Allocator, node: *const ast.Node, is_const:
                 .number, .hex, .octal, .binary => if (is_const) std.fmt.allocPrint(allocator, "{s} (int)", .{l.value}) catch null else std.mem.Allocator.dupe(allocator, u8, "int") catch null,
                 .string => if (is_const) std.fmt.allocPrint(allocator, "\"{s}\" (const []u8)", .{l.value}) catch null else std.mem.Allocator.dupe(allocator, u8, "const []u8") catch null,
                 .boolean => if (is_const) std.fmt.allocPrint(allocator, "{s} (bool)", .{l.value}) catch null else std.mem.Allocator.dupe(allocator, u8, "bool") catch null,
-                .@"null" => std.mem.Allocator.dupe(allocator, u8, "null") catch null,
+                .null => std.mem.Allocator.dupe(allocator, u8, "null") catch null,
             };
         },
         .struct_decl => |s| {
             var fields_str = std.ArrayList(u8).empty;
             defer fields_str.deinit(allocator);
-            
+
             for (s.fields, 0..) |f, i| {
                 if (i > 0) fields_str.appendSlice(allocator, ", ") catch {};
                 fields_str.appendSlice(allocator, f.name) catch {};
@@ -152,7 +152,7 @@ pub fn formatType(allocator: std.mem.Allocator, node: *const ast.Node, is_const:
                 }
             }
             if (fields_str.items.len > 0) {
-                return std.fmt.allocPrint(allocator, "@struct {s} {{ {s} }}", .{ir.cleanTypeName(s.name), fields_str.items}) catch null;
+                return std.fmt.allocPrint(allocator, "@struct {s} {{ {s} }}", .{ ir.cleanTypeName(s.name), fields_str.items }) catch null;
             }
             return std.fmt.allocPrint(allocator, "@struct {s} {{}}", .{ir.cleanTypeName(s.name)}) catch null;
         },
@@ -195,11 +195,11 @@ pub fn formatType(allocator: std.mem.Allocator, node: *const ast.Node, is_const:
                     ret_str = std.fmt.allocPrint(allocator, ": {s}", .{r_str}) catch "";
                 }
             }
-            return std.fmt.allocPrint(allocator, "@func {s}({s}){s}", .{ir.cleanTypeName(f.name), params_str.items, ret_str}) catch null;
+            return std.fmt.allocPrint(allocator, "@func {s}({s}){s}", .{ ir.cleanTypeName(f.name), params_str.items, ret_str }) catch null;
         },
         .type_decl => |t| {
             if (formatType(allocator, t.type_expr, false, doc)) |te_str| {
-                return std.fmt.allocPrint(allocator, "@type {s} = {s}", .{ir.cleanTypeName(t.name), te_str}) catch null;
+                return std.fmt.allocPrint(allocator, "@type {s} = {s}", .{ ir.cleanTypeName(t.name), te_str }) catch null;
             }
             return std.fmt.allocPrint(allocator, "@type {s}", .{ir.cleanTypeName(t.name)}) catch null;
         },
@@ -324,8 +324,7 @@ pub fn findPrimaryAtLoc(node: *ast.Node, line: u32, col: u32) ?*ast.Node {
     const loc = locOf(node);
     if (loc.line == line and loc.column == col) {
         switch (node.*) {
-            .primary, .literal, .if_expr, .for_expr, .switch_expr, .struct_init, .try_expr, .error_expr,
-            .array_type, .tuple_type, .union_type, .intersection_type, .pointer_type, .func_type, .type_decl => return node,
+            .primary, .literal, .if_expr, .for_expr, .switch_expr, .struct_init, .try_expr, .error_expr, .array_type, .tuple_type, .union_type, .intersection_type, .pointer_type, .func_type, .type_decl => return node,
             else => {},
         }
     }

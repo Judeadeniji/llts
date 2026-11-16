@@ -22,10 +22,7 @@ fn fetchFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
         var mbuf: std.ArrayList(u8) = .empty;
         defer mbuf.deinit(vm.allocator);
         const mstr = try util.valueToStr(vm, args[1], &mbuf);
-        if (std.mem.eql(u8, mstr, "POST")) method = .POST
-        else if (std.mem.eql(u8, mstr, "PUT")) method = .PUT
-        else if (std.mem.eql(u8, mstr, "DELETE")) method = .DELETE
-        else if (std.mem.eql(u8, mstr, "PATCH")) method = .PATCH;
+        if (std.mem.eql(u8, mstr, "POST")) method = .POST else if (std.mem.eql(u8, mstr, "PUT")) method = .PUT else if (std.mem.eql(u8, mstr, "DELETE")) method = .DELETE else if (std.mem.eql(u8, mstr, "PATCH")) method = .PATCH;
     }
 
     var body_str: ?[]const u8 = null;

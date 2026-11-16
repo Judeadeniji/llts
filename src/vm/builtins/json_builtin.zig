@@ -42,7 +42,8 @@ fn parseJsonNode(vm: *VMState, val: std.json.Value) anyerror!Value {
 fn jsonParseFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
     if (args.len < 1) return error.ArityError;
-    var buf: std.ArrayList(u8) = .empty; defer buf.deinit(vm.allocator);
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(vm.allocator);
     const str = try util.valueToStr(vm, args[0], &buf);
 
     var parsed = std.json.parseFromSlice(std.json.Value, vm.allocator, str, .{}) catch {
@@ -131,21 +132,21 @@ fn stringifyNode(vm: *VMState, val: Value, out: *std.io.Writer.Allocating) !void
 fn jsonStringifyFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const vm: *VMState = @ptrCast(@alignCast(vm_ptr));
     if (args.len < 1) return error.ArityError;
-    
+
     var out: std.io.Writer.Allocating = .init(vm.allocator);
     defer out.deinit();
-    
+
     stringifyNode(vm, args[0], &out) catch {
         return try util.makeError(vm, "JsonError");
     };
-    
+
     return try util.writeSlice(vm, out.written());
 }
 
 pub fn register(vm: *VMState) !void {
     json_parse_n = .{ .name = "__jsonParse", .func = jsonParseFn, .arity = 1 };
     json_stringify_n = .{ .name = "__jsonStringify", .func = jsonStringifyFn, .arity = 1 };
-    
+
     try vm.defineGlobal("__jsonParse", .{ .native = &json_parse_n });
     try vm.defineGlobal("__jsonStringify", .{ .native = &json_stringify_n });
 }

@@ -32,7 +32,7 @@ fn parseFloatWithUnderscores(raw: []const u8) !f64 {
 pub fn compileLiteral(state: *CompilerState, lit: *const ast.Literal) !void {
     try emit.emitLineIfNeeded(state, lit.loc.line, lit.loc.column);
     switch (lit.literal_type) {
-        .@"null" => try emit.emitOp(state, .OP_NULL),
+        .null => try emit.emitOp(state, .OP_NULL),
         .boolean => {
             if (std.mem.eql(u8, lit.value, "true")) {
                 try emit.emitOp(state, .OP_TRUE);

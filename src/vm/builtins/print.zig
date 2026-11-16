@@ -129,7 +129,10 @@ fn writePtr(vm: *VMState, out: *std.ArrayList(u8), p: i32) anyerror!void {
         var i: usize = 0;
         while (i < len) : (i += 1) {
             const val = vm.slot(p + @as(i32, @intCast(i))).*;
-            if (val != .i64) { printable = false; break; }
+            if (val != .i64) {
+                printable = false;
+                break;
+            }
             const ch = val.i64;
             if (ch < 32 or ch > 126) {
                 if (ch != '\n' and ch != '\t') {

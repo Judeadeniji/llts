@@ -2,7 +2,9 @@ const std = @import("std");
 const state_mod = @import("../state.zig");
 const value = @import("../../bytecode/value.zig");
 const util = @import("util.zig");
-const c = @cImport({ @cInclude("math.h"); });
+const c = @cImport({
+    @cInclude("math.h");
+});
 
 const VMState = state_mod.VMState;
 const Value = value.Value;
@@ -595,7 +597,7 @@ fn isfiniteFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     if (args.len < 1) return error.ArityError;
     const x = try asFloat(args[0]);
-    return Value.fromBool(!std.math.isNan(x) and !std.math.isInf(x) );
+    return Value.fromBool(!std.math.isNan(x) and !std.math.isInf(x));
 }
 
 fn isgreaterFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
@@ -603,7 +605,7 @@ fn isgreaterFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     if (args.len < 2) return error.ArityError;
     const a = try asFloat(args[0]);
     const b = try asFloat(args[1]);
-    return Value.fromBool(!std.math.isNan(a) and !std.math.isNan(b) and a > b );
+    return Value.fromBool(!std.math.isNan(a) and !std.math.isNan(b) and a > b);
 }
 
 fn isgreaterequalFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
@@ -611,13 +613,13 @@ fn isgreaterequalFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     if (args.len < 2) return error.ArityError;
     const a = try asFloat(args[0]);
     const b = try asFloat(args[1]);
-    return Value.fromBool(!std.math.isNan(a) and !std.math.isNan(b) and a >= b );
+    return Value.fromBool(!std.math.isNan(a) and !std.math.isNan(b) and a >= b);
 }
 
 fn isinfFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     if (args.len < 1) return error.ArityError;
-    return Value.fromBool(std.math.isInf(try asFloat(args[0])) );
+    return Value.fromBool(std.math.isInf(try asFloat(args[0])));
 }
 
 fn islessFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
@@ -625,7 +627,7 @@ fn islessFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     if (args.len < 2) return error.ArityError;
     const a = try asFloat(args[0]);
     const b = try asFloat(args[1]);
-    return Value.fromBool(!std.math.isNan(a) and !std.math.isNan(b) and a < b );
+    return Value.fromBool(!std.math.isNan(a) and !std.math.isNan(b) and a < b);
 }
 
 fn islessequalFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
@@ -633,7 +635,7 @@ fn islessequalFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     if (args.len < 2) return error.ArityError;
     const a = try asFloat(args[0]);
     const b = try asFloat(args[1]);
-    return Value.fromBool(!std.math.isNan(a) and !std.math.isNan(b) and a <= b );
+    return Value.fromBool(!std.math.isNan(a) and !std.math.isNan(b) and a <= b);
 }
 
 fn islessgreaterFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
@@ -641,19 +643,19 @@ fn islessgreaterFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     if (args.len < 2) return error.ArityError;
     const a = try asFloat(args[0]);
     const b = try asFloat(args[1]);
-    return Value.fromBool(!std.math.isNan(a) and !std.math.isNan(b) and a != b );
+    return Value.fromBool(!std.math.isNan(a) and !std.math.isNan(b) and a != b);
 }
 
 fn isnanFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     if (args.len < 1) return error.ArityError;
-    return Value.fromBool(std.math.isNan(try asFloat(args[0])) );
+    return Value.fromBool(std.math.isNan(try asFloat(args[0])));
 }
 
 fn isnormalFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     if (args.len < 1) return error.ArityError;
-    return Value.fromBool(std.math.isNormal(try asFloat(args[0])) );
+    return Value.fromBool(std.math.isNormal(try asFloat(args[0])));
 }
 
 fn isunorderedFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
@@ -661,15 +663,14 @@ fn isunorderedFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     if (args.len < 2) return error.ArityError;
     const a = try asFloat(args[0]);
     const b = try asFloat(args[1]);
-    return Value.fromBool(std.math.isNan(a) or std.math.isNan(b) );
+    return Value.fromBool(std.math.isNan(a) or std.math.isNan(b));
 }
 
 fn signbitFn(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     _ = vm_ptr;
     if (args.len < 1) return error.ArityError;
-    return Value.fromBool(std.math.signbit(try asFloat(args[0])) );
+    return Value.fromBool(std.math.signbit(try asFloat(args[0])));
 }
-
 
 pub fn register(vm: *VMState) !void {
     floor_n = .{ .name = "__floor", .func = floorFn, .arity = 1 };
@@ -838,5 +839,4 @@ pub fn register(vm: *VMState) !void {
     try vm.defineGlobal("MATH_ERRNO", .{ .i64 = 1 });
     try vm.defineGlobal("MATH_ERREXCEPT", .{ .i64 = 2 });
     try vm.defineGlobal("math_errhandling", .{ .i64 = 3 });
-
 }

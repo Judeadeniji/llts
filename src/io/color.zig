@@ -2,7 +2,6 @@ const std = @import("std");
 
 /// ANSI styling for diagnostics and logs. Off by default when stderr is not a
 /// TTY or when `NO_COLOR` is set. Force on with `FORCE_COLOR=1` / `LLTS_COLOR=1`.
-
 pub const reset = "\x1b[0m";
 pub const bold = "\x1b[1m";
 pub const dim = "\x1b[2m";

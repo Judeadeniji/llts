@@ -188,8 +188,6 @@ fn asArrayPtr(vm: *VMState, v: Value) ?i32 {
     };
 }
 
-
-
 pub fn getArray(vm: *VMState) HeapError!void {
     const idx = stack.pop(vm);
     const ptr = stack.pop(vm);
@@ -533,8 +531,7 @@ pub fn storeField(vm: *VMState, byte_offset: u16, kind: u8) HeapError!void {
                 },
                 // Scalars / objects boxed into an immortal slot (optional fields,
                 // nested structs, etc.).
-                .function, .native, .list, .map, .buffer, .ptr, .module, .array,
-                .u1, .i8, .i16, .i32, .i64, .u8, .u16, .u32, .u64, .f32, .f64 => {
+                .function, .native, .list, .map, .buffer, .ptr, .module, .array, .u1, .i8, .i16, .i32, .i64, .u8, .u16, .u32, .u64, .f32, .f64 => {
                     const slot = try vm.allocImmortal(1);
                     vm.slot(slot).* = val;
                     off = @intCast(slot);

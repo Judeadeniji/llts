@@ -53,7 +53,7 @@ pub fn params(f: *const ast.FunctionDecl) []ast.Param {
 
 /// Integer type names a type function's value parameter may use.
 const int_type_names = [_][]const u8{
-    "i8", "i16", "i32", "i64", "u1",  "u8",  "u16",
+    "i8",  "i16", "i32",   "i64",   "u1",  "u8",     "u16",
     "u32", "u64", "isize", "usize", "int", "number", "byte",
 };
 

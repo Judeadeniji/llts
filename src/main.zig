@@ -31,7 +31,7 @@ pub fn main() !void {
     defer _ = gpa_state.deinit();
     const gpa = gpa_state.allocator();
 
-    // Use a 0-byte buffer for stdout to make it unbuffered. 
+    // Use a 0-byte buffer for stdout to make it unbuffered.
     // This ensures zli's built-in exit(0) on --help prints immediately without needing a deferred flush.
     // llts dump and other heavy IO manually buffer and do single large writeAll calls, so performance is fine.
     var wbuf: [0]u8 = undefined;

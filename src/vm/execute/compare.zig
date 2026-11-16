@@ -24,7 +24,7 @@ pub fn compareEq(vm: *VMState, invert: bool) CmpError!void {
     const b = stack.pop(vm);
     const a = stack.pop(vm);
     const eq = valuesEqual(vm, a, b);
-    try stack.push(vm, Value.fromBool(if (invert) !eq else eq ));
+    try stack.push(vm, Value.fromBool(if (invert) !eq else eq));
 }
 
 fn valuesEqual(vm: *VMState, a: Value, b: Value) bool {
@@ -101,7 +101,7 @@ pub fn compareOrd(vm: *VMState, op: OpCode) CmpError!void {
         .OP_GREATER_EQUAL => af >= bf,
         else => unreachable,
     };
-    try stack.push(vm, Value.fromBool(result ));
+    try stack.push(vm, Value.fromBool(result));
 }
 
 fn asOrdFloat(v: Value) ?f64 {

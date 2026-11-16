@@ -19,7 +19,7 @@ pub fn readString(vm: *VMState, ptr: i32) ![]u8 {
             else => {
                 vm.allocator.free(buf);
                 return error.TypeError;
-            }
+            },
         }
     }
     return buf;
@@ -171,14 +171,14 @@ pub fn stringEquals(vm: *VMState, a: Value, b: Value) bool {
     const is_str_a = a == .name or a == .slice or a == .ptr or a == .bytes;
     const is_str_b = b == .name or b == .slice or b == .ptr or b == .bytes;
     if (!is_str_a or !is_str_b) return false;
-    
+
     // Quick fast paths for identical tags
     if (a == .name and b == .name) return a.name == b.name;
     if (a == .slice and b == .slice) {
         if (a.slice.len != b.slice.len) return false;
         if (a.slice.offset == b.slice.offset) return true;
     }
-    
+
     // Get lengths
     const len_a: usize = switch (a) {
         .slice => |s| s.len,
@@ -187,7 +187,7 @@ pub fn stringEquals(vm: *VMState, a: Value, b: Value) bool {
         .ptr => |p| @intCast(vm.slot(p - 1).*.i64),
         else => unreachable,
     };
-    
+
     const len_b: usize = switch (b) {
         .slice => |s| s.len,
         .bytes => |by| by.len,
@@ -195,9 +195,9 @@ pub fn stringEquals(vm: *VMState, a: Value, b: Value) bool {
         .ptr => |p| @intCast(vm.slot(p - 1).*.i64),
         else => unreachable,
     };
-    
+
     if (len_a != len_b) return false;
-    
+
     // Fallback: byte-by-byte comparison
     var i: usize = 0;
     while (i < len_a) : (i += 1) {
@@ -225,6 +225,6 @@ pub fn stringEquals(vm: *VMState, a: Value, b: Value) bool {
         };
         if (char_a != char_b) return false;
     }
-    
+
     return true;
 }

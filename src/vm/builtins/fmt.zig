@@ -900,12 +900,21 @@ fn doLegacyPrintf(vm: *VMState, out: *std.ArrayList(u8), format: []const u8, arg
 
         var min_idx: ?usize = null;
         var placeholder: enum { s, i, c } = .s;
-        if (idx_s) |pos| { min_idx = pos; placeholder = .s; }
+        if (idx_s) |pos| {
+            min_idx = pos;
+            placeholder = .s;
+        }
         if (idx_i) |pos| {
-            if (min_idx == null or pos < min_idx.?) { min_idx = pos; placeholder = .i; }
+            if (min_idx == null or pos < min_idx.?) {
+                min_idx = pos;
+                placeholder = .i;
+            }
         }
         if (idx_c) |pos| {
-            if (min_idx == null or pos < min_idx.?) { min_idx = pos; placeholder = .c; }
+            if (min_idx == null or pos < min_idx.?) {
+                min_idx = pos;
+                placeholder = .c;
+            }
         }
 
         if (min_idx == null) break;

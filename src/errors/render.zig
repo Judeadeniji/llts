@@ -126,7 +126,12 @@ pub fn printSummary(error_count: usize, files: []const []const u8, first_path: [
             out.printStderr("Found {d} error{s} in the same file, starting at: {s}{s}{s}{s}:{d}{s}.\n", .{
                 error_count,
                 if (error_count == 1) "" else "s",
-                c_path, first_path, r, c_dim, first_line, r,
+                c_path,
+                first_path,
+                r,
+                c_dim,
+                first_line,
+                r,
             });
         } else if (files.len > 1) {
             out.printStderr("Found {d} error{s} in {d} file{s}.\n", .{

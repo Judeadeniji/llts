@@ -510,20 +510,20 @@ fn arenaDeinit(vm_ptr: *anyopaque, args: []Value) anyerror!Value {
     const ctrl = try resolveArenaControl(vm, args[0]);
     if (vm.slot(ctrl).*.i64 != ARENA_MAGIC)
         return fail(vm, "__arena_deinit", "invalid arena");
-        
+
     // Walk the chunks and push them to vm.free_chunks
     var chunk_v = vm.slot(ctrl + 2).*; // first chunk
     while (true) {
         const chunk = try asHeapPtr(chunk_v);
         if (chunk == 0) break;
         if (vm.slot(chunk).*.i64 != CHUNK_MAGIC) break;
-        
+
         const next = vm.slot(chunk + 4).*;
-        
+
         // Push this chunk to the free list
         vm.slot(chunk + 4).* = .{ .i64 = vm.free_chunks };
         vm.free_chunks = chunk;
-        
+
         chunk_v = next;
     }
 

@@ -52,7 +52,9 @@ fn scanAll(self: *ctx.Scanner) ScanError!void {
             // active collector (or printed directly if none). Guarantee
             // forward progress so we don't loop on the same bad byte.
             if (self.pos == before_pos) {
-                if (self.peek(0)) |_| { _ = self.advance(); }
+                if (self.peek(0)) |_| {
+                    _ = self.advance();
+                }
             }
             continue;
         };
@@ -82,9 +84,7 @@ fn scanNext(self: *ctx.Scanner) ScanError!void {
             try template.scanTemplate(self);
             return;
         }
-        return failScan(
-            self,
-            error.UnexpectedCharacter,
+        return failScan(self, error.UnexpectedCharacter,
             \\unexpected backtick
             \\
             \\help: multiline strings use triple-backtick fences:

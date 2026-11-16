@@ -102,7 +102,8 @@ pub fn compileCall(state: *CompilerState, c: *const ast.Call, node: *ast.Node) !
         }
     }
 
-    if (try resolveCalleeName(state, c.callee)) |name| {        if (std.mem.indexOf(u8, name, "::") != null and c.callee.* == .member) {
+    if (try resolveCalleeName(state, c.callee)) |name| {
+        if (std.mem.indexOf(u8, name, "::") != null and c.callee.* == .member) {
             var buf: [512]u8 = undefined;
             const re_key = std.fmt.bufPrint(&buf, "${s}", .{name}) catch "";
             const is_reexport = path.moduleBindingType(state, re_key) != null;
