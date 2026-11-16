@@ -199,3 +199,16 @@ pub @func euidaccess(path: string, mode: i32): void | core.SyscallError {
         return core.last_error();
     }
 }
+
+# Set the calling process's file mode creation mask to `mask` & 0777.
+# Returns the previous value of the mask.
+pub @func umask(mask: u32): u32 {
+    return c.umask(mask);
+}
+
+# Return the current file mode creation mask without modifying it.
+pub @func getumask(): u32 {
+    $mask = c.umask(0);
+    _ = c.umask(mask);
+    return mask;
+}

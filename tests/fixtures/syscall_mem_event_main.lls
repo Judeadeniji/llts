@@ -1,0 +1,41 @@
+@const $sys = @import("std/syscall");
+
+pub @func main() {
+    # Page size and memory mapping
+    $psize = sys.memory.getpagesize();
+    @if (psize >= @as(usize, 4096)) {
+        print("pagesize-ok");
+    }
+
+    $prot = sys.memory.PROT_READ | sys.memory.PROT_WRITE;
+    $flags = sys.memory.MAP_PRIVATE | sys.memory.MAP_ANONYMOUS;
+    $addr = sys.memory.mmap(0, psize, prot, flags, -1, 0)?;
+    @if (addr > @as(sys.memory.Address, 0)) {
+        print("mmap-ok");
+    }
+
+    sys.memory.mprotect(addr, psize, sys.memory.PROT_READ)?;
+    print("mprotect-ok");
+
+    sys.memory.madvise(addr, psize, sys.memory.MADV_NORMAL)?;
+    print("madvise-ok");
+
+    sys.memory.munmap(addr, psize)?;
+    print("munmap-ok");
+
+    # memfd creation & locking
+    $mfd = sys.memory.memfd_create("test_memfd", 0)?;
+    sys.io.flock(mfd, sys.io.LOCK_EX)?;
+    sys.io.flock(mfd, sys.io.LOCK_UN)?;
+    sys.io.close(mfd)?;
+    print("memfd-flock-ok");
+
+    # eventfd
+    $efd = sys.event.eventfd(0, 0)?;
+    sys.event.eventfd_write(efd, @as(u64, 42))?;
+    $val = sys.event.eventfd_read(efd)?;
+    @if (val == @as(u64, 42)) {
+        print("eventfd-ok");
+    }
+    sys.io.close(efd)?;
+}

@@ -42,6 +42,22 @@ pub @struct PipeFds {
     write_fd: i32;
 }
 
+pub @struct WaitStatus {
+    value: i32;
+}
+
+pub @struct ClockIdCell {
+    value: i32;
+}
+
+pub @struct EventfdValue {
+    value: u64;
+}
+
+pub @struct IdCell {
+    value: u32;
+}
+
 pub @extern "c" @func exit(status: i32): never;
 pub @extern "c" @func abort(): never;
 
@@ -141,6 +157,92 @@ pub @extern "c" @func sleep(seconds: u32): u32;
 pub @extern "c" @func usleep(usec: u32): i32;
 pub @extern "c" @func alarm(seconds: u32): u32;
 pub @extern "c" @func sched_yield(): i32;
+
+# Signals
+pub @extern "c" @func kill(pid: i32, sig: i32): i32;
+pub @extern "c" @func killpg(pgrp: i32, sig: i32): i32;
+pub @extern "c" @func raise(sig: i32): i32;
+
+# Time
+pub @extern "c" @func time(tloc: ?*i64): i64;
+pub @extern "c" @func clock_getcpuclockid(pid: i32, clock_id: *ClockIdCell): i32;
+
+# Process fork & wait
+pub @extern "c" @func fork(): i32;
+pub @extern "c" @func wait(status: ?*WaitStatus): i32;
+pub @extern "c" @func waitpid(pid: i32, status: ?*WaitStatus, options: i32): i32;
+
+# Advisory locking
+pub @extern "c" @func flock(fd: i32, operation: i32): i32;
+
+# Memory
+pub @extern "c" @func mmap(addr: isize, length: usize, prot: i32, flags: i32, fd: i32, offset: i64): isize;
+pub @extern "c" @func munmap(addr: isize, length: usize): i32;
+pub @extern "c" @func mprotect(addr: isize, length: usize, prot: i32): i32;
+pub @extern "c" @func msync(addr: isize, length: usize, flags: i32): i32;
+pub @extern "c" @func madvise(addr: isize, length: usize, advice: i32): i32;
+pub @extern "c" @func posix_madvise(addr: isize, length: usize, advice: i32): i32;
+pub @extern "c" @func mlock(addr: isize, length: usize): i32;
+pub @extern "c" @func munlock(addr: isize, length: usize): i32;
+pub @extern "c" @func mlockall(flags: i32): i32;
+pub @extern "c" @func munlockall(): i32;
+pub @extern "c" @func getpagesize(): i32;
+pub @extern "c" @func memfd_create(name: *CBuffer, flags: u32): i32;
+pub @extern "c" @func shm_open(name: *CBuffer, oflag: i32, mode: i32): i32;
+pub @extern "c" @func shm_unlink(name: *CBuffer): i32;
+
+# Eventfd
+pub @extern "c" @func eventfd(initval: u32, flags: i32): i32;
+pub @extern "c" @func eventfd_read(fd: i32, value: *EventfdValue): i32;
+pub @extern "c" @func eventfd_write(fd: i32, value: u64): i32;
+
+# Terminal control
+pub @extern "c" @func tcgetpgrp(fd: i32): i32;
+pub @extern "c" @func tcsetpgrp(fd: i32, pgrp: i32): i32;
+pub @extern "c" @func tcgetsid(fd: i32): i32;
+pub @extern "c" @func tcdrain(fd: i32): i32;
+pub @extern "c" @func tcflow(fd: i32, action: i32): i32;
+pub @extern "c" @func tcflush(fd: i32, queue_selector: i32): i32;
+pub @extern "c" @func tcsendbreak(fd: i32, duration: i32): i32;
+
+# System information, priority, scheduling
+pub @extern "c" @func sysconf(name: i32): i64;
+pub @extern "c" @func pathconf(path: *CBuffer, name: i32): i64;
+pub @extern "c" @func fpathconf(fd: i32, name: i32): i64;
+pub @extern "c" @func getpriority(which: i32, who: i32): i32;
+pub @extern "c" @func setpriority(which: i32, who: i32, prio: i32): i32;
+pub @extern "c" @func nice(inc: i32): i32;
+pub @extern "c" @func get_nprocs(): i32;
+pub @extern "c" @func get_nprocs_conf(): i32;
+pub @extern "c" @func get_phys_pages(): i64;
+pub @extern "c" @func get_avphys_pages(): i64;
+pub @extern "c" @func gethostid(): i64;
+pub @extern "c" @func personality(persona: u64): i64;
+pub @extern "c" @func prctl(option: i32, arg2: u64, arg3: u64, arg4: u64, arg5: u64): i32;
+pub @extern "c" @func getrandom(buf: *u8, buflen: usize, flags: u32): isize;
+pub @extern "c" @func sched_get_priority_max(policy: i32): i32;
+pub @extern "c" @func sched_get_priority_min(policy: i32): i32;
+
+# Umask
+pub @extern "c" @func umask(mask: u32): u32;
+
+# Credentials inspection
+pub @extern "c" @func getresuid(ruid: *IdCell, euid: *IdCell, suid: *IdCell): i32;
+pub @extern "c" @func getresgid(rgid: *IdCell, egid: *IdCell, sgid: *IdCell): i32;
+
+# Memory remap
+pub @extern "c" @func mremap(old_address: isize, old_size: usize, new_size: usize, flags: i32): isize;
+
+# System V IPC
+pub @extern "c" @func ftok(pathname: *CBuffer, proj_id: i32): i32;
+
+# Auxval and privileged control
+pub @extern "c" @func getauxval(type: u64): u64;
+pub @extern "c" @func reboot(cmd: i32): i32;
+pub @extern "c" @func swapon(path: *CBuffer, swapflags: i32): i32;
+pub @extern "c" @func swapoff(path: *CBuffer): i32;
+pub @extern "c" @func klogctl(type: i32, bufp: ?*u8, len: i32): i32;
+pub @extern "c" @func acct(filename: ?*CBuffer): i32;
 
 pub @extern "c" @func malloc(size: usize): ?*CBuffer;
 pub @extern "c" @func free(p: *CBuffer): void;

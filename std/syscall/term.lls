@@ -1,0 +1,73 @@
+# Terminal control operations.
+
+@const $c = @import("std/syscall/c");
+@const $core = @import("std/syscall/core");
+
+# tcflush queue selectors.
+pub @const $TCIFLUSH: i32 = 0;
+pub @const $TCOFLUSH: i32 = 1;
+pub @const $TCIOFLUSH: i32 = 2;
+
+# tcflow actions.
+pub @const $TCOOFF: i32 = 0;
+pub @const $TCOON: i32 = 1;
+pub @const $TCIOFF: i32 = 2;
+pub @const $TCION: i32 = 3;
+
+# Return true if `fd` refers to an open terminal device.
+pub @func is_terminal(fd: core.Fd): bool {
+    return c.isatty(@as(i32, fd)) == 1;
+}
+
+# Return the foreground process group ID associated with terminal `fd`.
+pub @func tcgetpgrp(fd: core.Fd): core.Pid | core.SyscallError {
+    $raw = c.tcgetpgrp(@as(i32, fd));
+    @if (raw < 0) {
+        return core.last_error();
+    }
+    return @as(core.Pid, raw);
+}
+
+# Set the foreground process group ID associated with terminal `fd` to `pgrp`.
+pub @func tcsetpgrp(fd: core.Fd, pgrp: core.Pid): void | core.SyscallError {
+    @if (c.tcsetpgrp(@as(i32, fd), @as(i32, pgrp)) != 0) {
+        return core.last_error();
+    }
+}
+
+# Return the session ID associated with terminal `fd`.
+pub @func tcgetsid(fd: core.Fd): core.Pid | core.SyscallError {
+    $raw = c.tcgetsid(@as(i32, fd));
+    @if (raw < 0) {
+        return core.last_error();
+    }
+    return @as(core.Pid, raw);
+}
+
+# Wait until all output written to `fd` has been transmitted.
+pub @func tcdrain(fd: core.Fd): void | core.SyscallError {
+    @if (c.tcdrain(@as(i32, fd)) != 0) {
+        return core.last_error();
+    }
+}
+
+# Suspend transmission or reception of data on `fd`.
+pub @func tcflow(fd: core.Fd, action: i32): void | core.SyscallError {
+    @if (c.tcflow(@as(i32, fd), action) != 0) {
+        return core.last_error();
+    }
+}
+
+# Discard data written to or received by `fd` but not yet read/transmitted.
+pub @func tcflush(fd: core.Fd, queue_selector: i32): void | core.SyscallError {
+    @if (c.tcflush(@as(i32, fd), queue_selector) != 0) {
+        return core.last_error();
+    }
+}
+
+# Send a continuous stream of zero bits on `fd` for a given duration.
+pub @func tcsendbreak(fd: core.Fd, duration: i32): void | core.SyscallError {
+    @if (c.tcsendbreak(@as(i32, fd), duration) != 0) {
+        return core.last_error();
+    }
+}

@@ -1,0 +1,19 @@
+@const $sys = @import("std/syscall");
+
+pub @func main() {
+    $pid = sys.process.fork()?;
+    @if (pid == @as(sys.core.Pid, 0)) {
+        # Child process exits with Success (0)
+        sys.process.exit(sys.core.ExitCode.Success);
+    }
+
+    # Parent waits for child
+    $res = sys.process.wait_status(pid, 0)?;
+    @if (res.pid == pid) {
+        print("wait-pid-ok");
+    }
+    @if (sys.process.wifexited(res.status)) {
+        print("exited-ok");
+        print(sys.process.wexitstatus(res.status));
+    }
+}

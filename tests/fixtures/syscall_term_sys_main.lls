@@ -1,0 +1,48 @@
+@const $sys = @import("std/syscall");
+
+pub @func main() {
+    # Terminal check on invalid fd should return false
+    @if (!sys.term.is_terminal(-1)) {
+        print("is-term-ok");
+    }
+
+    # sysconf checks
+    $pagesize = sys.system.sysconf(sys.system.SC_PAGESIZE)?;
+    @if (pagesize >= @as(i64, 4096)) {
+        print("sysconf-ok");
+    }
+
+    # Hardware/system queries
+    $nprocs = sys.system.get_nprocs();
+    @if (nprocs > @as(i32, 0)) {
+        print("nprocs-ok");
+    }
+
+    $phys_pages = sys.system.get_phys_pages();
+    @if (phys_pages > @as(i64, 0)) {
+        print("phys-pages-ok");
+    }
+
+    $hostid = sys.system.gethostid();
+    _ = hostid;
+    print("hostid-ok");
+
+    # Priority
+    $prio = sys.system.getpriority(sys.system.PRIO_PROCESS, 0)?;
+    _ = prio;
+    print("prio-ok");
+
+    # Scheduling bounds
+    $max_prio = sys.system.sched_get_priority_max(sys.system.SCHED_OTHER)?;
+    $min_prio = sys.system.sched_get_priority_min(sys.system.SCHED_OTHER)?;
+    @if (max_prio >= min_prio) {
+        print("sched-prio-ok");
+    }
+
+    # getrandom
+    $buf: [8]u8 = [0, 0, 0, 0, 0, 0, 0, 0];
+    $n = sys.system.getrandom(buf[..], 0)?;
+    @if (n == @as(isize, 8)) {
+        print("getrandom-ok");
+    }
+}

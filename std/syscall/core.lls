@@ -5,6 +5,7 @@
 # can name the same types.
 
 @const $c = @import("std/syscall/c");
+@const $std = @import("std/core");
 
 # An open file descriptor. Use the `STDIN`/`STDOUT`/`STDERR` constants for the
 # three inherited descriptors.
@@ -54,6 +55,7 @@ pub @error SyscallError {
     OutOfMemory,
     Overflow,
     PermissionDenied,
+    ProcessNotFound,
     ReadOnlyFileSystem,
     TimedOut,
     TooManyOpenFiles,
@@ -68,6 +70,7 @@ pub @func error_from_errno(code: i32): SyscallError {
     return @switch (code) {
         1 => { break SyscallError.PermissionDenied; },
         2 => { break SyscallError.FileNotFound; },
+        3 => { break SyscallError.ProcessNotFound; },
         4 => { break SyscallError.Interrupted; },
         5 => { break SyscallError.InputOutput; },
         9 => { break SyscallError.BadFileDescriptor; },
@@ -107,7 +110,7 @@ pub @func stdio_fd(stream: Stdio): Fd {
 # Returns `OutOfMemory` if allocation fails, or `NameTooLong` if the path
 # exceeds `c.PATH_CAPACITY`.
 pub @func path_buffer(path: string): *c.CBuffer | SyscallError {
-    $n: i64 = len(path);
+    $n: i64 = @as(i64, std.len(path));
     @if (@as(usize, n) >= c.PATH_CAPACITY) {
         return SyscallError.NameTooLong;
     }

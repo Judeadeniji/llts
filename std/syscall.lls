@@ -13,6 +13,21 @@
 # that module directly.
 
 pub @const $core = @import("std/syscall/core");
+
+# alias shortcut for types
+pub @alias ExitCode = core.ExitCode;
+pub @alias Pid = core.Pid;
+pub @alias Uid = core.Uid;
+pub @alias Gid = core.Gid;
+
 pub @const $io = @import("std/syscall/io");
 pub @const $dir = @import("std/syscall/dir");
 pub @const $process = @import("std/syscall/process");
+pub @const $signal = @import("std/syscall/signal");
+pub @const $time = @import("std/syscall/time");
+pub @const $memory = @import("std/syscall/memory");
+pub @const $event = @import("std/syscall/event");
+pub @const $term = @import("std/syscall/term");
+pub @const $system = @import("std/syscall/system");
+pub @const $ipc = @import("std/syscall/ipc");
+

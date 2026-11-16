@@ -1,0 +1,21 @@
+@const $sys = @import("std/syscall");
+
+pub @func main() {
+    $pid = sys.process.process_id();
+    $pgrp = sys.process.getpgrp();
+
+    # Signal self with 0 (permission/existence check only)
+    sys.signal.kill(pid, 0)?;
+    sys.signal.killpg(pgrp, 0)?;
+    print("kill-ok");
+
+    # Time checks
+    $t = sys.time.time()?;
+    @if (t > @as(i64, 1700000000)) {
+        print("time-ok");
+    }
+
+    $cpu_clk = sys.time.clock_getcpuclockid(0)?;
+    _ = cpu_clk;
+    print("clock-ok");
+}

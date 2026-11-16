@@ -1,0 +1,17 @@
+# Inter-process communication helpers.
+
+@const $c = @import("std/syscall/c");
+@const $core = @import("std/syscall/core");
+
+pub @alias IpcKey = i32;
+
+# Convert a pathname and a project identifier to a System V IPC key.
+pub @func ftok(path: string, proj_id: i32): IpcKey | core.SyscallError {
+    $buf = core.path_buffer(path)?;
+    defer c.free(buf);
+    $raw = c.ftok(buf, proj_id);
+    @if (raw == -1) {
+        return core.last_error();
+    }
+    return @as(IpcKey, raw);
+}

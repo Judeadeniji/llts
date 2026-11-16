@@ -1,0 +1,181 @@
+# Memory management: page allocation, protection, locking, advice, shared memory, and memfd.
+
+@const $c = @import("std/syscall/c");
+@const $core = @import("std/syscall/core");
+
+# Memory address type representing a pointer value returned by `mmap`.
+pub @alias Address = isize;
+
+# Protection flags for `mmap` and `mprotect`.
+pub @const $PROT_NONE: i32 = 0;
+pub @const $PROT_READ: i32 = 1;
+pub @const $PROT_WRITE: i32 = 2;
+pub @const $PROT_EXEC: i32 = 4;
+
+# Map flags for `mmap`.
+pub @const $MAP_SHARED: i32 = 1;
+pub @const $MAP_PRIVATE: i32 = 2;
+pub @const $MAP_FIXED: i32 = 16;
+pub @const $MAP_ANONYMOUS: i32 = 32;
+pub @const $MAP_ANON: i32 = 32;
+pub @const $MAP_NORESERVE: i32 = 16384;
+pub @const $MAP_POPULATE: i32 = 32768;
+pub @const $MAP_NONBLOCK: i32 = 65536;
+pub @const $MAP_STACK: i32 = 131072;
+pub @const $MAP_HUGETLB: i32 = 262144;
+
+# Sync flags for `msync`.
+pub @const $MS_ASYNC: i32 = 1;
+pub @const $MS_INVALIDATE: i32 = 2;
+pub @const $MS_SYNC: i32 = 4;
+
+# Advice values for `madvise` and `posix_madvise`.
+pub @const $MADV_NORMAL: i32 = 0;
+pub @const $MADV_RANDOM: i32 = 1;
+pub @const $MADV_SEQUENTIAL: i32 = 2;
+pub @const $MADV_WILLNEED: i32 = 3;
+pub @const $MADV_DONTNEED: i32 = 4;
+pub @const $MADV_FREE: i32 = 8;
+pub @const $MADV_REMOVE: i32 = 9;
+pub @const $MADV_DONTFORK: i32 = 10;
+pub @const $MADV_DOFORK: i32 = 11;
+pub @const $MADV_MERGEABLE: i32 = 12;
+pub @const $MADV_UNMERGEABLE: i32 = 13;
+pub @const $MADV_HUGEPAGE: i32 = 14;
+pub @const $MADV_NOHUGEPAGE: i32 = 15;
+pub @const $MADV_DONTDUMP: i32 = 16;
+pub @const $MADV_DODUMP: i32 = 17;
+pub @const $MADV_WIPEONFORK: i32 = 18;
+pub @const $MADV_KEEPONFORK: i32 = 19;
+
+# Lockall flags for `mlockall`.
+pub @const $MCL_CURRENT: i32 = 1;
+pub @const $MCL_FUTURE: i32 = 2;
+pub @const $MCL_ONFAULT: i32 = 4;
+
+# Memfd flags for `memfd_create`.
+pub @const $MFD_CLOEXEC: u32 = 1;
+pub @const $MFD_ALLOW_SEALING: u32 = 2;
+pub @const $MFD_HUGETLB: u32 = 4;
+
+# Map files or anonymous memory into the process's address space.
+pub @func mmap(addr: Address, length: usize, prot: i32, flags: i32, fd: core.Fd, offset: i64): Address | core.SyscallError {
+    $raw = c.mmap(addr, length, prot, flags, @as(i32, fd), offset);
+    @if (raw == -1) {
+        return core.last_error();
+    }
+    return @as(Address, raw);
+}
+
+# Unmap pages in the range [addr, addr + length).
+pub @func munmap(addr: Address, length: usize): void | core.SyscallError {
+    @if (c.munmap(addr, length) != 0) {
+        return core.last_error();
+    }
+}
+
+# Change access protections for the calling process's memory pages containing [addr, addr + length).
+pub @func mprotect(addr: Address, length: usize, prot: i32): void | core.SyscallError {
+    @if (c.mprotect(addr, length, prot) != 0) {
+        return core.last_error();
+    }
+}
+
+# Synchronize changes made to the mapping at [addr, addr + length) back to the filesystem.
+pub @func msync(addr: Address, length: usize, flags: i32): void | core.SyscallError {
+    @if (c.msync(addr, length, flags) != 0) {
+        return core.last_error();
+    }
+}
+
+# Advise the kernel about the intended memory usage pattern for [addr, addr + length).
+pub @func madvise(addr: Address, length: usize, advice: i32): void | core.SyscallError {
+    @if (c.madvise(addr, length, advice) != 0) {
+        return core.last_error();
+    }
+}
+
+# POSIX variant of madvise.
+pub @func posix_madvise(addr: Address, length: usize, advice: i32): void | core.SyscallError {
+    @if (c.posix_madvise(addr, length, advice) != 0) {
+        return core.last_error();
+    }
+}
+
+# Lock the specified memory range into physical RAM, preventing it from being paged to swap.
+pub @func mlock(addr: Address, length: usize): void | core.SyscallError {
+    @if (c.mlock(addr, length) != 0) {
+        return core.last_error();
+    }
+}
+
+# Unlock the specified memory range.
+pub @func munlock(addr: Address, length: usize): void | core.SyscallError {
+    @if (c.munlock(addr, length) != 0) {
+        return core.last_error();
+    }
+}
+
+# Lock all current and future pages mapped into the calling process into RAM.
+pub @func mlockall(flags: i32): void | core.SyscallError {
+    @if (c.mlockall(flags) != 0) {
+        return core.last_error();
+    }
+}
+
+# Unlock all pages mapped into the calling process.
+pub @func munlockall(): void | core.SyscallError {
+    @if (c.munlockall() != 0) {
+        return core.last_error();
+    }
+}
+
+# Return the system memory page size in bytes.
+pub @func getpagesize(): usize {
+    return @as(usize, c.getpagesize());
+}
+
+# Create an anonymous file in RAM, returning a descriptor referring to it.
+pub @func memfd_create(name: string, flags: u32): core.Fd | core.SyscallError {
+    $buf = core.path_buffer(name)?;
+    defer c.free(buf);
+    $raw = c.memfd_create(buf, flags);
+    @if (raw < 0) {
+        return core.last_error();
+    }
+    return @as(core.Fd, raw);
+}
+
+# Open a POSIX shared memory object.
+pub @func shm_open(name: string, oflag: i32, mode: i32): core.Fd | core.SyscallError {
+    $buf = core.path_buffer(name)?;
+    defer c.free(buf);
+    $raw = c.shm_open(buf, oflag, mode);
+    @if (raw < 0) {
+        return core.last_error();
+    }
+    return @as(core.Fd, raw);
+}
+
+# Remove a POSIX shared memory object name.
+pub @func shm_unlink(name: string): void | core.SyscallError {
+    $buf = core.path_buffer(name)?;
+    defer c.free(buf);
+    @if (c.shm_unlink(buf) != 0) {
+        return core.last_error();
+    }
+}
+
+# Flags for `mremap`.
+pub @const $MREMAP_MAYMOVE: i32 = 1;
+pub @const $MREMAP_FIXED: i32 = 2;
+pub @const $MREMAP_DONTUNMAP: i32 = 4;
+
+# Remap a virtual memory address range, expanding, shrinking, or moving it.
+pub @func mremap(old_address: Address, old_size: usize, new_size: usize, flags: i32): Address | core.SyscallError {
+    $raw = c.mremap(old_address, old_size, new_size, flags);
+    @if (raw == -1) {
+        return core.last_error();
+    }
+    return @as(Address, raw);
+}

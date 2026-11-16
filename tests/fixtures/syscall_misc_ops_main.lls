@@ -1,0 +1,39 @@
+@const $sys = @import("std/syscall");
+
+pub @func main() {
+    # umask
+    $cur_mask = sys.dir.getumask();
+    $old_mask = sys.dir.umask(cur_mask);
+    @if (cur_mask == old_mask) {
+        print("umask-ok");
+    }
+
+    # resuid & resgid
+    $res_u = sys.process.getresuid()?;
+    @if (res_u.real == sys.process.getuid()) {
+        print("resuid-ok");
+    }
+    $res_g = sys.process.getresgid()?;
+    @if (res_g.real == sys.process.getgid()) {
+        print("resgid-ok");
+    }
+
+    # mremap
+    $psize = sys.memory.getpagesize();
+    $addr = sys.memory.mmap(0, psize, sys.memory.PROT_READ | sys.memory.PROT_WRITE, sys.memory.MAP_PRIVATE | sys.memory.MAP_ANONYMOUS, -1, 0)?;
+    $new_addr = sys.memory.mremap(addr, psize, psize * @as(usize, 2), sys.memory.MREMAP_MAYMOVE)?;
+    sys.memory.munmap(new_addr, psize * @as(usize, 2))?;
+    print("mremap-ok");
+
+    # getauxval
+    $aux_psize = sys.system.getauxval(sys.system.AT_PAGESZ);
+    @if (aux_psize >= @as(u64, 4096)) {
+        print("auxval-ok");
+    }
+
+    # ftok
+    $key = sys.ipc.ftok(".", 42)?;
+    @if (key != 0) {
+        print("ftok-ok");
+    }
+}

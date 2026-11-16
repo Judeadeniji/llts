@@ -3,14 +3,10 @@
 @const $c = @import("std/syscall/c");
 @const $core = @import("std/syscall/core");
 
-pub @alias ExitCode = core.ExitCode;
-pub @alias Pid = core.Pid;
-pub @alias Uid = core.Uid;
-pub @alias Gid = core.Gid;
 
 # Terminate the process with `code`. Does not return: deferred LLTS cleanup is
 # not run, matching C `exit`.
-pub @func exit(code: ExitCode): never {
+pub @func exit(code: core.ExitCode): never {
     c.exit(@as(i32, code));
 }
 
@@ -135,10 +131,52 @@ pub @func setresgid(rgid: core.Gid, egid: core.Gid, sgid: core.Gid): void | core
     }
 }
 
+pub @struct ResUid {
+    real: core.Uid;
+    effective: core.Uid;
+    saved: core.Uid;
+}
+
+pub @struct ResGid {
+    real: core.Gid;
+    effective: core.Gid;
+    saved: core.Gid;
+}
+
+# Return the real, effective, and saved user IDs of the calling process.
+pub @func getresuid(): ResUid | core.SyscallError {
+    $r = c.IdCell{ value: 0 };
+    $e = c.IdCell{ value: 0 };
+    $s = c.IdCell{ value: 0 };
+    @if (c.getresuid(&r, &e, &s) != 0) {
+        return core.last_error();
+    }
+    return ResUid{
+        real: @as(core.Uid, r.value),
+        effective: @as(core.Uid, e.value),
+        saved: @as(core.Uid, s.value),
+    };
+}
+
+# Return the real, effective, and saved group IDs of the calling process.
+pub @func getresgid(): ResGid | core.SyscallError {
+    $r = c.IdCell{ value: 0 };
+    $e = c.IdCell{ value: 0 };
+    $s = c.IdCell{ value: 0 };
+    @if (c.getresgid(&r, &e, &s) != 0) {
+        return core.last_error();
+    }
+    return ResGid{
+        real: @as(core.Gid, r.value),
+        effective: @as(core.Gid, e.value),
+        saved: @as(core.Gid, s.value),
+    };
+}
+
 # Return the session ID of the process `pid` (or calling process if `pid == 0`).
 pub @func session_id(pid: core.Pid): core.Pid | core.SyscallError {
     $raw = c.getsid(@as(i32, pid));
-    @if (raw < @as(i32, 0)) {
+    @if (raw < 0) {
         return core.last_error();
     }
     return @as(core.Pid, raw);
@@ -153,7 +191,7 @@ pub @func getsid(pid: core.Pid): core.Pid | core.SyscallError {
 # Returns the new session ID.
 pub @func create_session(): core.Pid | core.SyscallError {
     $raw = c.setsid();
-    @if (raw < @as(i32, 0)) {
+    @if (raw < 0) {
         return core.last_error();
     }
     return @as(core.Pid, raw);
@@ -167,7 +205,7 @@ pub @func setsid(): core.Pid | core.SyscallError {
 # Return the process group ID of the process `pid` (or calling process if `pid == 0`).
 pub @func process_group(pid: core.Pid): core.Pid | core.SyscallError {
     $raw = c.getpgid(@as(i32, pid));
-    @if (raw < @as(i32, 0)) {
+    @if (raw < 0) {
         return core.last_error();
     }
     return @as(core.Pid, raw);
@@ -204,8 +242,8 @@ pub @func setpgrp(): void | core.SyscallError {
 
 # Run the calling process in the background as a daemon.
 pub @func daemon(nochdir: bool, noclose: bool): void | core.SyscallError {
-    $c_nochdir: i32 = @if (nochdir) { break @as(i32, 1); } @else { break @as(i32, 0); };
-    $c_noclose: i32 = @if (noclose) { break @as(i32, 1); } @else { break @as(i32, 0); };
+    $c_nochdir: i32 = @if (nochdir) { break 1; } @else { break 0; };
+    $c_noclose: i32 = @if (noclose) { break 1; } @else { break 0; };
     @if (c.daemon(c_nochdir, c_noclose) != 0) {
         return core.last_error();
     }
@@ -246,4 +284,84 @@ pub @func yield_now(): void | core.SyscallError {
 # Alias for `yield_now`.
 pub @func sched_yield(): void | core.SyscallError {
     return yield_now();
+}
+
+# Wait options.
+pub @const $WNOHANG: i32 = 1;
+pub @const $WUNTRACED: i32 = 2;
+pub @const $WCONTINUED: i32 = 8;
+
+pub @struct WaitResult {
+    pid: core.Pid;
+    status: i32;
+}
+
+# Create a child process duplicating the calling process.
+pub @func fork(): core.Pid | core.SyscallError {
+    $raw = c.fork();
+    @if (raw < 0) {
+        return core.last_error();
+    }
+    return @as(core.Pid, raw);
+}
+
+# Wait for any child process to terminate.
+pub @func wait(): core.Pid | core.SyscallError {
+    $raw = c.wait(null);
+    @if (raw < 0) {
+        return core.last_error();
+    }
+    return @as(core.Pid, raw);
+}
+
+# Wait for state changes in child process `pid`.
+pub @func waitpid(pid: core.Pid, options: i32): core.Pid | core.SyscallError {
+    $raw = c.waitpid(@as(i32, pid), null, options);
+    @if (raw < 0) {
+        return core.last_error();
+    }
+    return @as(core.Pid, raw);
+}
+
+# Wait for state changes in child process `pid`, returning both child PID and exit status.
+pub @func wait_status(pid: core.Pid, options: i32): WaitResult | core.SyscallError {
+    $ws = c.WaitStatus{ value: 0 };
+    $raw = c.waitpid(@as(i32, pid), &ws, options);
+    @if (raw < 0) {
+        return core.last_error();
+    }
+    return WaitResult{
+        pid: @as(core.Pid, raw),
+        status: ws.value,
+    };
+}
+
+# Return true if the child process terminated normally.
+pub @func wifexited(status: i32): bool {
+    return (status & 127) == 0;
+}
+
+# Return the exit code of the child process (valid only if `wifexited` is true).
+pub @func wexitstatus(status: i32): i32 {
+    return (status >> 8) & 255;
+}
+
+# Return true if the child process was terminated by an unhandled signal.
+pub @func wifsignaled(status: i32): bool {
+    return (((status & 127) + 1) >> 1) > 0;
+}
+
+# Return the signal number that terminated the child (valid only if `wifsignaled` is true).
+pub @func wtermsig(status: i32): i32 {
+    return status & 127;
+}
+
+# Return true if the child process is currently stopped.
+pub @func wifstopped(status: i32): bool {
+    return (status & 255) == 127;
+}
+
+# Return the signal number that caused the child to stop (valid only if `wifstopped` is true).
+pub @func wstopsig(status: i32): i32 {
+    return (status >> 8) & 255;
 }

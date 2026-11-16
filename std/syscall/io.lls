@@ -2,6 +2,7 @@
 
 @const $c = @import("std/syscall/c");
 @const $core = @import("std/syscall/core");
+@const $std = @import("std/core");
 
 pub @const $PATH_CAPACITY: usize = c.PATH_CAPACITY;
 pub @const $DEFAULT_FILE_MODE: i32 = 420; # 0644
@@ -108,12 +109,12 @@ pub @func open_flags(access: Access, flags: []OpenFlag): i32 {
 # Read up to `len(buf)` bytes. Returns the number of bytes read, which is `0`
 # only at end of file.
 pub @func read(fd: core.Fd, buf: []u8): usize | core.SyscallError {
-    $count: usize = @as(usize, len(buf));
+    $count: usize = @as(usize, std.len(buf));
     @if (count == 0) {
         return count;
     }
     $n = c.read(@as(i32, fd), buf, count);
-    @if (n < @as(isize, 0)) {
+    @if (n < 0) {
         return core.last_error();
     }
     return @as(usize, n);
@@ -121,12 +122,12 @@ pub @func read(fd: core.Fd, buf: []u8): usize | core.SyscallError {
 
 # Read up to `len(buf)` bytes starting at `offset` without changing the file offset.
 pub @func pread(fd: core.Fd, buf: []u8, offset: i64): usize | core.SyscallError {
-    $count: usize = @as(usize, len(buf));
+    $count: usize = @as(usize, std.len(buf));
     @if (count == 0) {
         return count;
     }
     $n = c.pread(@as(i32, fd), buf, count, offset);
-    @if (n < @as(isize, 0)) {
+    @if (n < 0) {
         return core.last_error();
     }
     return @as(usize, n);
@@ -135,12 +136,12 @@ pub @func pread(fd: core.Fd, buf: []u8, offset: i64): usize | core.SyscallError 
 # Write up to `len(data)` bytes. Returns the number actually written; callers
 # that need everything written should use `write_all`.
 pub @func write(fd: core.Fd, data: []const u8): usize | core.SyscallError {
-    $count: usize = @as(usize, len(data));
+    $count: usize = @as(usize, std.len(data));
     @if (count == 0) {
         return count;
     }
     $n = c.write(@as(i32, fd), data, count);
-    @if (n < @as(isize, 0)) {
+    @if (n < 0) {
         return core.last_error();
     }
     return @as(usize, n);
@@ -148,12 +149,12 @@ pub @func write(fd: core.Fd, data: []const u8): usize | core.SyscallError {
 
 # Write up to `len(data)` bytes starting at `offset` without changing the file offset.
 pub @func pwrite(fd: core.Fd, data: []const u8, offset: i64): usize | core.SyscallError {
-    $count: usize = @as(usize, len(data));
+    $count: usize = @as(usize, std.len(data));
     @if (count == 0) {
         return count;
     }
     $n = c.pwrite(@as(i32, fd), data, count, offset);
-    @if (n < @as(isize, 0)) {
+    @if (n < 0) {
         return core.last_error();
     }
     return @as(usize, n);
@@ -162,7 +163,7 @@ pub @func pwrite(fd: core.Fd, data: []const u8, offset: i64): usize | core.Sysca
 # Write `data` completely, retrying short writes.
 pub @func write_all(fd: core.Fd, data: []const u8): void | core.SyscallError {
     $total: i64 = 0;
-    $size: i64 = len(data);
+    $size: i64 = @as(i64, std.len(data));
     @for (total < size) {
         $written = write(fd, data[total..size])?;
         @if (written == 0) {
@@ -179,7 +180,7 @@ pub @func is_terminal(fd: core.Fd): bool {
 # Move the file offset. Returns the resulting absolute offset.
 pub @func seek(fd: core.Fd, offset: i64, whence: SeekWhence): i64 | core.SyscallError {
     $result = c.lseek(@as(i32, fd), offset, @as(i32, whence));
-    @if (result < @as(i64, 0)) {
+    @if (result < 0) {
         return core.last_error();
     }
     return result;
@@ -231,7 +232,7 @@ pub @func syncfs(fd: core.Fd): void | core.SyscallError {
 # Duplicate an open file descriptor, returning the lowest-numbered unused descriptor.
 pub @func dup(oldfd: core.Fd): core.Fd | core.SyscallError {
     $raw = c.dup(@as(i32, oldfd));
-    @if (raw < @as(i32, 0)) {
+    @if (raw < 0) {
         return core.last_error();
     }
     return @as(core.Fd, raw);
@@ -240,7 +241,7 @@ pub @func dup(oldfd: core.Fd): core.Fd | core.SyscallError {
 # Duplicate `oldfd` onto `newfd`, closing `newfd` first if necessary.
 pub @func dup2(oldfd: core.Fd, newfd: core.Fd): core.Fd | core.SyscallError {
     $raw = c.dup2(@as(i32, oldfd), @as(i32, newfd));
-    @if (raw < @as(i32, 0)) {
+    @if (raw < 0) {
         return core.last_error();
     }
     return @as(core.Fd, raw);
@@ -249,7 +250,7 @@ pub @func dup2(oldfd: core.Fd, newfd: core.Fd): core.Fd | core.SyscallError {
 # Duplicate `oldfd` onto `newfd` with flags (e.g. `OpenFlag.CloExec`).
 pub @func dup3(oldfd: core.Fd, newfd: core.Fd, flags: i32): core.Fd | core.SyscallError {
     $raw = c.dup3(@as(i32, oldfd), @as(i32, newfd), flags);
-    @if (raw < @as(i32, 0)) {
+    @if (raw < 0) {
         return core.last_error();
     }
     return @as(core.Fd, raw);
@@ -324,7 +325,7 @@ pub @func close_from(lowfd: core.Fd): void {
 # Perform control operations on the file descriptor `fd`.
 pub @func fcntl(fd: core.Fd, cmd: FcntlCmd, arg: i64): i64 | core.SyscallError {
     $result = c.fcntl(@as(i32, fd), @as(i32, cmd), arg);
-    @if (result < @as(i64, 0)) {
+    @if (result < 0) {
         return core.last_error();
     }
     return result;
@@ -346,7 +347,7 @@ pub @func sendfile(out_fd: core.Fd, in_fd: core.Fd, count: usize): usize | core.
         return count;
     }
     $n = c.sendfile(@as(i32, out_fd), @as(i32, in_fd), null, count);
-    @if (n < @as(isize, 0)) {
+    @if (n < 0) {
         return core.last_error();
     }
     return @as(usize, n);
@@ -358,7 +359,7 @@ pub @func copy_file_range(in_fd: core.Fd, out_fd: core.Fd, count: usize): usize 
         return count;
     }
     $n = c.copy_file_range(@as(i32, in_fd), null, @as(i32, out_fd), null, count, 0);
-    @if (n < @as(isize, 0)) {
+    @if (n < 0) {
         return core.last_error();
     }
     return @as(usize, n);
@@ -369,7 +370,7 @@ pub @func open(path: string, flags: i32, mode: i32): core.Fd | core.SyscallError
     $buf = core.path_buffer(path)?;
     defer c.free(buf);
     $raw = c.open(buf, flags, mode);
-    @if (raw < @as(i32, 0)) {
+    @if (raw < 0) {
         return core.last_error();
     }
     return @as(core.Fd, raw);
@@ -380,7 +381,7 @@ pub @func openat(dirfd: core.Fd, path: string, flags: i32, mode: i32): core.Fd |
     $buf = core.path_buffer(path)?;
     defer c.free(buf);
     $raw = c.openat(@as(i32, dirfd), buf, flags, mode);
-    @if (raw < @as(i32, 0)) {
+    @if (raw < 0) {
         return core.last_error();
     }
     return @as(core.Fd, raw);
@@ -427,6 +428,19 @@ pub @func unlink(path: string): void | core.SyscallError {
     $buf = core.path_buffer(path)?;
     defer c.free(buf);
     @if (c.unlink(buf) != 0) {
+        return core.last_error();
+    }
+}
+
+# Advisory file locking operations for `flock`.
+pub @const $LOCK_SH: i32 = 1;
+pub @const $LOCK_EX: i32 = 2;
+pub @const $LOCK_NB: i32 = 4;
+pub @const $LOCK_UN: i32 = 8;
+
+# Apply or remove an advisory lock on the open file specified by `fd`.
+pub @func flock(fd: core.Fd, operation: i32): void | core.SyscallError {
+    @if (c.flock(@as(i32, fd), operation) != 0) {
         return core.last_error();
     }
 }

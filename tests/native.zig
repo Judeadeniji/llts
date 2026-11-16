@@ -785,3 +785,23 @@ test "native execution: syscall dir mkdir, access, link, rename, rmdir" {
 test "native execution: syscall process id, credentials, pgrp, sid, yield, sleep" {
     try expectNativeFileStdout(std.testing.allocator, "tests/fixtures/syscall_process_ops_main.lls", "pid-ok\nppid-ok\nuid-ok\ngid-ok\npgrp-ok\nsid-ok\nyield-sleep-ok\nalarm-ok\n");
 }
+
+test "native execution: syscall process fork, wait, exit status" {
+    try expectNativeFileStdout(std.testing.allocator, "tests/fixtures/syscall_process_wait_main.lls", "wait-pid-ok\nexited-ok\n0\n");
+}
+
+test "native execution: syscall signal kill and time retrieval" {
+    try expectNativeFileStdout(std.testing.allocator, "tests/fixtures/syscall_signal_time_main.lls", "kill-ok\ntime-ok\nclock-ok\n");
+}
+
+test "native execution: syscall memory mmap, mprotect, flock, eventfd" {
+    try expectNativeFileStdout(std.testing.allocator, "tests/fixtures/syscall_mem_event_main.lls", "pagesize-ok\nmmap-ok\nmprotect-ok\nmadvise-ok\nmunmap-ok\nmemfd-flock-ok\neventfd-ok\n");
+}
+
+test "native execution: syscall term, sysconf, priority, hardware info, getrandom" {
+    try expectNativeFileStdout(std.testing.allocator, "tests/fixtures/syscall_term_sys_main.lls", "is-term-ok\nsysconf-ok\nnprocs-ok\nphys-pages-ok\nhostid-ok\nprio-ok\nsched-prio-ok\ngetrandom-ok\n");
+}
+
+test "native execution: syscall umask, getresuid, getresgid, mremap, getauxval, ftok" {
+    try expectNativeFileStdout(std.testing.allocator, "tests/fixtures/syscall_misc_ops_main.lls", "umask-ok\nresuid-ok\nresgid-ok\nmremap-ok\nauxval-ok\nftok-ok\n");
+}

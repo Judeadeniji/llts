@@ -1,0 +1,34 @@
+# Event notification descriptors.
+
+@const $c = @import("std/syscall/c");
+@const $core = @import("std/syscall/core");
+
+# Eventfd flags.
+pub @const $EFD_SEMAPHORE: i32 = 1;
+pub @const $EFD_CLOEXEC: i32 = 524288;
+pub @const $EFD_NONBLOCK: i32 = 2048;
+
+# Create a file descriptor for event notification.
+pub @func eventfd(initval: u32, flags: i32): core.Fd | core.SyscallError {
+    $raw = c.eventfd(initval, flags);
+    @if (raw < 0) {
+        return core.last_error();
+    }
+    return @as(core.Fd, raw);
+}
+
+# Read a 64-bit integer counter value from `fd`.
+pub @func eventfd_read(fd: core.Fd): u64 | core.SyscallError {
+    $val = c.EventfdValue{ value: 0 };
+    @if (c.eventfd_read(@as(i32, fd), &val) != 0) {
+        return core.last_error();
+    }
+    return val.value;
+}
+
+# Add `value` to the 64-bit counter maintained by `fd`.
+pub @func eventfd_write(fd: core.Fd, value: u64): void | core.SyscallError {
+    @if (c.eventfd_write(@as(i32, fd), value) != 0) {
+        return core.last_error();
+    }
+}
