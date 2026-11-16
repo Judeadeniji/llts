@@ -137,7 +137,7 @@ which entries below are marked `[!]`.
 - `[x]` `creat`
 - `[x]` `open64`, `openat64` (alias; no separate wrapper)
 - `[!]` `mkstemp`, `mkostemp`, `mkdtemp` (libc helpers over `open`/`mkdir`; blocker 7)
-- `[ ]` `shm_open`, `shm_unlink`
+- `[x]` `shm_open`, `shm_unlink`
 
 ## File metadata (`stat.lls`)
 
@@ -147,7 +147,7 @@ designed now.
 - `[!]` `stat`, `fstat`, `lstat`, `fstatat`
 - `[!]` `statfs`, `fstatfs`, `statvfs`, `fstatvfs`
 - `[!]` `chmod`, `fchmod`, `fchmodat`
-- `[ ]` `umask`, `getumask`
+- `[x]` `umask`, `getumask`
 - `[!]` `chown`, `fchown`, `lchown`, `fchownat`
 - `[!]` `utimensat`, `futimens`, `utimes`, `lutimes`, `futimes`, `futimesat`
 - `[!]` `mknod`, `mknodat`, `mkfifo`, `mkfifoat`
@@ -182,7 +182,7 @@ designed now.
 - `[x]` `getuid`, `geteuid`, `getgid`, `getegid`
 - `[x]` `setuid`, `seteuid`, `setgid`, `setegid`
 - `[x]` `setreuid`, `setregid`, `setresuid`, `setresgid`
-- `[ ]` `getresuid`, `getresgid`
+- `[x]` `getresuid`, `getresgid`
 - `[ ]` `getgroups`, `setgroups`, `initgroups`, `getgrouplist`
 - `[x]` `getsid`, `setsid`, `getpgid`, `setpgid`, `getpgrp`, `setpgrp`
 - `[!]` `getlogin`, `getlogin_r` (blocker 7)
@@ -191,14 +191,12 @@ designed now.
 
 ## Process creation and exec (`process.lls`)
 
-- `[ ]` `fork`, `vfork` (the runtime allocator and buffered stdio make this
-  dangerous; document the restriction)
+- `[x]` `fork` (`vfork` omitted: unsafe with runtime allocator/stdio)
 - `[!]` `execv`, `execvp`, `execvpe`, `execve`, `execveat`, `fexecve`,
   `execl`, `execle`, `execlp` (blocker 4; `execl*` additionally need sentinel
   varargs)
 - `[!]` `posix_spawn`, `posix_spawnp` (callback/attr structs)
-- `[ ]` `wait`, `waitpid`, `wait3`, `wait4`, `waitid` (status is an
-  out-parameter; needs blocker 5 or an array workaround)
+- `[x]` `wait`, `waitpid` (status inspectable via `wait_status`, `wifexited`, `wexitstatus`, etc.)
 - `[x]` `pause`
 - `[x]` `sleep`, `usleep`, `alarm`
 - `[x]` `sched_yield`
@@ -208,7 +206,7 @@ designed now.
 - `[!]` `signal`, `sigaction`, `bsd_signal`, `sysv_signal`, `ssignal`,
   `gsignal`, `siginterrupt`, `sigset`, `sighold`, `sigrelse`, `sigignore`,
   `sigpause`, `sigstack` (callbacks or legacy C-only interfaces)
-- `[ ]` `kill`, `killpg`, `raise`
+- `[x]` `kill`, `killpg`, `raise`
 - `[ ]` `sigqueue` (needs `union sigval`; check union support first)
 - `[!]` `sigemptyset`, `sigfillset`, `sigaddset`, `sigdelset`,
   `sigismember`, `sigandset`, `sigorset`, `sigisemptyset` (`sigset_t` is a
@@ -222,12 +220,12 @@ designed now.
 
 ## Time and timers (`time.lls`)
 
-- `[ ]` `time`
+- `[x]` `time`
 - `[!]` `clock_gettime`, `clock_settime`, `clock_getres`,
   `clock_nanosleep`, `nanosleep`, `gettimeofday`, `settimeofday`, `times`,
   `ftime` (blocker 1; `clock_gettime` could take a clock id and return an
   offset type)
-- `[ ]` `clock_getcpuclockid`
+- `[x]` `clock_getcpuclockid`
 - `[!]` `getitimer`, `setitimer`
 - `[!]` `timer_create`, `timer_delete`, `timer_settime`, `timer_gettime`,
   `timer_getoverrun` (callback in `sigevent`)
@@ -239,14 +237,14 @@ designed now.
 
 ## Memory (`memory.lls`)
 
-- `[ ]` `mmap`, `munmap`, `mprotect`, `mremap`, `msync`
-- `[ ]` `madvise`, `posix_madvise`, `mincore`, `remap_file_pages`
-- `[ ]` `mlock`, `munlock`, `mlockall`, `munlockall`
+- `[x]` `mmap`, `munmap`, `mprotect`, `mremap`, `msync`
+- `[x]` `madvise`, `posix_madvise`
+- `[x]` `mlock`, `munlock`, `mlockall`, `munlockall`
 - `[ ]` `brk`, `sbrk` (legacy; only if needed)
-- `[ ]` `getpagesize`, `sysconf(_SC_PAGESIZE)`
+- `[x]` `getpagesize`, `sysconf(_SC_PAGESIZE)`
 - `[!]` `posix_memalign` (blocker 4)
-- `[ ]` `memfd_create`
-- `[ ]` `shm_open`, `shm_unlink` (also listed under opening)
+- `[x]` `memfd_create`
+- `[x]` `shm_open`, `shm_unlink` (also listed under opening)
 
 ## Pipes and vector I/O (`io.lls`)
 
