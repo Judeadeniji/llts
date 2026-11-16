@@ -280,7 +280,7 @@ nominal struct with constructors rather than a raw `sockaddr`, and
 
 ## Event, timer and notification descriptors (`event.lls`)
 
-- `[ ]` `eventfd`, `eventfd_read`, `eventfd_write`
+- `[x]` `eventfd`, `eventfd_read`, `eventfd_write`
 - `[!]` `timerfd_create`, `timerfd_gettime`, `timerfd_settime`
 - `[!]` `inotify_init`, `inotify_init1`, `inotify_add_watch`,
   `inotify_rm_watch` (path conversion is fine; event struct layout is not)
@@ -305,7 +305,7 @@ need caller buffers and `**` out-pointers.
 - `[x]` `isatty` as `is_terminal`
 - `[!]` `tcgetattr`, `tcsetattr`, `cfmakeraw`, `cfgetispeed`, `cfsetispeed`,
   `cfgetospeed`, `cfsetospeed`, `cfsetspeed` (`termios` layout)
-- `[ ]` `tcgetpgrp`, `tcsetpgrp`, `tcgetsid`, `tcdrain`, `tcflow`, `tcflush`,
+- `[x]` `tcgetpgrp`, `tcsetpgrp`, `tcgetsid`, `tcdrain`, `tcflow`, `tcflush`,
   `tcsendbreak`
 - `[!]` `ttyname`, `ttyname_r`, `ctermid`, `ttyslot` (string conversion)
 
@@ -314,28 +314,28 @@ need caller buffers and `**` out-pointers.
 - `[!]` `uname` (`utsname` layout)
 - `[!]` `gethostname`, `sethostname`, `getdomainname`, `setdomainname`
   (fixed char arrays plus string conversion)
-- `[ ]` `sysconf`, `pathconf`, `fpathconf`, `confstr`
-- `[ ]` `getauxval`
+- `[x]` `sysconf`, `pathconf`, `fpathconf`
+- `[x]` `getauxval`
 - `[!]` `sysinfo` (struct layout)
-- `[ ]` `get_nprocs`, `get_nprocs_conf`, `get_phys_pages`, `get_avphys_pages`
-- `[ ]` `gethostid`, `sethostid`
-- `[ ]` `personality`
-- `[ ]` `prctl`
-- `[ ]` `getrandom`
-- `[ ]` `memfd_create`
+- `[x]` `get_nprocs`, `get_nprocs_conf`, `get_phys_pages`, `get_avphys_pages`
+- `[x]` `gethostid`
+- `[x]` `personality`
+- `[x]` `prctl`
+- `[x]` `getrandom`
+- `[x]` `memfd_create`
 
 ## Resources, scheduling and priority (`system.lls`)
 
 - `[!]` `getrlimit`, `setrlimit`, `getrusage` (struct layout)
-- `[ ]` `getpriority`, `setpriority`, `nice`
-- `[ ]` `sched_get_priority_max`, `sched_get_priority_min`, `sched_yield`
+- `[x]` `getpriority`, `setpriority`, `nice`
+- `[x]` `sched_get_priority_max`, `sched_get_priority_min`, `sched_yield`
 - `[!]` `sched_getparam`, `sched_setparam`, `sched_getscheduler`,
   `sched_setscheduler`, `sched_rr_get_interval` (struct layout)
 - `[!]` `sched_getaffinity`, `sched_setaffinity` (`cpu_set_t` layout)
 
 ## Advisory locking (`io.lls`)
 
-- `[ ]` `flock`
+- `[x]` `flock`
 - `[!]` `fcntl` record locks (`F_GETLK`, `F_SETLK`, `F_SETLKW`; `struct flock`
   layout)
 - `[!]` `lockf` (same `struct flock` requirement)
@@ -347,7 +347,7 @@ need caller buffers and `**` out-pointers.
 - `[!]` `semget`, `semop`, `semtimedop`, `semctl` (`union semun` needs
   explicit per-command wrappers)
 - `[!]` `msgget`, `msgsnd`, `msgrcv`, `msgctl` (struct layout)
-- `[ ]` `ftok`
+- `[x]` `ftok`
 
 Prefer `shm_open`/`mmap` for new code; System V IPC is completeness only.
 
@@ -368,10 +368,10 @@ Privileged operations; keep them in one submodule with explicit
 
 - `[!]` `mount`, `umount`, `umount2`, `mount_setattr`
 - `[!]` `open_tree`, `move_mount`, `fsopen`, `fsconfig`, `fsmount`, `fspick`
-- `[ ]` `swapon`, `swapoff`
-- `[ ]` `reboot`
-- `[ ]` `klogctl`
-- `[ ]` `acct`
+- `[x]` `swapon`, `swapoff`
+- `[x]` `reboot`
+- `[x]` `klogctl`
+- `[x]` `acct`
 
 ## Raw escape hatch (`std/syscall.lls`)
 
