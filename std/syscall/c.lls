@@ -58,6 +58,107 @@ pub @struct IdCell {
     value: u32;
 }
 
+# POSIX timespec aggregate (tv_sec: seconds, tv_nsec: nanoseconds).
+# Used by high-resolution timestamp queries, sleeps, and file touch operations.
+pub @extern "c" @struct Timespec {
+    tv_sec: i64;
+    tv_nsec: i64;
+}
+
+# Two consecutive Timespec values as expected by utimensat() and futimens().
+pub @extern "c" @struct TimePair {
+    atime: Timespec;
+    mtime: Timespec;
+}
+
+# Linux x86-64 C ABI struct stat (144 bytes, 8-byte aligned).
+# Memory layout strictly matches glibc bits/struct_stat.h on LP64 architectures.
+pub @extern "c" @struct Stat {
+    st_dev: u64;
+    st_ino: u64;
+    st_nlink: u64;
+    st_mode: u32;
+    st_uid: u32;
+    st_gid: u32;
+    __pad0: i32;
+    st_rdev: u64;
+    st_size: i64;
+    st_blksize: i64;
+    st_blocks: i64;
+    st_atim: Timespec;
+    st_mtim: Timespec;
+    st_ctim: Timespec;
+    __glibc_reserved: [3]i64;
+}
+
+# Linux x86-64 C ABI struct statfs (120 bytes, 8-byte aligned).
+# Returned by statfs() and fstatfs() for filesystem-wide statistics.
+pub @extern "c" @struct Statfs {
+    f_type: i64;
+    f_bsize: i64;
+    f_blocks: u64;
+    f_bfree: u64;
+    f_bavail: u64;
+    f_files: u64;
+    f_ffree: u64;
+    f_fsid: [2]i32;
+    f_namelen: i64;
+    f_frsize: i64;
+    f_flags: i64;
+    f_spare: [4]i64;
+}
+
+# POSIX / Linux x86-64 C ABI struct statvfs (112 bytes, 8-byte aligned).
+# Returned by statvfs() and fstatvfs() for VFS filesystem statistics.
+pub @extern "c" @struct Statvfs {
+    f_bsize: u64;
+    f_frsize: u64;
+    f_blocks: u64;
+    f_bfree: u64;
+    f_bavail: u64;
+    f_files: u64;
+    f_ffree: u64;
+    f_favail: u64;
+    f_fsid: u64;
+    f_flag: u64;
+    f_namemax: u64;
+    f_type: u32;
+    __f_spare: [5]i32;
+}
+
+# POSIX pollfd aggregate for poll() / ppoll() multiplexing.
+pub @extern "c" @struct Pollfd {
+    fd: i32;
+    events: i16;
+    revents: i16;
+}
+
+# POSIX iovec aggregate for scatter/gather (vectored) I/O operations.
+pub @extern "c" @struct Iovec {
+    iov_base: *u8;
+    iov_len: usize;
+}
+
+# POSIX rlimit aggregate for getrlimit() / setrlimit() resource limits.
+pub @extern "c" @struct Rlimit {
+    rlim_cur: u64;
+    rlim_max: u64;
+}
+
+# Linux x86-64 C ABI struct termios (60 bytes, 4-byte aligned).
+# Terminal control settings passed to tcgetattr() and tcsetattr().
+pub @extern "c" @struct Termios {
+    c_iflag: u32;
+    c_oflag: u32;
+    c_cflag: u32;
+    c_lflag: u32;
+    c_line: u8;
+    c_cc: [32]u8;
+    __pad: [3]u8;
+    c_ispeed: u32;
+    c_ospeed: u32;
+}
+
 pub @extern "c" @func exit(status: i32): never;
 pub @extern "c" @func abort(): never;
 
@@ -65,6 +166,12 @@ pub @extern "c" @func read(fd: i32, buf: *u8, count: usize): isize;
 pub @extern "c" @func write(fd: i32, buf: *u8, count: usize): isize;
 pub @extern "c" @func pread(fd: i32, buf: *u8, count: usize, offset: i64): isize;
 pub @extern "c" @func pwrite(fd: i32, buf: *u8, count: usize, offset: i64): isize;
+
+# Vectored I/O (scatter / gather)
+pub @extern "c" @func readv(fd: i32, iov: *Iovec, iovcnt: i32): isize;
+pub @extern "c" @func writev(fd: i32, iov: *Iovec, iovcnt: i32): isize;
+pub @extern "c" @func preadv(fd: i32, iov: *Iovec, iovcnt: i32, offset: i64): isize;
+pub @extern "c" @func pwritev(fd: i32, iov: *Iovec, iovcnt: i32, offset: i64): isize;
 pub @extern "c" @func close(fd: i32): i32;
 pub @extern "c" @func lseek(fd: i32, offset: i64, whence: i32): i64;
 pub @extern "c" @func ftruncate(fd: i32, length: i64): i32;
@@ -166,6 +273,11 @@ pub @extern "c" @func raise(sig: i32): i32;
 # Time
 pub @extern "c" @func time(tloc: ?*i64): i64;
 pub @extern "c" @func clock_getcpuclockid(pid: i32, clock_id: *ClockIdCell): i32;
+pub @extern "c" @func clock_gettime(clk_id: i32, tp: *Timespec): i32;
+pub @extern "c" @func clock_settime(clk_id: i32, tp: *Timespec): i32;
+pub @extern "c" @func clock_getres(clk_id: i32, tp: *Timespec): i32;
+pub @extern "c" @func clock_nanosleep(clk_id: i32, flags: i32, req: *Timespec, rem: ?*Timespec): i32;
+pub @extern "c" @func nanosleep(req: *Timespec, rem: ?*Timespec): i32;
 
 # Process fork & wait
 pub @extern "c" @func fork(): i32;
@@ -243,6 +355,53 @@ pub @extern "c" @func swapon(path: *CBuffer, swapflags: i32): i32;
 pub @extern "c" @func swapoff(path: *CBuffer): i32;
 pub @extern "c" @func klogctl(type: i32, bufp: ?*u8, len: i32): i32;
 pub @extern "c" @func acct(filename: ?*CBuffer): i32;
+
+# File metadata and status inspection
+pub @extern "c" @func stat(path: *CBuffer, buf: *Stat): i32;
+pub @extern "c" @func fstat(fd: i32, buf: *Stat): i32;
+pub @extern "c" @func lstat(path: *CBuffer, buf: *Stat): i32;
+pub @extern "c" @func fstatat(dirfd: i32, path: *CBuffer, buf: *Stat, flags: i32): i32;
+
+# Filesystem statistics
+pub @extern "c" @func statfs(path: *CBuffer, buf: *Statfs): i32;
+pub @extern "c" @func fstatfs(fd: i32, buf: *Statfs): i32;
+pub @extern "c" @func statvfs(path: *CBuffer, buf: *Statvfs): i32;
+pub @extern "c" @func fstatvfs(fd: i32, buf: *Statvfs): i32;
+
+# File permissions and ownership modifications
+pub @extern "c" @func chmod(path: *CBuffer, mode: u32): i32;
+pub @extern "c" @func fchmod(fd: i32, mode: u32): i32;
+pub @extern "c" @func fchmodat(dirfd: i32, path: *CBuffer, mode: u32, flags: i32): i32;
+pub @extern "c" @func chown(path: *CBuffer, owner: u32, group: u32): i32;
+pub @extern "c" @func fchown(fd: i32, owner: u32, group: u32): i32;
+pub @extern "c" @func lchown(path: *CBuffer, owner: u32, group: u32): i32;
+pub @extern "c" @func fchownat(dirfd: i32, path: *CBuffer, owner: u32, group: u32, flags: i32): i32;
+
+# File timestamp adjustments
+pub @const $UTIME_NOW: i64 = 1073741823;
+pub @const $UTIME_OMIT: i64 = 1073741822;
+
+pub @extern "c" @func utimensat(dirfd: i32, path: *CBuffer, times: ?*TimePair, flags: i32): i32;
+pub @extern "c" @func futimens(fd: i32, times: ?*TimePair): i32;
+
+# Special filesystem node creation
+pub @extern "c" @func mknod(path: *CBuffer, mode: u32, dev: u64): i32;
+pub @extern "c" @func mknodat(dirfd: i32, path: *CBuffer, mode: u32, dev: u64): i32;
+pub @extern "c" @func mkfifo(path: *CBuffer, mode: u32): i32;
+pub @extern "c" @func mkfifoat(dirfd: i32, path: *CBuffer, mode: u32): i32;
+
+# Polling and I/O event multiplexing
+pub @extern "c" @func poll(fds: *Pollfd, nfds: u64, timeout: i32): i32;
+pub @extern "c" @func ppoll(fds: *Pollfd, nfds: u64, tmo_p: ?*Timespec, sigmask: ?*u64): i32;
+
+# Terminal attributes configuration
+pub @extern "c" @func tcgetattr(fd: i32, termios_p: *Termios): i32;
+pub @extern "c" @func tcsetattr(fd: i32, optional_actions: i32, termios_p: *Termios): i32;
+
+# Resource limits queries and adjustments
+pub @extern "c" @func getrlimit(resource: i32, rlim: *Rlimit): i32;
+pub @extern "c" @func setrlimit(resource: i32, rlim: *Rlimit): i32;
+pub @extern "c" @func prlimit(pid: i32, resource: i32, new_limit: ?*Rlimit, old_limit: ?*Rlimit): i32;
 
 pub @extern "c" @func malloc(size: usize): ?*CBuffer;
 pub @extern "c" @func free(p: *CBuffer): void;

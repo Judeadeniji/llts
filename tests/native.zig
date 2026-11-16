@@ -811,5 +811,109 @@ test "native execution: syscall umask, getresuid, getresgid, mremap, getauxval, 
 }
 
 test "native execution: syscall c extern struct ABI layout, sizeOf, and alignOf" {
-    try expectNativeFileStdout(std.testing.allocator, "tests/fixtures/syscall_extern_struct_main.lls", "16\n8\n144\n8\n8\n4\n60\n4\n16\n8\n16\n8\n16\n2\nstat-call-ok\n");
+    const expected =
+        \\16
+        \\8
+        \\144
+        \\8
+        \\8
+        \\4
+        \\60
+        \\4
+        \\16
+        \\8
+        \\16
+        \\8
+        \\16
+        \\2
+        \\stat-call-ok
+        \\
+    ;
+    try expectNativeFileStdout(std.testing.allocator, "tests/fixtures/syscall_extern_struct_main.lls", expected);
+}
+
+test "native execution: syscall stat, fstat, statfs, statvfs, chmod, utimensat" {
+    const expected =
+        \\dev-null-is-char-device
+        \\root-is-directory
+        \\stdin-fstat-ok
+        \\statfs-dev-ok
+        \\statvfs-dev-ok
+        \\file-is-regular-size-9
+        \\chmod-0600-ok
+        \\utimensat-ok
+        \\
+    ;
+    try expectNativeFileStdout(std.testing.allocator, "tests/fixtures/syscall_stat_main.lls", expected);
+}
+
+test "native execution: syscall time, poll, rlimit, termios" {
+    const expected =
+        \\clock-gettime-realtime-ok
+        \\clock-getres-ok
+        \\poll-stdout-writable-ok
+        \\rlimit-nofile-ok
+        \\prlimit-cur-proc-ok
+        \\term-is-terminal-and-attrs-read
+        \\
+    ;
+    try expectNativeFileStdout(std.testing.allocator, "tests/fixtures/syscall_time_poll_system_main.lls", expected);
+}
+
+test "native execution: syscall facade major type re-exports" {
+    const expected =
+        \\0 1 1000 1000
+        \\1 0 0 64 256 0 4
+        \\Error: FileNotFound
+        \\16 144 120 112 8 60 16
+        \\
+    ;
+    try expectNativeFileStdout(std.testing.allocator, "tests/fixtures/syscall_reexports_main.lls", expected);
+}
+
+test "native execution: @zeroed builds zero values" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\@struct Inner { a: i32; b: bool; }
+        \\@enum Color { Red, Green, Blue }
+        \\@type Pair = [i64, bool];
+        \\@struct Config {
+        \\    x: i64;
+        \\    f: f64;
+        \\    flag: bool;
+        \\    inner: Inner;
+        \\    arr: [3]u8;
+        \\    opt: ?*Inner;
+        \\    s: string;
+        \\}
+        \\pub @func main() {
+        \\    $c: Config = @zeroed(Config);
+        \\    $a: [4]i64 = @zeroed([4]i64);
+        \\    $p: Pair = @zeroed(Pair);
+        \\    $col: Color = @zeroed(Color);
+        \\    print(c.x, c.f, c.flag, c.inner.a, c.inner.b, c.arr[2], c.opt == null);
+        \\    print(a[0], a[3], p.0, p.1, c.s == "", col);
+        \\}
+    ;
+    try expectNativeStdout(allocator, src, "0 0 0 0 0 0 1\n0 0 0 0 1 0\n");
+}
+
+test "native execution: @zeroed slices are real empty slices" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\pub @func main() {
+        \\    $s: string = @zeroed(string);
+        \\    $b: []byte = @zeroed([]byte);
+        \\    print(s == "", b == @zeroed([]byte));
+        \\}
+    ;
+    try expectNativeStdout(allocator, src, "1 1\n");
+}
+
+test "native compile: @zeroed diagnostic names the offending part" {
+    try expectNativeFileFailure(
+        std.testing.allocator,
+        "tests/fixtures/zeroed_non_null_ptr_main.lls",
+        "part 'conn.handle' has type '*Handle', a non-null pointer",
+    );
 }

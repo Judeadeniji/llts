@@ -1,0 +1,49 @@
+# Verification of std/syscall time, poll, system rlimits, and termios operations.
+
+@const $sys = @import("std/syscall");
+@const $core = sys.core;
+@const $time = sys.time;
+@const $poll = sys.poll;
+@const $system = sys.system;
+@const $term = sys.term;
+
+pub @func main() {
+    # 1. High-resolution clock query
+    $ts = time.clock_gettime(time.CLOCK_REALTIME)?;
+    @if (ts.tv_sec > @as(i64, 1600000000)) {
+        print("clock-gettime-realtime-ok");
+    }
+
+    # 2. Clock resolution query
+    $res = time.clock_getres(time.CLOCK_REALTIME)?;
+    @if (res.tv_nsec > @as(i64, 0)) {
+        print("clock-getres-ok");
+    }
+
+    # 3. Poll on STDOUT for writability (non-blocking, timeout 0)
+    $revents = poll.poll_one(core.STDOUT, poll.POLLOUT, 0)?;
+    @if ((revents & poll.POLLOUT) != @as(i16, 0)) {
+        print("poll-stdout-writable-ok");
+    }
+
+    # 4. Resource limits query (RLIMIT_NOFILE)
+    $rlim = system.getrlimit(system.RLIMIT_NOFILE)?;
+    @if (rlim.rlim_cur > @as(u64, 0) && rlim.rlim_max > @as(u64, 0)) {
+        print("rlimit-nofile-ok");
+    }
+
+    # 5. prlimit on current process (pid 0)
+    $prlim = system.prlimit(@as(core.Pid, 0), system.RLIMIT_NOFILE, null)?;
+    @if (prlim.rlim_cur == rlim.rlim_cur) {
+        print("prlimit-cur-proc-ok");
+    }
+
+    # 6. Terminal check
+    $is_term = term.is_terminal(core.STDIN);
+    @if (is_term) {
+        _ = term.tcgetattr(core.STDIN)?;
+        print("term-is-terminal-and-attrs-read");
+    } @else {
+        print("term-not-a-terminal");
+    }
+}

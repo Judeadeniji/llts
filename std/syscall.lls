@@ -13,21 +13,51 @@
 # that module directly.
 
 pub @const $core = @import("std/syscall/core");
-
-# alias shortcut for types
-pub @alias ExitCode = core.ExitCode;
-pub @alias Pid = core.Pid;
-pub @alias Uid = core.Uid;
-pub @alias Gid = core.Gid;
-
 pub @const $io = @import("std/syscall/io");
+pub @const $stat = @import("std/syscall/stat");
 pub @const $dir = @import("std/syscall/dir");
 pub @const $process = @import("std/syscall/process");
 pub @const $signal = @import("std/syscall/signal");
 pub @const $time = @import("std/syscall/time");
 pub @const $memory = @import("std/syscall/memory");
 pub @const $event = @import("std/syscall/event");
+pub @const $poll = @import("std/syscall/poll");
 pub @const $term = @import("std/syscall/term");
 pub @const $system = @import("std/syscall/system");
 pub @const $ipc = @import("std/syscall/ipc");
+
+# Re-exported primary types for callers using the top-level facade.
+
+# Descriptors, identifiers, exit codes, and error set.
+pub @alias Fd = core.Fd;
+pub @alias Pid = core.Pid;
+pub @alias Uid = core.Uid;
+pub @alias Gid = core.Gid;
+pub @alias Stdio = core.Stdio;
+pub @alias ExitCode = core.ExitCode;
+pub @alias SyscallError = core.SyscallError;
+
+# File I/O access, flags, permissions, and seek origin
+pub @alias Access = io.Access;
+pub @alias OpenFlag = io.OpenFlag;
+pub @alias Permission = io.Permission;
+pub @alias SeekWhence = io.SeekWhence;
+
+# Directory access check modes
+pub @alias AccessMode = dir.AccessMode;
+
+# File metadata, filesystem statistics, and timestamps
+pub @alias Timespec = stat.Timespec;
+pub @alias Stat = stat.Stat;
+pub @alias Statfs = stat.Statfs;
+pub @alias Statvfs = stat.Statvfs;
+
+# I/O event multiplexing
+pub @alias Pollfd = poll.Pollfd;
+
+# Terminal control settings
+pub @alias Termios = term.Termios;
+
+# Resource consumption limits
+pub @alias Rlimit = system.Rlimit;
 

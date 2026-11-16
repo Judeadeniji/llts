@@ -244,3 +244,45 @@ pub @func acct(path: ?string): void | core.SyscallError {
         return core.last_error();
     }
 }
+
+# Resource limit constants defined by POSIX / sys/resource.h
+pub @const $RLIMIT_CPU: i32 = 0;
+pub @const $RLIMIT_FSIZE: i32 = 1;
+pub @const $RLIMIT_DATA: i32 = 2;
+pub @const $RLIMIT_STACK: i32 = 3;
+pub @const $RLIMIT_CORE: i32 = 4;
+pub @const $RLIMIT_RSS: i32 = 5;
+pub @const $RLIMIT_NPROC: i32 = 6;
+pub @const $RLIMIT_NOFILE: i32 = 7;
+pub @const $RLIMIT_MEMLOCK: i32 = 8;
+pub @const $RLIMIT_AS: i32 = 9;
+pub @const $RLIM_INFINITY: u64 = 18446744073709551615;
+
+# Re-export Rlimit aggregate for resource limits manipulation
+pub @alias Rlimit = c.Rlimit;
+
+# Query consumption limit for specified resource `resource`.
+pub @func getrlimit(resource: i32): Rlimit | core.SyscallError {
+    $r: Rlimit = Rlimit{ rlim_cur: 0, rlim_max: 0 };
+    @if (c.getrlimit(resource, &r) != 0) {
+        return core.last_error();
+    }
+    return r;
+}
+
+# Set consumption limit for specified resource `resource`.
+pub @func setrlimit(resource: i32, rlim: Rlimit): void | core.SyscallError {
+    $r: Rlimit = rlim;
+    @if (c.setrlimit(resource, &r) != 0) {
+        return core.last_error();
+    }
+}
+
+# Query and optionally set resource limits of process `pid` (or calling process if `pid == 0`).
+pub @func prlimit(pid: core.Pid, resource: i32, new_limit: ?*Rlimit): Rlimit | core.SyscallError {
+    $old: Rlimit = Rlimit{ rlim_cur: 0, rlim_max: 0 };
+    @if (c.prlimit(@as(i32, pid), resource, new_limit, &old) != 0) {
+        return core.last_error();
+    }
+    return old;
+}

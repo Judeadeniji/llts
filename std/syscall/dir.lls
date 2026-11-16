@@ -4,7 +4,7 @@
 @const $core = @import("std/syscall/core");
 
 pub @const $PATH_CAPACITY: usize = c.PATH_CAPACITY;
-pub @const $DEFAULT_DIR_MODE: i32 = 493; # 0755
+pub @const $DEFAULT_DIR_MODE: i32 = 0o755;
 
 pub @const $AT_FDCWD: core.Fd = @as(core.Fd, c.AT_FDCWD);
 pub @const $AT_SYMLINK_NOFOLLOW: i32 = c.AT_SYMLINK_NOFOLLOW;

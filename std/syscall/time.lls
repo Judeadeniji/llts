@@ -1,9 +1,32 @@
-# Time retrieval and CPU clock IDs.
+# High-resolution time retrieval, clock queries, sleeps, and CPU clock IDs.
+#
+# Exposes POSIX clock operations using Timespec timestamps:
+#   clock_gettime, clock_settime, clock_getres
+#   clock_nanosleep, nanosleep
+#   time, clock_getcpuclockid
 
 @const $c = @import("std/syscall/c");
 @const $core = @import("std/syscall/core");
 
-# Return the current time as seconds since the Epoch (1970-01-01 00:00:00 UTC).
+# Re-export Timespec aggregate for timestamp representation.
+pub @alias Timespec = c.Timespec;
+
+# Standard Linux / POSIX clock identifiers.
+pub @const $CLOCK_REALTIME: i32 = 0;
+pub @const $CLOCK_MONOTONIC: i32 = 1;
+pub @const $CLOCK_PROCESS_CPUTIME_ID: i32 = 2;
+pub @const $CLOCK_THREAD_CPUTIME_ID: i32 = 3;
+pub @const $CLOCK_MONOTONIC_RAW: i32 = 4;
+pub @const $CLOCK_REALTIME_COARSE: i32 = 5;
+pub @const $CLOCK_MONOTONIC_COARSE: i32 = 6;
+pub @const $CLOCK_BOOTTIME: i32 = 7;
+pub @const $CLOCK_REALTIME_ALARM: i32 = 8;
+pub @const $CLOCK_BOOTTIME_ALARM: i32 = 9;
+
+# Flag for clock_nanosleep indicating absolute time target rather than relative duration.
+pub @const $TIMER_ABSTIME: i32 = 1;
+
+# Return the current time as whole seconds since the Unix Epoch (1970-01-01 00:00:00 UTC).
 pub @func time(): i64 | core.SyscallError {
     $raw = c.time(null);
     @if (raw == -1) {
@@ -12,11 +35,69 @@ pub @func time(): i64 | core.SyscallError {
     return raw;
 }
 
-# Return the clock ID of the CPU-time clock of the process `pid` (or calling process if `pid == 0`).
+# Return the clock ID of the CPU-time clock of process `pid` (or calling process if `pid == 0`).
 pub @func clock_getcpuclockid(pid: core.Pid): i32 | core.SyscallError {
     $cell = c.ClockIdCell{ value: 0 };
     @if (c.clock_getcpuclockid(@as(i32, pid), &cell) != 0) {
         return core.last_error();
     }
     return cell.value;
+}
+
+# Query the current time of specified clock `clk_id` with nanosecond precision.
+pub @func clock_gettime(clk_id: i32): Timespec | core.SyscallError {
+    $ts: Timespec = Timespec{ tv_sec: 0, tv_nsec: 0 };
+    @if (c.clock_gettime(clk_id, &ts) != 0) {
+        return core.last_error();
+    }
+    return ts;
+}
+
+# Set the current time of specified clock `clk_id` (privileged: CAP_SYS_TIME).
+pub @func clock_settime(clk_id: i32, tp: Timespec): void | core.SyscallError {
+    $ts: Timespec = tp;
+    @if (c.clock_settime(clk_id, &ts) != 0) {
+        return core.last_error();
+    }
+}
+
+# Query the resolution (precision) of specified clock `clk_id`.
+pub @func clock_getres(clk_id: i32): Timespec | core.SyscallError {
+    $ts: Timespec = Timespec{ tv_sec: 0, tv_nsec: 0 };
+    @if (c.clock_getres(clk_id, &ts) != 0) {
+        return core.last_error();
+    }
+    return ts;
+}
+
+# Suspend thread execution until requested duration `req` elapses or a signal arrives.
+# If interrupted by a signal, returns the remaining time unslept.
+pub @func nanosleep(req: Timespec): ?Timespec | core.SyscallError {
+    $req_ts: Timespec = req;
+    $rem_ts: Timespec = Timespec{ tv_sec: 0, tv_nsec: 0 };
+    $rc = c.nanosleep(&req_ts, &rem_ts);
+    @if (rc != 0) {
+        $err = core.last_error();
+        @if (err == core.SyscallError.Interrupted) {
+            return rem_ts;
+        }
+        return err;
+    }
+    return null;
+}
+
+# High-resolution sleep targeting specified clock `clk_id`.
+# When `flags == TIMER_ABSTIME`, sleeps until absolute timestamp `req`.
+pub @func clock_nanosleep(clk_id: i32, flags: i32, req: Timespec): ?Timespec | core.SyscallError {
+    $req_ts: Timespec = req;
+    $rem_ts: Timespec = Timespec{ tv_sec: 0, tv_nsec: 0 };
+    $rc = c.clock_nanosleep(clk_id, flags, &req_ts, &rem_ts);
+    @if (rc != 0) {
+        $err = core.error_from_errno(rc);
+        @if (err == core.SyscallError.Interrupted) {
+            return rem_ts;
+        }
+        return err;
+    }
+    return null;
 }

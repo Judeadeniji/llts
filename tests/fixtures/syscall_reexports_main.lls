@@ -1,0 +1,37 @@
+# Test verification of major type re-exports from std/syscall facade.
+
+@const $sys = @import("std/syscall");
+
+# Verify nominal and alias type annotations
+$my_fd: sys.Fd = @as(sys.Fd, 0);
+$my_pid: sys.Pid = @as(sys.Pid, 1);
+$my_uid: sys.Uid = @as(sys.Uid, 1000);
+$my_gid: sys.Gid = @as(sys.Gid, 1000);
+
+# Verify enum type annotations and member accesses
+$stdio: sys.Stdio = sys.Stdio.Stdout;
+$exit_code: sys.ExitCode = sys.ExitCode.Success;
+$access: sys.Access = sys.Access.ReadOnly;
+$open_flag: sys.OpenFlag = sys.OpenFlag.Create;
+$perm: sys.Permission = sys.Permission.OwnerRead;
+$whence: sys.SeekWhence = sys.SeekWhence.Set;
+$access_mode: sys.AccessMode = sys.AccessMode.Read;
+
+# Verify error set type annotation
+$err: sys.SyscallError = sys.SyscallError.FileNotFound;
+
+# Verify struct type annotations and size calculations
+$ts_size: i64 = @sizeOf(sys.Timespec);
+$st_size: i64 = @sizeOf(sys.Stat);
+$stfs_size: i64 = @sizeOf(sys.Statfs);
+$stvfs_size: i64 = @sizeOf(sys.Statvfs);
+$pfd_size: i64 = @sizeOf(sys.Pollfd);
+$term_size: i64 = @sizeOf(sys.Termios);
+$rlim_size: i64 = @sizeOf(sys.Rlimit);
+
+pub @func main() {
+    print(my_fd, my_pid, my_uid, my_gid);
+    print(stdio, exit_code, access, open_flag, perm, whence, access_mode);
+    print(err);
+    print(ts_size, st_size, stfs_size, stvfs_size, pfd_size, term_size, rlim_size);
+}

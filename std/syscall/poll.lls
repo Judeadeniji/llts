@@ -1,0 +1,58 @@
+# I/O multiplexing and readiness polling.
+#
+# Provides safe LLTS wrappers over POSIX poll() and ppoll() calls using Pollfd descriptors.
+
+@const $c = @import("std/syscall/c");
+@const $core = @import("std/syscall/core");
+@const $std = @import("std/core");
+
+# Re-export Pollfd and Timespec aggregates.
+pub @alias Pollfd = c.Pollfd;
+pub @alias Timespec = c.Timespec;
+
+# Event condition bitmasks matching poll.h
+pub @const $POLLIN: i16 = 1;        # There is data to read
+pub @const $POLLPRI: i16 = 2;       # There is urgent data to read
+pub @const $POLLOUT: i16 = 4;       # Writing now will not block
+pub @const $POLLERR: i16 = 8;       # Error condition (always reported in revents)
+pub @const $POLLHUP: i16 = 16;      # Hung up (always reported in revents)
+pub @const $POLLNVAL: i16 = 32;     # Invalid request: fd not open (always reported in revents)
+
+# Constructs a zero-initialized Pollfd descriptor for descriptor `fd` and requested `events`.
+pub @func init_pollfd(fd: core.Fd, events: i16): Pollfd {
+    return Pollfd{
+        fd: @as(i32, fd),
+        events: events,
+        revents: 0,
+    };
+}
+
+# Poll a single file descriptor `fd` for requested `events` with millisecond `timeout`.
+# Returns the returned events mask (`revents`), or 0 on timeout.
+pub @func poll_one(fd: core.Fd, events: i16, timeout: i32): i16 | core.SyscallError {
+    $pfd: Pollfd = init_pollfd(fd, events);
+    $rc = c.poll(&pfd, 1, timeout);
+    @if (rc < 0) {
+        return core.last_error();
+    }
+    return pfd.revents;
+}
+
+# Wait for events on a slice of `Pollfd` descriptors.
+# Returns the number of descriptors with non-zero `revents`, or 0 on timeout.
+pub @func poll(fds: []Pollfd, timeout: i32): i32 | core.SyscallError {
+    $n: u64 = @as(u64, std.len(fds));
+    @if (n == 0) {
+        $pfd: Pollfd = init_pollfd(@as(core.Fd, -1), 0);
+        $rc = c.poll(&pfd, 0, timeout);
+        @if (rc < 0) {
+            return core.last_error();
+        }
+        return rc;
+    }
+    $rc = c.poll(&fds[0], n, timeout);
+    @if (rc < 0) {
+        return core.last_error();
+    }
+    return rc;
+}

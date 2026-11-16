@@ -5,7 +5,7 @@
 @const $std = @import("std/core");
 
 pub @const $PATH_CAPACITY: usize = c.PATH_CAPACITY;
-pub @const $DEFAULT_FILE_MODE: i32 = 420; # 0644
+pub @const $DEFAULT_FILE_MODE: i32 = 0o644;
 pub @const $AT_FDCWD: core.Fd = @as(core.Fd, c.AT_FDCWD);
 
 # Requested access for `open`-style calls (the low two bits of the C flags).
@@ -28,15 +28,15 @@ pub @enum OpenFlag {
 
 # Permission bits for `create` and `creat`.
 pub @enum Permission {
-    OwnerRead = 256,
-    OwnerWrite = 128,
-    OwnerExecute = 64,
-    GroupRead = 32,
-    GroupWrite = 16,
-    GroupExecute = 8,
-    OtherRead = 4,
-    OtherWrite = 2,
-    OtherExecute = 1,
+    OwnerRead = 0o400,
+    OwnerWrite = 0o200,
+    OwnerExecute = 0o100,
+    GroupRead = 0o040,
+    GroupWrite = 0o020,
+    GroupExecute = 0o010,
+    OtherRead = 0o004,
+    OtherWrite = 0o002,
+    OtherExecute = 0o001,
 }
 
 # Origin used by `seek`.

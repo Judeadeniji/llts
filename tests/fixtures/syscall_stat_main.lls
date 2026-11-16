@@ -1,0 +1,70 @@
+# Verification of std/syscall/stat metadata operations and type queries.
+
+@const $sys = @import("std/syscall");
+@const $stat = sys.stat;
+@const $core = sys.core;
+@const $io = sys.io;
+
+pub @func main() {
+    # 1. stat /dev/null
+    $st = stat.stat("/dev/null")?;
+    @if (stat.is_char_device(st.st_mode)) {
+        print("dev-null-is-char-device");
+    }
+
+    # 2. stat standard directory /
+    $root_st = stat.stat("/")?;
+    @if (stat.is_directory(root_st.st_mode)) {
+        print("root-is-directory");
+    }
+
+    # 3. fstat on STDIN
+    $stdin_st = stat.fstat(core.STDIN)?;
+    @if (stdin_st.st_mode != @as(u32, 0)) {
+        print("stdin-fstat-ok");
+    }
+
+    # 4. statfs on /dev
+    $fs = stat.statfs("/dev")?;
+    @if (fs.f_bsize > @as(i64, 0)) {
+        print("statfs-dev-ok");
+    }
+
+    # 5. statvfs on /dev
+    $vfs = stat.statvfs("/dev")?;
+    @if (vfs.f_bsize > @as(u64, 0)) {
+        print("statvfs-dev-ok");
+    }
+
+    # 6. File creation, chmod, fchmod, timestamps, and stat verification
+    $test_file = "./.tmpdir/stat_test_file.tmp";
+    $fd = io.open_write(test_file)?;
+    _ = io.write_all(fd, "test-data")?;
+    _ = io.close(fd)?;
+
+    # Verify file is regular and size is 9 bytes
+    $file_st = stat.stat(test_file)?;
+    @if (stat.is_regular(file_st.st_mode) && file_st.st_size == @as(i64, 9)) {
+        print("file-is-regular-size-9");
+    }
+
+    # chmod to 0o600
+    _ = stat.chmod(test_file, 0o600)?;
+    $mod_st = stat.stat(test_file)?;
+    @if ((mod_st.st_mode & 0o777) == 0o600) {
+        print("chmod-0600-ok");
+    }
+
+    # futimens / utimensat
+    $ts: stat.Timespec = stat.Timespec{ tv_sec: 1700000000, tv_nsec: 0 };
+    _ = stat.utimensat(stat.AT_FDCWD, test_file, ts, ts, 0)?;
+    $time_st = stat.stat(test_file)?;
+    $atim = time_st.st_atim;
+    $mtim = time_st.st_mtim;
+    @if (atim.tv_sec == @as(i64, 1700000000) && mtim.tv_sec == @as(i64, 1700000000)) {
+        print("utimensat-ok");
+    }
+
+    # Clean up test file
+    _ = sys.dir.unlink(test_file)?;
+}

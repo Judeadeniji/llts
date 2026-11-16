@@ -14,6 +14,53 @@ pub @const $TCOON: i32 = 1;
 pub @const $TCIOFF: i32 = 2;
 pub @const $TCION: i32 = 3;
 
+# tcsetattr actions.
+pub @const $TCSANOW: i32 = 0;
+pub @const $TCSADRAIN: i32 = 1;
+pub @const $TCSAFLUSH: i32 = 2;
+
+# Re-export Termios aggregate.
+pub @alias Termios = c.Termios;
+
+# Constructs a zero-initialized Termios struct in user stack space.
+pub @func init_termios(): Termios {
+    $cc32: [32]u8 = [
+        0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0,
+    ];
+    $pad3: [3]u8 = [0, 0, 0];
+    return Termios{
+        c_iflag: 0,
+        c_oflag: 0,
+        c_cflag: 0,
+        c_lflag: 0,
+        c_line: 0,
+        c_cc: cc32,
+        __pad: pad3,
+        c_ispeed: 0,
+        c_ospeed: 0,
+    };
+}
+
+# Query the current terminal configuration attributes associated with descriptor `fd`.
+pub @func tcgetattr(fd: core.Fd): Termios | core.SyscallError {
+    $t: Termios = init_termios();
+    @if (c.tcgetattr(@as(i32, fd), &t) != 0) {
+        return core.last_error();
+    }
+    return t;
+}
+
+# Set terminal attributes associated with descriptor `fd` according to `optional_actions`.
+pub @func tcsetattr(fd: core.Fd, optional_actions: i32, termios_p: Termios): void | core.SyscallError {
+    $t: Termios = termios_p;
+    @if (c.tcsetattr(@as(i32, fd), optional_actions, &t) != 0) {
+        return core.last_error();
+    }
+}
+
 # Return true if `fd` refers to an open terminal device.
 pub @func is_terminal(fd: core.Fd): bool {
     return c.isatty(@as(i32, fd)) == 1;
