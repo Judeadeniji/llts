@@ -66,17 +66,10 @@ functions are re-declared as thin wrappers in the facade.
 These are compiler/language issues, not library design choices. They decide
 which entries below are marked `[!]`.
 
-1. **C struct layout.** The native emitter renders `@struct` as a plain Zig
-   `struct`, and Zig reorders fields. A 144-byte `struct stat` probe read
-   `st_mode` from the wrong offset, and Zig placed the `mode` field at byte 104
-   instead of 24. Every libc struct passed by pointer (`stat`, `timeval`,
-   `timespec`, `pollfd`, `sockaddr`, `rusage`, `rlimit`, `termios`, `iovec`,
-   `dirent`, `utsname`) is therefore unusable until extern-facing structs are
-   emitted with C layout (`extern struct`). This is the single highest-value
-   fix and unblocks the largest group.
-2. **`@sizeOf` disagrees with the backend.** For the same struct the compiler
-   folded `@sizeOf` to 128 while Zig reported 144. Layout facts must come from
-   one implementation.
+1. **[RESOLVED] C struct layout.** Added `@extern "c" @struct` support.
+   Native emitter renders as Zig `extern struct` preserving declaration order and C ABI layout.
+2. **[RESOLVED] `@sizeOf` disagrees with the backend.** Compiler layout calculates exact C ABI
+   size and alignment, and `@sizeOf` / `@alignOf` match native Zig `extern struct` sizes.
 3. **No function-pointer types.** `fn(...)` is rejected in type position, so no
    callbacks: `signal`, `sigaction`, `atexit`, `on_exit`, `scandir`, `qsort`,
    `timer_create`, `pthread_atfork`.
@@ -141,16 +134,13 @@ which entries below are marked `[!]`.
 
 ## File metadata (`stat.lls`)
 
-All of these are `[!]` until blocker 1 is fixed; the wrapper surface can be
-designed now.
-
-- `[!]` `stat`, `fstat`, `lstat`, `fstatat`
-- `[!]` `statfs`, `fstatfs`, `statvfs`, `fstatvfs`
-- `[!]` `chmod`, `fchmod`, `fchmodat`
+- `[x]` `stat`, `fstat`, `lstat`, `fstatat`
+- `[x]` `statfs`, `fstatfs`, `statvfs`, `fstatvfs`
+- `[x]` `chmod`, `fchmod`, `fchmodat`
 - `[x]` `umask`, `getumask`
-- `[!]` `chown`, `fchown`, `lchown`, `fchownat`
-- `[!]` `utimensat`, `futimens`, `utimes`, `lutimes`, `futimes`, `futimesat`
-- `[!]` `mknod`, `mknodat`, `mkfifo`, `mkfifoat`
+- `[x]` `chown`, `fchown`, `lchown`, `fchownat`
+- `[x]` `utimensat`, `futimens`
+- `[x]` `mknod`, `mknodat`, `mkfifo`, `mkfifoat`
 - `[!]` `readlink`, `readlinkat` (also blocker 7)
 
 ## Paths, links and permissions (`dir.lls`)
@@ -221,10 +211,7 @@ designed now.
 ## Time and timers (`time.lls`)
 
 - `[x]` `time`
-- `[!]` `clock_gettime`, `clock_settime`, `clock_getres`,
-  `clock_nanosleep`, `nanosleep`, `gettimeofday`, `settimeofday`, `times`,
-  `ftime` (blocker 1; `clock_gettime` could take a clock id and return an
-  offset type)
+- `[x]` `clock_gettime`, `clock_settime`, `clock_getres`, `clock_nanosleep`, `nanosleep`
 - `[x]` `clock_getcpuclockid`
 - `[!]` `getitimer`, `setitimer`
 - `[!]` `timer_create`, `timer_delete`, `timer_settime`, `timer_gettime`,
@@ -274,7 +261,8 @@ nominal struct with constructors rather than a raw `sockaddr`, and
 ## Readiness and polling (`poll.lls`)
 
 - `[!]` `select`, `pselect` (`fd_set` layout)
-- `[!]` `poll`, `ppoll` (`pollfd` layout)
+- `[x]` `poll` (with `poll_one` and slice `poll`; `pollfd` layout)
+- `[!]` `ppoll` (`pollfd` layout; signal mask needs sigset)
 - `[!]` `epoll_create`, `epoll_create1`, `epoll_ctl`, `epoll_wait`,
   `epoll_pwait`, `epoll_pwait2` (event struct layout)
 
@@ -303,8 +291,8 @@ need caller buffers and `**` out-pointers.
 ## Terminals (`term.lls`)
 
 - `[x]` `isatty` as `is_terminal`
-- `[!]` `tcgetattr`, `tcsetattr`, `cfmakeraw`, `cfgetispeed`, `cfsetispeed`,
-  `cfgetospeed`, `cfsetospeed`, `cfsetspeed` (`termios` layout)
+- `[x]` `tcgetattr`, `tcsetattr` (`termios` layout)
+- `[ ]` `cfmakeraw`, `cfgetispeed`, `cfsetispeed`, `cfgetospeed`, `cfsetospeed`, `cfsetspeed`
 - `[x]` `tcgetpgrp`, `tcsetpgrp`, `tcgetsid`, `tcdrain`, `tcflow`, `tcflush`,
   `tcsendbreak`
 - `[!]` `ttyname`, `ttyname_r`, `ctermid`, `ttyslot` (string conversion)
@@ -326,7 +314,8 @@ need caller buffers and `**` out-pointers.
 
 ## Resources, scheduling and priority (`system.lls`)
 
-- `[!]` `getrlimit`, `setrlimit`, `getrusage` (struct layout)
+- `[x]` `getrlimit`, `setrlimit`, `prlimit` (`rlimit` layout)
+- `[!]` `getrusage` (struct layout)
 - `[x]` `getpriority`, `setpriority`, `nice`
 - `[x]` `sched_get_priority_max`, `sched_get_priority_min`, `sched_yield`
 - `[!]` `sched_getparam`, `sched_setparam`, `sched_getscheduler`,
