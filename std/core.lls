@@ -1,0 +1,5 @@
+# std/core — fundamental operations on built-in types.
+
+pub @func len(T: type, s: T): usize {
+    return @as(usize, s.len);
+}
