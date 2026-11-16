@@ -13,6 +13,7 @@ Compiler intrinsics are built-in hooks recognized directly by the LLTS compiler 
 | [`@as`](#as) | 2 | VM & Native | Explicit type casting and width conversion |
 | [`@typeOf`](#typeof) | 1 | VM & Native | Compile-time type introspection |
 | [`@sizeOf`](#sizeof) | 1 | VM & Native | Memory size in bytes of a type or place |
+| [`@zeroed`](#zeroed) | 1 | Native | Zero value construction for a type |
 | [`@nameOf`](#nameof) | 1 | VM & Native | String identifier of a variant or symbol |
 | [`@isError`](#iserror) | 1 | VM & Native | Runtime error inspection |
 | [`@addrOf`](#addrof) | 1 | VM & Native | Raw memory address of an aggregate |
@@ -97,6 +98,33 @@ print(@sizeOf(Vec2));   # 16
 - **Signature:** `@sizeOf(Type | expression)`
 - **Return Type:** `i64` (size in bytes).
 - For compile-time types, calculates static layout size; for runtime dynamic variables, calculates storage allocation.
+
+---
+
+### `@zeroed`
+Constructs the zero value of a type, with every part holding that type's zero value:
+
+```lls
+@struct Conn { sock: i32; buf: [8]u8; }
+
+$c: Conn = @zeroed(Conn);        # all fields 0
+$n: [4]i64 = @zeroed([4]i64);    # [0, 0, 0, 0]
+$s: string = @zeroed(string);    # ""
+$opt: ?Conn = @zeroed(?Conn);    # null
+```
+
+- **Signature:** `@zeroed(Type)`
+- **Return Type:** the type argument itself.
+- Integers and floats → `0`, booleans → `false`, arrays/tuples/structs → every element and field zeroed, `?T` → `null`, enums → the variant whose value is `0`, slices and strings → the empty value.
+- The check is recursive: a struct is zeroable only when all of its fields are. A field that has no zero value (a non-null `*T`, a function value, a union in v1, an enum with no `0` variant, an uninhabited type) rejects the whole expression, and the diagnostic names the path to that part:
+
+  ```
+  error: @zeroed(Wrapper) is invalid: part 'conn.handle' has type '*Handle', a non-null pointer, which has no zero value (hint: use '?*Handle' if it may be absent)
+  ```
+
+- The element type of a zero-length array is still checked, so generic `[N]T` code cannot pass at `N = 0` and fail at `N = 1`.
+- A zero value, not an allocation and not uninitialized memory: it lives wherever the binding lives. Use a separate in-place operation to zero existing storage.
+- Field defaults and constructors are ignored — `@zeroed` always means zero.
 
 ---
 

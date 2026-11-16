@@ -394,6 +394,13 @@ pub fn emitCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) any
             }
             return self.failAt(node, "native backend cannot determine @alignOf statically", .{});
         }
+        if (std.mem.eql(u8, intrinsic, "@zeroed")) {
+            if (c.args.len != 1) return self.failAt(node, "@zeroed expects 1 argument", .{});
+            if (self.state.zeroed_results.get(node) == null) {
+                return self.failAt(node, "native backend cannot determine the @zeroed type", .{});
+            }
+            return emitZeroed(self, node, try self.valueType(node));
+        }
         if (std.mem.eql(u8, intrinsic, "@nameOf")) {
             if (c.args.len != 1) return self.failAt(node, "@nameOf expects 1 argument", .{});
             const plan = self.state.name_of_plans.get(node) orelse {
@@ -2403,4 +2410,108 @@ fn exprHasEffects(node: *ast_mod.Node) bool {
         .comptime_expr => |ce| exprHasEffects(ce.expr),
         else => false,
     };
+}
+
+/// `@zeroed(T)` — materialize the zero value of `vt` as a Zig expression.
+/// Scalars and optionals are immediates; slices become a real empty slice
+/// (never an all-zero pointer); arrays and structs are built field by field so
+/// padding and non-bit-zero representations cannot leak garbage.
+fn emitZeroed(self: *Emitter, node: *ast_mod.Node, vt: ValType) anyerror![]const u8 {
+    const a = self.arena.allocator();
+    switch (vt.kind) {
+        // Immediates are explicitly typed: `print(@zeroed(i64))` must not leave
+        // Zig to infer a `comptime_int`.
+        .int, .float => return std.fmt.allocPrint(a, "@as({s}, 0)", .{vt.zig}),
+        .bool => return if (std.mem.eql(u8, vt.zig, "bool"))
+            "@as(bool, false)"
+        else
+            std.fmt.allocPrint(a, "@as({s}, 0)", .{vt.zig}),
+        .null_value, .optional => return "null",
+        .string => return "\"\"",
+        .slice => {
+            const elem = vt.elem orelse {
+                return self.failAt(node, "native backend cannot determine the slice element type", .{});
+            };
+            self.counter += 1;
+            const id = self.counter;
+            return std.fmt.allocPrint(a,
+                \\blk: {{
+                \\    const lls_zero_buf_{d} = try rt.mem.allocArray(ctx, 0, @sizeOf({s}), @alignOf({s}));
+                \\    break :blk @as([*]{s}, @ptrCast(@alignCast(lls_zero_buf_{d}.ptr)))[0..0];
+                \\}}
+            , .{ id, elem.zig, elem.zig, elem.zig, id });
+        },
+        .array => {
+            const elem = vt.elem orelse {
+                return self.failAt(node, "native backend cannot determine the array element type", .{});
+            };
+            const len = vt.array_len orelse {
+                return self.failAt(node, "native backend cannot determine the array length", .{});
+            };
+            if (len == 0) return std.fmt.allocPrint(a, "{s}{{}}", .{vt.zig});
+            const zero = try emitZeroed(self, node, elem.*);
+            return std.fmt.allocPrint(a, "@as({s}, [1]{s}{{ {s} }} ** {d})", .{
+                vt.zig, elem.zig, zero, len,
+            });
+        },
+        .struct_ => {
+            const info = try self.ensureStructType(node, vt.display);
+            if (info.fields.len == 0) return std.fmt.allocPrint(a, "{s}{{}}", .{info.zig_name});
+
+            // Zero the whole slot first so padding bytes are deterministic, then
+            // write only the parts whose zero is not all-zero bits (a slice's
+            // empty value needs a real non-null pointer).
+            var needs_store = false;
+            for (info.fields) |field| {
+                if (!try zeroIsBitwise(self, node, field.vt)) {
+                    needs_store = true;
+                    break;
+                }
+            }
+            self.counter += 1;
+            const id = self.counter;
+            if (!needs_store) {
+                return std.fmt.allocPrint(a,
+                    \\blk: {{
+                    \\    var lls_zero_{d}: {s} = undefined;
+                    \\    @memset(std.mem.asBytes(&lls_zero_{d}), 0);
+                    \\    break :blk lls_zero_{d};
+                    \\}}
+                , .{ id, info.zig_name, id, id });
+            }
+            var stores: std.ArrayList([]const u8) = .empty;
+            for (info.fields) |field| {
+                if (try zeroIsBitwise(self, node, field.vt)) continue;
+                const zero = try emitZeroed(self, node, field.vt);
+                try stores.append(a, try std.fmt.allocPrint(a, "    lls_zero_{d}.{s} = {s};\n", .{
+                    id, field.zig_name, zero,
+                }));
+            }
+            return std.fmt.allocPrint(a,
+                \\blk: {{
+                \\    var lls_zero_{d}: {s} = undefined;
+                \\    @memset(std.mem.asBytes(&lls_zero_{d}), 0);
+                \\{s}    break :blk lls_zero_{d};
+                \\}}
+            , .{ id, info.zig_name, id, try std.mem.join(a, "", stores.items), id });
+        },
+        else => return self.failAt(node, "native backend cannot produce a zero value for '{s}'", .{vt.display}),
+    }
+}
+
+/// True when `vt`'s zero value is represented entirely by zero bits, so a
+/// whole-slot memset is enough (and zeroes padding too).
+fn zeroIsBitwise(self: *Emitter, node: *ast_mod.Node, vt: ValType) anyerror!bool {
+    switch (vt.kind) {
+        .int, .float, .bool, .null_value, .optional => return true,
+        .array => return vt.elem != null and try zeroIsBitwise(self, node, vt.elem.?.*),
+        .struct_ => {
+            const info = try self.ensureStructType(node, vt.display);
+            for (info.fields) |field| {
+                if (!try zeroIsBitwise(self, node, field.vt)) return false;
+            }
+            return true;
+        },
+        else => return false,
+    }
 }

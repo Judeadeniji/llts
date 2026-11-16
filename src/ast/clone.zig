@@ -144,6 +144,7 @@ pub fn cloneNode(a: std.mem.Allocator, n: *const Node) Error!*Node {
             c.fields = fields;
             c.methods = try cloneSlice(a, s.methods);
             c.params = try cloneParams(a, s.params);
+            c.abi = if (s.abi) |abi| try a.dupe(u8, abi) else null;
             break :blk .{ .struct_decl = c };
         },
         .type_decl => |td| blk: {

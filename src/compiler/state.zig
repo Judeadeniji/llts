@@ -146,15 +146,17 @@ pub const PendingInstance = struct {
 pub const StructDef = struct {
     name: []const u8,
     size: i32,
-    /// Maximum natural field alignment for C ABI layout; default 1.
+    /// Maximum natural field alignment for ABI layout; default 1.
     alignment: i32 = 1,
-    /// Set to true for `@extern "c" @struct` (C ABI layout).
+    /// Set to true for `@extern "<abi>" @struct` (extern ABI layout).
     is_extern: bool = false,
+    /// Target ABI string (e.g. "c", "sysv", "win64").
+    abi: ?[]const u8 = null,
     offsets: std.StringHashMap(i32),
     types: std.StringHashMap([]const u8),
     /// Canonical field types, dual-written while display types are migrated.
     field_irs: std.StringHashMapUnmanaged(ir.Type) = .{},
-    /// Declared field names in source order; used by emitter to preserve C ABI order.
+    /// Declared field names in source order; used by emitter to preserve ABI order.
     field_names: [][]const u8 = &.{},
 };
 
@@ -418,6 +420,8 @@ pub const CompilerState = struct {
     align_of_results: std.AutoHashMap(*ast.Node, i32),
     /// `@nameOf` lowering plan per call node (variant spelling as declared).
     name_of_plans: std.AutoHashMap(*ast.Node, NameOfPlan),
+    /// `@zeroed(T)` resolved type per call node (checked zeroable at typecheck).
+    zeroed_results: std.AutoHashMap(*ast.Node, ir.Type),
     for_is_cond: std.AutoHashMap(*const ast.For, void),
     /// Mutation/read facts per local declaration, populated by the
     /// binding-facts analysis pass and consumed by the native emitter.
@@ -578,6 +582,7 @@ pub fn create(allocator: std.mem.Allocator) !CompilerState {
         .size_of_results = std.AutoHashMap(*ast.Node, i32).init(allocator),
         .align_of_results = std.AutoHashMap(*ast.Node, i32).init(allocator),
         .name_of_plans = std.AutoHashMap(*ast.Node, NameOfPlan).init(allocator),
+        .zeroed_results = std.AutoHashMap(*ast.Node, ir.Type).init(allocator),
         .for_is_cond = std.AutoHashMap(*const ast.For, void).init(allocator),
         .binding_facts = std.AutoHashMap(*ast.Node, BindingFacts).init(allocator),
         .param_facts = std.AutoHashMap(*const ast.Param, BindingFacts).init(allocator),
@@ -742,6 +747,7 @@ pub fn deinit(self: *CompilerState) void {
     self.size_of_results.deinit();
     self.align_of_results.deinit();
     self.name_of_plans.deinit();
+    self.zeroed_results.deinit();
     self.for_is_cond.deinit();
     self.binding_facts.deinit();
     self.param_facts.deinit();

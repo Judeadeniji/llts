@@ -132,9 +132,17 @@ fn failEscape(state: *CompilerState, value: *ast.Node, comptime msg: []const u8)
     );
 }
 
+/// `@zeroed(T)` is a value constructor like a literal: it builds a fresh
+/// aggregate (and any empty slices inside it) in the current region.
+fn isZeroedCall(node: *ast.Node) bool {
+    return node.* == .call and node.call.callee.* == .primary and
+        std.mem.eql(u8, node.call.callee.primary.name, "@zeroed");
+}
+
 /// True when `return <value>` can immortalize a literal shell instead of erroring.
 pub fn canPromoteReturnLiteral(state: *CompilerState, value: *ast.Node) bool {
     switch (value.*) {
+        .call => return isZeroedCall(value),
         .struct_init => |*init| {
             for (init.fields) |f| {
                 if (!operandOkForPromote(state, f.value)) return false;
@@ -168,6 +176,7 @@ pub fn regionOf(state: *CompilerState, node: *ast.Node) AllocRegion {
         // cannot outlive the frame, but an arena passed in (or any other
         // allocator we cannot prove local) may escape.
         .call => |c| {
+            if (isZeroedCall(node)) return if (state.alloc_immortal) .pass else .frame;
             if (c.callee.* == .primary and std.mem.eql(u8, c.callee.primary.name, "@new")) {
                 if (c.args.len > 0 and allocatorIsFunctionLocal(state, c.args[0])) return .arena_local;
                 return .pass;

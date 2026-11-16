@@ -814,6 +814,7 @@ const Ctx = struct {
                     if (std.mem.eql(u8, name, "@typeOf") or
                         std.mem.eql(u8, name, "@sizeOf") or
                         std.mem.eql(u8, name, "@alignOf") or
+                        std.mem.eql(u8, name, "@zeroed") or
                         std.mem.eql(u8, name, "@nameOf")) return;
                     if (std.mem.eql(u8, name, "@as") and c.args.len == 2) {
                         try ctx.walkExpr(c.args[1]);

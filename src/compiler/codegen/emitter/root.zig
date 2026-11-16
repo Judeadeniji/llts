@@ -101,6 +101,8 @@ pub const StructType = struct {
     is_tuple: bool = false,
     /// When true, emitted as `extern struct { ... }` matching C ABI.
     is_extern: bool = false,
+    /// ABI string when is_extern is true (e.g. "c", "sysv", "win64").
+    abi: ?[]const u8 = null,
 };
 
 pub const MemberTarget = union(enum) {
@@ -339,6 +341,7 @@ pub const Emitter = struct {
             .field_index = std.StringHashMap(usize).init(a),
             .is_tuple = is_tuple,
             .is_extern = def.is_extern,
+            .abi = def.abi,
         };
         try self.struct_by_key.put(def.name, info);
         try self.struct_types.append(a, info);

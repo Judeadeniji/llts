@@ -339,6 +339,7 @@ fn registerStructNames(state: *state_mod.CompilerState, doc: *ast.Document) !voi
                 .size = 0,
                 .alignment = 1,
                 .is_extern = s.struct_decl.is_extern,
+                .abi = s.struct_decl.abi,
                 .offsets = std.StringHashMap(i32).init(state.allocator),
                 .types = std.StringHashMap([]const u8).init(state.allocator),
             });

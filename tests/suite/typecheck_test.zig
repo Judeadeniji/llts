@@ -630,3 +630,90 @@ test "typecheck: closure with optional params" {
     var analyzed = try helpers.analyzeSource(allocator, src, null, true);
     defer analyzed.deinit();
 }
+
+test "typecheck: @zeroed accepts zeroable scalars and aggregates" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\@struct Inner { a: i32; b: bool; }
+        \\@struct Node { next: ?*Node; value: i64; inner: Inner; }
+        \\@enum Color { Red, Green, Blue }
+        \\@type Pair = [i64, bool];
+        \\pub @func main() {
+        \\    $i: i64 = @zeroed(i64);
+        \\    $f: f64 = @zeroed(f64);
+        \\    $b: bool = @zeroed(bool);
+        \\    $arr: [4]u8 = @zeroed([4]u8);
+        \\    $empty: [0]u8 = @zeroed([0]u8);
+        \\    $n: Node = @zeroed(Node);
+        \\    $c: Color = @zeroed(Color);
+        \\    $p: Pair = @zeroed(Pair);
+        \\    $s: string = @zeroed(string);
+        \\    $slices: []byte = @zeroed([]byte);
+        \\    $opt: ?*Inner = @zeroed(?*Inner);
+        \\    print(i, f, b, arr[0], n.value, n.next == null, p.1, s == "", opt == null);
+        \\    print(empty[0], c, slices == slices);
+        \\}
+    ;
+    var analyzed = try helpers.analyzeSource(allocator, src, null, true);
+    defer analyzed.deinit();
+}
+
+test "typecheck: @zeroed rejects a non-null pointer field" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\@struct Handle { fd: i32; }
+        \\@struct Conn { sock: Handle; }
+        \\@struct BadConn { handle: *Handle; }
+        \\@struct Wrapper { conn: BadConn; }
+        \\pub @func main() {
+        \\    $w: Wrapper = @zeroed(Wrapper);
+        \\}
+    ;
+    try helpers.expectCompileFail(allocator, src);
+}
+
+test "typecheck: @zeroed rejects a union without a zero variant" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\@struct A { x: i32; }
+        \\@struct B { y: i32; }
+        \\@type U = A | B;
+        \\pub @func main() {
+        \\    $u: U = @zeroed(U);
+        \\}
+    ;
+    try helpers.expectCompileFail(allocator, src);
+}
+
+test "typecheck: @zeroed checks the element type of a zero-length array" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\@struct Bad { p: *i32; }
+        \\pub @func main() {
+        \\    $z: [0]Bad = @zeroed([0]Bad);
+        \\}
+    ;
+    try helpers.expectCompileFail(allocator, src);
+}
+
+test "typecheck: @zeroed rejects an enum with no zero variant" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\@enum Code { NotFound = 4, Denied = 13 }
+        \\pub @func main() {
+        \\    $c: Code = @zeroed(Code);
+        \\}
+    ;
+    try helpers.expectCompileFail(allocator, src);
+}
+
+test "typecheck: @zeroed rejects a function value" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\@type Handler = @func(i64): i64;
+        \\pub @func main() {
+        \\    $h: Handler = @zeroed(Handler);
+        \\}
+    ;
+    try helpers.expectCompileFail(allocator, src);
+}

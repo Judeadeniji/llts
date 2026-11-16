@@ -25,6 +25,7 @@ pub const Intrinsic = enum {
     isError,
     sizeOf,
     alignOf,
+    zeroed,
     nameOf,
     as,
     new,
@@ -39,6 +40,7 @@ const intrinsics = std.StaticStringMap(Intrinsic).initComptime(.{
     .{ "@isError", .isError },
     .{ "@sizeOf", .sizeOf },
     .{ "@alignOf", .alignOf },
+    .{ "@zeroed", .zeroed },
     .{ "@nameOf", .nameOf },
     .{ "@as", .as },
     // Legacy bytecode/VM compatibility only. The native emitter rejects
@@ -65,6 +67,7 @@ pub fn arity(intr: Intrinsic) Arity {
         .isError => .{ .exact = 1 },
         .sizeOf => .{ .exact = 1 },
         .alignOf => .{ .exact = 1 },
+        .zeroed => .{ .exact = 1 },
         .nameOf => .{ .exact = 1 },
         .as => .{ .exact = 2 },
         .new => .{ .range = .{ .min = 2, .max = 3 } },
@@ -165,6 +168,19 @@ pub fn typecheck(state: *CompilerState, env: *typecheck_root.Env, ta: ir.TypeAll
                 try state.align_of_results.put(call_node, al);
             }
             return ir.TInt;
+        },
+        .zeroed => {
+            const arg = c.args[0];
+            if (!isTypeValueNode(state, env, arg)) {
+                // Evaluate the operand so an undefined name reports itself rather
+                // than a misleading "expects a type" error.
+                _ = try typecheck_root.inferExpr(state, env, ta, arg);
+                return compile_errors.compileFailFmt(state, "@zeroed expects a type argument", .{});
+            }
+            const t = try denotedType(state, env, ta, arg);
+            try checkZeroable(state, t);
+            try state.zeroed_results.put(call_node, t);
+            return t;
         },
         .nameOf => {
             const arg_type = try typecheck_root.inferExpr(state, env, ta, c.args[0]);
@@ -343,6 +359,12 @@ pub fn compile(state: *CompilerState, intr: Intrinsic, node: *ast.Node, c: *cons
                 }
             }
             try emit.emitConstant(state, .{ .i64 = 8 });
+        },
+        .zeroed => {
+            const t = state.zeroed_results.get(node) orelse {
+                return compile_errors.compileFailFmt(state, "Internal error: @zeroed missing type", .{});
+            };
+            try emitZeroValue(state, t);
         },
         .nameOf => {
             const plan = state.name_of_plans.get(node) orelse {
@@ -943,4 +965,287 @@ fn intLiteralArrayToBytes(
         }
     }
     return true;
+}
+
+// ── @zeroed ──────────────────────────────────────────────────────────────────
+//
+// `@zeroed(T)` produces the zero value of `T`: every part holds that type's
+// zero value. It is checked recursively at compile time (a non-null pointer, a
+// closure, or a union without a zero variant deep inside a struct rejects the
+// whole expression), and it is a value, not an allocation.
+
+const ZeroCheck = struct {
+    state: *CompilerState,
+    /// Spelling of the type the user asked to zero, for the diagnostic header.
+    root: []const u8,
+    /// Aggregates already being expanded, so recursive types terminate.
+    visited: std.StringHashMap(void),
+    /// Arena for IR parsed from legacy display-only field types.
+    ta: ir.TypeAlloc,
+};
+
+fn checkZeroable(state: *CompilerState, t: ir.Type) !void {
+    var arena = std.heap.ArenaAllocator.init(state.allocator);
+    defer arena.deinit();
+    var ctx = ZeroCheck{
+        .state = state,
+        .root = try typecheck_root.ownDisplay(state, t),
+        .visited = std.StringHashMap(void).init(state.allocator),
+        .ta = .{ .allocator = arena.allocator() },
+    };
+    defer ctx.visited.deinit();
+    // Keep the intrinsic's error set narrow: the typechecker only recovers from
+    // CompileError, and allocation failure is its own error.
+    zeroCheck(&ctx, t, "") catch |err| switch (err) {
+        error.CompileError => return error.CompileError,
+        else => return error.OutOfMemory,
+    };
+}
+
+fn zeroFieldPath(ctx: *ZeroCheck, part: []const u8, field: []const u8) ![]const u8 {
+    if (part.len == 0) return std.fmt.allocPrint(ctx.ta.allocator, "{s}", .{field});
+    return std.fmt.allocPrint(ctx.ta.allocator, "{s}.{s}", .{ part, field });
+}
+
+fn zeroElemPath(ctx: *ZeroCheck, part: []const u8, comptime fmt: []const u8, args: anytype) ![]const u8 {
+    const suffix = try std.fmt.allocPrint(ctx.ta.allocator, fmt, args);
+    if (part.len == 0) return suffix;
+    return std.fmt.allocPrint(ctx.ta.allocator, "{s}{s}", .{ part, suffix });
+}
+
+fn zeroFail(
+    ctx: *ZeroCheck,
+    t: ir.Type,
+    part: []const u8,
+    reason: []const u8,
+    hint: ?[]const u8,
+) error{CompileError} {
+    const disp = typecheck_root.ownDisplay(ctx.state, t) catch {
+        return compile_errors.compileFailFmt(ctx.state, "@zeroed({s}) is invalid: {s}", .{ ctx.root, reason });
+    };
+    if (part.len == 0) {
+        if (hint) |h| {
+            return compile_errors.compileFailFmt(ctx.state, "@zeroed({s}) is invalid: '{s}' is {s} (hint: {s})", .{ ctx.root, disp, reason, h });
+        }
+        return compile_errors.compileFailFmt(ctx.state, "@zeroed({s}) is invalid: '{s}' is {s}", .{ ctx.root, disp, reason });
+    }
+    if (hint) |h| {
+        return compile_errors.compileFailFmt(ctx.state, "@zeroed({s}) is invalid: part '{s}' has type '{s}', {s} (hint: {s})", .{ ctx.root, part, disp, reason, h });
+    }
+    return compile_errors.compileFailFmt(ctx.state, "@zeroed({s}) is invalid: part '{s}' has type '{s}', {s}", .{ ctx.root, part, disp, reason });
+}
+
+fn checkZeroableEnum(
+    ctx: *ZeroCheck,
+    t: ir.Type,
+    name: []const u8,
+    variant: ?[]const u8,
+    part: []const u8,
+) !void {
+    const ed = ctx.state.enums.get(name) orelse
+        return zeroFail(ctx, t, part, "an enum whose declaration is unknown", null);
+    if (ed.isString()) {
+        return zeroFail(ctx, t, part, "a string-valued enum, which has no zero variant", null);
+    }
+    if (variant) |v| {
+        const value = ed.variants.get(v) orelse
+            return zeroFail(ctx, t, part, "an enum variant that is not declared", null);
+        if (value != 0) {
+            return zeroFail(ctx, t, part, "an enum variant that is not the zero variant", null);
+        }
+        return;
+    }
+    var it = ed.variants.valueIterator();
+    while (it.next()) |value| {
+        if (value.* == 0) return;
+    }
+    return zeroFail(ctx, t, part, "an enum with no variant whose value is 0", null);
+}
+
+fn zeroCheck(ctx: *ZeroCheck, t: ir.Type, part: []const u8) anyerror!void {
+    // `unknown` shows up while a generic is still being resolved; the check
+    // runs again on the instantiated type.
+    if (ir.involvesUnknown(t)) return;
+    const p = ir.peelDefined(t);
+    if (ir.widthOf(p) != null) return;
+
+    switch (p) {
+        .null => return,
+        .void => return zeroFail(ctx, t, part, "a unit type ('void'), which has no zero value", null),
+        .never => return zeroFail(ctx, t, part, "an uninhabited type ('never'), which has no value", null),
+        .ptr => {
+            const disp = try typecheck_root.ownDisplay(ctx.state, t);
+            const hint = try std.fmt.allocPrint(ctx.ta.allocator, "use '?{s}' if it may be absent", .{disp});
+            return zeroFail(ctx, t, part, "a non-null pointer, which has no zero value", hint);
+        },
+        .c_str => return zeroFail(ctx, t, part, "a non-null C string pointer ('c_str'), which has no zero value", null),
+        .func => return zeroFail(ctx, t, part, "a function value, which has no zero value", null),
+        .error_, .error_set, .error_lit => return zeroFail(ctx, t, part, "an error value, which has no zero value", null),
+        .type_ => return zeroFail(ctx, t, part, "the type of types, which has no zero value", null),
+        .str_lit => return zeroFail(ctx, t, part, "a string singleton type, which has no zero value", null),
+        .unknown => return,
+        .array => |a| {
+            // The element type is checked even when the length is zero, so
+            // generic `[N]T` code cannot pass at N = 0 and fail at N = 1.
+            return zeroCheck(ctx, a.elem.*, try zeroElemPath(ctx, part, "[]", .{}));
+        },
+        .tuple => |elems| {
+            for (elems, 0..) |elem, i| {
+                try zeroCheck(ctx, elem, try zeroElemPath(ctx, part, "[{d}]", .{i}));
+            }
+            return;
+        },
+        .union_ => {
+            // `?T` is `T | null`, and its zero value is null.
+            if (ir.optionalPayload(p) != null) return;
+            return zeroFail(ctx, t, part, "a union, which has no zero variant in v1", null);
+        },
+        .enum_ => |name| return checkZeroableEnum(ctx, t, name, null, part),
+        .enum_lit => |lit| return checkZeroableEnum(ctx, t, lit.enum_name, lit.variant, part),
+        .struct_ => |name| {
+            // Bare names that denote enums surface as `struct_` in some paths.
+            if (ctx.state.enums.contains(name)) return checkZeroableEnum(ctx, t, name, null, part);
+            const sd = ctx.state.structs.get(name) orelse
+                return zeroFail(ctx, t, part, "an opaque or foreign type with no known layout", null);
+            if (ctx.visited.contains(name)) return;
+            try ctx.visited.put(name, {});
+            defer _ = ctx.visited.remove(name);
+
+            var field_names: std.ArrayList([]const u8) = .empty;
+            defer field_names.deinit(ctx.state.allocator);
+            if (sd.field_names.len > 0) {
+                try field_names.appendSlice(ctx.state.allocator, sd.field_names);
+            } else {
+                var it = sd.field_irs.keyIterator();
+                while (it.next()) |k| try field_names.append(ctx.state.allocator, k.*);
+            }
+            for (field_names.items) |field_name| {
+                const field_ir: ?ir.Type = if (sd.field_irs.get(field_name)) |ft|
+                    ft
+                else if (sd.types.get(field_name)) |disp|
+                    try from_ast.parseDisplayType(ctx.state, ctx.ta, disp, null)
+                else
+                    null;
+                const ft = field_ir orelse continue;
+                try zeroCheck(ctx, ft, try zeroFieldPath(ctx, part, field_name));
+            }
+            return;
+        },
+        .shape => |fields| {
+            const disp = try typecheck_root.ownDisplay(ctx.state, t);
+            if (ctx.visited.contains(disp)) return;
+            try ctx.visited.put(disp, {});
+            defer _ = ctx.visited.remove(disp);
+            for (fields) |f| {
+                try zeroCheck(ctx, f.ty, try zeroFieldPath(ctx, part, f.name));
+            }
+            return;
+        },
+        // Scalars are handled by `widthOf` above; `defined` is peeled first.
+        .u1, .i8, .i16, .i32, .i64, .u8, .u16, .u32, .u64, .f32, .f64, .isize, .usize, .fsize => return,
+        .int_lit, .bool_lit, .defined => return,
+    }
+}
+
+/// Bytecode: push the zero value of `t` on the stack. Aggregates are built in
+/// the current allocation region (frame bump, or immortal for module-level
+/// bindings), never in a program-lifetime arena of their own.
+fn emitZeroValue(state: *CompilerState, t: ir.Type) anyerror!void {
+    const p = ir.peelDefined(t);
+    if (ir.widthOf(p)) |w| {
+        if (w.isFloat()) {
+            try emit.emitConstant(state, .{ .f64 = 0 });
+        } else if (w == .u1) {
+            try emit.emitOp(state, .OP_FALSE);
+        } else {
+            try emit.emitConstant(state, .{ .i64 = 0 });
+        }
+        return;
+    }
+
+    switch (p) {
+        .null, .union_ => try emit.emitOp(state, .OP_NULL),
+        .enum_, .enum_lit => try emit.emitConstant(state, .{ .i64 = 0 }),
+        .array => |a| {
+            // `string` is a const `[]u8`; its zero value is the empty string,
+            // not a fresh zero-length buffer.
+            if (a.length == null and a.is_const and a.elem.* == .u8) {
+                try emit.emitString(state, "");
+                return;
+            }
+            const len: i32 = @intCast(a.length orelse 0);
+            try emitZeroArray(state, len, a.elem.*);
+        },
+        .tuple => |elems| {
+            const alloc = if (state.alloc_immortal) "__allocImmortalArray" else "__allocArray";
+            try emit.emitNameGet(state, .OP_GET_GLOBAL, alloc);
+            try emit.emitConstant(state, .{ .i64 = @intCast(elems.len) });
+            try emit.emitCall(state, 1);
+            for (elems, 0..) |elem, i| {
+                try emit.emitOp(state, .OP_DUP);
+                try emit.emitConstant(state, .{ .i64 = @intCast(i) });
+                try emitZeroValue(state, elem);
+                try emit.emitOp(state, .OP_SET_ARRAY);
+                try emit.emitOp(state, .OP_POP);
+            }
+        },
+        .struct_ => |name| {
+            if (state.enums.contains(name)) {
+                try emit.emitConstant(state, .{ .i64 = 0 });
+                return;
+            }
+            const sd = state.structs.get(name) orelse {
+                return compile_errors.compileFailFmt(state, "@zeroed: unknown struct '{s}'", .{name});
+            };
+            try emitZeroStruct(state, sd);
+        },
+        .shape => {
+            const disp = try typecheck_root.ownDisplay(state, t);
+            const sd = from_ast.lookupStruct(state, disp) orelse {
+                return compile_errors.compileFailFmt(state, "@zeroed: unknown shape '{s}'", .{disp});
+            };
+            try emitZeroStruct(state, sd);
+        },
+        else => return compile_errors.compileFailFmt(state, "@zeroed: type has no runtime zero value", .{}),
+    }
+}
+
+fn emitZeroArray(state: *CompilerState, len: i32, elem: ir.Type) anyerror!void {
+    const alloc = if (state.alloc_immortal) "__allocImmortalArray" else "__allocArray";
+    try emit.emitNameGet(state, .OP_GET_GLOBAL, alloc);
+    try emit.emitConstant(state, .{ .i64 = len });
+    try emit.emitCall(state, 1);
+    var i: i32 = 0;
+    while (i < len) : (i += 1) {
+        try emit.emitOp(state, .OP_DUP);
+        try emit.emitConstant(state, .{ .i64 = i });
+        try emitZeroValue(state, elem);
+        try emit.emitOp(state, .OP_SET_ARRAY);
+        try emit.emitOp(state, .OP_POP);
+    }
+}
+
+fn emitZeroStruct(state: *CompilerState, sd: state_mod.StructDef) anyerror!void {
+    const alloc = if (state.alloc_immortal) "__allocImmortalBytes" else "__allocBytes";
+    try emit.emitNameGet(state, .OP_GET_GLOBAL, alloc);
+    try emit.emitConstant(state, .{ .i64 = sd.size });
+    try emit.emitCall(state, 1);
+
+    var field_names: std.ArrayList([]const u8) = .empty;
+    defer field_names.deinit(state.allocator);
+    if (sd.field_names.len > 0) {
+        try field_names.appendSlice(state.allocator, sd.field_names);
+    } else {
+        var it = sd.field_irs.keyIterator();
+        while (it.next()) |k| try field_names.append(state.allocator, k.*);
+    }
+    for (field_names.items) |field_name| {
+        const field_ir = sd.field_irs.get(field_name) orelse continue;
+        const offset = sd.offsets.get(field_name) orelse continue;
+        const kind: u8 = @intFromEnum(layout.fieldKindFromType(field_ir));
+        try emit.emitOp(state, .OP_DUP);
+        try emitZeroValue(state, field_ir);
+        try emit.emitStoreField(state, offset, kind);
+        try emit.emitOp(state, .OP_POP);
+    }
 }

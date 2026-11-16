@@ -136,11 +136,13 @@ pub const StructDecl = struct {
     /// are allowed; the declaration itself is never laid out or emitted, each
     /// distinct argument list gets its own instance (`Name(T)`).
     params: []Param = &.{},
-    /// True when declared as `@extern "c" @struct` or `@extern @struct`.
-    /// Tells the compiler and native emitter to use C ABI struct layout (strict
-    /// declaration field order, natural C alignment padding, and total size
-    /// padded to max field alignment).
+    /// True when declared as `@extern "<abi>" @struct`.
+    /// Tells the compiler and native emitter to use the specified ABI struct layout
+    /// (e.g. "c", "sysv", "win64": strict declaration field order, natural ABI alignment padding,
+    /// and total size padded to max field alignment).
     is_extern: bool = false,
+    /// ABI string identifier (e.g. "c", "sysv", "win64") when is_extern is true.
+    abi: ?[]const u8 = null,
     is_public: bool = false,
     loc: Location,
 };

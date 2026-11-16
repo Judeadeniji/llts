@@ -1,0 +1,8 @@
+@struct Handle { fd: i32; }
+@struct Conn { sock: Handle; }
+@struct BadConn { handle: *Handle; }
+@struct Wrapper { conn: BadConn; }
+
+pub @func main() {
+    $w: Wrapper = @zeroed(Wrapper);
+}

@@ -1,10 +1,10 @@
 const std = @import("std");
 
 const compiler_map = std.StaticStringMap(void).initComptime(.{
-    .{ "import", {} },  .{ "const", {} },  .{ "func", {} },     .{ "for", {} },     .{ "if", {} },     .{ "else", {} },
-    .{ "switch", {} },  .{ "struct", {} }, .{ "enum", {} },     .{ "error", {} },   .{ "type", {} },   .{ "alias", {} },
-    .{ "isError", {} }, .{ "typeOf", {} }, .{ "sizeOf", {} },   .{ "alignOf", {} }, .{ "nameOf", {} }, .{ "as", {} },
-    .{ "extern", {} },  .{ "new", {} },    .{ "comptime", {} },
+    .{ "import", {} },  .{ "const", {} },  .{ "func", {} },   .{ "for", {} },      .{ "if", {} },     .{ "else", {} },
+    .{ "switch", {} },  .{ "struct", {} }, .{ "enum", {} },   .{ "error", {} },    .{ "type", {} },   .{ "alias", {} },
+    .{ "isError", {} }, .{ "typeOf", {} }, .{ "sizeOf", {} }, .{ "alignOf", {} },  .{ "zeroed", {} }, .{ "nameOf", {} },
+    .{ "as", {} },      .{ "extern", {} }, .{ "new", {} },    .{ "comptime", {} },
 });
 
 const keyword_map = std.StaticStringMap(void).initComptime(.{

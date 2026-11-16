@@ -398,6 +398,7 @@ pub fn compileStruct(state: *CompilerState, s: *const ast.StructDecl) !void {
         .size = laid.size,
         .alignment = laid.alignment,
         .is_extern = s.is_extern,
+        .abi = s.abi,
         .offsets = laid.offsets,
         .types = type_map,
         .field_irs = field_irs,
