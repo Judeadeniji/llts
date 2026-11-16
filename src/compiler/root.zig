@@ -337,6 +337,8 @@ fn registerStructNames(state: *state_mod.CompilerState, doc: *ast.Document) !voi
             try state.structs.put(s.struct_decl.name, .{
                 .name = s.struct_decl.name,
                 .size = 0,
+                .alignment = 1,
+                .is_extern = s.struct_decl.is_extern,
                 .offsets = std.StringHashMap(i32).init(state.allocator),
                 .types = std.StringHashMap([]const u8).init(state.allocator),
             });

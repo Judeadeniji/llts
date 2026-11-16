@@ -1,14 +1,14 @@
 const std = @import("std");
 
 const compiler_map = std.StaticStringMap(void).initComptime(.{
-    .{ "import", {} }, .{ "const", {} }, .{ "func", {} }, .{ "for", {} }, .{ "if", {} }, .{ "else", {} },
-    .{ "switch", {} }, .{ "struct", {} }, .{ "enum", {} }, .{ "error", {} }, .{ "type", {} }, .{ "alias", {} },
-    .{ "isError", {} }, .{ "typeOf", {} }, .{ "sizeOf", {} }, .{ "nameOf", {} }, .{ "as", {} }, .{ "extern", {} }, .{ "new", {} },
-    .{ "comptime", {} },
+    .{ "import", {} },  .{ "const", {} },  .{ "func", {} },     .{ "for", {} },     .{ "if", {} },     .{ "else", {} },
+    .{ "switch", {} },  .{ "struct", {} }, .{ "enum", {} },     .{ "error", {} },   .{ "type", {} },   .{ "alias", {} },
+    .{ "isError", {} }, .{ "typeOf", {} }, .{ "sizeOf", {} },   .{ "alignOf", {} }, .{ "nameOf", {} }, .{ "as", {} },
+    .{ "extern", {} },  .{ "new", {} },    .{ "comptime", {} },
 });
 
 const keyword_map = std.StaticStringMap(void).initComptime(.{
-    .{ "true", {} }, .{ "false", {} }, .{ "return", {} }, .{ "pub", {} }, .{ "break", {} },
+    .{ "true", {} },     .{ "false", {} }, .{ "return", {} },   .{ "pub", {} },   .{ "break", {} },
     .{ "continue", {} }, .{ "defer", {} }, .{ "errdefer", {} }, .{ "error", {} }, .{ "null", {} },
     // Expression-level literal assertion: `const "x"` → type `"x"`.
     .{ "const", {} },

@@ -371,7 +371,9 @@ pub fn compileStruct(state: *CompilerState, s: *const ast.StructDecl) !void {
     var field_list: std.ArrayList(layout.FieldSpec) = .empty;
     defer field_list.deinit(state.allocator);
 
-    for (s.fields) |field| {
+    const field_names = try state.allocator.alloc([]const u8, s.fields.len);
+    for (s.fields, 0..) |field, i| {
+        field_names[i] = field.name;
         var disp: []const u8 = "int";
         if (field.type_annotation) |ta| {
             disp = (try from_ast.typeAstToDisplayQualified(ta, state)) orelse "unknown";
@@ -384,7 +386,7 @@ pub fn compileStruct(state: *CompilerState, s: *const ast.StructDecl) !void {
         try field_irs.put(state.allocator, field.name, field_ir);
         try field_list.append(state.allocator, .{ .name = field.name, .type_name = disp });
     }
-    const laid = try layout.layoutFields(state.allocator, field_list.items);
+    const laid = try layout.layoutFieldsWithState(state, state.allocator, field_list.items, s.is_extern);
     if (state.structs.fetchRemove(s.name)) |kv| {
         var old = kv.value;
         old.offsets.deinit();
@@ -394,9 +396,12 @@ pub fn compileStruct(state: *CompilerState, s: *const ast.StructDecl) !void {
     try state.structs.put(s.name, .{
         .name = s.name,
         .size = laid.size,
+        .alignment = laid.alignment,
+        .is_extern = s.is_extern,
         .offsets = laid.offsets,
         .types = type_map,
         .field_irs = field_irs,
+        .field_names = field_names,
     });
 
     // Qualify method names to Struct::method for dispatch

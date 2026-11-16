@@ -99,6 +99,8 @@ pub const StructType = struct {
     fields: []StructField = &.{},
     field_index: std.StringHashMap(usize),
     is_tuple: bool = false,
+    /// When true, emitted as `extern struct { ... }` matching C ABI.
+    is_extern: bool = false,
 };
 
 pub const MemberTarget = union(enum) {
@@ -336,6 +338,7 @@ pub const Emitter = struct {
             .size = @intCast(def.size),
             .field_index = std.StringHashMap(usize).init(a),
             .is_tuple = is_tuple,
+            .is_extern = def.is_extern,
         };
         try self.struct_by_key.put(def.name, info);
         try self.struct_types.append(a, info);
@@ -346,22 +349,35 @@ pub const Emitter = struct {
             offset: i32,
         };
         var seeds: std.ArrayList(Seed) = .empty;
-        var it = def.types.iterator();
-        while (it.next()) |entry| {
-            const field_name = entry.key_ptr.*;
-            const offset = def.offsets.get(field_name) orelse 0;
-            try seeds.append(a, .{
-                .name = field_name,
-                .display = entry.value_ptr.*,
-                .offset = offset,
-            });
-        }
-        std.mem.sort(Seed, seeds.items, {}, struct {
-            fn lessThan(_: void, lhs: Seed, rhs: Seed) bool {
-                if (lhs.offset != rhs.offset) return lhs.offset < rhs.offset;
-                return std.mem.lessThan(u8, lhs.name, rhs.name);
+        // Prefer declared field order when recorded to ensure strict C ABI struct layout
+        if (def.field_names.len > 0) {
+            for (def.field_names) |field_name| {
+                const display_ty = def.types.get(field_name) orelse "i64";
+                const offset = def.offsets.get(field_name) orelse 0;
+                try seeds.append(a, .{
+                    .name = field_name,
+                    .display = display_ty,
+                    .offset = offset,
+                });
             }
-        }.lessThan);
+        } else {
+            var it = def.types.iterator();
+            while (it.next()) |entry| {
+                const field_name = entry.key_ptr.*;
+                const offset = def.offsets.get(field_name) orelse 0;
+                try seeds.append(a, .{
+                    .name = field_name,
+                    .display = entry.value_ptr.*,
+                    .offset = offset,
+                });
+            }
+            std.mem.sort(Seed, seeds.items, {}, struct {
+                fn lessThan(_: void, lhs: Seed, rhs: Seed) bool {
+                    if (lhs.offset != rhs.offset) return lhs.offset < rhs.offset;
+                    return std.mem.lessThan(u8, lhs.name, rhs.name);
+                }
+            }.lessThan);
+        }
 
         const fields = try a.alloc(StructField, seeds.items.len);
         for (seeds.items, 0..) |seed, i| {
@@ -403,7 +419,11 @@ pub const Emitter = struct {
         var i: usize = 0;
         while (i < self.struct_types.items.len) : (i += 1) {
             const info = self.struct_types.items[i];
-            try self.writer.print("const {s} = struct {{\n", .{info.zig_name});
+            if (info.is_extern) {
+                try self.writer.print("const {s} = extern struct {{\n", .{info.zig_name});
+            } else {
+                try self.writer.print("const {s} = struct {{\n", .{info.zig_name});
+            }
             for (info.fields) |field| {
                 try self.writer.print("    {s}: {s},\n", .{ field.zig_name, field.vt.zig });
             }

@@ -146,10 +146,16 @@ pub const PendingInstance = struct {
 pub const StructDef = struct {
     name: []const u8,
     size: i32,
+    /// Maximum natural field alignment for C ABI layout; default 1.
+    alignment: i32 = 1,
+    /// Set to true for `@extern "c" @struct` (C ABI layout).
+    is_extern: bool = false,
     offsets: std.StringHashMap(i32),
     types: std.StringHashMap([]const u8),
     /// Canonical field types, dual-written while display types are migrated.
     field_irs: std.StringHashMapUnmanaged(ir.Type) = .{},
+    /// Declared field names in source order; used by emitter to preserve C ABI order.
+    field_names: [][]const u8 = &.{},
 };
 
 pub const EnumDef = struct {
@@ -408,6 +414,8 @@ pub const CompilerState = struct {
     type_eq_folds: std.AutoHashMap(*ast.Node, bool),
     /// `@sizeOf(...)` resolved statically at typecheck (call node → bytes).
     size_of_results: std.AutoHashMap(*ast.Node, i32),
+    /// `@alignOf(...)` resolved statically at typecheck (call node → alignment).
+    align_of_results: std.AutoHashMap(*ast.Node, i32),
     /// `@nameOf` lowering plan per call node (variant spelling as declared).
     name_of_plans: std.AutoHashMap(*ast.Node, NameOfPlan),
     for_is_cond: std.AutoHashMap(*const ast.For, void),
@@ -568,6 +576,7 @@ pub fn create(allocator: std.mem.Allocator) !CompilerState {
         .type_call_ir_results = std.AutoHashMap(*ast.Node, ir.Type).init(allocator),
         .type_eq_folds = std.AutoHashMap(*ast.Node, bool).init(allocator),
         .size_of_results = std.AutoHashMap(*ast.Node, i32).init(allocator),
+        .align_of_results = std.AutoHashMap(*ast.Node, i32).init(allocator),
         .name_of_plans = std.AutoHashMap(*ast.Node, NameOfPlan).init(allocator),
         .for_is_cond = std.AutoHashMap(*const ast.For, void).init(allocator),
         .binding_facts = std.AutoHashMap(*ast.Node, BindingFacts).init(allocator),
@@ -731,6 +740,7 @@ pub fn deinit(self: *CompilerState) void {
     self.type_call_ir_results.deinit();
     self.type_eq_folds.deinit();
     self.size_of_results.deinit();
+    self.align_of_results.deinit();
     self.name_of_plans.deinit();
     self.for_is_cond.deinit();
     self.binding_facts.deinit();

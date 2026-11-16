@@ -24,6 +24,7 @@ pub const Intrinsic = enum {
     typeOf,
     isError,
     sizeOf,
+    alignOf,
     nameOf,
     as,
     new,
@@ -37,6 +38,7 @@ const intrinsics = std.StaticStringMap(Intrinsic).initComptime(.{
     .{ "@typeOf", .typeOf },
     .{ "@isError", .isError },
     .{ "@sizeOf", .sizeOf },
+    .{ "@alignOf", .alignOf },
     .{ "@nameOf", .nameOf },
     .{ "@as", .as },
     // Legacy bytecode/VM compatibility only. The native emitter rejects
@@ -62,6 +64,7 @@ pub fn arity(intr: Intrinsic) Arity {
         .typeOf => .{ .exact = 1 },
         .isError => .{ .exact = 1 },
         .sizeOf => .{ .exact = 1 },
+        .alignOf => .{ .exact = 1 },
         .nameOf => .{ .exact = 1 },
         .as => .{ .exact = 2 },
         .new => .{ .range = .{ .min = 2, .max = 3 } },
@@ -147,6 +150,19 @@ pub fn typecheck(state: *CompilerState, env: *typecheck_root.Env, ta: ir.TypeAll
                 } else if (try staticTypeArgSize(state, arg)) |size| {
                     try state.size_of_results.put(call_node, size);
                 }
+            }
+            return ir.TInt;
+        },
+        .alignOf => {
+            const arg = c.args[0];
+            if (isTypeValueNode(state, env, arg)) {
+                const t = try denotedType(state, env, ta, arg);
+                const al = try layout.alignOfType(state, t);
+                try state.align_of_results.put(call_node, al);
+            } else {
+                const t = try typecheck_root.inferExpr(state, env, ta, arg);
+                const al = try layout.alignOfType(state, t);
+                try state.align_of_results.put(call_node, al);
             }
             return ir.TInt;
         },
@@ -312,6 +328,21 @@ pub fn compile(state: *CompilerState, intr: Intrinsic, node: *ast.Node, c: *cons
 
             try expr.compileExpression(state, c.args[0]);
             try emit.emitOp(state, .OP_SIZEOF);
+        },
+        .alignOf => {
+            if (state.align_of_results.get(node)) |al| {
+                try emit.emitConstant(state, .{ .i64 = al });
+                return;
+            }
+            if (from_ast.resolveType(state, c.args[0])) |type_name| {
+                if (from_ast.lookupStruct(state, type_name)) |sd| {
+                    try expr.compileExpression(state, c.args[0]);
+                    try emit.emitOp(state, .OP_POP);
+                    try emit.emitConstant(state, .{ .i64 = sd.alignment });
+                    return;
+                }
+            }
+            try emit.emitConstant(state, .{ .i64 = 8 });
         },
         .nameOf => {
             const plan = state.name_of_plans.get(node) orelse {

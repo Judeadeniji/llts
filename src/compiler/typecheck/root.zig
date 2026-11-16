@@ -5079,18 +5079,17 @@ fn checkStructFieldTypes(state: *state_mod.CompilerState, env: *Env, ta: ir.Type
             else => |e| return e,
         };
     }
-    // The pre-typecheck layout pass saw type-returning fields as `unknown`.
-    if (relayout) {
-        var specs: std.ArrayList(layout.FieldSpec) = .empty;
-        defer specs.deinit(ta.allocator);
-        for (s.fields) |field| {
-            try specs.append(ta.allocator, .{ .name = field.name, .type_name = def.types.get(field.name) orelse "int" });
-        }
-        const laid = try layout.layoutFields(state.allocator, specs.items);
-        def.offsets.deinit();
-        def.offsets = laid.offsets;
-        def.size = laid.size;
+    // Re-layout with fully-resolved types and C ABI alignment rules.
+    var specs: std.ArrayList(layout.FieldSpec) = .empty;
+    defer specs.deinit(ta.allocator);
+    for (s.fields) |field| {
+        try specs.append(ta.allocator, .{ .name = field.name, .type_name = def.types.get(field.name) orelse "int" });
     }
+    const laid = try layout.layoutFieldsWithState(state, state.allocator, specs.items, def.is_extern);
+    def.offsets.deinit();
+    def.offsets = laid.offsets;
+    def.size = laid.size;
+    def.alignment = laid.alignment;
 }
 
 fn checkOneStructField(

@@ -51,6 +51,18 @@ pub fn sizeOfTypeName(type_name: []const u8) i32 {
         return 0;
     if (std.mem.eql(u8, bare, "string") or std.mem.eql(u8, bare, "[]byte"))
         return 8;
+    // Fixed array `[N]T`: size is N * sizeOf(T)
+    if (bare.len > 0 and bare[0] == '[' and std.mem.indexOfScalar(u8, bare, ',') == null) {
+        if (std.mem.indexOfScalar(u8, bare, ']')) |rb| {
+            if (rb > 1) {
+                const num_str = bare[1..rb];
+                if (std.fmt.parseInt(usize, num_str, 10)) |n| {
+                    const elem_ty = bare[rb + 1 ..];
+                    return @as(i32, @intCast(n)) * sizeOfTypeName(elem_ty);
+                } else |_| {}
+            }
+        }
+    }
     return 8;
 }
 
@@ -59,7 +71,20 @@ pub fn sizeOfNamedType(state: *state_mod.CompilerState, type_name: []const u8) i
     const bare = unwrapTypeName(type_name);
     if (state.typedefs.get(bare)) |td| return sizeOfNamedType(state, td.underlying);
     if (state.enums.contains(bare)) return 8; // tag-only i64
+    if (from_ast.lookupStruct(state, bare)) |sd| return sd.size;
     if (state.structs.get(bare)) |sd| return sd.size;
+    // Fixed array `[N]T` with named/nested element type
+    if (bare.len > 0 and bare[0] == '[' and std.mem.indexOfScalar(u8, bare, ',') == null) {
+        if (std.mem.indexOfScalar(u8, bare, ']')) |rb| {
+            if (rb > 1) {
+                const num_str = bare[1..rb];
+                if (std.fmt.parseInt(usize, num_str, 10)) |n| {
+                    const elem_ty = bare[rb + 1 ..];
+                    return @as(i32, @intCast(n)) * sizeOfNamedType(state, elem_ty);
+                } else |_| {}
+            }
+        }
+    }
     return sizeOfTypeName(type_name);
 }
 
@@ -84,7 +109,15 @@ pub fn sizeOfType(state: *state_mod.CompilerState, t: ir.Type) !?i32 {
             break :blk 8;
         },
         .union_ => if (ir.optionalPayload(t)) |payload| try sizeOfType(state, payload) else 8,
-        .enum_, .enum_lit, .str_lit, .c_str, .array, .tuple, .ptr, .func, .error_, .error_set, .error_lit => 8,
+        .array => |arr| blk: {
+            // Fixed array `[N]T` has concrete static size N * sizeOf(T).
+            if (arr.length) |len| {
+                const elem_sz = (try sizeOfType(state, arr.elem.*)) orelse return null;
+                break :blk @as(i32, @intCast(len)) * elem_sz;
+            }
+            break :blk 8;
+        },
+        .enum_, .enum_lit, .str_lit, .c_str, .tuple, .ptr, .func, .error_, .error_set, .error_lit => 8,
         .unknown, .never, .type_ => null,
     };
 }
@@ -96,7 +129,63 @@ pub fn alignOfTypeName(type_name: []const u8) i32 {
     if (widths.fromName(bare)) |w| return w.alignment();
     if (std.mem.eql(u8, bare, "null") or std.mem.eql(u8, bare, "void"))
         return 1;
+    // Fixed array `[N]T` has alignment of element type T.
+    if (bare.len > 0 and bare[0] == '[' and std.mem.indexOfScalar(u8, bare, ',') == null) {
+        if (std.mem.indexOfScalar(u8, bare, ']')) |rb| {
+            if (rb > 1) {
+                const elem_ty = bare[rb + 1 ..];
+                return alignOfTypeName(elem_ty);
+            }
+        }
+    }
     return 8;
+}
+
+/// Alignment of a named type when enum/struct defs are available.
+pub fn alignOfNamedType(state: *state_mod.CompilerState, type_name: []const u8) i32 {
+    const bare = unwrapTypeName(type_name);
+    if (state.typedefs.get(bare)) |td| return alignOfNamedType(state, td.underlying);
+    if (state.enums.contains(bare)) return 8;
+    if (from_ast.lookupStruct(state, bare)) |sd| return sd.alignment;
+    if (state.structs.get(bare)) |sd| return sd.alignment;
+    if (bare.len > 0 and bare[0] == '[' and std.mem.indexOfScalar(u8, bare, ',') == null) {
+        if (std.mem.indexOfScalar(u8, bare, ']')) |rb| {
+            if (rb > 1) {
+                const elem_ty = bare[rb + 1 ..];
+                return alignOfNamedType(state, elem_ty);
+            }
+        }
+    }
+    return alignOfTypeName(type_name);
+}
+
+/// Static `@alignOf` for a resolved canonical type.
+pub fn alignOfType(state: *state_mod.CompilerState, t: ir.Type) error{ OutOfMemory, CompileError }!i32 {
+    return switch (t) {
+        .u1, .i8, .u8 => 1,
+        .i16, .u16 => 2,
+        .i32, .u32, .f32 => 4,
+        .i64, .u64, .f64, .isize, .usize, .fsize => 8,
+        .int_lit => 8,
+        .bool_lit => 1,
+        .null, .void => 1,
+        .defined => |d| try alignOfType(state, d.underlying.*),
+        .struct_ => |name| blk: {
+            if (state.enums.contains(name)) break :blk 8;
+            if (from_ast.lookupStruct(state, name)) |sd| break :blk sd.alignment;
+            break :blk 8;
+        },
+        .shape => blk: {
+            const disp = try ir.displayTypeQualifiedAlloc(state.allocator, t);
+            try state.owned.append(state.allocator, disp);
+            if (from_ast.lookupStruct(state, disp)) |sd| break :blk sd.alignment;
+            break :blk 8;
+        },
+        .union_ => if (ir.optionalPayload(t)) |payload| try alignOfType(state, payload) else 8,
+        .array => |arr| try alignOfType(state, arr.elem.*),
+        .enum_, .enum_lit, .str_lit, .c_str, .tuple, .ptr, .func, .error_, .error_set, .error_lit => 8,
+        .unknown, .never, .type_ => 1,
+    };
 }
 
 pub fn fieldKind(state: ?*state_mod.CompilerState, type_name: []const u8) FieldKind {
@@ -171,6 +260,7 @@ pub fn unwrapTypeName(type_name: []const u8) []const u8 {
 
 pub const LayoutResult = struct {
     size: i32,
+    alignment: i32 = 1,
     offsets: std.StringHashMap(i32),
 };
 
@@ -179,17 +269,33 @@ pub const FieldSpec = struct {
     type_name: []const u8,
 };
 
+/// Backward-compatible wrapper for non-extern structs without compiler state.
 pub fn layoutFields(
     allocator: std.mem.Allocator,
     fields: []const FieldSpec,
+) !LayoutResult {
+    return layoutFieldsWithState(null, allocator, fields, false);
+}
+
+/// Computes struct field offsets and total size according to ABI rules.
+/// When `is_extern` is true, C ABI rules are used:
+/// 1. Fields are placed in strictly declared order.
+/// 2. Each field is aligned to its natural C alignment (e.g. 1 for u8, 4 for i32, 8 for i64).
+/// 3. The struct's total size is padded to a multiple of its maximum field alignment.
+/// When `is_extern` is false, standard LLTS struct rules apply (padded to max(max_align, 8)).
+pub fn layoutFieldsWithState(
+    state: ?*state_mod.CompilerState,
+    allocator: std.mem.Allocator,
+    fields: []const FieldSpec,
+    is_extern: bool,
 ) !LayoutResult {
     var offsets = std.StringHashMap(i32).init(allocator);
     errdefer offsets.deinit();
     var offset: i32 = 0;
     var max_align: i32 = 1;
     for (fields) |f| {
-        const al = alignOfTypeName(f.type_name);
-        const sz = sizeOfTypeName(f.type_name);
+        const al = if (state) |st| alignOfNamedType(st, f.type_name) else alignOfTypeName(f.type_name);
+        const sz = if (state) |st| sizeOfNamedType(st, f.type_name) else sizeOfTypeName(f.type_name);
         if (sz == 0) {
             try offsets.put(f.name, offset);
             continue;
@@ -199,8 +305,9 @@ pub fn layoutFields(
         offset += sz;
         if (al > max_align) max_align = al;
     }
-    const size = if (offset == 0) 0 else alignUp(offset, @max(max_align, 8));
-    return .{ .size = size, .offsets = offsets };
+    const struct_align = if (is_extern) max_align else @max(max_align, 8);
+    const size = if (offset == 0) 0 else alignUp(offset, struct_align);
+    return .{ .size = size, .alignment = struct_align, .offsets = offsets };
 }
 
 /// Field storage kind straight from canonical IR: no display parsing.
@@ -272,4 +379,3 @@ pub fn layoutUnion(state: *state_mod.CompilerState, union_t: ir.Type, display: [
         .enum_name = enum_name,
     };
 }
-

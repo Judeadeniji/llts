@@ -77,6 +77,12 @@ fn parseCompilerExtern(self: *Parser) ParseError!*Node {
         return self.failTokRaw(extern_kw, "@extern declarations are only allowed at file scope");
     }
 
+    // Direct form: `@extern @struct Name { ... }` defaults to C ABI.
+    if (self.checkKeyword("struct")) {
+        _ = self.advance();
+        return structs.parseCompilerStructWithExtern(self, true);
+    }
+
     // The legacy form had no ABI string: `@extern Name;`.
     if (self.check(.identifier)) {
         return self.failTokRaw(extern_kw, "legacy '@extern Name;' declarations are not supported; write '@extern \"c\" @func Name(params): return_type;'");
@@ -84,18 +90,27 @@ fn parseCompilerExtern(self: *Parser) ParseError!*Node {
 
     const abi = try self.consume(
         .string,
-        "Expected ABI string after @extern, e.g. @extern \"c\" @func puts(s: c_str): i32;",
+        "Expected ABI string after @extern, e.g. @extern \"c\" @func puts(s: c_str): i32; or @extern \"c\" @struct Name { ... };",
         null,
     );
 
+    if (!std.mem.eql(u8, abi.value, "c")) {
+        return self.failTokRaw(extern_kw, "only \"c\" ABI is supported for extern declarations");
+    }
+
     if (self.checkKeyword("func")) {
         return parseExternFunc(self, abi.value);
+    }
+    // ABI-qualified form: `@extern "c" @struct Name { ... }`.
+    if (self.checkKeyword("struct")) {
+        _ = self.advance();
+        return structs.parseCompilerStructWithExtern(self, true);
     }
     if (self.check(.identifier)) {
         return parseExternData(self, abi.value);
     }
 
-    return self.failTokRaw(extern_kw, "Expected '@func' or a data declaration after the @extern ABI string");
+    return self.failTokRaw(extern_kw, "Expected '@func', '@struct', or a data declaration after the @extern ABI string");
 }
 
 const ExternParamsResult = struct {

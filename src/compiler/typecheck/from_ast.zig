@@ -1405,7 +1405,7 @@ pub fn resolveType(state: *state_mod.CompilerState, node: *ast.Node) ?[]const u8
         },
         .call => |c| blk: {
             if (isTypeCall(state, node)) break :blk "type";
-            if (c.callee.* == .primary and std.mem.eql(u8, c.callee.primary.name, "@sizeOf")) break :blk "i64";
+            if (c.callee.* == .primary and (std.mem.eql(u8, c.callee.primary.name, "@sizeOf") or std.mem.eql(u8, c.callee.primary.name, "@alignOf"))) break :blk "i64";
             if (state.generic_calls.get(node)) |gc| {
                 if (state.functions.get(gc.instance)) |def| break :blk def.return_type;
             }

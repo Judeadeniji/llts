@@ -9,6 +9,12 @@ const ParseError = ctx.ParseError;
 const Node = ast.Node;
 
 pub fn parseCompilerStruct(self: *Parser) ParseError!*Node {
+    return parseCompilerStructWithExtern(self, false);
+}
+
+/// Parses `@struct Name { ... }` or `@extern "c" @struct Name { ... }`.
+/// When `is_extern` is true, the struct represents a C ABI aggregate layout.
+pub fn parseCompilerStructWithExtern(self: *Parser, is_extern: bool) ParseError!*Node {
     const struct_token = self.previous() orelse return error.ParseFailed;
     const name = try self.consume(.identifier, "Expected struct name", null);
     // `@struct Name(T: type)` — generic struct template.
@@ -16,6 +22,10 @@ pub fn parseCompilerStruct(self: *Parser) ParseError!*Node {
     if (self.checkDelim("(")) {
         _ = self.advance();
         params = (try decl.parseParamsList(self)).elements;
+        // C ABI structs have fixed memory layouts and cannot be generic templates.
+        if (is_extern and params.len > 0) {
+            return self.failTokRaw(struct_token, "extern struct declarations cannot be generic");
+        }
     }
     _ = try self.consume(.delimiter, "Expected '{' before struct body", "{");
 
@@ -51,6 +61,7 @@ pub fn parseCompilerStruct(self: *Parser) ParseError!*Node {
         .fields = try fields.toOwnedSlice(self.arena),
         .methods = try methods.toOwnedSlice(self.arena),
         .params = params,
+        .is_extern = is_extern,
         .loc = self.locOf(struct_token),
     } });
 }

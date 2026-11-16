@@ -387,6 +387,13 @@ pub fn emitCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) any
             }
             return self.failAt(node, "native backend cannot determine @sizeOf statically", .{});
         }
+        if (std.mem.eql(u8, intrinsic, "@alignOf")) {
+            if (c.args.len != 1) return self.failAt(node, "@alignOf expects 1 argument", .{});
+            if (self.state.align_of_results.get(node)) |al| {
+                return std.fmt.allocPrint(a, "@as(i64, {d})", .{al});
+            }
+            return self.failAt(node, "native backend cannot determine @alignOf statically", .{});
+        }
         if (std.mem.eql(u8, intrinsic, "@nameOf")) {
             if (c.args.len != 1) return self.failAt(node, "@nameOf expects 1 argument", .{});
             const plan = self.state.name_of_plans.get(node) orelse {

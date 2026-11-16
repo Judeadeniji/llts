@@ -1,0 +1,137 @@
+# C ABI struct layout and alignment verification fixture.
+# Verifies exact layout, @sizeOf, @alignOf, and interoperability with libc.
+
+# 1. Timespec layout: 2 x i64 -> 16 bytes, align 8
+pub @extern "c" @struct Timespec {
+    tv_sec: i64;
+    tv_nsec: i64;
+}
+
+# 2. Stat layout on Linux x86-64 glibc: 144 bytes, align 8
+pub @extern "c" @struct Stat {
+    st_dev: u64;
+    st_ino: u64;
+    st_nlink: u64;
+    st_mode: u32;
+    st_uid: u32;
+    st_gid: u32;
+    __pad0: i32;
+    st_rdev: u64;
+    st_size: i64;
+    st_blksize: i64;
+    st_blocks: i64;
+    st_atim: Timespec;
+    st_mtim: Timespec;
+    st_ctim: Timespec;
+    __glibc_reserved: [3]i64;
+}
+
+# 3. Pollfd layout: i32 + i16 + i16 -> 8 bytes, align 4
+pub @extern "c" @struct Pollfd {
+    fd: i32;
+    events: i16;
+    revents: i16;
+}
+
+# 4. Termios layout: 4 x u32 + u8 + [32]u8 + pad(3) + 2 x u32 -> 60 bytes, align 4
+pub @extern "c" @struct Termios {
+    c_iflag: u32;
+    c_oflag: u32;
+    c_cflag: u32;
+    c_lflag: u32;
+    c_line: u8;
+    c_cc: [32]u8;
+    c_ispeed: u32;
+    c_ospeed: u32;
+}
+
+# 5. Iovec layout: *u8 + usize -> 16 bytes, align 8
+pub @extern "c" @struct Iovec {
+    iov_base: *u8;
+    iov_len: usize;
+}
+
+# 6. Rlimit layout: 2 x u64 -> 16 bytes, align 8
+pub @extern "c" @struct Rlimit {
+    rlim_cur: u64;
+    rlim_max: u64;
+}
+
+# 7. Sockaddr layout: u16 + [14]u8 -> 16 bytes, align 2
+pub @extern "c" @struct Sockaddr {
+    sa_family: u16;
+    sa_data: [14]u8;
+}
+
+# Libc extern calls taking pointer to extern structs
+@extern "c" @func stat(path: c_str, buf: *Stat): i32;
+
+pub @func main() {
+    # Verify Timespec size and alignment
+    $ts_size: i64 = @sizeOf(Timespec);
+    $ts_align: i64 = @alignOf(Timespec);
+    print(ts_size);
+    print(ts_align);
+
+    # Verify Stat size and alignment
+    $st_size: i64 = @sizeOf(Stat);
+    $st_align: i64 = @alignOf(Stat);
+    print(st_size);
+    print(st_align);
+
+    # Verify Pollfd size and alignment
+    $pfd_size: i64 = @sizeOf(Pollfd);
+    $pfd_align: i64 = @alignOf(Pollfd);
+    print(pfd_size);
+    print(pfd_align);
+
+    # Verify Termios size and alignment (60 bytes, align 4)
+    $term_size: i64 = @sizeOf(Termios);
+    $term_align: i64 = @alignOf(Termios);
+    print(term_size);
+    print(term_align);
+
+    # Verify Iovec size and alignment
+    $iov_size: i64 = @sizeOf(Iovec);
+    $iov_align: i64 = @alignOf(Iovec);
+    print(iov_size);
+    print(iov_align);
+
+    # Verify Rlimit size and alignment
+    $rlim_size: i64 = @sizeOf(Rlimit);
+    $rlim_align: i64 = @alignOf(Rlimit);
+    print(rlim_size);
+    print(rlim_align);
+
+    # Verify Sockaddr size and alignment
+    $sa_size: i64 = @sizeOf(Sockaddr);
+    $sa_align: i64 = @alignOf(Sockaddr);
+    print(sa_size);
+    print(sa_align);
+
+    # Live call to libc stat
+    $ts0: Timespec = Timespec{ tv_sec: 0, tv_nsec: 0 };
+    $pad3: [3]i64 = [0, 0, 0];
+    $st: Stat = Stat{
+        st_dev: 0,
+        st_ino: 0,
+        st_nlink: 0,
+        st_mode: 0,
+        st_uid: 0,
+        st_gid: 0,
+        __pad0: 0,
+        st_rdev: 0,
+        st_size: 0,
+        st_blksize: 0,
+        st_blocks: 0,
+        st_atim: ts0,
+        st_mtim: ts0,
+        st_ctim: ts0,
+        __glibc_reserved: pad3,
+    };
+
+    $rc: i32 = stat("/dev/null", &st);
+    @if (rc == 0 && st.st_mode != @as(u32, 0)) {
+        print("stat-call-ok");
+    }
+}
