@@ -1712,7 +1712,7 @@ fn placeStorageType(self: *Emitter, node: *ast_mod.Node) anyerror!?ValType {
         },
         .member => |*m| {
             const target = (try resolveMemberField(self, node, m)) orelse return null;
-            return target.info.fields[target.index].vt;
+            return target.valueType();
         },
         .index => |*ix| {
             if (ix.is_slice) return null;
@@ -1827,11 +1827,23 @@ pub fn resolveMemberField(self: *Emitter, node: *ast_mod.Node, m: *const ast_mod
     if (from_ast.resolveEnumName(self.state, m.object) != null) return null;
     const field_name = m.property.primary.name;
     const obj_t = try self.valueType(m.object);
+    if (std.mem.eql(u8, field_name, "len")) {
+        switch (obj_t.kind) {
+            .string, .slice, .array => return .{ .builtin = .{
+                .zig_name = "len",
+                .vt = .{ .display = "i64", .clean = "i64", .kind = .int, .width = .i64, .zig = "i64" },
+                .needs_int_cast = true,
+            } },
+            else => {},
+        }
+    }
     const info = (try self.structInfoForValType(m.object, obj_t)) orelse return null;
     const index = info.field_index.get(field_name) orelse {
-        return self.failAt(m.property, "native backend cannot resolve field '{s}'", .{field_name});
+        return self.failAt(m.property, "'{s}' does not exist on type '{s}' (this might be a bug in llts: the typechecker should have caught it)", .{
+            field_name, obj_t.display,
+        });
     };
-    return .{ .info = info, .index = index };
+    return .{ .field = .{ .info = info, .index = index } };
 }
 
 pub fn errorOperandCode(self: *Emitter, node: *ast_mod.Node) ![]const u8 {
@@ -1845,16 +1857,24 @@ pub fn errorOperandCode(self: *Emitter, node: *ast_mod.Node) ![]const u8 {
 
 pub fn emitMemberAccess(self: *Emitter, node: *ast_mod.Node, m: *const ast_mod.Member) ![]const u8 {
     const target = (try resolveMemberField(self, node, m)) orelse {
-        return self.failAt(node, "native backend cannot lower member access '.{s}' yet", .{
-            if (m.property.* == .primary) m.property.primary.name else "?",
-        });
+        const name = if (m.property.* == .primary) m.property.primary.name else "?";
+        if (self.valueType(m.object) catch null) |t| {
+            return self.failAt(node, "'{s}' does not exist on type '{s}' (this might be a bug in llts: the typechecker should have caught it)", .{ name, t.display });
+        }
+        return self.failAt(node, "'{s}' does not exist on this value (this might be a bug in llts: the typechecker should have caught it)", .{name});
     };
     const obj_t = try self.valueType(m.object);
-    const field = target.info.fields[target.index];
     const deref: []const u8 = if (obj_t.kind == .pointer) ".*" else "";
-    return std.fmt.allocPrint(self.arena.allocator(), "({s}){s}.{s}", .{
-        try emitExpr(self, m.object), deref, field.zig_name,
+    const access = try std.fmt.allocPrint(self.arena.allocator(), "({s}){s}.{s}", .{
+        try emitExpr(self, m.object), deref, target.zigName(),
     });
+    return switch (target) {
+        .builtin => |b| if (b.needs_int_cast)
+            std.fmt.allocPrint(self.arena.allocator(), "@as({s}, @intCast({s}))", .{ b.vt.zig, access })
+        else
+            access,
+        .field => access,
+    };
 }
 
 pub fn emitMember(self: *Emitter, node: *ast_mod.Node, m: *const ast_mod.Member) ![]const u8 {

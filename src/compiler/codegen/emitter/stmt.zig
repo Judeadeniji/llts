@@ -78,12 +78,15 @@ pub fn emitAssignment(self: *Emitter, node: *ast_mod.Node, asn: *const ast_mod.A
             const target = (try expr_mod.resolveMemberField(self, asn.left, m)) orelse {
                 return self.failAt(asn.left, "native backend only supports assigning to struct fields", .{});
             };
-            const field = target.info.fields[target.index];
-            try self.requireValueType(asn.left, field.vt);
+            const field_vt = switch (target) {
+                .field => target.valueType(),
+                .builtin => return self.failAt(asn.left, "cannot assign to builtin member '{s}'", .{target.zigName()}),
+            };
+            try self.requireValueType(asn.left, field_vt);
             const rhs = if (compound) |c|
-                try expr_mod.emitCompoundValue(self, node, asn.left, asn.right, c, field.vt)
+                try expr_mod.emitCompoundValue(self, node, asn.left, asn.right, c, field_vt)
             else
-                try expr_mod.emitValueCoerced(self, asn.right, field.vt);
+                try expr_mod.emitValueCoerced(self, asn.right, field_vt);
             const lvalue = try emitPlaceLvalue(self, asn.left);
             try self.writeIndent();
             try self.writer.print("{s} = {s};\n", .{ lvalue, rhs });
@@ -197,11 +200,13 @@ pub fn emitPlaceLvalue(self: *Emitter, node: *ast_mod.Node) ![]const u8 {
             const target = (try expr_mod.resolveMemberField(self, node, &m)) orelse {
                 return self.failAt(node, "native backend only supports assigning to struct fields", .{});
             };
-            const field = target.info.fields[target.index];
+            if (target == .builtin) {
+                return self.failAt(node, "cannot assign to builtin member '{s}'", .{target.zigName()});
+            }
             const base = try emitPlaceLvalue(self, m.object);
             const obj_t = try self.valueType(m.object);
             const deref: []const u8 = if (obj_t.kind == .pointer) ".*" else "";
-            return std.fmt.allocPrint(a, "({s}){s}.{s}", .{ base, deref, field.zig_name });
+            return std.fmt.allocPrint(a, "({s}){s}.{s}", .{ base, deref, target.zigName() });
         },
         .index => |ix| {
             if (ix.is_slice) {

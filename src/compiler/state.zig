@@ -582,7 +582,6 @@ pub fn create(allocator: std.mem.Allocator) !CompilerState {
     };
     try state.native_globals.put("print", {});
     try state.native_globals.put("error", {});
-    try state.native_globals.put("len", {});
     try state.native_globals.put("__printLn", {});
     try state.native_globals.put("__hostLog", {});
     try state.native_globals.put("__caller", {});

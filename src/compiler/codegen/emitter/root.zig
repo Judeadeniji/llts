@@ -101,9 +101,34 @@ pub const StructType = struct {
     is_tuple: bool = false,
 };
 
-pub const MemberTarget = struct {
-    info: *StructType,
-    index: usize,
+pub const MemberTarget = union(enum) {
+    /// A declared field of a struct/shape value.
+    field: struct {
+        info: *StructType,
+        index: usize,
+    },
+    /// A member every value of a builtin type has (`string`/slice/array `.len`).
+    builtin: struct {
+        zig_name: []const u8,
+        vt: ValType,
+        /// The language type differs from Zig's native member type, so the
+        /// access needs an explicit narrowing cast (`usize` -> `i64`).
+        needs_int_cast: bool = false,
+    },
+
+    pub fn valueType(self: MemberTarget) ValType {
+        return switch (self) {
+            .field => |f| f.info.fields[f.index].vt,
+            .builtin => |b| b.vt,
+        };
+    }
+
+    pub fn zigName(self: MemberTarget) []const u8 {
+        return switch (self) {
+            .field => |f| f.info.fields[f.index].zig_name,
+            .builtin => |b| b.zig_name,
+        };
+    }
 };
 
 pub const DeferEntry = struct {

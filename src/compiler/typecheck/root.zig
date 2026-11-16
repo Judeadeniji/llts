@@ -821,8 +821,25 @@ fn intLiteralFits(node: *ast.Node, width: widths.Width) bool {
 /// Fold an integer expression made only of literals (`-5`, `2 + 3`, `0xFF`)
 /// so an exact constant can narrow to a smaller width without a cast.
 fn constIntFitsExpr(node: *ast.Node, width: widths.Width) bool {
+    // `@if (cond) { break 1; } @else { break 0; }` is constant when every
+    // branch produces a constant that fits, even though the selected value is
+    // only known at runtime.
+    if (node.* == .if_expr) {
+        const ife = node.if_expr;
+        if (!branchIntFits(ife.body, width)) return false;
+        const else_body = ife.else_body orelse return false;
+        return branchIntFits(else_body, width);
+    }
     const n = foldIntLiteralExpr(node) orelse return false;
     return widths.i64Fits(width, n);
+}
+
+fn branchIntFits(node: *ast.Node, width: widths.Width) bool {
+    return switch (node.*) {
+        .block => |blk| blk.statements.len == 1 and blk.statements[0].* == .break_expr and
+            if (blk.statements[0].break_expr.value) |v| constIntFitsExpr(v, width) else false,
+        else => constIntFitsExpr(node, width),
+    };
 }
 
 fn foldIntLiteralExpr(node: *ast.Node) ?i64 {
@@ -1832,9 +1849,30 @@ fn inferBinaryExpr(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc,
     if (isCmpOrLogic(op)) {
         if (std.mem.eql(u8, op, "<") or std.mem.eql(u8, op, "<=") or std.mem.eql(u8, op, ">") or std.mem.eql(u8, op, ">=")) {
             if (!ir.involvesUnknown(l) and !ir.involvesUnknown(r)) {
+                // A bare integer literal takes the other operand's width, so
+                // `i32_value < 0` is an i32 comparison, not a mixed one.
+                var l_adj = l;
+                var r_adj = r;
+                if (isBareIntLiteral(b.right) and !isBareIntLiteral(b.left)) {
+                    if (ir.widthOf(ir.peelDefined(l))) |lw| {
+                        if (lw != .i64 and constIntFitsExpr(b.right, lw)) {
+                            l_adj = ir.peelDefined(l);
+                            r_adj = l_adj;
+                            try recordExprType(state, b.right, l_adj);
+                        }
+                    }
+                } else if (isBareIntLiteral(b.left) and !isBareIntLiteral(b.right)) {
+                    if (ir.widthOf(ir.peelDefined(r))) |rw| {
+                        if (rw != .i64 and constIntFitsExpr(b.left, rw)) {
+                            r_adj = ir.peelDefined(r);
+                            l_adj = r_adj;
+                            try recordExprType(state, b.left, r_adj);
+                        }
+                    }
+                }
                 // Ordered comparisons allow mixed numeric widths with a
                 // warning (runtime widens via f64). Arithmetic stays strict.
-                _ = try requireNumericPair(state, l, r, "comparison");
+                _ = try requireNumericPair(state, l_adj, r_adj, "comparison");
             }
         }
         return ir.TBool;
@@ -1963,6 +2001,9 @@ fn inferMemberExpr(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc,
                     }
                 }
                 return field_obj.array.elem.*;
+            }
+            if (std.mem.eql(u8, m.property.primary.name, "len")) {
+                return ir.TInt;
             }
         }
         if (field_obj == .shape) {
@@ -3113,14 +3154,6 @@ fn inferCall(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, call_
     // `T(x)` cast sugar ≡ `@as(T, x)` when T is a type and not a function.
     if (try intrinsics.tryTypeCastCall(state, c)) |type_node| {
         return try intrinsics.typecheckCast(state, env, ta, type_node, c.args[0]);
-    }
-
-    // Native `len(x)` (arrays / strings / tuples) always yields an integer.
-    if (c.callee.* == .primary and std.mem.eql(u8, c.callee.primary.name, "len") and
-        !state.functions.contains("len"))
-    {
-        for (c.args) |a| _ = try inferExpr(state, env, ta, a);
-        return ir.TInt;
     }
 
     // Native side-effect / noreturn builtins with fixed result types.
