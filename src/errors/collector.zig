@@ -14,10 +14,12 @@ pub const Diagnostic = struct {
     column: u32,
     message: []const u8,
     frames: std.ArrayList(Frame) = .empty,
+    notes: std.ArrayList(Note) = .empty,
     severity: Severity = .err,
 };
 
 pub const Frame = render.Frame;
+pub const Note = render.Note;
 
 pub const Collector = struct {
     allocator: std.mem.Allocator,
@@ -43,6 +45,12 @@ pub const Collector = struct {
             allocator.free(f.name);
         }
         d.frames.deinit(allocator);
+        for (d.notes.items) |*n| {
+            allocator.free(n.path);
+            allocator.free(n.source);
+            allocator.free(n.message);
+        }
+        d.notes.deinit(allocator);
     }
 
     pub fn deinit(self: *Collector) void {
@@ -179,6 +187,41 @@ pub const Collector = struct {
         };
     }
 
+    /// Attach extra context (with its own source excerpt) to the most recently
+    /// added diagnostic.
+    pub fn addNote(
+        self: *Collector,
+        path: []const u8,
+        source: []const u8,
+        line: u32,
+        column: u32,
+        message: []const u8,
+    ) void {
+        if (self.items.items.len == 0) return;
+        const owned_path = self.allocator.dupe(u8, path) catch return;
+        const owned_source = self.allocator.dupe(u8, source) catch {
+            self.allocator.free(owned_path);
+            return;
+        };
+        const msg = self.allocator.dupe(u8, message) catch {
+            self.allocator.free(owned_path);
+            self.allocator.free(owned_source);
+            return;
+        };
+        const last = &self.items.items[self.items.items.len - 1];
+        _ = last.notes.append(self.allocator, .{
+            .path = owned_path,
+            .source = owned_source,
+            .line = line,
+            .column = column,
+            .message = msg,
+        }) catch {
+            self.allocator.free(owned_path);
+            self.allocator.free(owned_source);
+            self.allocator.free(msg);
+        };
+    }
+
     pub fn hasErrors(self: *Collector) bool {
         for (self.items.items) |d| {
             if (d.severity == .err) return true;
@@ -229,7 +272,7 @@ pub const Collector = struct {
                 }
                 if (!known) files.append(self.allocator, d.path) catch {};
             }
-            render.printDiagnostic(d.path, d.source, d.line, d.column, d.message, d.severity, d.frames.items);
+            render.printDiagnostic(d.path, d.source, d.line, d.column, d.message, d.severity, d.frames.items, d.notes.items);
         }
 
         render.printSummary(err_count, files.items, first_path, first_line, self.truncated);

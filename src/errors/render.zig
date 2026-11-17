@@ -42,8 +42,19 @@ pub const Frame = struct {
     name: []const u8,
 };
 
-/// Source excerpt plus caret for one diagnostic, then any frames stacked
-/// underneath it. Ends with a blank line so blocks stay separated.
+/// Extra context attached to a diagnostic, pointing at a second source site:
+/// where a function was declared, what type it was declared to return, and so
+/// on. Rendered like Rust's `note:` labels, underneath the main excerpt.
+pub const Note = struct {
+    path: []const u8 = "",
+    source: []const u8 = "",
+    line: u32 = 0,
+    column: u32 = 0,
+    message: []const u8,
+};
+
+/// Source excerpt plus caret for one diagnostic, then any notes and frames
+/// stacked underneath it. Ends with a blank line so blocks stay separated.
 pub fn printDiagnostic(
     path: []const u8,
     source: []const u8,
@@ -52,12 +63,11 @@ pub fn printDiagnostic(
     message: []const u8,
     severity: Severity,
     frames: []const Frame,
+    notes: []const Note,
 ) void {
     const c_sev = color.paint(severity.colorCode());
     const c_path = color.paint(color.bright_cyan);
     const c_num = color.paint(color.yellow);
-    const c_mark = color.paint(severity.colorCode());
-    const c_gutter = color.paint(color.reverse);
     const c_dim = color.paint(color.dim);
     const r = color.r();
 
@@ -71,32 +81,10 @@ pub fn printDiagnostic(
         c_path, path, r, c_num, line, r, c_num, column, r, c_sev, severity.label(), r, message,
     });
 
-    if (findLine(source, line)) |src_line| {
-        var width_buf: [12]u8 = undefined;
-        const num = std.fmt.bufPrint(&width_buf, "{d}", .{line}) catch "?";
-        const gutter_width = num.len;
+    printExcerpt(source, line, column);
 
-        out.printStderr("{s}{s}{s} {s}\n", .{ c_gutter, num, r, src_line });
-
-        // `column` is a byte offset into the line. Tabs and multi-byte
-        // characters take up more than one terminal cell, so the marker is
-        // positioned by the *display width* of the prefix, and repeated for
-        // the display width of the underlined bytes.
-        const start = byteOffset(src_line, column);
-        const span = highlightSpan(src_line, start);
-        const prefix_width = displayWidth(src_line[0..start]);
-        const mark_width = @max(displayWidth(src_line[start .. start + span]), 1);
-
-        out.printStderr("{s}", .{c_gutter});
-        var gutter_pad: usize = 0;
-        while (gutter_pad < gutter_width) : (gutter_pad += 1) out.printStderr(" ", .{});
-        out.printStderr("{s} ", .{r});
-        var pad: usize = 0;
-        while (pad < prefix_width) : (pad += 1) out.printStderr(" ", .{});
-        out.printStderr("{s}", .{c_mark});
-        var mark: usize = 0;
-        while (mark < mark_width) : (mark += 1) out.printStderr("~", .{});
-        out.printStderr("{s}\n", .{r});
+    for (notes) |n| {
+        printNote(n);
     }
 
     for (frames) |f| {
@@ -113,6 +101,49 @@ pub fn printDiagnostic(
     }
 
     out.printStderr("\n", .{});
+}
+
+/// Render a `note:` block with its own source excerpt, indented so it reads
+/// as context belonging to the diagnostic above it.
+pub fn printNote(note: Note) void {
+    const c_note = color.paint(color.bold ++ color.bright_cyan);
+    const r = color.r();
+    out.printStderr("    {s}note{s}: {s}\n", .{ c_note, r, note.message });
+    printExcerpt(note.source, note.line, note.column);
+}
+
+/// Print a numbered source line with a caret under `column`.
+fn printExcerpt(source: []const u8, line: u32, column: u32) void {
+    const src_line = findLine(source, line) orelse return;
+    const c_mark = color.paint(color.bright_cyan);
+    const c_gutter = color.paint(color.reverse);
+    const r = color.r();
+
+    var width_buf: [12]u8 = undefined;
+    const num = std.fmt.bufPrint(&width_buf, "{d}", .{line}) catch "?";
+    const gutter_width = num.len;
+
+    out.printStderr("{s}{s}{s} {s}\n", .{ c_gutter, num, r, src_line });
+
+    // `column` is a byte offset into the line. Tabs and multi-byte
+    // characters take up more than one terminal cell, so the marker is
+    // positioned by the *display width* of the prefix, and repeated for
+    // the display width of the underlined bytes.
+    const start = byteOffset(src_line, column);
+    const span = highlightSpan(src_line, start);
+    const prefix_width = displayWidth(src_line[0..start]);
+    const mark_width = @max(displayWidth(src_line[start .. start + span]), 1);
+
+    out.printStderr("{s}", .{c_gutter});
+    var gutter_pad: usize = 0;
+    while (gutter_pad < gutter_width) : (gutter_pad += 1) out.printStderr(" ", .{});
+    out.printStderr("{s} ", .{r});
+    var pad: usize = 0;
+    while (pad < prefix_width) : (pad += 1) out.printStderr(" ", .{});
+    out.printStderr("{s}", .{c_mark});
+    var mark: usize = 0;
+    while (mark < mark_width) : (mark += 1) out.printStderr("~", .{});
+    out.printStderr("{s}\n", .{r});
 }
 
 /// Total line count of a diagnostic block: one heading, a blank line, the

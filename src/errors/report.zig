@@ -25,7 +25,7 @@ fn emitSource(
         return;
     }
     if (mark_emitted) diag.markEmitted();
-    render.printDiagnostic(path, source, line, column, message, severity, &.{});
+    render.printDiagnostic(path, source, line, column, message, severity, &.{}, &.{});
 }
 
 pub fn reportSourceError(
@@ -71,7 +71,30 @@ pub fn reportSourceErrorWithFrame(
         .column = column,
         .name = frame_name,
     }};
-    render.printDiagnostic(path, source, line, column, message, .err, &frames);
+    render.printDiagnostic(path, source, line, column, message, .err, &frames, &.{});
+}
+
+/// Extra context for the diagnostic just reported (declaration site, declared
+/// return type, …). With no active collector there is no diagnostic to attach
+/// to, so the note is rendered on its own.
+pub fn reportNote(
+    path: []const u8,
+    source: []const u8,
+    line: u32,
+    column: u32,
+    message: []const u8,
+) void {
+    if (active()) |c| {
+        c.addNote(path, source, line, column, message);
+        return;
+    }
+    render.printNote(.{
+        .path = path,
+        .source = source,
+        .line = line,
+        .column = column,
+        .message = message,
+    });
 }
 
 pub fn reportLocationFrame(path: []const u8, line: u32, name: []const u8) void {
@@ -96,7 +119,7 @@ pub fn reportCompileMessage(message: []const u8) void {
         return;
     }
     diag.markEmitted();
-    render.printDiagnostic("", "", 1, 1, message, .err, &.{});
+    render.printDiagnostic("", "", 1, 1, message, .err, &.{}, &.{});
 }
 
 pub fn reportRuntimeError(message: []const u8) void {
@@ -105,5 +128,5 @@ pub fn reportRuntimeError(message: []const u8) void {
         return;
     }
     diag.markEmitted();
-    render.printDiagnostic("", "", 1, 1, message, .err, &.{});
+    render.printDiagnostic("", "", 1, 1, message, .err, &.{}, &.{});
 }

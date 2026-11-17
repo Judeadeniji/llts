@@ -334,6 +334,7 @@ fn registerStructNames(state: *state_mod.CompilerState, doc: *ast.Document) !voi
                 try generics.registerStructTemplate(state, s);
                 continue;
             }
+            try state.struct_nodes.put(s.struct_decl.name, s);
             try state.structs.put(s.struct_decl.name, .{
                 .name = s.struct_decl.name,
                 .size = 0,

@@ -1,4 +1,5 @@
 const std = @import("std");
+const ast = @import("../ast/root.zig");
 const report = @import("report.zig");
 const state_mod = @import("../compiler/state.zig");
 
@@ -51,6 +52,14 @@ pub fn compileFailFmt(state: *CompilerState, comptime fmt: []const u8, args: any
     return compileFailFromState(state, msg);
 }
 
+/// Report a compile failure without unwinding: for loops that should keep
+/// checking after one bad item, so a single compile reports everything.
+pub fn compileReportFmt(state: *CompilerState, comptime fmt: []const u8, args: anytype) void {
+    switch (compileFailFmt(state, fmt, args)) {
+        error.CompileError => {},
+    }
+}
+
 pub fn compileFailMsg(state: *CompilerState, message: []const u8) error{CompileError} {
     return compileFailFromState(state, message);
 }
@@ -81,6 +90,34 @@ pub fn compileFailAt(
     report.reportSourceErrorWithFrame(path, source, line, column, msg, "<compile>");
     reportImportChain(state, path);
     return error.CompileError;
+}
+
+/// Extra context attached to the previously reported diagnostic, pointing at
+/// another source site (usually a declaration).
+pub fn compileNoteAt(
+    state: *CompilerState,
+    path: []const u8,
+    line: u32,
+    column: u32,
+    comptime fmt: []const u8,
+    args: anytype,
+) void {
+    var buf: [1024]u8 = undefined;
+    const msg = std.fmt.bufPrint(&buf, fmt, args) catch fmt;
+    report.reportNote(path, sourceFor(state, path), line, column, msg);
+}
+
+/// Note at an AST node's own location.
+pub fn compileNoteNode(
+    state: *CompilerState,
+    node: *ast.Node,
+    comptime fmt: []const u8,
+    args: anytype,
+) void {
+    const loc = node.loc();
+    if (loc.line == 0) return;
+    const path = if (loc.path.len > 0) loc.path else state.chunk.file;
+    compileNoteAt(state, path, loc.line, loc.column, fmt, args);
 }
 
 /// Non-fatal compile warning at an explicit AST location.

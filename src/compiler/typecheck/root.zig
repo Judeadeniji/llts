@@ -1589,6 +1589,96 @@ fn noteDiag(state: *state_mod.CompilerState, node: *ast.Node) void {
     if (loc.path.len > 0) state.diag_path = loc.path;
 }
 
+/// Attach a note pointing at a function's declaration to the diagnostic that
+/// was just reported: the caller learns where the signature it violated lives.
+fn noteFnDecl(state: *state_mod.CompilerState, fn_name: []const u8, comptime fmt: []const u8, args: anytype) void {
+    const def = state.functions.get(fn_name) orelse return;
+    compiler_errors.compileNoteNode(state, def.node, fmt, args);
+}
+
+/// Attach a note pointing at a struct's declaration, so a field error shows
+/// the declaration that lists the valid fields.
+fn noteStructDecl(state: *state_mod.CompilerState, struct_name: []const u8, comptime fmt: []const u8, args: anytype) void {
+    const def = from_ast.lookupStruct(state, struct_name) orelse return;
+    const node = state.struct_nodes.get(def.name) orelse state.struct_nodes.get(struct_name) orelse return;
+    compiler_errors.compileNoteNode(state, node, fmt, args);
+}
+
+/// Note the enclosing function's declared return type on a return mismatch.
+fn noteDeclaredReturn(state: *state_mod.CompilerState, env: *Env, ret: ir.Type) void {
+    const fn_name = env.current_fn orelse return;
+    noteFnDecl(state, fn_name, "function '{s}' is declared to return '{s}' here", .{ fn_name, ir.displayType(ret) });
+}
+
+/// Levenshtein distance, enough for "did you mean" on identifiers. Names
+/// longer than 64 bytes are compared on their first 64 bytes.
+fn editDistance(a: []const u8, b: []const u8) usize {
+    var prev: [64]usize = undefined;
+    var cur: [64]usize = undefined;
+    const n = @min(b.len, 64);
+    for (0..n + 1) |j| prev[j] = j;
+    for (a[0..@min(a.len, 64)], 0..) |ca, i| {
+        cur[0] = i + 1;
+        for (0..n) |j| {
+            const cost: usize = if (ca == b[j]) 0 else 1;
+            cur[j + 1] = @min(@min(prev[j + 1] + 1, cur[j] + 1), prev[j] + cost);
+        }
+        @memcpy(prev[0 .. n + 1], cur[0 .. n + 1]);
+    }
+    return prev[n];
+}
+
+/// A name that resolves to something visible: a local/global binding, a
+/// function, a type, an extern, or a runtime builtin. Used to decide whether an
+/// identifier should be reported as unknown during typechecking.
+fn isKnownName(state: *state_mod.CompilerState, env: *Env, name: []const u8) bool {
+    if (env.lookup(name) != null) return true;
+    if (env.globals.contains(name)) return true;
+    if (std.mem.startsWith(u8, name, "__")) return true;
+    var qualified_buf: [256]u8 = undefined;
+    const qualified = std.fmt.bufPrint(&qualified_buf, "${s}", .{name}) catch null;
+    return state.native_globals.contains(name) or
+        state.functions.contains(name) or
+        state.fn_aliases.contains(name) or
+        state.templates.contains(name) or
+        state.struct_templates.contains(name) or
+        state.structs.contains(name) or
+        state.enums.contains(name) or
+        state.error_sets.contains(name) or
+        state.typedefs.contains(name) or
+        state.externs.contains(name) or
+        state.global_vars.contains(name) or
+        state.global_consts.contains(name) or
+        state.global_types.contains(name) or
+        (qualified != null and state.global_types.contains(qualified.?));
+}
+
+fn considerClosest(best: *?[]const u8, best_dist: *usize, name: []const u8, candidate: []const u8) void {
+    if (candidate.len == 0) return;
+    const d = editDistance(name, candidate);
+    if (d < best_dist.*) {
+        best_dist.* = d;
+        best.* = candidate;
+    }
+}
+
+/// Closest visible name (local, global, or function), when it is close enough
+/// to be a plausible typo rather than an unrelated name.
+fn closestKnownName(state: *state_mod.CompilerState, env: *Env, name: []const u8) ?[]const u8 {
+    const limit: usize = if (name.len <= 4) 1 else if (name.len <= 8) 2 else 3;
+    var best: ?[]const u8 = null;
+    var best_dist: usize = limit + 1;
+    for (env.locals.items) |scope_map| {
+        var it = scope_map.keyIterator();
+        while (it.next()) |key| considerClosest(&best, &best_dist, name, key.*);
+    }
+    var git = env.globals.keyIterator();
+    while (git.next()) |key| considerClosest(&best, &best_dist, name, key.*);
+    var fit = state.functions.keyIterator();
+    while (fit.next()) |key| considerClosest(&best, &best_dist, name, key.*);
+    return best;
+}
+
 pub fn recordExprType(state: *state_mod.CompilerState, node: *ast.Node, t: ir.Type) !void {
     try recordExprTypeMode(state, node, t, false);
 }
@@ -1828,6 +1918,15 @@ fn inferPrimaryExpr(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc
         }
         if (state.structs.contains(p.name) or state.enums.contains(p.name) or state.error_sets.contains(p.name) or state.typedefs.contains(p.name)) {
             return ir.TType;
+        }
+        // Nothing declares this name: report it at the use site instead of
+        // letting an `unknown` type surface later as a vague "cannot infer" or
+        // "opaque type" diagnostic, or only when codegen reaches it.
+        if (p.kind == .identifier and !isKnownName(state, env, p.name)) {
+            if (closestKnownName(state, env, p.name)) |suggestion| {
+                return compiler_errors.compileFailFmt(state, "Unknown identifier '{s}'; did you mean '{s}'?", .{ p.name, suggestion });
+            }
+            return compiler_errors.compileFailFmt(state, "Unknown identifier '{s}'", .{p.name});
         }
     }
     return ir.TUnknown;
@@ -2271,18 +2370,23 @@ fn inferAssignmentExpr(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAl
                 }
                 if (from_ast.lookupStruct(state, sname)) |def| {
                     if (def.types.get(mem.property.primary.name) == null) {
-                        return compiler_errors.compileFailFmt(
+                        compiler_errors.compileFailFmt(
                             state,
                             "Field '{s}' does not exist on '{s}'",
                             .{ mem.property.primary.name, ir.cleanTypeName(sname) },
-                        );
+                        ) catch {};
+                        noteStructDecl(state, sname, "struct '{s}' is declared here", .{ir.cleanTypeName(sname)});
+                        return error.CompileError;
                     }
                 }
                 const ft = try fieldTypeFromStruct(state, ta, sname, mem.property.primary.name);
                 // Record the field type on the member node so editor
                 // features (hover) can resolve assignment targets.
                 try recordExprType(state, a.left, ft);
-                try requireAssignFrom(state, val, ft, "assignment to field", a.right);
+                requireAssignFrom(state, val, ft, "assignment to field", a.right) catch |err| {
+                    noteStructDecl(state, sname, "struct '{s}' is declared here", .{ir.cleanTypeName(sname)});
+                    return err;
+                };
             } else if (ir.shapeFieldsOf(obj)) |shape_fields| {
                 var ft: ?ir.Type = null;
                 for (shape_fields) |sf| {
@@ -3267,8 +3371,11 @@ fn inferCall(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, call_
             const named_count = params.items.len;
             // Every argument is checked on its own: two bad arguments in one
             // call produce two diagnostics, then the call yields `unknown`
-            // instead of a bogus return type.
+            // instead of a bogus return type. An arity mismatch is reported
+            // too, but checking the supplied arguments still continues so one
+            // call can explain everything wrong with it.
             var arg_failed = false;
+            var arity_failed = false;
             const any_annotated = blk: {
                 for (params.items) |p| {
                     if (p != .unknown) break :blk true;
@@ -3297,11 +3404,10 @@ fn inferCall(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, call_
                         required_user_count += 1;
                     }
                 }
-                if (!variadic and rest == null and any_annotated and c.args.len < required_user_count) {
-                    return compiler_errors.compileFailFmt(state, "Function '{s}' expected at least {d} arguments, got {d}", .{ name.?, required_user_count, c.args.len });
-                }
-                if ((variadic or rest != null) and any_annotated and c.args.len < required_user_count) {
-                    return compiler_errors.compileFailFmt(state, "Function '{s}' expected at least {d} arguments, got {d}", .{ name.?, required_user_count, c.args.len });
+                if (any_annotated and c.args.len < required_user_count) {
+                    compiler_errors.compileReportFmt(state, "Function '{s}' expected at least {d} arguments, got {d}", .{ name.?, required_user_count, c.args.len });
+                    noteFnDecl(state, name.?, "'{s}' is declared here", .{name.?});
+                    arity_failed = true;
                 }
                 if (named_count > 0) {
                     const recv = try inferExprRec(state, env, ta, m.receiver);
@@ -3320,7 +3426,10 @@ fn inferCall(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, call_
                     }
                     var ctx_buf: [96]u8 = undefined;
                     const ctx = std.fmt.bufPrint(&ctx_buf, "argument {d} of '{s}'", .{ i + 1, name.? }) catch "argument";
-                    if (!try assignRec(state, at.ty, params.items[i + 1], ctx, c.args[i])) arg_failed = true;
+                    if (!try assignRec(state, at.ty, params.items[i + 1], ctx, c.args[i])) {
+                        arg_failed = true;
+                        noteFnDecl(state, name.?, "'{s}' is declared here", .{name.?});
+                    }
                 }
                 while (i < c.args.len) : (i += 1) {
                     const errors_before = collectedErrorCount();
@@ -3333,7 +3442,10 @@ fn inferCall(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, call_
                         if (r == .array and r.array.elem.* != .unknown) {
                             var ctx_buf: [96]u8 = undefined;
                             const ctx = std.fmt.bufPrint(&ctx_buf, "argument {d} of '{s}'", .{ i + 1, name.? }) catch "argument";
-                            if (!try assignRec(state, at.ty, r.array.elem.*, ctx, c.args[i])) arg_failed = true;
+                            if (!try assignRec(state, at.ty, r.array.elem.*, ctx, c.args[i])) {
+                                arg_failed = true;
+                                noteFnDecl(state, name.?, "'{s}' is declared here", .{name.?});
+                            }
                         }
                     }
                 }
@@ -3349,11 +3461,10 @@ fn inferCall(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, call_
                         required_count += 1;
                     }
                 }
-                if (!variadic and rest == null and any_annotated and c.args.len < required_count) {
-                    return compiler_errors.compileFailFmt(state, "Function '{s}' expected at least {d} arguments, got {d}", .{ name.?, required_count, c.args.len });
-                }
-                if ((variadic or rest != null) and any_annotated and c.args.len < required_count) {
-                    return compiler_errors.compileFailFmt(state, "Function '{s}' expected at least {d} arguments, got {d}", .{ name.?, required_count, c.args.len });
+                if (any_annotated and c.args.len < required_count) {
+                    compiler_errors.compileReportFmt(state, "Function '{s}' expected at least {d} arguments, got {d}", .{ name.?, required_count, c.args.len });
+                    noteFnDecl(state, name.?, "'{s}' is declared here", .{name.?});
+                    arity_failed = true;
                 }
                 const ncheck = @min(c.args.len, named_count);
                 var i: usize = 0;
@@ -3366,7 +3477,10 @@ fn inferCall(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, call_
                     }
                     var ctx_buf: [96]u8 = undefined;
                     const ctx = std.fmt.bufPrint(&ctx_buf, "argument {d} of '{s}'", .{ i + 1, name.? }) catch "argument";
-                    if (!try assignRec(state, at.ty, params.items[i], ctx, c.args[i])) arg_failed = true;
+                    if (!try assignRec(state, at.ty, params.items[i], ctx, c.args[i])) {
+                        arg_failed = true;
+                        noteFnDecl(state, name.?, "'{s}' is declared here", .{name.?});
+                    }
                 }
                 while (i < c.args.len) : (i += 1) {
                     const errors_before = collectedErrorCount();
@@ -3379,17 +3493,48 @@ fn inferCall(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, call_
                         if (r == .array and r.array.elem.* != .unknown) {
                             var ctx_buf: [96]u8 = undefined;
                             const ctx = std.fmt.bufPrint(&ctx_buf, "argument {d} of '{s}'", .{ i + 1, name.? }) catch "argument";
-                            if (!try assignRec(state, at.ty, r.array.elem.*, ctx, c.args[i])) arg_failed = true;
+                            if (!try assignRec(state, at.ty, r.array.elem.*, ctx, c.args[i])) {
+                                arg_failed = true;
+                                noteFnDecl(state, name.?, "'{s}' is declared here", .{name.?});
+                            }
                         }
                     }
                 }
             }
-            if (arg_failed) return ir.TUnknown;
+            if (arg_failed or arity_failed) return ir.TUnknown;
         } else {
             if (method) |m| _ = try inferExpr(state, env, ta, m.receiver);
             for (c.args) |a| _ = try inferExpr(state, env, ta, a);
         }
         return try fnReturnType(state, ta, name.?);
+    }
+
+    // Unresolved plain callee: name it here instead of letting codegen fail
+    // later with a vague "cannot infer the type of this expression". Every
+    // unresolved call gets its own diagnostic, and its arguments are still
+    // checked so nested mistakes surface too.
+    if (c.callee.* == .primary and
+        (c.callee.primary.kind == .identifier or c.callee.primary.kind == .register))
+    {
+        const n = c.callee.primary.name;
+        const known = env.lookup(n) != null or
+            state.native_globals.contains(n) or
+            state.functions.contains(n) or
+            state.fn_aliases.contains(n) or
+            state.templates.contains(n) or
+            state.structs.contains(n) or
+            state.enums.contains(n) or
+            state.error_sets.contains(n) or
+            state.typedefs.contains(n) or
+            state.externs.contains(n) or
+            state.global_type_irs.contains(n);
+        if (!known) {
+            for (c.args) |a| _ = try inferExprRec(state, env, ta, a);
+            if (closestKnownName(state, env, n)) |suggestion| {
+                return compiler_errors.compileFailFmt(state, "Unknown function '{s}'; did you mean '{s}'?", .{ n, suggestion });
+            }
+            return compiler_errors.compileFailFmt(state, "Unknown function '{s}'", .{n});
+        }
     }
 
     // First-class / typed function value: `$f(…)` where `$f: @func(…)`.
@@ -3834,14 +3979,25 @@ fn inferGenericCall(
             if (generics.isTypeParam(p)) type_arg_count += 1;
         }
     }
+    // Arguments are checked independently, like a non-generic call: two bad
+    // arguments report two diagnostics instead of only the first.
+    var arg_failed = false;
     for (c.args[type_arg_count..], type_arg_count..) |a, i| {
-        const at = try inferExpr(state, env, ta, a);
+        const at = try inferExprRec(state, env, ta, a);
+        if (!at.ok) {
+            arg_failed = true;
+            continue;
+        }
         if (i - type_arg_count + offset < params.items.len) {
             var ctx_buf: [96]u8 = undefined;
             const ctx = std.fmt.bufPrint(&ctx_buf, "argument {d} of '{s}'", .{ i - type_arg_count + 1, ir.cleanTypeName(name) }) catch "argument";
-            try requireAssignFrom(state, at, params.items[i - type_arg_count + offset], ctx, a);
+            if (!try assignRec(state, at.ty, params.items[i - type_arg_count + offset], ctx, a)) {
+                arg_failed = true;
+                noteFnDecl(state, inst, "'{s}' is declared here", .{ir.cleanTypeName(name)});
+            }
         }
     }
+    if (arg_failed) return ir.TUnknown;
     return try fnReturnType(state, ta, inst);
 }
 
@@ -4029,6 +4185,7 @@ fn checkInitAgainstStruct(
             if (from_ast.lookupStruct(state, struct_name)) |def| {
                 if (def.types.get(field.name) == null) {
                     compiler_errors.compileFailFmt(state, "Unknown field '{s}' on '{s}'", .{ field.name, ir.cleanTypeName(struct_name) }) catch {};
+                    noteStructDecl(state, struct_name, "struct '{s}' is declared here", .{ir.cleanTypeName(struct_name)});
                     failed = true;
                     continue;
                 }
@@ -4058,7 +4215,10 @@ fn checkInitAgainstStruct(
         }
         var ctx_buf: [128]u8 = undefined;
         const ctx = std.fmt.bufPrint(&ctx_buf, "Field '{s}' of '{s}'", .{ field.name, ir.cleanTypeName(struct_name) }) catch "Field";
-        if (!try assignRec(state, got, expected, ctx, field.value)) failed = true;
+        if (!try assignRec(state, got, expected, ctx, field.value)) {
+            noteStructDecl(state, struct_name, "struct '{s}' is declared here", .{ir.cleanTypeName(struct_name)});
+            failed = true;
+        }
     }
     if (failed) return false;
     if (state.strict) {
@@ -4083,6 +4243,7 @@ fn checkInitAgainstStruct(
                             "Missing required field '{s}' in initialization of '{s}'; provide it in the initializer or declare the field optional ('?T')",
                             .{ required_name, ir.cleanTypeName(struct_name) },
                         ) catch {};
+                        noteStructDecl(state, struct_name, "struct '{s}' is declared here", .{ir.cleanTypeName(struct_name)});
                         failed = true;
                     }
                 }
@@ -4289,6 +4450,10 @@ fn checkStmt(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node:
                 try intrinsics.resolveTypeExprs(state, env, ta, ann);
                 const annot = try from_ast.typeFromAst(ann, state, ta);
                 try rejectTypeValue(state, annot, "a variable's type");
+                // Bind before checking the initializer: a bad initializer must
+                // not leave the name undeclared, or later uses cascade into
+                // bogus "Unknown identifier" diagnostics.
+                try env.define(d.name, annot);
                 var ctx_buf: [160]u8 = undefined;
                 const ctx = std.fmt.bufPrint(&ctx_buf, "declaration of '{s}'", .{d.name}) catch "declaration";
                 var contextually_typed = false;
@@ -4321,7 +4486,6 @@ fn checkStmt(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node:
                 } else {
                     try recordExprTypeForced(state, d.value, annot);
                 }
-                try env.define(d.name, annot);
                 if (persist_global) {
                     const disp = try ownDisplayQualified(state, annot);
                     try state.global_types.put(d.name, disp);
@@ -4402,9 +4566,15 @@ fn checkStmt(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, node:
                     }
                 }
                 if (r.return_value) |v| {
-                    try requireAssignFrom(state, t, er, "return value", v);
+                    requireAssignFrom(state, t, er, "return value", v) catch |err| {
+                        noteDeclaredReturn(state, env, er);
+                        return err;
+                    };
                 } else {
-                    try requireAssign(state, t, er, "return value");
+                    requireAssign(state, t, er, "return value") catch |err| {
+                        noteDeclaredReturn(state, env, er);
+                        return err;
+                    };
                 }
             }
             return t;

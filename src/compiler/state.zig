@@ -310,6 +310,9 @@ pub const CompilerState = struct {
     stack_depth: u32 = 0,
     functions: std.StringHashMap(FunctionDef),
     structs: std.StringHashMap(StructDef),
+    /// Declaration site of each named struct, keyed like `structs`, so
+    /// diagnostics can point at where the fields were declared.
+    struct_nodes: std.StringHashMap(*ast.Node),
     unions: std.StringHashMap(UnionDef),
     enums: std.StringHashMap(EnumDef),
     error_sets: std.StringHashMap(ErrorSetDef),
@@ -545,6 +548,7 @@ pub fn create(allocator: std.mem.Allocator) !CompilerState {
         .comptime_max_loop_iterations = max_iters,
         .functions = std.StringHashMap(FunctionDef).init(allocator),
         .structs = std.StringHashMap(StructDef).init(allocator),
+        .struct_nodes = std.StringHashMap(*ast.Node).init(allocator),
         .unions = std.StringHashMap(UnionDef).init(allocator),
         .enums = std.StringHashMap(EnumDef).init(allocator),
         .error_sets = std.StringHashMap(ErrorSetDef).init(allocator),
@@ -694,6 +698,7 @@ pub fn deinit(self: *CompilerState) void {
         if (e.value_ptr.field_names.len > 0) self.allocator.free(e.value_ptr.field_names);
     }
     self.structs.deinit();
+    self.struct_nodes.deinit();
     self.unions.deinit();
     var eit = self.enums.iterator();
     while (eit.next()) |e| {
