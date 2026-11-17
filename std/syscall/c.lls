@@ -159,6 +159,20 @@ pub @extern "c" @struct Termios {
     c_ospeed: u32;
 }
 
+# IPv4 socket address aggregate (16 bytes, align 4/2 matching struct sockaddr_in).
+pub @extern "c" @struct SockaddrIn {
+    sin_family: u16;
+    sin_port: u16;
+    sin_addr: u32;
+    sin_zero: [8]u8;
+}
+
+# Generic socket address aggregate (16 bytes, align 2 matching struct sockaddr).
+pub @extern "c" @struct Sockaddr {
+    sa_family: u16;
+    sa_data: [14]u8;
+}
+
 pub @extern "c" @func exit(status: i32): never;
 pub @extern "c" @func abort(): never;
 
@@ -402,6 +416,18 @@ pub @extern "c" @func tcsetattr(fd: i32, optional_actions: i32, termios_p: *Term
 pub @extern "c" @func getrlimit(resource: i32, rlim: *Rlimit): i32;
 pub @extern "c" @func setrlimit(resource: i32, rlim: *Rlimit): i32;
 pub @extern "c" @func prlimit(pid: i32, resource: i32, new_limit: ?*Rlimit, old_limit: ?*Rlimit): i32;
+
+# Network socket operations
+pub @extern "c" @func socket(domain: i32, socket_type: i32, protocol: i32): i32;
+pub @extern "c" @func bind(sockfd: i32, addr: *SockaddrIn, addrlen: u32): i32;
+pub @extern "c" @func connect(sockfd: i32, addr: *SockaddrIn, addrlen: u32): i32;
+pub @extern "c" @func listen(sockfd: i32, backlog: i32): i32;
+pub @extern "c" @func accept(sockfd: i32, addr: ?*SockaddrIn, addrlen: ?*u32): i32;
+pub @extern "c" @func send(sockfd: i32, buf: *u8, len: usize, flags: i32): isize;
+pub @extern "c" @func recv(sockfd: i32, buf: *u8, len: usize, flags: i32): isize;
+pub @extern "c" @func shutdown(sockfd: i32, how: i32): i32;
+pub @extern "c" @func getsockname(sockfd: i32, addr: *SockaddrIn, addrlen: *u32): i32;
+pub @extern "c" @func getpeername(sockfd: i32, addr: *SockaddrIn, addrlen: *u32): i32;
 
 pub @extern "c" @func malloc(size: usize): ?*CBuffer;
 pub @extern "c" @func free(p: *CBuffer): void;

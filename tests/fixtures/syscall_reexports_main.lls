@@ -28,10 +28,13 @@ $stvfs_size: i64 = @sizeOf(sys.Statvfs);
 $pfd_size: i64 = @sizeOf(sys.Pollfd);
 $term_size: i64 = @sizeOf(sys.Termios);
 $rlim_size: i64 = @sizeOf(sys.Rlimit);
+$iov_size: i64 = @sizeOf(sys.Iovec);
+$sain_size: i64 = @sizeOf(sys.SockaddrIn);
+$sa_size: i64 = @sizeOf(sys.Sockaddr);
 
 pub @func main() {
     print(my_fd, my_pid, my_uid, my_gid);
     print(stdio, exit_code, access, open_flag, perm, whence, access_mode);
     print(err);
-    print(ts_size, st_size, stfs_size, stvfs_size, pfd_size, term_size, rlim_size);
+    print(ts_size, st_size, stfs_size, stvfs_size, pfd_size, term_size, rlim_size, iov_size, sain_size, sa_size);
 }

@@ -865,10 +865,47 @@ test "native execution: syscall facade major type re-exports" {
         \\0 1 1000 1000
         \\1 0 0 64 256 0 4
         \\Error: FileNotFound
-        \\16 144 120 112 8 60 16
+        \\16 144 120 112 8 60 16 16 16 16
         \\
     ;
     try expectNativeFileStdout(std.testing.allocator, "tests/fixtures/syscall_reexports_main.lls", expected);
+}
+
+test "native execution: syscall vectored io readv writev preadv pwritev" {
+    const expected =
+        \\17
+        \\17
+        \\104
+        \\118
+        \\105
+        \\4
+        \\4
+        \\65
+        \\67
+        \\
+    ;
+    try expectNativeFileStdout(std.testing.allocator, "tests/fixtures/syscall_vectored_io_main.lls", expected);
+}
+
+test "native execution: syscall network sockets lifecycle" {
+    const expected =
+        \\1
+        \\1
+        \\1
+        \\1
+        \\1
+        \\1
+        \\4
+        \\4
+        \\112
+        \\103
+        \\4
+        \\4
+        \\111
+        \\socket-ok
+        \\
+    ;
+    try expectNativeFileStdout(std.testing.allocator, "tests/fixtures/syscall_socket_main.lls", expected);
 }
 
 test "native execution: @zeroed builds zero values" {
@@ -896,6 +933,31 @@ test "native execution: @zeroed builds zero values" {
         \\}
     ;
     try expectNativeStdout(allocator, src, "0 0 0 0 0 0 1\n0 0 0 0 1 0\n");
+}
+
+test "native execution: @zeroed accepts inline types" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\pub @func main() {
+        \\    $shape = @zeroed({a: i64; b: []u8; c: ?[2]i8});
+        \\    print(shape.a, shape.b.len, shape.c == null);
+        \\    $nested = @zeroed({inner: {x: i8}});
+        \\    print(nested.inner.x);
+        \\}
+    ;
+    try expectNativeStdout(allocator, src, "0 0 1\n0\n");
+}
+
+test "native execution: loop arithmetic assigns into a narrower integer slot" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\pub @func main() {
+        \\    $buf: [5]u8 = @zeroed([5]u8);
+        \\    @for (0..5) |i| { buf[i] = i + 1; }
+        \\    print(buf);
+        \\}
+    ;
+    try expectNativeStdout(allocator, src, "[1, 2, 3, 4, 5]\n");
 }
 
 test "native execution: @zeroed slices are real empty slices" {

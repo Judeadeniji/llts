@@ -111,7 +111,7 @@ pub @func main() {
 
     # Live call to libc stat
     $ts0: Timespec = Timespec{ tv_sec: 0, tv_nsec: 0 };
-    $pad3: [3]i64 = [0, 0, 0];
+    $pad3 = @zeroed([3]i64);
     $st: Stat = Stat{
         st_dev: 0,
         st_ino: 0,

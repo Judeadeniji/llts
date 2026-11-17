@@ -25,6 +25,7 @@ pub @const $poll = @import("std/syscall/poll");
 pub @const $term = @import("std/syscall/term");
 pub @const $system = @import("std/syscall/system");
 pub @const $ipc = @import("std/syscall/ipc");
+pub @const $socket = @import("std/syscall/socket");
 
 # Re-exported primary types for callers using the top-level facade.
 
@@ -42,6 +43,7 @@ pub @alias Access = io.Access;
 pub @alias OpenFlag = io.OpenFlag;
 pub @alias Permission = io.Permission;
 pub @alias SeekWhence = io.SeekWhence;
+pub @alias Iovec = io.Iovec;
 
 # Directory access check modes
 pub @alias AccessMode = dir.AccessMode;
@@ -60,4 +62,9 @@ pub @alias Termios = term.Termios;
 
 # Resource consumption limits
 pub @alias Rlimit = system.Rlimit;
+
+# Network socket addresses and connection states
+pub @alias SockaddrIn = socket.SockaddrIn;
+pub @alias Sockaddr = socket.Sockaddr;
+pub @alias AcceptedSocket = socket.AcceptedSocket;
 

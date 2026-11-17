@@ -263,7 +263,7 @@ pub @alias Rlimit = c.Rlimit;
 
 # Query consumption limit for specified resource `resource`.
 pub @func getrlimit(resource: i32): Rlimit | core.SyscallError {
-    $r: Rlimit = Rlimit{ rlim_cur: 0, rlim_max: 0 };
+    $r = @zeroed(Rlimit);
     @if (c.getrlimit(resource, &r) != 0) {
         return core.last_error();
     }
@@ -280,7 +280,7 @@ pub @func setrlimit(resource: i32, rlim: Rlimit): void | core.SyscallError {
 
 # Query and optionally set resource limits of process `pid` (or calling process if `pid == 0`).
 pub @func prlimit(pid: core.Pid, resource: i32, new_limit: ?*Rlimit): Rlimit | core.SyscallError {
-    $old: Rlimit = Rlimit{ rlim_cur: 0, rlim_max: 0 };
+    $old = @zeroed(Rlimit);
     @if (c.prlimit(@as(i32, pid), resource, new_limit, &old) != 0) {
         return core.last_error();
     }

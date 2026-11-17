@@ -8,6 +8,17 @@ pub @const $PATH_CAPACITY: usize = c.PATH_CAPACITY;
 pub @const $DEFAULT_FILE_MODE: i32 = 0o644;
 pub @const $AT_FDCWD: core.Fd = @as(core.Fd, c.AT_FDCWD);
 
+# Re-exported POSIX I/O vector for scatter/gather operations.
+pub @alias Iovec = c.Iovec;
+
+# Construct an Iovec describing a buffer region.
+pub @func init_iovec(base: *u8, len: usize): Iovec {
+    return Iovec {
+        iov_base: base,
+        iov_len: len,
+    };
+}
+
 # Requested access for `open`-style calls (the low two bits of the C flags).
 pub @enum Access {
     ReadOnly = 0,
@@ -154,6 +165,58 @@ pub @func pwrite(fd: core.Fd, data: []const u8, offset: i64): usize | core.Sysca
         return count;
     }
     $n = c.pwrite(@as(i32, fd), data, count, offset);
+    @if (n < 0) {
+        return core.last_error();
+    }
+    return @as(usize, n);
+}
+
+# Read data from `fd` into multiple buffers described by `iov` (scatter input).
+pub @func readv(fd: core.Fd, iov: []Iovec): usize | core.SyscallError {
+    $count = @as(i32, std.len(iov));
+    @if (count == 0) {
+        return 0;
+    }
+    $n = c.readv(@as(i32, fd), &iov[0], count);
+    @if (n < 0) {
+        return core.last_error();
+    }
+    return @as(usize, n);
+}
+
+# Read data from `fd` at `offset` into multiple buffers described by `iov` without changing file offset.
+pub @func preadv(fd: core.Fd, iov: []Iovec, offset: i64): usize | core.SyscallError {
+    $count = @as(i32, std.len(iov));
+    @if (count == 0) {
+        return 0;
+    }
+    $n = c.preadv(@as(i32, fd), &iov[0], count, offset);
+    @if (n < 0) {
+        return core.last_error();
+    }
+    return @as(usize, n);
+}
+
+# Write data to `fd` from multiple buffers described by `iov` (gather output).
+pub @func writev(fd: core.Fd, iov: []Iovec): usize | core.SyscallError {
+    $count = @as(i32, std.len(iov));
+    @if (count == 0) {
+        return 0;
+    }
+    $n = c.writev(@as(i32, fd), &iov[0], count);
+    @if (n < 0) {
+        return core.last_error();
+    }
+    return @as(usize, n);
+}
+
+# Write data to `fd` at `offset` from multiple buffers described by `iov` without changing file offset.
+pub @func pwritev(fd: core.Fd, iov: []Iovec, offset: i64): usize | core.SyscallError {
+    $count = @as(i32, std.len(iov));
+    @if (count == 0) {
+        return 0;
+    }
+    $n = c.pwritev(@as(i32, fd), &iov[0], count, offset);
     @if (n < 0) {
         return core.last_error();
     }

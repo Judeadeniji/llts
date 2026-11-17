@@ -658,6 +658,22 @@ test "typecheck: @zeroed accepts zeroable scalars and aggregates" {
     defer analyzed.deinit();
 }
 
+test "typecheck: @zeroed accepts inline types" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\pub @func main() {
+        \\    $shape: {a: i64; b: ?*i64} = @zeroed({a: i64; b: ?*i64});
+        \\    $empty: {} = @zeroed({});
+        \\    $nested: {inner: {x: i8}} = @zeroed({inner: {x: i8}});
+        \\    $arr: [3]u8 = @zeroed([3]u8);
+        \\    $opt: ?[]byte = @zeroed(?[]byte);
+        \\    print(shape.a, nested.inner.x, arr[0], opt == null);
+        \\}
+    ;
+    var analyzed = try helpers.analyzeSource(allocator, src, null, true);
+    defer analyzed.deinit();
+}
+
 test "typecheck: @zeroed rejects a non-null pointer field" {
     const allocator = std.testing.allocator;
     const src =

@@ -1,0 +1,57 @@
+@const $sys = @import("std/syscall");
+
+pub @func main() {
+    $path = ".tmpdir/native_test_vectored_io.txt";
+    $rw = @as(i32, sys.io.Access.ReadWrite) | @as(i32, sys.io.OpenFlag.Create) | @as(i32, sys.io.OpenFlag.Truncate);
+    $fd = sys.io.open(path, rw, 0o644)?;
+
+    # Gather write with writev
+    $b1 = "hello ";
+    $b2 = "vectored ";
+    $b3 = "io";
+    $v1 = sys.io.init_iovec(&b1[0], 6);
+    $v2 = sys.io.init_iovec(&b2[0], 9);
+    $v3 = sys.io.init_iovec(&b3[0], 2);
+    $iov_out: [3]sys.io.Iovec = [v1, v2, v3];
+
+    $nw = sys.io.writev(fd, iov_out[..])?;
+    print(nw); # 17
+
+    # Scatter read with readv
+    _ = sys.io.seek(fd, 0, sys.io.SeekWhence.Set)?;
+    $r1 = @zeroed([6]u8);
+    $r2 = @zeroed([9]u8);
+    $r3 = @zeroed([2]u8);
+    $rv1 = sys.io.init_iovec(&r1[0], 6);
+    $rv2 = sys.io.init_iovec(&r2[0], 9);
+    $rv3 = sys.io.init_iovec(&r3[0], 2);
+    $iov_in: [3]sys.io.Iovec = [rv1, rv2, rv3];
+
+    $nr = sys.io.readv(fd, iov_in[..])?;
+    print(nr); # 17
+    print(r1[0]); # 104 ('h')
+    print(r2[0]); # 118 ('v')
+    print(r3[0]); # 105 ('i')
+
+    # Positional gather/scatter with pwritev and preadv
+    $pw1 = "AB";
+    $pw2 = "CD";
+    $pv1 = sys.io.init_iovec(&pw1[0], 2);
+    $pv2 = sys.io.init_iovec(&pw2[0], 2);
+    $iov_pos_w: [2]sys.io.Iovec = [pv1, pv2];
+    $npw = sys.io.pwritev(fd, iov_pos_w[..], 6)?;
+    print(npw); # 4
+
+    $pr1 = @zeroed([2]u8);
+    $pr2 = @zeroed([2]u8);
+    $pvr1 = sys.io.init_iovec(&pr1[0], 2);
+    $pvr2 = sys.io.init_iovec(&pr2[0], 2);
+    $iov_pos_r: [2]sys.io.Iovec = [pvr1, pvr2];
+    $npr = sys.io.preadv(fd, iov_pos_r[..], 6)?;
+    print(npr); # 4
+    print(pr1[0]); # 65 ('A')
+    print(pr2[0]); # 67 ('C')
+
+    sys.io.close(fd)?;
+    sys.io.unlink(path)?;
+}

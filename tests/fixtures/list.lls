@@ -10,10 +10,7 @@ pub @struct List {
 }
 
 pub @func create(initial_hint: int): *List {
-    $lst = List {
-        items: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-        count: 0,
-    };
+    $lst = @zeroed(List);
     return &lst;
 }
 

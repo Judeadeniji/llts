@@ -1,0 +1,67 @@
+@const $sys = @import("std/syscall");
+
+pub @func main() {
+    # 1. Byte order and address helper verification
+    $h_port: u16 = 8080;
+    $n_port = sys.socket.htons(h_port);
+    print(sys.socket.ntohs(n_port) == h_port); # true
+
+    $h_val: u32 = 305419896; # 0x12345678
+    $n_val = sys.socket.htonl(h_val);
+    print(sys.socket.ntohl(n_val) == h_val); # true
+
+    $ip = sys.socket.ipv4_address(127, 0, 0, 1);
+    $sa = sys.socket.sockaddr_in(9090, ip);
+    print(sys.socket.port_from_sockaddr(sa) == 9090); # true
+
+    # 2. Server socket: create, bind to ephemeral port (0), listen
+    $srv = sys.socket.socket(sys.socket.AF_INET, sys.socket.SOCK_STREAM, 0)?;
+    $bind_sa = sys.socket.sockaddr_in(0, ip);
+    sys.socket.bind(srv, bind_sa)?;
+
+    # Discover assigned port via getsockname
+    $bound_sa = sys.socket.getsockname(srv)?;
+    $assigned_port = sys.socket.port_from_sockaddr(bound_sa);
+    print(assigned_port > 0); # true
+
+    sys.socket.listen(srv, 1)?;
+
+    # 3. Client socket: create, connect to server port
+    $cli = sys.socket.socket(sys.socket.AF_INET, sys.socket.SOCK_STREAM, 0)?;
+    $target_sa = sys.socket.sockaddr_in(assigned_port, ip);
+    sys.socket.connect(cli, target_sa)?;
+
+    # 4. Server accept
+    $accepted = sys.socket.accept(srv)?;
+    print(accepted.fd > 0); # true
+
+    # Verify getpeername on client
+    $peer_sa = sys.socket.getpeername(cli)?;
+    print(sys.socket.port_from_sockaddr(peer_sa) == assigned_port); # true
+
+    # 5. Client send, Server recv
+    $s1 = sys.socket.send(cli, "ping", 0)?;
+    print(s1); # 4
+
+    $r_buf = @zeroed([4]u8);
+    $r1 = sys.socket.recv(accepted.fd, r_buf[..], 0)?;
+    print(r1); # 4
+    print(r_buf[0]); # 112 ('p')
+    print(r_buf[3]); # 103 ('g')
+
+    # 6. Server send reply, Client recv reply
+    $s2 = sys.socket.send(accepted.fd, "pong", 0)?;
+    print(s2); # 4
+
+    $c_buf = @zeroed([4]u8);
+    $r2 = sys.socket.recv(cli, c_buf[..], 0)?;
+    print(r2); # 4
+    print(c_buf[1]); # 111 ('o')
+
+    # 7. Shutdown and close
+    sys.socket.shutdown(cli, sys.socket.SHUT_RDWR)?;
+    sys.io.close(cli)?;
+    sys.io.close(accepted.fd)?;
+    sys.io.close(srv)?;
+    print("socket-ok");
+}

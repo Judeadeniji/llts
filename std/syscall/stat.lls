@@ -69,74 +69,25 @@ pub @func is_socket(mode: u32): bool {
 }
 
 # Constructs a zero-initialized Stat struct in user stack space.
-# Required because strict mode expects explicit field initialization.
 pub @func init_stat(): Stat {
-    $ts0: Timespec = Timespec{ tv_sec: 0, tv_nsec: 0 };
-    $pad3: [3]i64 = [0, 0, 0];
-    return Stat{
-        st_dev: 0,
-        st_ino: 0,
-        st_nlink: 0,
-        st_mode: 0,
-        st_uid: 0,
-        st_gid: 0,
-        __pad0: 0,
-        st_rdev: 0,
-        st_size: 0,
-        st_blksize: 0,
-        st_blocks: 0,
-        st_atim: ts0,
-        st_mtim: ts0,
-        st_ctim: ts0,
-        __glibc_reserved: pad3,
-    };
+    return @zeroed(Stat);
 }
 
 # Constructs a zero-initialized Statfs struct in user stack space.
 pub @func init_statfs(): Statfs {
-    $fsid: [2]i32 = [0, 0];
-    $spare: [4]i64 = [0, 0, 0, 0];
-    return Statfs{
-        f_type: 0,
-        f_bsize: 0,
-        f_blocks: 0,
-        f_bfree: 0,
-        f_bavail: 0,
-        f_files: 0,
-        f_ffree: 0,
-        f_fsid: fsid,
-        f_namelen: 0,
-        f_frsize: 0,
-        f_flags: 0,
-        f_spare: spare,
-    };
+    return @zeroed(Statfs);
 }
 
 # Constructs a zero-initialized Statvfs struct in user stack space.
 pub @func init_statvfs(): Statvfs {
-    $spare: [5]i32 = [0, 0, 0, 0, 0];
-    return Statvfs{
-        f_bsize: 0,
-        f_frsize: 0,
-        f_blocks: 0,
-        f_bfree: 0,
-        f_bavail: 0,
-        f_files: 0,
-        f_ffree: 0,
-        f_favail: 0,
-        f_fsid: 0,
-        f_flag: 0,
-        f_namemax: 0,
-        f_type: 0,
-        __f_spare: spare,
-    };
+    return @zeroed(Statvfs);
 }
 
 # Return metadata for the file specified by `path`.
 pub @func stat(path: string): Stat | core.SyscallError {
     $buf = core.path_buffer(path)?;
     defer c.free(buf);
-    $st: Stat = init_stat();
+    $st = @zeroed(Stat);
     @if (c.stat(buf, &st) != 0) {
         return core.last_error();
     }
@@ -145,7 +96,7 @@ pub @func stat(path: string): Stat | core.SyscallError {
 
 # Return metadata for open file descriptor `fd`.
 pub @func fstat(fd: core.Fd): Stat | core.SyscallError {
-    $st: Stat = init_stat();
+    $st = @zeroed(Stat);
     @if (c.fstat(@as(i32, fd), &st) != 0) {
         return core.last_error();
     }
@@ -156,7 +107,7 @@ pub @func fstat(fd: core.Fd): Stat | core.SyscallError {
 pub @func lstat(path: string): Stat | core.SyscallError {
     $buf = core.path_buffer(path)?;
     defer c.free(buf);
-    $st: Stat = init_stat();
+    $st = @zeroed(Stat);
     @if (c.lstat(buf, &st) != 0) {
         return core.last_error();
     }
@@ -167,7 +118,7 @@ pub @func lstat(path: string): Stat | core.SyscallError {
 pub @func fstatat(dirfd: core.Fd, path: string, flags: i32): Stat | core.SyscallError {
     $buf = core.path_buffer(path)?;
     defer c.free(buf);
-    $st: Stat = init_stat();
+    $st = @zeroed(Stat);
     @if (c.fstatat(@as(i32, dirfd), buf, &st, flags) != 0) {
         return core.last_error();
     }
@@ -178,7 +129,7 @@ pub @func fstatat(dirfd: core.Fd, path: string, flags: i32): Stat | core.Syscall
 pub @func statfs(path: string): Statfs | core.SyscallError {
     $buf = core.path_buffer(path)?;
     defer c.free(buf);
-    $st: Statfs = init_statfs();
+    $st = @zeroed(Statfs);
     @if (c.statfs(buf, &st) != 0) {
         return core.last_error();
     }
@@ -187,7 +138,7 @@ pub @func statfs(path: string): Statfs | core.SyscallError {
 
 # Return filesystem statistics for the filesystem referred to by descriptor `fd`.
 pub @func fstatfs(fd: core.Fd): Statfs | core.SyscallError {
-    $st: Statfs = init_statfs();
+    $st = @zeroed(Statfs);
     @if (c.fstatfs(@as(i32, fd), &st) != 0) {
         return core.last_error();
     }
@@ -198,7 +149,7 @@ pub @func fstatfs(fd: core.Fd): Statfs | core.SyscallError {
 pub @func statvfs(path: string): Statvfs | core.SyscallError {
     $buf = core.path_buffer(path)?;
     defer c.free(buf);
-    $st: Statvfs = init_statvfs();
+    $st = @zeroed(Statvfs);
     @if (c.statvfs(buf, &st) != 0) {
         return core.last_error();
     }
@@ -207,7 +158,7 @@ pub @func statvfs(path: string): Statvfs | core.SyscallError {
 
 # Return VFS filesystem statistics for descriptor `fd`.
 pub @func fstatvfs(fd: core.Fd): Statvfs | core.SyscallError {
-    $st: Statvfs = init_statvfs();
+    $st = @zeroed(Statvfs);
     @if (c.fstatvfs(@as(i32, fd), &st) != 0) {
         return core.last_error();
     }

@@ -1,0 +1,207 @@
+# Network socket creation, connection management, and data transfer.
+#
+# Provides safe, typed wrappers over POSIX / BSD socket system calls:
+#   socket, bind, connect, listen, accept, send, recv, shutdown, getsockname, getpeername
+#
+# All network addresses use typed `SockaddrIn` aggregates matching the C ABI
+# memory layout of `struct sockaddr_in` (16 bytes, align 4/2).
+
+@const $c = @import("std/syscall/c");
+@const $core = @import("std/syscall/core");
+@const $std = @import("std/core");
+
+# Re-exported socket address aggregates
+pub @alias SockaddrIn = c.SockaddrIn;
+pub @alias Sockaddr = c.Sockaddr;
+
+# Return value for `accept` containing descriptor and client address
+pub @struct AcceptedSocket {
+    fd: core.Fd;
+    address: SockaddrIn;
+}
+
+# Address family domains
+pub @const $AF_UNSPEC: i32 = 0;
+pub @const $AF_UNIX: i32 = 1;
+pub @const $AF_LOCAL: i32 = 1;
+pub @const $AF_INET: i32 = 2;
+pub @const $AF_INET6: i32 = 10;
+
+# Socket communication types and creation flags
+pub @const $SOCK_STREAM: i32 = 1;
+pub @const $SOCK_DGRAM: i32 = 2;
+pub @const $SOCK_RAW: i32 = 3;
+pub @const $SOCK_CLOEXEC: i32 = 524288;
+pub @const $SOCK_NONBLOCK: i32 = 2048;
+
+# Socket shutdown directions
+pub @const $SHUT_RD: i32 = 0;
+pub @const $SHUT_WR: i32 = 1;
+pub @const $SHUT_RDWR: i32 = 2;
+
+# Common transport protocols
+pub @const $IPPROTO_IP: i32 = 0;
+pub @const $IPPROTO_ICMP: i32 = 1;
+pub @const $IPPROTO_TCP: i32 = 6;
+pub @const $IPPROTO_UDP: i32 = 17;
+
+# Special IPv4 addresses
+pub @const $INADDR_ANY: u32 = 0;
+
+# Convert a 16-bit integer from host byte order to network byte order (big-endian).
+pub @func htons(val: u16): u16 {
+    return ((val >> 8) & 0x00ff) | ((val & 0x00ff) << 8);
+}
+
+# Convert a 16-bit integer from network byte order to host byte order.
+pub @func ntohs(val: u16): u16 {
+    return htons(val);
+}
+
+# Convert a 32-bit integer from host byte order to network byte order.
+pub @func htonl(val: u32): u32 {
+    return ((val >> 24) & 0x000000ff) |
+           ((val >> 8) & 0x0000ff00) |
+           ((val & 0x0000ff00) << 8) |
+           ((val & 0x000000ff) << 24);
+}
+
+# Convert a 32-bit integer from network byte order to host byte order.
+pub @func ntohl(val: u32): u32 {
+    return htonl(val);
+}
+
+# Construct a 32-bit IPv4 address integer in network byte order from octets.
+pub @func ipv4_address(a: u8, b: u8, c: u8, d: u8): u32 {
+    return @as(u32, a) |
+           (@as(u32, b) << 8) |
+           (@as(u32, c) << 16) |
+           (@as(u32, d) << 24);
+}
+
+# Construct an IPv4 socket address aggregate for specified port and IPv4 address.
+pub @func sockaddr_in(port: u16, addr: u32): SockaddrIn {
+    $zero = @zeroed([8]u8);
+    return SockaddrIn {
+        sin_family: @as(u16, AF_INET),
+        sin_port: htons(port),
+        sin_addr: addr,
+        sin_zero: zero,
+    };
+}
+
+# Extract the host-order port number from a SockaddrIn aggregate.
+pub @func port_from_sockaddr(addr: SockaddrIn): u16 {
+    return ntohs(addr.sin_port);
+}
+
+# Create an unbound communication endpoint of the specified family, type, and protocol.
+pub @func socket(domain: i32, socket_type: i32, protocol: i32): core.Fd | core.SyscallError {
+    $raw = c.socket(domain, socket_type, protocol);
+    @if (raw < 0) {
+        return core.last_error();
+    }
+    return @as(core.Fd, raw);
+}
+
+# Bind socket descriptor `sockfd` to local address `addr`.
+pub @func bind(sockfd: core.Fd, addr: SockaddrIn): void | core.SyscallError {
+    $sa = addr;
+    $len: u32 = @as(u32, @sizeOf(SockaddrIn));
+    @if (c.bind(@as(i32, sockfd), &sa, len) != 0) {
+        return core.last_error();
+    }
+}
+
+# Connect socket descriptor `sockfd` to remote peer address `addr`.
+pub @func connect(sockfd: core.Fd, addr: SockaddrIn): void | core.SyscallError {
+    $sa = addr;
+    $len: u32 = @as(u32, @sizeOf(SockaddrIn));
+    @if (c.connect(@as(i32, sockfd), &sa, len) != 0) {
+        return core.last_error();
+    }
+}
+
+# Mark socket descriptor `sockfd` as passive, accepting incoming connections.
+pub @func listen(sockfd: core.Fd, backlog: i32): void | core.SyscallError {
+    @if (c.listen(@as(i32, sockfd), backlog) != 0) {
+        return core.last_error();
+    }
+}
+
+# Accept the first pending connection request on listening socket `sockfd`.
+# Returns a new file descriptor and the remote peer's IPv4 address.
+pub @func accept(sockfd: core.Fd): AcceptedSocket | core.SyscallError {
+    $addr = @zeroed(SockaddrIn);
+    $addrlen: u32 = @as(u32, @sizeOf(SockaddrIn));
+    $raw = c.accept(@as(i32, sockfd), &addr, &addrlen);
+    @if (raw < 0) {
+        return core.last_error();
+    }
+    return AcceptedSocket {
+        fd: @as(core.Fd, raw),
+        address: addr,
+    };
+}
+
+# Accept a connection without inspecting the peer address.
+pub @func accept_raw(sockfd: core.Fd): core.Fd | core.SyscallError {
+    $raw = c.accept(@as(i32, sockfd), null, null);
+    @if (raw < 0) {
+        return core.last_error();
+    }
+    return @as(core.Fd, raw);
+}
+
+# Send data on connected socket descriptor `sockfd`.
+pub @func send(sockfd: core.Fd, buf: []const u8, flags: i32): usize | core.SyscallError {
+    $len = std.len(buf);
+    @if (len == 0) {
+        return 0;
+    }
+    $n = c.send(@as(i32, sockfd), buf, len, flags);
+    @if (n < 0) {
+        return core.last_error();
+    }
+    return @as(usize, n);
+}
+
+# Receive data from connected socket descriptor `sockfd`.
+pub @func recv(sockfd: core.Fd, buf: []u8, flags: i32): usize | core.SyscallError {
+    $len = std.len(buf);
+    @if (len == 0) {
+        return 0;
+    }
+    $n = c.recv(@as(i32, sockfd), buf, len, flags);
+    @if (n < 0) {
+        return core.last_error();
+    }
+    return @as(usize, n);
+}
+
+# Shut down all or part of a full-duplex connection on `sockfd`.
+pub @func shutdown(sockfd: core.Fd, how: i32): void | core.SyscallError {
+    @if (c.shutdown(@as(i32, sockfd), how) != 0) {
+        return core.last_error();
+    }
+}
+
+# Retrieve the current local address to which socket `sockfd` is bound.
+pub @func getsockname(sockfd: core.Fd): SockaddrIn | core.SyscallError {
+    $addr = @zeroed(SockaddrIn);
+    $addrlen: u32 = @as(u32, @sizeOf(SockaddrIn));
+    @if (c.getsockname(@as(i32, sockfd), &addr, &addrlen) != 0) {
+        return core.last_error();
+    }
+    return addr;
+}
+
+# Retrieve the remote peer address to which socket `sockfd` is connected.
+pub @func getpeername(sockfd: core.Fd): SockaddrIn | core.SyscallError {
+    $addr = @zeroed(SockaddrIn);
+    $addrlen: u32 = @as(u32, @sizeOf(SockaddrIn));
+    @if (c.getpeername(@as(i32, sockfd), &addr, &addrlen) != 0) {
+        return core.last_error();
+    }
+    return addr;
+}

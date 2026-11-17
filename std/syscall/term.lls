@@ -24,29 +24,12 @@ pub @alias Termios = c.Termios;
 
 # Constructs a zero-initialized Termios struct in user stack space.
 pub @func init_termios(): Termios {
-    $cc32: [32]u8 = [
-        0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0,
-    ];
-    $pad3: [3]u8 = [0, 0, 0];
-    return Termios{
-        c_iflag: 0,
-        c_oflag: 0,
-        c_cflag: 0,
-        c_lflag: 0,
-        c_line: 0,
-        c_cc: cc32,
-        __pad: pad3,
-        c_ispeed: 0,
-        c_ospeed: 0,
-    };
+    return @zeroed(Termios);
 }
 
 # Query the current terminal configuration attributes associated with descriptor `fd`.
 pub @func tcgetattr(fd: core.Fd): Termios | core.SyscallError {
-    $t: Termios = init_termios();
+    $t = @zeroed(Termios);
     @if (c.tcgetattr(@as(i32, fd), &t) != 0) {
         return core.last_error();
     }

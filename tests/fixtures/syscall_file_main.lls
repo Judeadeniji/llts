@@ -9,7 +9,7 @@ pub @func main() {
 
     $input = sys.io.open_read(path)?;
     $offset = sys.io.seek(input, 6, sys.io.SeekWhence.Set)?;
-    $buf: [4]u8 = [0, 0, 0, 0];
+    $buf = @zeroed([4]u8);
     $n = sys.io.read(input, buf[..])?;
     sys.io.close(input)?;
     sys.io.unlink(path)?;

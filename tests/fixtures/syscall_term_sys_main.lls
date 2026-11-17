@@ -40,7 +40,7 @@ pub @func main() {
     }
 
     # getrandom
-    $buf: [8]u8 = [0, 0, 0, 0, 0, 0, 0, 0];
+    $buf = @zeroed([8]u8);
     $n = sys.system.getrandom(buf[..], 0)?;
     @if (n == @as(isize, 8)) {
         print("getrandom-ok");

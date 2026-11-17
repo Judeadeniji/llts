@@ -8,6 +8,8 @@ pub @const $EFD_SEMAPHORE: i32 = 1;
 pub @const $EFD_CLOEXEC: i32 = 524288;
 pub @const $EFD_NONBLOCK: i32 = 2048;
 
+pub @alias EventfdValue = c.EventfdValue;
+
 # Create a file descriptor for event notification.
 pub @func eventfd(initval: u32, flags: i32): core.Fd | core.SyscallError {
     $raw = c.eventfd(initval, flags);
@@ -19,7 +21,7 @@ pub @func eventfd(initval: u32, flags: i32): core.Fd | core.SyscallError {
 
 # Read a 64-bit integer counter value from `fd`.
 pub @func eventfd_read(fd: core.Fd): u64 | core.SyscallError {
-    $val = c.EventfdValue{ value: 0 };
+    $val = @zeroed(EventfdValue);
     @if (c.eventfd_read(@as(i32, fd), &val) != 0) {
         return core.last_error();
     }

@@ -28,7 +28,7 @@ pub @func main() {
     # hardlink
     sys.dir.link(file_path, hl_path)?;
     $f_hl = sys.io.open_read(hl_path)?;
-    $buf: [16]u8 = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    $buf = @zeroed([16]u8);
     $n = sys.io.read(f_hl, buf[..])?;
     sys.io.close(f_hl)?;
     print(n); # 13

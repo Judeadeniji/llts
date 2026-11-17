@@ -8,7 +8,7 @@ pub @func main() {
         print("unexpected-open");
     }
 
-    $buf: [4]u8 = [0, 0, 0, 0];
+    $buf = @zeroed([4]u8);
     $empty = sys.io.read(sys.core.STDIN, buf[0..0])?;
     print(empty);
 }

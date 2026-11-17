@@ -11,7 +11,7 @@ pub @func main() {
     $input = sys.io.open_read(path)?;
     $size = sys.io.seek(input, 0, sys.io.SeekWhence.End)?;
     _ = sys.io.seek(input, 0, sys.io.SeekWhence.Set)?;
-    $buf: [8]u8 = [0, 0, 0, 0, 0, 0, 0, 0];
+    $buf = @zeroed([8]u8);
     $n = sys.io.read(input, buf[..])?;
     sys.io.close(input)?;
     sys.io.unlink(path)?;
