@@ -229,15 +229,15 @@ pub @func fchownat(dirfd: core.Fd, path: string, owner: core.Uid, group: core.Gi
 pub @func utimensat(dirfd: core.Fd, path: string, atime: ?Timespec, mtime: ?Timespec, flags: i32): void | core.SyscallError {
     $buf = core.path_buffer(path)?;
     defer c.free(buf);
-    $a_ts: Timespec = Timespec{ tv_sec: 0, tv_nsec: UTIME_OMIT };
+    $a_ts = Timespec{ tv_sec: 0, tv_nsec: UTIME_OMIT };
     @if (atime != null) {
         a_ts = atime;
     }
-    $m_ts: Timespec = Timespec{ tv_sec: 0, tv_nsec: UTIME_OMIT };
+    $m_ts = Timespec{ tv_sec: 0, tv_nsec: UTIME_OMIT };
     @if (mtime != null) {
         m_ts = mtime;
     }
-    $pair: TimePair = TimePair{ atime: a_ts, mtime: m_ts };
+    $pair = TimePair{ atime: a_ts, mtime: m_ts };
     @if (c.utimensat(@as(i32, dirfd), buf, &pair, flags) != 0) {
         return core.last_error();
     }
@@ -246,15 +246,15 @@ pub @func utimensat(dirfd: core.Fd, path: string, atime: ?Timespec, mtime: ?Time
 # Change file timestamps of open descriptor `fd`.
 # If `atime` or `mtime` is null, that timestamp is omitted (kept unchanged).
 pub @func futimens(fd: core.Fd, atime: ?Timespec, mtime: ?Timespec): void | core.SyscallError {
-    $a_ts: Timespec = Timespec{ tv_sec: 0, tv_nsec: UTIME_OMIT };
+    $a_ts = Timespec{ tv_sec: 0, tv_nsec: UTIME_OMIT };
     @if (atime != null) {
         a_ts = atime;
     }
-    $m_ts: Timespec = Timespec{ tv_sec: 0, tv_nsec: UTIME_OMIT };
+    $m_ts = Timespec{ tv_sec: 0, tv_nsec: UTIME_OMIT };
     @if (mtime != null) {
         m_ts = mtime;
     }
-    $pair: TimePair = TimePair{ atime: a_ts, mtime: m_ts };
+    $pair = TimePair{ atime: a_ts, mtime: m_ts };
     @if (c.futimens(@as(i32, fd), &pair) != 0) {
         return core.last_error();
     }

@@ -56,7 +56,7 @@ pub @func main() {
     }
 
     # futimens / utimensat
-    $ts: stat.Timespec = stat.Timespec{ tv_sec: 1700000000, tv_nsec: 0 };
+    $ts = stat.Timespec{ tv_sec: 1700000000, tv_nsec: 0 };
     _ = stat.utimensat(stat.AT_FDCWD, test_file, ts, ts, 0)?;
     $time_st = stat.stat(test_file)?;
     $atim = time_st.st_atim;

@@ -110,9 +110,9 @@ pub @func main() {
     print(sa_align);
 
     # Live call to libc stat
-    $ts0: Timespec = Timespec{ tv_sec: 0, tv_nsec: 0 };
+    $ts0 = Timespec{ tv_sec: 0, tv_nsec: 0 };
     $pad3 = @zeroed([3]i64);
-    $st: Stat = Stat{
+    $st = Stat{
         st_dev: 0,
         st_ino: 0,
         st_nlink: 0,
