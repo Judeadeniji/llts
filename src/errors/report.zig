@@ -94,7 +94,7 @@ pub fn reportNote(
         .line = line,
         .column = column,
         .message = message,
-    });
+    }, path);
 }
 
 pub fn reportLocationFrame(path: []const u8, line: u32, name: []const u8) void {

@@ -84,7 +84,7 @@ pub fn printDiagnostic(
     printExcerpt(source, line, column);
 
     for (notes) |n| {
-        printNote(n);
+        printNote(n, path);
     }
 
     for (frames) |f| {
@@ -105,10 +105,16 @@ pub fn printDiagnostic(
 
 /// Render a `note:` block with its own source excerpt, indented so it reads
 /// as context belonging to the diagnostic above it.
-pub fn printNote(note: Note) void {
+pub fn printNote(note: Note, owner_path: []const u8) void {
     const c_note = color.paint(color.bold ++ color.bright_cyan);
     const r = color.r();
     out.printStderr("    {s}note{s}: {s}\n", .{ c_note, r, note.message });
+    // Name the file when the note lives somewhere other than the reported
+    // diagnostic, so an excerpt from another module is not mistaken for one
+    // of the current file's lines.
+    if (note.path.len > 0 and !std.mem.eql(u8, note.path, owner_path)) {
+        out.printStderr("    at {s}:{d}:{d}\n", .{ note.path, note.line, note.column });
+    }
     printExcerpt(note.source, note.line, note.column);
 }
 
