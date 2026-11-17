@@ -70,15 +70,16 @@ which entries below are marked `[!]`.
    Native emitter renders as Zig `extern struct` preserving declaration order and C ABI layout.
 2. **[RESOLVED] `@sizeOf` disagrees with the backend.** Compiler layout calculates exact C ABI
    size and alignment, and `@sizeOf` / `@alignOf` match native Zig `extern struct` sizes.
-3. **No function-pointer types.** `fn(...)` is rejected in type position, so no
-   callbacks: `signal`, `sigaction`, `atexit`, `on_exit`, `scandir`, `qsort`,
-   `timer_create`, `pthread_atfork`.
+3. **Function pointers rejected in extern signatures.** `@func(...)` works as a
+   value type, but extern parameters only accept scalars, `c_str`, and pointers,
+   so callbacks (`signal`, `sigaction`, `atexit`, `scandir`, `timer_create`)
+   still need compiler support.
 4. **No double indirection (`**T`).** Blocks `exec*` argument vectors,
    `getaddrinfo`, `posix_memalign`, and any C API that allocates through an
    out-pointer.
-5. **No scalar pointers (`*i32`).** Out-parameters for scalars need a
-   workaround (for example a pointer to a one-element array) or a language
-   feature. `stat`-style struct pointers are covered by blocker 1.
+5. **[RESOLVED] Scalar pointers (`*i32`).** Scalar pointers work in extern
+   signatures and expressions; the `IntCell`/`IdCell` wrapper structs remain as
+   harmless ABI helpers.
 6. **No pointer arithmetic or pointer casts.** Blocks generic `sockaddr`
    handling, walking `dirent` buffers, and returning borrowed C memory as
    slices.
@@ -89,10 +90,9 @@ which entries below are marked `[!]`.
 8. **Struct arrays in literals.** Array fields can only be initialized from a
    named temporary today; inline `[N]u8{...}` is rejected. This is an
    ergonomics issue once blocker 1 is fixed.
-9. **Variadic externs.** glibc variadic entry points (`open`, `fcntl`, `ioctl`,
-   `prctl`, `syscall`) are declared with fixed extra parameters. This works for
-   fixed-arity uses but needs verification per call and cannot model true
-   varargs.
+9. **Variadic externs.** True varargs are supported and used by `ioctl` and
+   `syscall`; fixed-arity entry points (`open`, `fcntl`, `prctl`) are still
+   declared with their concrete trailing parameters.
 10. **Resolved enum members and imported extern types** were fixed on this
     branch and are prerequisites for the modules above.
 
@@ -105,8 +105,7 @@ which entries below are marked `[!]`.
 - `[x]` `seek` (`lseek`)
 - `[x]` `ftruncate` as `truncate_file`
 - `[x]` `pread`, `pwrite`
-- `[ ]` `readv`, `writev`, `preadv`, `pwritev`, `preadv2`, `pwritev2` (`[!]`
-  `iovec` layout)
+- `[x]` `readv`, `writev`, `preadv`, `pwritev`, `preadv2`, `pwritev2`
 - `[x]` `truncate`
 - `[x]` `fsync`, `fdatasync`, `sync`, `syncfs`
 - `[x]` `dup`, `dup2`, `dup3`
@@ -117,10 +116,10 @@ which entries below are marked `[!]`.
 - `[x]` `fcntl` (`F_GETFD`, `F_SETFD`, `F_GETFL`, `F_SETFL`, `F_DUPFD`,
   `F_DUPFD_CLOEXEC`, `F_GETPIPE_SZ`, `F_SETPIPE_SZ`; record locks are under
   locking)
-- `[ ]` `ioctl` (fixed-arity request wrappers only; request structs need
-  blocker 1)
+- `[x]` `ioctl` (variadic extern; typed wrappers for `TIOCGWINSZ`,
+  `TIOCSWINSZ`, `FIONREAD`)
 - `[x]` `getdtablesize` (as `descriptor_table_size`)
-- `[ ]` `vhangup`, `revoke`, `profil`
+- `[x]` `vhangup`, `revoke`, `profil`
 
 ## Opening and creation (`io.lls`)
 
@@ -158,11 +157,12 @@ which entries below are marked `[!]`.
 
 ## Directories (`dir.lls`)
 
-- `[!]` `opendir`, `fdopendir`, `closedir`, `readdir`, `readdir_r`
-  (`struct dirent` layout)
-- `[ ]` `rewinddir`, `seekdir`, `telldir`, `dirfd`
+- `[x]` `opendir`, `fdopendir`, `closedir`, `readdir` (`readdir_r` omitted:
+  deprecated by glibc)
+- `[x]` `rewinddir`, `seekdir`, `telldir`, `dirfd`
 - `[!]` `scandir`, `scandirat`, `alphasort`, `versionsort` (callbacks)
-- `[ ]` `getdirentries` (raw `getdents64` has no glibc wrapper)
+- `[x]` `getdirentries` (glibc wrapper; raw `getdents64` also available via
+  the syscall escape hatch)
 
 ## Process identity and control (`process.lls`)
 
@@ -173,7 +173,7 @@ which entries below are marked `[!]`.
 - `[x]` `setuid`, `seteuid`, `setgid`, `setegid`
 - `[x]` `setreuid`, `setregid`, `setresuid`, `setresgid`
 - `[x]` `getresuid`, `getresgid`
-- `[ ]` `getgroups`, `setgroups`, `initgroups`, `getgrouplist`
+- `[x]` `getgroups`, `setgroups`, `initgroups`, `getgrouplist`
 - `[x]` `getsid`, `setsid`, `getpgid`, `setpgid`, `getpgrp`, `setpgrp`
 - `[!]` `getlogin`, `getlogin_r` (blocker 7)
 - `[x]` `daemon`
@@ -197,14 +197,14 @@ which entries below are marked `[!]`.
   `gsignal`, `siginterrupt`, `sigset`, `sighold`, `sigrelse`, `sigignore`,
   `sigpause`, `sigstack` (callbacks or legacy C-only interfaces)
 - `[x]` `kill`, `killpg`, `raise`
-- `[ ]` `sigqueue` (needs `union sigval`; check union support first)
-- `[!]` `sigemptyset`, `sigfillset`, `sigaddset`, `sigdelset`,
-  `sigismember`, `sigandset`, `sigorset`, `sigisemptyset` (`sigset_t` is a
-  struct; choose an explicit bitset type in the wrapper instead)
-- `[ ]` `sigprocmask`, `sigpending`, `sigsuspend`, `sigwait`, `sigwaitinfo`,
+- `[x]` `sigqueue` (`union sigval` passed as its pointer-sized `i64` payload)
+- `[x]` `sigemptyset`, `sigfillset`, `sigaddset`, `sigdelset`,
+  `sigismember`, `sigandset`, `sigorset`, `sigisemptyset` (explicit `SigSet`
+  bitset type with `sigset_*` helpers)
+- `[x]` `sigprocmask`, `sigpending`, `sigsuspend`, `sigwait`, `sigwaitinfo`,
   `sigtimedwait`
-- `[ ]` `sigaltstack`
-- `[ ]` `psignal`, `psiginfo`
+- `[x]` `sigaltstack`
+- `[x]` `psignal`, `psiginfo`
 - `[ ]` `sigreturn` (raw only; not useful from a libc wrapper)
 - `[!]` `signalfd` (struct layout plus a readable fd type)
 
@@ -216,9 +216,8 @@ which entries below are marked `[!]`.
 - `[!]` `getitimer`, `setitimer`
 - `[!]` `timer_create`, `timer_delete`, `timer_settime`, `timer_gettime`,
   `timer_getoverrun` (callback in `sigevent`)
-- `[ ]` `adjtime`
-- `[ ]` `mktime`, `timegm`, `timelocal`, `difftime`, `tzset` (libc date math,
-  not syscalls; include only if the time module grows that scope)
+- `[x]` `adjtime`
+- `[x]` `mktime`, `timegm`, `timelocal`, `difftime`, `tzset` (libc date math)
 - `[!]` `strftime`, `strptime`, `localtime`, `gmtime`, `ctime`, `asctime`
   (formatting/locale, out of scope for the syscall layer)
 
@@ -227,7 +226,7 @@ which entries below are marked `[!]`.
 - `[x]` `mmap`, `munmap`, `mprotect`, `mremap`, `msync`
 - `[x]` `madvise`, `posix_madvise`
 - `[x]` `mlock`, `munlock`, `mlockall`, `munlockall`
-- `[ ]` `brk`, `sbrk` (legacy; only if needed)
+- `[x]` `brk`, `sbrk` (legacy, exported for completeness)
 - `[x]` `getpagesize`, `sysconf(_SC_PAGESIZE)`
 - `[!]` `posix_memalign` (blocker 4)
 - `[x]` `memfd_create`
@@ -240,16 +239,15 @@ which entries below are marked `[!]`.
 
 ## Sockets (`socket.lls`)
 
-Every address-taking call is `[!]` until blocker 1 is fixed; `sockaddr` also
-needs a tagged LLTS address type instead of exposing the C union.
-
-- `[!]` `socket`, `socketpair`
-- `[!]` `bind`, `connect`, `listen`, `accept`, `accept4`, `shutdown`
-- `[!]` `send`, `recv`, `sendto`, `recvfrom`
-- `[!]` `sendmsg`, `recvmsg`, `sendmmsg`, `recvmmsg` (`msghdr` layout)
-- `[!]` `getsockname`, `getpeername`
-- `[!]` `getsockopt`, `setsockopt`
-- `[!]` `sockatmark`, `isfdtype`
+- `[x]` `socket`
+- `[ ]` `socketpair`
+- `[x]` `bind`, `connect`, `listen`, `accept`, `shutdown`
+- `[ ]` `accept4`, `sendto`, `recvfrom`
+- `[x]` `send`, `recv`
+- `[ ]` `sendmsg`, `recvmsg`, `sendmmsg`, `recvmmsg` (`msghdr` layout)
+- `[x]` `getsockname`, `getpeername`
+- `[ ]` `getsockopt`, `setsockopt`
+- `[ ]` `sockatmark`, `isfdtype`
 - `[!]` `getaddrinfo`, `freeaddrinfo`, `getnameinfo`, `gai_strerror`
   (blocker 4; libc resolver, not a direct syscall)
 
@@ -260,9 +258,9 @@ nominal struct with constructors rather than a raw `sockaddr`, and
 
 ## Readiness and polling (`poll.lls`)
 
-- `[!]` `select`, `pselect` (`fd_set` layout)
+- `[ ]` `select`, `pselect` (`fd_set` is a fixed bitset, now expressible)
 - `[x]` `poll` (with `poll_one` and slice `poll`; `pollfd` layout)
-- `[!]` `ppoll` (`pollfd` layout; signal mask needs sigset)
+- `[ ]` `ppoll` (`pollfd` layout and `SigSet` are now available)
 - `[!]` `epoll_create`, `epoll_create1`, `epoll_ctl`, `epoll_wait`,
   `epoll_pwait`, `epoll_pwait2` (event struct layout)
 
@@ -286,7 +284,6 @@ need caller buffers and `**` out-pointers.
 - `[!]` `getgrnam`, `getgrgid`, `getgrent`, `fgetgrent`
 - `[!]` `getgrnam_r`, `getgrgid_r`, `getgrent_r`, `fgetgrent_r`
 - `[!]` `setgrent`, `endgrent`, `putgrent`
-- `[!]` `getgrouplist`, `initgroups`
 
 ## Terminals (`term.lls`)
 
@@ -364,8 +361,9 @@ Privileged operations; keep them in one submodule with explicit
 
 ## Raw escape hatch (`std/syscall.lls`)
 
-- `[ ]` `syscall(number, ...)` behind a nominal `SyscallNumber` enum, so
-  unwrapped Linux entry points are still reachable without importing libc.
+- `[x]` `syscall(number, ...)` behind a nominal `SyscallNumber` struct, with
+  `syscall0`…`syscall5` arity helpers and `SYS_*` constants, so unwrapped
+  Linux entry points are still reachable without importing libc.
 - Not every one of the 384 entries in `asm/unistd_64.h` has a glibc wrapper;
   `syscall` is the only way to reach the rest from this library.
 
