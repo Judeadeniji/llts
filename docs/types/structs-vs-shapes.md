@@ -44,14 +44,30 @@ the compiler applies.
 }
 
 pub @func main() {
-    $p = Point { x: 1.0, y: 2.0 };
-    print(p.x, p.y);
+    # 1. Inferred binding with named constructor
+    $a = Point { x: 1.0, y: 2.0 };
+
+    # 2. Annotated binding with target-typed bare literal
+    $b: Point = { x: 3.0, y: 4.0 };
+
+    # Discouraged: redundant "double typing"
+    # $c: Point = Point { x: 5.0, y: 6.0 };
+
+    print(a.x, b.x);
 }
 ```
 
 A struct declaration is a nominal type declaration. It is **not** followed by a
 semicolon. Fields are declared by name and type; methods may be declared in the
 same body.
+
+When instantiating a struct, LLTS encourages clean, single-point typing:
+- Use an **inferred binding with a named constructor** (`$a = Point { ... }`), or
+- Use an **annotated binding with a target-typed literal** (`$b: Point = { ... }`).
+
+Repeating the type on both sides (`$c: Point = Point { ... }`) is referred to as
+**double typing**; while parsed, it is redundant boilerplate and discouraged in
+idiomatic LLTS code.
 
 ### Anonymous shapes
 
@@ -77,8 +93,9 @@ A named shape is a `@type` whose underlying type is a shape:
 ```lls
 @type Vector2 = { x: f64; y: f64; };
 
-$v: Vector2 = Vector2 { x: 1.0, y: 2.0 };
-$w: Vector2 = { x: 3.0, y: 4.0 }; # bare literal accepted
+$v = Vector2 { x: 1.0, y: 2.0 };  # inferred from named constructor
+$w: Vector2 = { x: 3.0, y: 4.0 };  # target-typed bare literal
+# Avoid double typing: $bad: Vector2 = Vector2 { ... };
 ```
 
 The trailing semicolon is required for `@type`. A named shape is a distinct
@@ -127,6 +144,25 @@ show(p); # compile error: 'Point' is not assignable to '{x: f64; y: f64}'
 rejected, and casting a struct to a shape is rejected. If you need a nominal
 type with a structural interface, use a shape (or a named shape) rather than a
 struct.
+
+#### Target-Typed Literals vs. Shape Value Assignment
+
+A common source of confusion is why `$a: MyStruct = { value: "hello" };` compiles if shapes are not assignable to structs:
+
+```lls
+@struct MyStruct { value: string; }
+
+# 1. Target-typed bare literal: compiles
+$a: MyStruct = { value: "hello" };
+
+# 2. Shape value assignment: fails at compile time
+$s = { value: "hello" }; # inferred as anonymous shape { value: string }
+# $b: MyStruct = s;      # COMPILE ERROR: '{value: string}' is not assignable to 'MyStruct'
+```
+
+- **Target-Typed Literal:** In `$a: MyStruct = { ... }`, the bare literal `{ ... }` has no independent type of its own; the compiler uses contextual target typing (`inferInitAgainstType`) to check the fields directly against `MyStruct` and instantiate the struct in place. An anonymous shape is **never created**.
+- **Shape Value Assignment:** Once an expression is typed as an anonymous shape (such as `$s = { ... }`), that value carries structural identity. Assigning a shape value to a nominal struct is strictly forbidden by the type system.
+- **Function Call Arguments:** In an argument position like `foo({ value: "hello" })`, a bare literal infers as an anonymous shape. When the parameter requires a nominal struct, you must use the explicit constructor: `foo(MyStruct { value: "hello" })`.
 
 ### 3.2 Anonymous shapes are structural
 

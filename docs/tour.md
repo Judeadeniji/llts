@@ -241,6 +241,9 @@ pub @func main() {
 }
 ```
 
+> [!TIP]
+> **Idiomatic Struct Instantiation:** In LLTS, name the type only once: either infer the binding from the constructor (`$v = Vector2 { ... }`) or annotate the binding and use a target-typed bare literal (`$v: Vector2 = { ... }`). Avoid redundant "double typing" (`$v: Vector2 = Vector2 { ... }`).
+
 ### Enums
 Enums define closed sets of named variants:
 

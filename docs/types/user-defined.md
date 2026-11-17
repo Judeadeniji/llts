@@ -9,18 +9,49 @@ LLTS supports several mechanisms for defining custom data types: nominal structs
 Structs are nominal aggregate data types that group named fields and associate methods with an explicit memory layout.
 
 ### Declaration and Instantiation
+
+A struct declaration is nominal and is not terminated by a semicolon. Fields are declared with `name: type;`.
+
 ```lls
 @struct Point {
     x: f64;
     y: f64;
 }
-
-pub @func main() {
-    # Initializing struct fields by name
-    $pt = Point { x: 3.0, y: 4.0 };
-    print(pt.x, pt.y);
-}
 ```
+
+LLTS provides two idiomatic ways to instantiate a struct:
+
+1. **Inferred binding with named constructor:**
+   Omit the variable type annotation and explicitly name the struct on the literal constructor. The binding's type is inferred from the expression:
+   ```lls
+   $a = Point { x: 3.0, y: 4.0 };
+   ```
+
+2. **Annotated binding with target-typed literal:**
+   Annotate the variable binding explicitly and use a bare struct literal `{ ... }` without repeating the type name. The compiler uses target typing to instantiate the nominal struct:
+   ```lls
+   $b: Point = { x: 3.0, y: 4.0 };
+   ```
+   Target typing also applies when returning a struct from a function:
+   ```lls
+   @func origin(): Point {
+       return { x: 0.0, y: 0.0 };
+   }
+   ```
+
+#### Avoiding "Double Typing"
+
+Repeating the type on both the binding and the constructor is discouraged:
+
+```lls
+# Bad: redundant double typing
+# $c: Point = Point { x: 3.0, y: 4.0 };
+```
+
+While grammatically accepted by the parser, double typing is redundant boilerplate. It adds visual clutter without providing any extra safety or semantic information over the two idiomatic forms above. Always prefer either an inferred binding with a named constructor (`$a = Point { ... }`) or an annotated binding with a bare literal (`$b: Point = { ... }`).
+
+> [!NOTE]
+> **Target-Typing vs. Assigning a Shape:** Writing `$b: Point = { x: 3.0, y: 4.0 };` is **not** assigning a structural shape to a nominal struct. The bare literal `{ ... }` has no independent type; the compiler uses contextual target typing to instantiate `Point` directly. In contrast, assigning an already-inferred shape value to a struct (`$s = { x: 3.0, y: 4.0 }; $p: Point = s;`) is strictly forbidden and rejected at compile time. See [Structs vs. Shapes](structs-vs-shapes.md#target-typed-literals-vs-shape-value-assignment) for details.
 
 ### Methods & Receiver Semantics
 Methods are declared inside the `@struct` body using `@func`. The first parameter is always the receiver (`self`):

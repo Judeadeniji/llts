@@ -64,6 +64,36 @@ $buffer: [4]u8 = [0, 0, 0, 0];
 
 If the initializer value does not match or cannot implicitly widen to the annotated type, the compiler issues a compile-time type mismatch error.
 
+### Struct Instantiation & Avoiding "Double Typing"
+
+When instantiating structs or named records, LLTS's target typing and type inference ensure you only need to name the type once. There are two idiomatic patterns:
+
+1. **Named Constructor (Type-Inferred Binding):**
+   ```lls
+   $a = Point { x: 10, y: 20 };
+   ```
+   The binding's type is inferred directly from the constructor expression.
+
+2. **Target-Typed Literal (Annotated Binding):**
+   ```lls
+   $b: Point = { x: 10, y: 20 };
+   ```
+   The variable's annotation provides the type, allowing the literal `{ ... }` to omit the struct name. The compiler target-types the fields directly into the struct.
+
+#### Why Double Typing is Discouraged
+
+Repeating the type name on both sides of the `=` operator:
+
+```lls
+# Bad / Discouraged: redundant double typing
+# $c: Point = Point { x: 10, y: 20 };
+```
+
+While syntactically valid, this pattern is considered bad practice in LLTS. It creates unnecessary repetition and visual noise without adding any safety or type information beyond what Option 1 or Option 2 already provides. Choose one style or the other, and never double-type.
+
+> [!NOTE]
+> Bare literals in `$b: Point = { ... }` are resolved via contextual target typing. This is **not** structural subtyping: an actual shape value (`$s = { ... }; $b: Point = s;`) cannot be assigned to a nominal struct. See [Structs vs. Shapes](types/structs-vs-shapes.md#target-typed-literals-vs-shape-value-assignment) for full details.
+
 ---
 
 ## Immutable Constants: `@const`
