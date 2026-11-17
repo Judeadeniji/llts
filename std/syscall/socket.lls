@@ -10,9 +10,14 @@
 @const $core = @import("std/syscall/core");
 @const $std = @import("std/core");
 
-# Re-exported socket address aggregates
+# Re-exported socket address and message aggregates
 pub @alias SockaddrIn = c.SockaddrIn;
 pub @alias Sockaddr = c.Sockaddr;
+pub @alias Iovec = c.Iovec;
+pub @alias Msghdr = c.Msghdr;
+pub @alias Mmghdr = c.Mmghdr;
+pub @alias SocketPair = c.IntPair;
+pub @alias Timespec = c.Timespec;
 
 # Return value for `accept` containing descriptor and client address
 pub @struct AcceptedSocket {
@@ -47,6 +52,29 @@ pub @const $IPPROTO_UDP: i32 = 17;
 
 # Special IPv4 addresses
 pub @const $INADDR_ANY: u32 = 0;
+
+# Generic socket option levels
+pub @const $SOL_SOCKET: i32 = 1;
+pub @const $SOL_IP: i32 = 0;
+pub @const $SOL_TCP: i32 = 6;
+
+# Common SOL_SOCKET options
+pub @const $SO_REUSEADDR: i32 = 2;
+pub @const $SO_TYPE: i32 = 3;
+pub @const $SO_ERROR: i32 = 4;
+pub @const $SO_SNDBUF: i32 = 7;
+pub @const $SO_RCVBUF: i32 = 8;
+pub @const $SO_KEEPALIVE: i32 = 9;
+pub @const $SO_REUSEPORT: i32 = 15;
+
+# TCP options
+pub @const $TCP_NODELAY: i32 = 1;
+
+# Message flags
+pub @const $MSG_PEEK: i32 = 2;
+pub @const $MSG_DONTWAIT: i32 = 64;
+pub @const $MSG_WAITALL: i32 = 256;
+pub @const $MSG_NOSIGNAL: i32 = 16384;
 
 # Convert a 16-bit integer from host byte order to network byte order (big-endian).
 pub @func htons(val: u16): u16 {
@@ -204,4 +232,173 @@ pub @func getpeername(sockfd: core.Fd): SockaddrIn | core.SyscallError {
         return core.last_error();
     }
     return addr;
+}
+
+# Create a pair of connected sockets in `domain` (typically `AF_UNIX`).
+pub @func socketpair(domain: i32, socket_type: i32, protocol: i32): SocketPair | core.SyscallError {
+    $sv = c.IntPair { first: -1, second: -1 };
+    @if (c.socketpair(domain, socket_type, protocol, &sv) != 0) {
+        return core.last_error();
+    }
+    return sv;
+}
+
+# Accept a connection with extra creation `flags` (for example `SOCK_CLOEXEC`).
+pub @func accept4(sockfd: core.Fd, flags: i32): AcceptedSocket | core.SyscallError {
+    $addr = @zeroed(SockaddrIn);
+    $addrlen: u32 = @as(u32, @sizeOf(SockaddrIn));
+    $raw = c.accept4(@as(i32, sockfd), &addr, &addrlen, flags);
+    @if (raw < 0) {
+        return core.last_error();
+    }
+    return AcceptedSocket {
+        fd: @as(core.Fd, raw),
+        address: addr,
+    };
+}
+
+# Send a datagram to `addr` on unconnected socket `sockfd`.
+pub @func sendto(sockfd: core.Fd, buf: []const u8, flags: i32, addr: SockaddrIn): usize | core.SyscallError {
+    $len = std.len(buf);
+    @if (len == 0) {
+        return 0;
+    }
+    $dest: SockaddrIn = addr;
+    $addrlen: u32 = @as(u32, @sizeOf(SockaddrIn));
+    $n = c.sendto(@as(i32, sockfd), buf, len, flags, &dest, addrlen);
+    @if (n < 0) {
+        return core.last_error();
+    }
+    return @as(usize, n);
+}
+
+# A received datagram: byte count plus the sender's IPv4 address.
+pub @struct Datagram {
+    size: usize;
+    address: SockaddrIn;
+}
+
+# Receive a datagram and its source address from `sockfd`.
+pub @func recvfrom(sockfd: core.Fd, buf: []u8, flags: i32): Datagram | core.SyscallError {
+    $len = std.len(buf);
+    @if (len == 0) {
+        return core.SyscallError.InvalidArgument;
+    }
+    $addr = @zeroed(SockaddrIn);
+    $addrlen: u32 = @as(u32, @sizeOf(SockaddrIn));
+    $n = c.recvfrom(@as(i32, sockfd), buf, len, flags, &addr, &addrlen);
+    @if (n < 0) {
+        return core.last_error();
+    }
+    return Datagram {
+        size: @as(usize, n),
+        address: addr,
+    };
+}
+
+# Send a scatter/gather message, optionally to an explicit destination.
+pub @func sendmsg(sockfd: core.Fd, name: ?SockaddrIn, iov: []Iovec, flags: i32): usize | core.SyscallError {
+    $count = std.len(iov);
+    @if (count == 0) {
+        return 0;
+    }
+    $addr = @zeroed(SockaddrIn);
+    $addr_ptr: ?*SockaddrIn = null;
+    $addr_len: u32 = 0;
+    @if (name != null) {
+        addr = name;
+        addr_ptr = &addr;
+        addr_len = @as(u32, @sizeOf(SockaddrIn));
+    }
+    $msg = Msghdr {
+        msg_name: addr_ptr,
+        msg_namelen: addr_len,
+        msg_iov: &iov[0],
+        msg_iovlen: count,
+        msg_control: null,
+        msg_controllen: 0,
+        msg_flags: flags,
+    };
+    $n = c.sendmsg(@as(i32, sockfd), &msg, flags);
+    @if (n < 0) {
+        return core.last_error();
+    }
+    return @as(usize, n);
+}
+
+# Receive a message into the buffers described by `message`.
+pub @func recvmsg(sockfd: core.Fd, message: *Msghdr, flags: i32): usize | core.SyscallError {
+    $n = c.recvmsg(@as(i32, sockfd), message, flags);
+    @if (n < 0) {
+        return core.last_error();
+    }
+    return @as(usize, n);
+}
+
+# Send a vector of messages in one call. Returns the number sent.
+pub @func sendmmsg(sockfd: core.Fd, messages: []Mmghdr, flags: i32): i32 | core.SyscallError {
+    $count = std.len(messages);
+    @if (count == 0) {
+        return 0;
+    }
+    $raw = c.sendmmsg(@as(i32, sockfd), &messages[0], @as(u32, count), flags);
+    @if (raw < 0) {
+        return core.last_error();
+    }
+    return raw;
+}
+
+# Receive up to `len(messages)` messages, waiting at most `timeout`.
+pub @func recvmmsg(sockfd: core.Fd, messages: []Mmghdr, flags: i32, timeout: ?Timespec): i32 | core.SyscallError {
+    $count = std.len(messages);
+    @if (count == 0) {
+        return 0;
+    }
+    $tmo: ?*Timespec = null;
+    $value = @zeroed(Timespec);
+    @if (timeout != null) {
+        value = timeout;
+        tmo = &value;
+    }
+    $raw = c.recvmmsg(@as(i32, sockfd), &messages[0], @as(u32, count), flags, tmo);
+    @if (raw < 0) {
+        return core.last_error();
+    }
+    return raw;
+}
+
+# Read an integer socket option value.
+pub @func socket_option(sockfd: core.Fd, level: i32, name: i32): i32 | core.SyscallError {
+    $value: i32 = 0;
+    $len: u32 = @as(u32, @sizeOf(i32));
+    @if (c.getsockopt(@as(i32, sockfd), level, name, &value, &len) != 0) {
+        return core.last_error();
+    }
+    return value;
+}
+
+# Set an integer socket option value.
+pub @func set_socket_option(sockfd: core.Fd, level: i32, name: i32, value: i32): void | core.SyscallError {
+    $v: i32 = value;
+    @if (c.setsockopt(@as(i32, sockfd), level, name, &v, @as(u32, @sizeOf(i32))) != 0) {
+        return core.last_error();
+    }
+}
+
+# Return true when `sockfd` is at the out-of-band data mark.
+pub @func at_out_of_band_mark(sockfd: core.Fd): bool | core.SyscallError {
+    $raw = c.sockatmark(@as(i32, sockfd));
+    @if (raw < 0) {
+        return core.last_error();
+    }
+    return raw == 1;
+}
+
+# Return true when descriptor `fd` refers to an object of the given `S_IF*` type.
+pub @func is_fd_type(fd: core.Fd, fdtype: i32): bool | core.SyscallError {
+    $raw = c.isfdtype(@as(i32, fd), fdtype);
+    @if (raw < 0) {
+        return core.last_error();
+    }
+    return raw == 1;
 }
