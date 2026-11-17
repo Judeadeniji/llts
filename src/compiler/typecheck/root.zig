@@ -1604,6 +1604,47 @@ fn noteStructDecl(state: *state_mod.CompilerState, struct_name: []const u8, comp
     compiler_errors.compileNoteNode(state, node, fmt, args);
 }
 
+/// Note where a struct field's type comes from: the field's own type
+/// annotation in the struct body, and — when that type is itself a struct —
+/// the declaration of that named type too.
+fn noteFieldTypeDecl(state: *state_mod.CompilerState, struct_name: []const u8, field_name: []const u8, expected: ir.Type) void {
+    const def = from_ast.lookupStruct(state, struct_name);
+    const decl: ?*ast.Node = if (def) |d|
+        (state.struct_nodes.get(d.name) orelse state.struct_nodes.get(struct_name))
+    else
+        state.struct_nodes.get(struct_name);
+
+    var annotated = false;
+    if (decl) |node| {
+        if (node.* == .struct_decl) {
+            for (node.struct_decl.fields) |field| {
+                if (!std.mem.eql(u8, field.name, field_name)) continue;
+                if (field.type_annotation) |ann| {
+                    compiler_errors.compileNoteNode(
+                        state,
+                        ann,
+                        "field '{s}' is declared with type '{s}' here",
+                        .{ field_name, ir.displayType(expected) },
+                    );
+                    annotated = true;
+                }
+                break;
+            }
+        }
+    }
+    if (!annotated) noteStructDecl(state, struct_name, "struct '{s}' is declared here", .{ir.cleanTypeName(struct_name)});
+
+    // The field's type may be a named type declared elsewhere; point there so
+    // the reader can see what the value has to look like.
+    const peeled = ir.peelDefined(expected);
+    if (peeled == .struct_) {
+        const type_name = peeled.struct_;
+        if (!std.mem.eql(u8, ir.cleanTypeName(type_name), ir.cleanTypeName(struct_name))) {
+            noteStructDecl(state, type_name, "type '{s}' is declared here", .{ir.cleanTypeName(type_name)});
+        }
+    }
+}
+
 /// Note the enclosing function's declared return type on a return mismatch.
 fn noteDeclaredReturn(state: *state_mod.CompilerState, env: *Env, ret: ir.Type) void {
     const fn_name = env.current_fn orelse return;
@@ -2384,7 +2425,7 @@ fn inferAssignmentExpr(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAl
                 // features (hover) can resolve assignment targets.
                 try recordExprType(state, a.left, ft);
                 requireAssignFrom(state, val, ft, "assignment to field", a.right) catch |err| {
-                    noteStructDecl(state, sname, "struct '{s}' is declared here", .{ir.cleanTypeName(sname)});
+                    noteFieldTypeDecl(state, sname, mem.property.primary.name, ft);
                     return err;
                 };
             } else if (ir.shapeFieldsOf(obj)) |shape_fields| {
@@ -4216,7 +4257,7 @@ fn checkInitAgainstStruct(
         var ctx_buf: [128]u8 = undefined;
         const ctx = std.fmt.bufPrint(&ctx_buf, "Field '{s}' of '{s}'", .{ field.name, ir.cleanTypeName(struct_name) }) catch "Field";
         if (!try assignRec(state, got, expected, ctx, field.value)) {
-            noteStructDecl(state, struct_name, "struct '{s}' is declared here", .{ir.cleanTypeName(struct_name)});
+            noteFieldTypeDecl(state, struct_name, field.name, expected);
             failed = true;
         }
     }
