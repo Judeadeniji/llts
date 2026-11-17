@@ -57,6 +57,13 @@ pub @enum SeekWhence {
     End = 2,
 }
 
+# Per-call flags for `preadv2` and `pwritev2`.
+pub @const $RWF_HIPRI: i32 = 1;
+pub @const $RWF_DSYNC: i32 = 2;
+pub @const $RWF_SYNC: i32 = 4;
+pub @const $RWF_NOWAIT: i32 = 8;
+pub @const $RWF_APPEND: i32 = 16;
+
 # Advice values for `posix_fadvise`.
 pub @enum Advice {
     Normal = 0,
@@ -217,6 +224,32 @@ pub @func pwritev(fd: core.Fd, iov: []Iovec, offset: i64): usize | core.SyscallE
         return 0;
     }
     $n = c.pwritev(@as(i32, fd), &iov[0], count, offset);
+    @if (n < 0) {
+        return core.last_error();
+    }
+    return @as(usize, n);
+}
+
+# Read into multiple buffers at `offset` with per-call `RWF_*` flags.
+pub @func preadv2(fd: core.Fd, iov: []Iovec, offset: i64, flags: i32): usize | core.SyscallError {
+    $count = @as(i32, std.len(iov));
+    @if (count == 0) {
+        return 0;
+    }
+    $n = c.preadv2(@as(i32, fd), &iov[0], count, offset, flags);
+    @if (n < 0) {
+        return core.last_error();
+    }
+    return @as(usize, n);
+}
+
+# Write from multiple buffers at `offset` with per-call `RWF_*` flags.
+pub @func pwritev2(fd: core.Fd, iov: []Iovec, offset: i64, flags: i32): usize | core.SyscallError {
+    $count = @as(i32, std.len(iov));
+    @if (count == 0) {
+        return 0;
+    }
+    $n = c.pwritev2(@as(i32, fd), &iov[0], count, offset, flags);
     @if (n < 0) {
         return core.last_error();
     }
@@ -402,6 +435,71 @@ pub @func descriptor_table_size(): i32 {
 # Alias for `descriptor_table_size`.
 pub @func getdtablesize(): i32 {
     return c.getdtablesize();
+}
+
+# ioctl request numbers supported by the typed wrappers below.
+pub @const $TIOCGWINSZ: u64 = 0x5413;
+pub @const $TIOCSWINSZ: u64 = 0x5414;
+pub @const $FIONREAD: u64 = 0x541B;
+
+# Re-exported terminal window size aggregate for `winsize`/`set_winsize`.
+pub @alias Winsize = c.Winsize;
+
+# Return the window size of terminal `fd`.
+pub @func winsize(fd: core.Fd): Winsize | core.SyscallError {
+    $ws = @zeroed(Winsize);
+    @if (c.ioctl(@as(i32, fd), TIOCGWINSZ, &ws) != 0) {
+        return core.last_error();
+    }
+    return ws;
+}
+
+# Set the window size of terminal `fd`.
+pub @func set_winsize(fd: core.Fd, ws: Winsize): void | core.SyscallError {
+    $value: Winsize = ws;
+    @if (c.ioctl(@as(i32, fd), TIOCSWINSZ, &value) != 0) {
+        return core.last_error();
+    }
+}
+
+# Return the number of bytes immediately available to read from `fd`.
+pub @func pending_bytes(fd: core.Fd): i32 | core.SyscallError {
+    $cell = c.IntCell{ value: 0 };
+    @if (c.ioctl(@as(i32, fd), FIONREAD, &cell) != 0) {
+        return core.last_error();
+    }
+    return cell.value;
+}
+
+# Hang up the current terminal, if the process has one and CAP_SYS_TTY_CONFIG.
+pub @func vhangup(): void | core.SyscallError {
+    @if (c.vhangup() != 0) {
+        return core.last_error();
+    }
+}
+
+# Revoke access to the terminal device at `path`.
+pub @func revoke(path: string): void | core.SyscallError {
+    $buf = core.path_buffer(path)?;
+    defer c.free(buf);
+    @if (c.revoke(buf) != 0) {
+        return core.last_error();
+    }
+}
+
+# Enable execution profiling into `buffer`; an empty buffer disables profiling.
+# `offset` and `scale` map the program counter range onto the buffer.
+pub @func profil(buffer: []u8, offset: usize, scale: u32): void | core.SyscallError {
+    $base: ?*u8 = null;
+    $size: usize = 0;
+    $len: usize = @as(usize, std.len(buffer));
+    @if (len > 0) {
+        base = &buffer[0];
+        size = len;
+    }
+    @if (c.profil(base, size, offset, scale) != 0) {
+        return core.last_error();
+    }
 }
 
 # Transfer up to `count` bytes between file descriptors inside the kernel.

@@ -1,0 +1,34 @@
+@const $sys = @import("std/syscall");
+
+pub @func main() {
+    $set = sys.signal.sigset_empty();
+    set = sys.signal.sigset_add(set, sys.signal.SIGUSR1)?;
+    print(sys.signal.sigset_contains(set, sys.signal.SIGUSR1)?);
+    print(sys.signal.sigset_is_empty(set));
+
+    $other = sys.signal.sigset_empty();
+    other = sys.signal.sigset_add(other, sys.signal.SIGUSR2)?;
+    $both = sys.signal.sigset_union(set, other);
+    print(sys.signal.sigset_contains(both, sys.signal.SIGUSR2)?);
+    $overlap = sys.signal.sigset_intersection(set, other);
+    print(sys.signal.sigset_is_empty(overlap));
+
+    $old = sys.signal.process_mask(sys.signal.MaskHow.Block, set)?;
+    $me = sys.process.process_id();
+    sys.signal.sigqueue(me, sys.signal.SIGUSR1, 42)?;
+    print(sys.signal.sigwait(set)?);
+
+    sys.signal.sigqueue(me, sys.signal.SIGUSR1, 43)?;
+    $info = sys.signal.sigwaitinfo(set)?;
+    print(info.si_signo);
+
+    $none = sys.signal.sigtimedwait(set, sys.signal.Timespec { tv_sec: 0, tv_nsec: 0 })?;
+    @if (none == null) { print("timeout"); }
+
+    $stack = sys.signal.alt_stack()?;
+    $disabled: i32 = sys.signal.SS_DISABLE;
+    print(stack.ss_flags == disabled);
+
+    _ = sys.signal.process_mask(sys.signal.MaskHow.SetMask, old)?;
+    print("mask-restored");
+}

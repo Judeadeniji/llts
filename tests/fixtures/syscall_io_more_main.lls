@@ -1,0 +1,43 @@
+@const $sys = @import("std/syscall");
+
+pub @func main() {
+    $pipe = sys.io.pipe()?;
+    sys.io.write_all(pipe.write, "hello")?;
+    print(sys.io.pending_bytes(pipe.read)?);
+    $ws = sys.io.winsize(pipe.read);
+    @if (@isError(ws)) { print("no-tty"); }
+    $drain = @zeroed([5]u8);
+    _ = sys.io.read(pipe.read, drain[..])?;
+    sys.io.close(pipe.read)?;
+    sys.io.close(pipe.write)?;
+
+    $path = ".tmpdir/native_io_more.txt";
+    $out = sys.io.open_write(path)?;
+    $a = @zeroed([2]u8);
+    a[0] = 97;
+    a[1] = 98;
+    $b = @zeroed([2]u8);
+    b[0] = 99;
+    b[1] = 100;
+    $iov: [2]sys.io.Iovec = [sys.io.init_iovec(&a[0], 2), sys.io.init_iovec(&b[0], 2)];
+    print(sys.io.pwritev2(out, iov[..], 0, 0)?);
+    sys.io.close(out)?;
+
+    $in = sys.io.open_read(path)?;
+    $ra = @zeroed([2]u8);
+    $rb = @zeroed([2]u8);
+    $riov: [2]sys.io.Iovec = [sys.io.init_iovec(&ra[0], 2), sys.io.init_iovec(&rb[0], 2)];
+    print(sys.io.preadv2(in, riov[..], 0, 0)?);
+    print(ra[0], ra[1], rb[0], rb[1]);
+    print(sys.io.preadv2(in, riov[..], 0, sys.io.RWF_NOWAIT)?);
+    sys.io.close(in)?;
+
+    $empty = @zeroed([1]u8);
+    sys.io.profil(empty[0..0], 0, 0)?;
+    _ = @isError(sys.io.revoke(path));
+    print("revoke-called");
+    _ = @isError(sys.io.vhangup());
+    print("vhangup-called");
+
+    sys.dir.unlink(path)?;
+}

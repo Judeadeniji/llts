@@ -1,0 +1,57 @@
+@const $sys = @import("std/syscall");
+
+pub @func main() {
+    $root = ".tmpdir/native_dir_iter";
+    $a = ".tmpdir/native_dir_iter/a.txt";
+    $b = ".tmpdir/native_dir_iter/b.txt";
+    $c = ".tmpdir/native_dir_iter/c.txt";
+    sys.dir.mkdir(root, sys.dir.DEFAULT_DIR_MODE)?;
+    $fa = sys.io.open_write(a)?;
+    sys.io.close(fa)?;
+    $fb = sys.io.open_write(b)?;
+    sys.io.close(fb)?;
+    $fc = sys.io.open_write(c)?;
+    sys.io.close(fc)?;
+
+    $d = sys.dir.opendir(root)?;
+    $count: i32 = 0;
+    $e = sys.dir.readdir(d)?;
+    @for (e != null) {
+        count = count + 1;
+        e = sys.dir.readdir(d)?;
+    }
+    print(count == 5);
+
+    sys.dir.rewinddir(d);
+    $again: i32 = 0;
+    $e2 = sys.dir.readdir(d)?;
+    @for (e2 != null) {
+        again = again + 1;
+        e2 = sys.dir.readdir(d)?;
+    }
+    print(again == 5);
+
+    sys.dir.rewinddir(d);
+    $first = sys.dir.readdir(d)?;
+    $pos = sys.dir.telldir(d);
+    $second = sys.dir.readdir(d)?;
+    sys.dir.seekdir(d, pos);
+    $third = sys.dir.readdir(d)?;
+    print(first != null);
+    print(second != null);
+    print(third != null);
+
+    $fd = sys.dir.dirfd(d)?;
+    print(fd >= 0);
+    sys.dir.closedir(d)?;
+
+    $raw_fd = sys.io.open(root, @as(i32, sys.io.Access.ReadOnly) | @as(i32, sys.io.OpenFlag.Directory), 0)?;
+    $buf = @zeroed([512]u8);
+    print(sys.dir.getdirentries(raw_fd, buf[..])? > @as(usize, 0));
+    sys.io.close(raw_fd)?;
+
+    sys.dir.unlink(a)?;
+    sys.dir.unlink(b)?;
+    sys.dir.unlink(c)?;
+    sys.dir.rmdir(root)?;
+}

@@ -58,6 +58,15 @@ pub @struct IdCell {
     value: u32;
 }
 
+# One-field scratch cells used where a C API takes an out-pointer to a scalar.
+pub @struct IntCell {
+    value: i32;
+}
+
+pub @struct OffCell {
+    value: i64;
+}
+
 # POSIX timespec aggregate (tv_sec: seconds, tv_nsec: nanoseconds).
 # Used by high-resolution timestamp queries, sleeps, and file touch operations.
 pub @extern "c" @struct Timespec {
@@ -145,6 +154,14 @@ pub @extern "c" @struct Rlimit {
     rlim_max: u64;
 }
 
+# Terminal window size aggregate passed to ioctl(TIOCGWINSZ/TIOCSWINSZ).
+pub @extern "c" @struct Winsize {
+    ws_row: u16;
+    ws_col: u16;
+    ws_xpixel: u16;
+    ws_ypixel: u16;
+}
+
 # Linux x86-64 C ABI struct termios (60 bytes, 4-byte aligned).
 # Terminal control settings passed to tcgetattr() and tcsetattr().
 pub @extern "c" @struct Termios {
@@ -186,6 +203,8 @@ pub @extern "c" @func readv(fd: i32, iov: *Iovec, iovcnt: i32): isize;
 pub @extern "c" @func writev(fd: i32, iov: *Iovec, iovcnt: i32): isize;
 pub @extern "c" @func preadv(fd: i32, iov: *Iovec, iovcnt: i32, offset: i64): isize;
 pub @extern "c" @func pwritev(fd: i32, iov: *Iovec, iovcnt: i32, offset: i64): isize;
+pub @extern "c" @func preadv2(fd: i32, iov: *Iovec, iovcnt: i32, offset: i64, flags: i32): isize;
+pub @extern "c" @func pwritev2(fd: i32, iov: *Iovec, iovcnt: i32, offset: i64, flags: i32): isize;
 pub @extern "c" @func close(fd: i32): i32;
 pub @extern "c" @func lseek(fd: i32, offset: i64, whence: i32): i64;
 pub @extern "c" @func ftruncate(fd: i32, length: i64): i32;
@@ -212,6 +231,14 @@ pub @extern "c" @func closefrom(lowfd: i32): void;
 
 pub @extern "c" @func fcntl(fd: i32, cmd: i32, arg: i64): i64;
 pub @extern "c" @func getdtablesize(): i32;
+
+# Variadic device control. Wrappers pass a typed pointer or scalar exactly as
+# the request expects; no pointer casts are involved.
+pub @extern "c" @func ioctl(fd: i32, request: u64, ...): i32;
+
+pub @extern "c" @func vhangup(): i32;
+pub @extern "c" @func revoke(path: *CBuffer): i32;
+pub @extern "c" @func profil(buffer: ?*u8, bufsiz: usize, offset: usize, scale: u32): i32;
 
 pub @extern "c" @func sendfile(out_fd: i32, in_fd: i32, offset: ?*i64, count: usize): isize;
 pub @extern "c" @func copy_file_range(fd_in: i32, off_in: ?*i64, fd_out: i32, off_out: ?*i64, len: usize, flags: u32): isize;
@@ -247,6 +274,31 @@ pub @extern "c" @func faccessat(dirfd: i32, path: *CBuffer, mode: i32, flags: i3
 pub @extern "c" @func eaccess(path: *CBuffer, mode: i32): i32;
 pub @extern "c" @func euidaccess(path: *CBuffer, mode: i32): i32;
 
+# Opaque libc DIR handle. Only used through a pointer, so its size is not
+# observable by C.
+pub @extern "c" @struct Directory {
+    _opaque: u8;
+}
+
+# Linux x86-64 struct dirent returned by readdir() and getdents64().
+pub @extern "c" @struct Dirent {
+    d_ino: u64;
+    d_off: i64;
+    d_reclen: u16;
+    d_type: u8;
+    d_name: [256]u8;
+}
+
+pub @extern "c" @func opendir(path: *CBuffer): ?*Directory;
+pub @extern "c" @func fdopendir(fd: i32): ?*Directory;
+pub @extern "c" @func readdir(dir: *Directory): ?*Dirent;
+pub @extern "c" @func closedir(dir: *Directory): i32;
+pub @extern "c" @func rewinddir(dir: *Directory): void;
+pub @extern "c" @func seekdir(dir: *Directory, loc: i64): void;
+pub @extern "c" @func telldir(dir: *Directory): i64;
+pub @extern "c" @func dirfd(dir: *Directory): i32;
+pub @extern "c" @func getdirentries(fd: i32, buf: *u8, nbytes: usize, basep: ?*OffCell): isize;
+
 pub @extern "c" @func isatty(fd: i32): i32;
 pub @extern "c" @func getpid(): i32;
 pub @extern "c" @func getppid(): i32;
@@ -264,6 +316,11 @@ pub @extern "c" @func setregid(rgid: u32, egid: u32): i32;
 pub @extern "c" @func setresuid(ruid: u32, euid: u32, suid: u32): i32;
 pub @extern "c" @func setresgid(rgid: u32, egid: u32, sgid: u32): i32;
 
+pub @extern "c" @func getgroups(size: i32, list: ?*u32): i32;
+pub @extern "c" @func setgroups(size: usize, list: ?*u32): i32;
+pub @extern "c" @func initgroups(user: *CBuffer, group: u32): i32;
+pub @extern "c" @func getgrouplist(user: *CBuffer, group: u32, groups: ?*u32, ngroups: *IntCell): i32;
+
 pub @extern "c" @func getsid(pid: i32): i32;
 pub @extern "c" @func setsid(): i32;
 pub @extern "c" @func getpgid(pid: i32): i32;
@@ -280,9 +337,53 @@ pub @extern "c" @func alarm(seconds: u32): u32;
 pub @extern "c" @func sched_yield(): i32;
 
 # Signals
+
+# glibc sigset_t: 1024 signal bits stored as 16 unsigned longs (128 bytes).
+pub @extern "c" @struct SigSet {
+    bits: [16]u64;
+}
+
+# Linux x86-64 siginfo_t is 128 bytes. The leading fields are stable; the rest
+# is an opaque payload union that wrappers do not interpret.
+pub @extern "c" @struct Siginfo {
+    si_signo: i32;
+    si_errno: i32;
+    si_code: i32;
+    __pad: i32;
+    __data: [112]u8;
+}
+
+# POSIX stack_t used by sigaltstack().
+pub @extern "c" @struct Stack {
+    ss_sp: ?*u8;
+    ss_flags: i32;
+    ss_size: usize;
+}
+
 pub @extern "c" @func kill(pid: i32, sig: i32): i32;
 pub @extern "c" @func killpg(pgrp: i32, sig: i32): i32;
 pub @extern "c" @func raise(sig: i32): i32;
+
+pub @extern "c" @func sigemptyset(set: *SigSet): i32;
+pub @extern "c" @func sigfillset(set: *SigSet): i32;
+pub @extern "c" @func sigaddset(set: *SigSet, sig: i32): i32;
+pub @extern "c" @func sigdelset(set: *SigSet, sig: i32): i32;
+pub @extern "c" @func sigismember(set: *SigSet, sig: i32): i32;
+pub @extern "c" @func sigandset(set: *SigSet, left: *SigSet, right: *SigSet): i32;
+pub @extern "c" @func sigorset(set: *SigSet, left: *SigSet, right: *SigSet): i32;
+pub @extern "c" @func sigisemptyset(set: *SigSet): i32;
+
+pub @extern "c" @func sigprocmask(how: i32, set: ?*SigSet, oldset: ?*SigSet): i32;
+pub @extern "c" @func sigpending(set: *SigSet): i32;
+pub @extern "c" @func sigsuspend(mask: *SigSet): i32;
+pub @extern "c" @func sigwait(set: *SigSet, sig: *IntCell): i32;
+pub @extern "c" @func sigwaitinfo(set: *SigSet, info: ?*Siginfo): i32;
+pub @extern "c" @func sigtimedwait(set: *SigSet, info: ?*Siginfo, timeout: ?*Timespec): i32;
+pub @extern "c" @func sigaltstack(ss: ?*Stack, old_ss: ?*Stack): i32;
+pub @extern "c" @func sigqueue(pid: i32, sig: i32, value: i64): i32;
+
+pub @extern "c" @func psignal(sig: i32, s: *CBuffer): void;
+pub @extern "c" @func psiginfo(info: *Siginfo, s: *CBuffer): void;
 
 # Time
 pub @extern "c" @func time(tloc: ?*i64): i64;
@@ -292,6 +393,33 @@ pub @extern "c" @func clock_settime(clk_id: i32, tp: *Timespec): i32;
 pub @extern "c" @func clock_getres(clk_id: i32, tp: *Timespec): i32;
 pub @extern "c" @func clock_nanosleep(clk_id: i32, flags: i32, req: *Timespec, rem: ?*Timespec): i32;
 pub @extern "c" @func nanosleep(req: *Timespec, rem: ?*Timespec): i32;
+
+# POSIX timeval aggregate used by adjtime().
+pub @extern "c" @struct Timeval {
+    tv_sec: i64;
+    tv_usec: i64;
+}
+
+# C struct tm for libc calendar math. Layout is LP64 glibc.
+pub @extern "c" @struct Tm {
+    tm_sec: i32;
+    tm_min: i32;
+    tm_hour: i32;
+    tm_mday: i32;
+    tm_mon: i32;
+    tm_year: i32;
+    tm_wday: i32;
+    tm_yday: i32;
+    tm_isdst: i32;
+    tm_gmtoff: i64;
+    tm_zone: ?*u8;
+}
+
+pub @extern "c" @func adjtime(delta: ?*Timeval, olddelta: ?*Timeval): i32;
+pub @extern "c" @func mktime(tm: *Tm): i64;
+pub @extern "c" @func timegm(tm: *Tm): i64;
+pub @extern "c" @func difftime(t1: i64, t0: i64): f64;
+pub @extern "c" @func tzset(): void;
 
 # Process fork & wait
 pub @extern "c" @func fork(): i32;
@@ -313,6 +441,8 @@ pub @extern "c" @func munlock(addr: isize, length: usize): i32;
 pub @extern "c" @func mlockall(flags: i32): i32;
 pub @extern "c" @func munlockall(): i32;
 pub @extern "c" @func getpagesize(): i32;
+pub @extern "c" @func brk(addr: usize): i32;
+pub @extern "c" @func sbrk(increment: isize): isize;
 pub @extern "c" @func memfd_create(name: *CBuffer, flags: u32): i32;
 pub @extern "c" @func shm_open(name: *CBuffer, oflag: i32, mode: i32): i32;
 pub @extern "c" @func shm_unlink(name: *CBuffer): i32;
@@ -433,3 +563,7 @@ pub @extern "c" @func malloc(size: usize): ?*CBuffer;
 pub @extern "c" @func free(p: *CBuffer): void;
 
 pub @extern "c" @func __errno_location(): *ErrnoCell;
+
+# Raw Linux entry-point escape hatch. libc forwards the requested number and
+# arguments directly to the kernel.
+pub @extern "c" @func syscall(number: i64, ...): i64;

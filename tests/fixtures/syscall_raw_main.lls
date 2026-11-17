@@ -1,0 +1,13 @@
+@const $sys = @import("std/syscall");
+
+pub @func main() {
+    $pid = sys.process.process_id();
+    print(sys.syscall0(sys.SYS_GETPID)? == @as(isize, pid));
+    print(sys.syscall5(sys.SYS_GETPID, 0, 0, 0, 0, 0)? == @as(isize, pid));
+    print(sys.syscall0(sys.SYS_GETPPID)? == @as(isize, sys.process.parent_process_id()));
+
+    $pipe = sys.io.pipe()?;
+    sys.syscall1(sys.SYS_CLOSE, @as(isize, pipe.read))?;
+    sys.io.close(pipe.write)?;
+    print("raw-close-ok");
+}

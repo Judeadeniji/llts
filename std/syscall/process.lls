@@ -2,6 +2,7 @@
 
 @const $c = @import("std/syscall/c");
 @const $core = @import("std/syscall/core");
+@const $std = @import("std/core");
 
 
 # Terminate the process with `code`. Does not return: deferred LLTS cleanup is
@@ -171,6 +172,62 @@ pub @func getresgid(): ResGid | core.SyscallError {
         effective: @as(core.Gid, e.value),
         saved: @as(core.Gid, s.value),
     };
+}
+
+# Fill `groups` with the supplementary group IDs of the calling process.
+# Returns the number of groups copied; a larger number means the list was
+# truncated and a bigger buffer is required.
+pub @func getgroups(groups: []core.Gid): usize | core.SyscallError {
+    $count = @as(i32, std.len(groups));
+    $list: ?*u32 = null;
+    @if (count > 0) {
+        list = @as(*u32, &groups[0]);
+    }
+    $n = c.getgroups(count, list);
+    @if (n < 0) {
+        return core.last_error();
+    }
+    return @as(usize, n);
+}
+
+# Set the supplementary group IDs of the calling process (privileged).
+pub @func setgroups(groups: []core.Gid): void | core.SyscallError {
+    $count: usize = @as(usize, std.len(groups));
+    $list: ?*u32 = null;
+    @if (count > 0) {
+        list = @as(*u32, &groups[0]);
+    }
+    @if (c.setgroups(count, list) != 0) {
+        return core.last_error();
+    }
+}
+
+# Initialize the supplementary group list for `user` from the group database
+# (privileged).
+pub @func initgroups(user: string, group: core.Gid): void | core.SyscallError {
+    $buf = core.path_buffer(user)?;
+    defer c.free(buf);
+    @if (c.initgroups(buf, @as(u32, group)) != 0) {
+        return core.last_error();
+    }
+}
+
+# Look up the group list for `user`, starting from `group`, into `groups`.
+# Returns the number of groups found; if it exceeds `len(groups)`, the list was
+# truncated and a bigger buffer is required.
+pub @func getgrouplist(user: string, group: core.Gid, groups: []core.Gid): usize | core.SyscallError {
+    $count = @as(i32, std.len(groups));
+    @if (count == 0) {
+        return core.SyscallError.InvalidArgument;
+    }
+    $buf = core.path_buffer(user)?;
+    defer c.free(buf);
+    $ngroups = c.IntCell{ value: count };
+    $raw = c.getgrouplist(buf, @as(u32, group), @as(*u32, &groups[0]), &ngroups);
+    @if (raw < 0) {
+        return core.last_error();
+    }
+    return @as(usize, ngroups.value);
 }
 
 # Return the session ID of the process `pid` (or calling process if `pid == 0`).

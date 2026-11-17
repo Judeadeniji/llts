@@ -179,3 +179,26 @@ pub @func mremap(old_address: Address, old_size: usize, new_size: usize, flags: 
     }
     return @as(Address, raw);
 }
+
+# Return the current program break (end of the data segment).
+pub @func program_break(): Address {
+    return @as(Address, c.sbrk(0));
+}
+
+# Change the program break by `increment` bytes, returning the previous break.
+pub @func sbrk(increment: isize): Address | core.SyscallError {
+    $raw = c.sbrk(increment);
+    @if (raw == -1) {
+        return core.last_error();
+    }
+    return @as(Address, raw);
+}
+
+# Set the program break to `addr`, returning the previous break.
+pub @func brk(addr: Address): Address | core.SyscallError {
+    $old = c.sbrk(0);
+    @if (c.brk(@as(usize, addr)) != 0) {
+        return core.last_error();
+    }
+    return @as(Address, old);
+}

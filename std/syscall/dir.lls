@@ -2,6 +2,7 @@
 
 @const $c = @import("std/syscall/c");
 @const $core = @import("std/syscall/core");
+@const $std = @import("std/core");
 
 pub @const $PATH_CAPACITY: usize = c.PATH_CAPACITY;
 pub @const $DEFAULT_DIR_MODE: i32 = 0o755;
@@ -198,6 +199,115 @@ pub @func euidaccess(path: string, mode: i32): void | core.SyscallError {
     @if (c.euidaccess(buf, mode) != 0) {
         return core.last_error();
     }
+}
+
+# Re-exported directory handle and entry types.
+pub @alias Directory = c.Directory;
+pub @alias Dirent = c.Dirent;
+
+# `d_type` values reported by `readdir`.
+pub @const $DT_UNKNOWN: u8 = 0;
+pub @const $DT_FIFO: u8 = 1;
+pub @const $DT_CHR: u8 = 2;
+pub @const $DT_DIR: u8 = 4;
+pub @const $DT_BLK: u8 = 6;
+pub @const $DT_REG: u8 = 8;
+pub @const $DT_LNK: u8 = 10;
+pub @const $DT_SOCK: u8 = 12;
+
+# Open the directory at `path` for iteration.
+pub @func opendir(path: string): *Directory | core.SyscallError {
+    $buf = core.path_buffer(path)?;
+    defer c.free(buf);
+    $raw = c.opendir(buf);
+    @if (raw == null) {
+        return core.last_error();
+    }
+    return raw.?;
+}
+
+# Wrap the directory file descriptor `fd` in a directory stream. `fd` must
+# refer to a directory and must not be used independently afterwards.
+pub @func fdopendir(fd: core.Fd): *Directory | core.SyscallError {
+    $raw = c.fdopendir(@as(i32, fd));
+    @if (raw == null) {
+        return core.last_error();
+    }
+    return raw.?;
+}
+
+# Return the next directory entry, or `null` at end of stream. The returned
+# pointer is owned by the directory stream and is invalidated by the next call.
+pub @func readdir(dir: *Directory): ?*Dirent | core.SyscallError {
+    $errno = c.__errno_location();
+    errno.value = 0;
+    $entry = c.readdir(dir);
+    @if (entry == null) {
+        @if (errno.value != 0) {
+            return core.last_error();
+        }
+        return null;
+    }
+    return entry;
+}
+
+# Close a directory stream.
+pub @func closedir(dir: *Directory): void | core.SyscallError {
+    @if (c.closedir(dir) != 0) {
+        return core.last_error();
+    }
+}
+
+# Reset a directory stream to its beginning.
+pub @func rewinddir(dir: *Directory): void {
+    c.rewinddir(dir);
+}
+
+# Seek a directory stream to a position returned by `telldir`.
+pub @func seekdir(dir: *Directory, location: i64): void {
+    c.seekdir(dir, location);
+}
+
+# Return the current position of a directory stream.
+pub @func telldir(dir: *Directory): i64 {
+    return c.telldir(dir);
+}
+
+# Return the file descriptor underlying a directory stream.
+pub @func dirfd(dir: *Directory): core.Fd | core.SyscallError {
+    $raw = c.dirfd(dir);
+    @if (raw < 0) {
+        return core.last_error();
+    }
+    return @as(core.Fd, raw);
+}
+
+# Copy the NUL-terminated `d_name` of `entry` into an LLTS string slice. The
+# slice borrows the directory stream's storage until the next `readdir`.
+pub @func dirent_name(entry: *Dirent): string {
+    $n: i64 = 0;
+    @for (0..256) |i| {
+        @if (entry.d_name[i] == 0) {
+            break;
+        }
+        n = n + 1;
+    }
+    return entry.d_name[0..n];
+}
+
+# Read raw directory entries through `getdirentries` (the glibc wrapper over
+# `getdents64`) into `buffer`. Returns the number of bytes written.
+pub @func getdirentries(fd: core.Fd, buffer: []u8): usize | core.SyscallError {
+    $len: usize = @as(usize, std.len(buffer));
+    @if (len == 0) {
+        return core.SyscallError.InvalidArgument;
+    }
+    $base = c.OffCell{ value: 0 };
+    $n = c.getdirentries(@as(i32, fd), &buffer[0], len, &base);
+    @if (n < 0) {
+        return core.last_error();
+    }
+    return @as(usize, n);
 }
 
 # Set the calling process's file mode creation mask to `mask` & 0777.

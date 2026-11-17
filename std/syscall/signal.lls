@@ -58,3 +58,203 @@ pub @func raise(sig: i32): void | core.SyscallError {
         return core.last_error();
     }
 }
+
+# Re-exported signal-set, alternate-stack, and timeout aggregates.
+pub @alias SigSet = c.SigSet;
+pub @alias Stack = c.Stack;
+pub @alias Siginfo = c.Siginfo;
+pub @alias Timespec = c.Timespec;
+
+# Operations accepted by `process_mask`.
+pub @enum MaskHow {
+    Block = 0,
+    Unblock = 1,
+    SetMask = 2,
+}
+
+# Alternate-stack flags for `Stack`.
+pub @const $SS_ONSTACK: i32 = 1;
+pub @const $SS_DISABLE: i32 = 2;
+
+# Return an empty signal set.
+pub @func sigset_empty(): SigSet {
+    $set = @zeroed(SigSet);
+    _ = c.sigemptyset(&set);
+    return set;
+}
+
+# Return a set containing every valid signal.
+pub @func sigset_full(): SigSet {
+    $set = @zeroed(SigSet);
+    _ = c.sigfillset(&set);
+    return set;
+}
+
+# Return `set` with `sig` added.
+pub @func sigset_add(set: SigSet, sig: i32): SigSet | core.SyscallError {
+    $copy: SigSet = set;
+    @if (c.sigaddset(&copy, sig) != 0) {
+        return core.last_error();
+    }
+    return copy;
+}
+
+# Return `set` with `sig` removed.
+pub @func sigset_remove(set: SigSet, sig: i32): SigSet | core.SyscallError {
+    $copy: SigSet = set;
+    @if (c.sigdelset(&copy, sig) != 0) {
+        return core.last_error();
+    }
+    return copy;
+}
+
+# Return true if `sig` is a member of `set`.
+pub @func sigset_contains(set: SigSet, sig: i32): bool | core.SyscallError {
+    $copy: SigSet = set;
+    $member = c.sigismember(&copy, sig);
+    @if (member < 0) {
+        return core.last_error();
+    }
+    return member != 0;
+}
+
+# Return the intersection of `left` and `right`.
+pub @func sigset_intersection(left: SigSet, right: SigSet): SigSet {
+    $l: SigSet = left;
+    $r: SigSet = right;
+    $out = @zeroed(SigSet);
+    _ = c.sigandset(&out, &l, &r);
+    return out;
+}
+
+# Return the union of `left` and `right`.
+pub @func sigset_union(left: SigSet, right: SigSet): SigSet {
+    $l: SigSet = left;
+    $r: SigSet = right;
+    $out = @zeroed(SigSet);
+    _ = c.sigorset(&out, &l, &r);
+    return out;
+}
+
+# Return true if `set` contains no signals.
+pub @func sigset_is_empty(set: SigSet): bool {
+    $copy: SigSet = set;
+    return c.sigisemptyset(&copy) != 0;
+}
+
+# Change the calling thread's signal mask, returning the previous mask.
+pub @func process_mask(how: MaskHow, set: ?SigSet): SigSet | core.SyscallError {
+    $new = @zeroed(SigSet);
+    $new_ptr: ?*SigSet = null;
+    @if (set != null) {
+        new = set;
+        new_ptr = &new;
+    }
+    $old = @zeroed(SigSet);
+    @if (c.sigprocmask(@as(i32, how), new_ptr, &old) != 0) {
+        return core.last_error();
+    }
+    return old;
+}
+
+# Return the set of signals pending for the calling thread.
+pub @func pending_signals(): SigSet | core.SyscallError {
+    $set = @zeroed(SigSet);
+    @if (c.sigpending(&set) != 0) {
+        return core.last_error();
+    }
+    return set;
+}
+
+# Temporarily replace the signal mask and suspend until a signal is delivered.
+# Returns `Interrupted` after a handler runs.
+pub @func suspend(mask: SigSet): void | core.SyscallError {
+    $set: SigSet = mask;
+    _ = c.sigsuspend(&set);
+    return core.last_error();
+}
+
+# Synchronously wait for one of the signals in `set`, which must be blocked.
+pub @func sigwait(set: SigSet): i32 | core.SyscallError {
+    $mask: SigSet = set;
+    $cell = c.IntCell{ value: 0 };
+    $err = c.sigwait(&mask, &cell);
+    @if (err != 0) {
+        return core.error_from_errno(err);
+    }
+    return cell.value;
+}
+
+# Synchronously wait for a signal in `set` and return its `siginfo_t`.
+pub @func sigwaitinfo(set: SigSet): Siginfo | core.SyscallError {
+    $mask: SigSet = set;
+    $info = @zeroed(Siginfo);
+    $err = c.sigwaitinfo(&mask, &info);
+    @if (err < 0) {
+        return core.last_error();
+    }
+    return info;
+}
+
+# Wait for a signal in `set` with an optional timeout. Returns `null` when the
+# timeout expires.
+pub @func sigtimedwait(set: SigSet, timeout: ?Timespec): ?Siginfo | core.SyscallError {
+    $mask: SigSet = set;
+    $info = @zeroed(Siginfo);
+    $tmo: ?*c.Timespec = null;
+    $value = @zeroed(Timespec);
+    @if (timeout != null) {
+        value = timeout;
+        tmo = &value;
+    }
+    $err = c.sigtimedwait(&mask, &info, tmo);
+    @if (err < 0) {
+        $mapped = core.last_error();
+        @if (mapped == core.SyscallError.WouldBlock) {
+            return null;
+        }
+        return mapped;
+    }
+    return info;
+}
+
+# Return the alternate signal stack of the calling thread.
+pub @func alt_stack(): Stack | core.SyscallError {
+    $old = @zeroed(Stack);
+    @if (c.sigaltstack(null, &old) != 0) {
+        return core.last_error();
+    }
+    return old;
+}
+
+# Install `stack` as the alternate signal stack, returning the previous stack.
+pub @func set_alt_stack(stack: Stack): Stack | core.SyscallError {
+    $new: Stack = stack;
+    $old = @zeroed(Stack);
+    @if (c.sigaltstack(&new, &old) != 0) {
+        return core.last_error();
+    }
+    return old;
+}
+
+# Queue signal `sig` with an integer payload to process `pid`.
+pub @func sigqueue(pid: core.Pid, sig: i32, value: i64): void | core.SyscallError {
+    @if (c.sigqueue(@as(i32, pid), sig, value) != 0) {
+        return core.last_error();
+    }
+}
+
+# Print a description of signal `sig` to standard error, prefixed with `name`.
+pub @func psignal(sig: i32, name: string): void | core.SyscallError {
+    $buf = core.path_buffer(name)?;
+    defer c.free(buf);
+    c.psignal(sig, buf);
+}
+
+# Print a description of `info` to standard error, prefixed with `name`.
+pub @func psiginfo(info: Siginfo, name: string): void | core.SyscallError {
+    $value: Siginfo = info;
+    $buf = core.path_buffer(name)?;
+    defer c.free(buf);
+    c.psiginfo(&value, buf);
+}

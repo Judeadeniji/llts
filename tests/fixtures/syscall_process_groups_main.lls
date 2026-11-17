@@ -1,0 +1,18 @@
+@const $sys = @import("std/syscall");
+
+pub @func main() {
+    $groups = @zeroed([16]sys.core.Gid);
+    $n = sys.process.getgroups(groups[..])?;
+    print(n <= 16);
+
+    $list = @zeroed([32]sys.core.Gid);
+    $found = sys.process.getgrouplist("root", 0, list[..])?;
+    print(found > 0);
+
+    $none: [0]sys.core.Gid = @zeroed([0]sys.core.Gid);
+    _ = @isError(sys.process.setgroups(none[..]));
+    print("setgroups-called");
+
+    _ = @isError(sys.process.initgroups("root", 0));
+    print("initgroups-called");
+}

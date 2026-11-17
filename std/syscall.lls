@@ -27,6 +27,9 @@ pub @const $system = @import("std/syscall/system");
 pub @const $ipc = @import("std/syscall/ipc");
 pub @const $socket = @import("std/syscall/socket");
 
+@const $c = @import("std/syscall/c");
+@const $core = @import("std/syscall/core");
+
 # Re-exported primary types for callers using the top-level facade.
 
 # Descriptors, identifiers, exit codes, and error set.
@@ -67,4 +70,269 @@ pub @alias Rlimit = system.Rlimit;
 pub @alias SockaddrIn = socket.SockaddrIn;
 pub @alias Sockaddr = socket.Sockaddr;
 pub @alias AcceptedSocket = socket.AcceptedSocket;
+
+# ---------------------------------------------------------------------------
+# Raw Linux syscall escape hatch
+# ---------------------------------------------------------------------------
+
+# A nominal Linux x86-64 syscall number. Constants are provided for the entry
+# points this library does not wrap; construct one directly for anything else.
+pub @struct SyscallNumber {
+    value: i64;
+}
+
+pub @const $SYS_READ = SyscallNumber { value: 0 };
+pub @const $SYS_WRITE = SyscallNumber { value: 1 };
+pub @const $SYS_OPEN = SyscallNumber { value: 2 };
+pub @const $SYS_CLOSE = SyscallNumber { value: 3 };
+pub @const $SYS_STAT = SyscallNumber { value: 4 };
+pub @const $SYS_FSTAT = SyscallNumber { value: 5 };
+pub @const $SYS_POLL = SyscallNumber { value: 7 };
+pub @const $SYS_LSEEK = SyscallNumber { value: 8 };
+pub @const $SYS_MMAP = SyscallNumber { value: 9 };
+pub @const $SYS_MPROTECT = SyscallNumber { value: 10 };
+pub @const $SYS_MUNMAP = SyscallNumber { value: 11 };
+pub @const $SYS_BRK = SyscallNumber { value: 12 };
+pub @const $SYS_IOCTL = SyscallNumber { value: 16 };
+pub @const $SYS_PREAD64 = SyscallNumber { value: 17 };
+pub @const $SYS_PWRITE64 = SyscallNumber { value: 18 };
+pub @const $SYS_READV = SyscallNumber { value: 19 };
+pub @const $SYS_WRITEV = SyscallNumber { value: 20 };
+pub @const $SYS_ACCESS = SyscallNumber { value: 21 };
+pub @const $SYS_PIPE = SyscallNumber { value: 22 };
+pub @const $SYS_SCHED_YIELD = SyscallNumber { value: 24 };
+pub @const $SYS_MREMAP = SyscallNumber { value: 25 };
+pub @const $SYS_MSYNC = SyscallNumber { value: 26 };
+pub @const $SYS_MADVISE = SyscallNumber { value: 28 };
+pub @const $SYS_DUP = SyscallNumber { value: 32 };
+pub @const $SYS_DUP2 = SyscallNumber { value: 33 };
+pub @const $SYS_NANOSLEEP = SyscallNumber { value: 35 };
+pub @const $SYS_GETPID = SyscallNumber { value: 39 };
+pub @const $SYS_SOCKET = SyscallNumber { value: 41 };
+pub @const $SYS_CONNECT = SyscallNumber { value: 42 };
+pub @const $SYS_ACCEPT = SyscallNumber { value: 43 };
+pub @const $SYS_SENDTO = SyscallNumber { value: 44 };
+pub @const $SYS_RECVFROM = SyscallNumber { value: 45 };
+pub @const $SYS_SENDMSG = SyscallNumber { value: 46 };
+pub @const $SYS_RECVMSG = SyscallNumber { value: 47 };
+pub @const $SYS_SHUTDOWN = SyscallNumber { value: 48 };
+pub @const $SYS_BIND = SyscallNumber { value: 49 };
+pub @const $SYS_LISTEN = SyscallNumber { value: 50 };
+pub @const $SYS_GETSOCKNAME = SyscallNumber { value: 51 };
+pub @const $SYS_GETPEERNAME = SyscallNumber { value: 52 };
+pub @const $SYS_SOCKETPAIR = SyscallNumber { value: 53 };
+pub @const $SYS_SETSOCKOPT = SyscallNumber { value: 54 };
+pub @const $SYS_GETSOCKOPT = SyscallNumber { value: 55 };
+pub @const $SYS_CLONE = SyscallNumber { value: 56 };
+pub @const $SYS_FORK = SyscallNumber { value: 57 };
+pub @const $SYS_EXECVE = SyscallNumber { value: 59 };
+pub @const $SYS_EXIT = SyscallNumber { value: 60 };
+pub @const $SYS_WAIT4 = SyscallNumber { value: 61 };
+pub @const $SYS_KILL = SyscallNumber { value: 62 };
+pub @const $SYS_UNAME = SyscallNumber { value: 63 };
+pub @const $SYS_FCNTL = SyscallNumber { value: 72 };
+pub @const $SYS_FLOCK = SyscallNumber { value: 73 };
+pub @const $SYS_FSYNC = SyscallNumber { value: 74 };
+pub @const $SYS_FDATASYNC = SyscallNumber { value: 75 };
+pub @const $SYS_TRUNCATE = SyscallNumber { value: 76 };
+pub @const $SYS_FTRUNCATE = SyscallNumber { value: 77 };
+pub @const $SYS_GETCWD = SyscallNumber { value: 79 };
+pub @const $SYS_CHDIR = SyscallNumber { value: 80 };
+pub @const $SYS_RENAME = SyscallNumber { value: 82 };
+pub @const $SYS_MKDIR = SyscallNumber { value: 83 };
+pub @const $SYS_RMDIR = SyscallNumber { value: 84 };
+pub @const $SYS_LINK = SyscallNumber { value: 86 };
+pub @const $SYS_UNLINK = SyscallNumber { value: 87 };
+pub @const $SYS_SYMLINK = SyscallNumber { value: 88 };
+pub @const $SYS_READLINK = SyscallNumber { value: 89 };
+pub @const $SYS_CHMOD = SyscallNumber { value: 90 };
+pub @const $SYS_UMASK = SyscallNumber { value: 95 };
+pub @const $SYS_GETTIMEOFDAY = SyscallNumber { value: 96 };
+pub @const $SYS_GETRLIMIT = SyscallNumber { value: 97 };
+pub @const $SYS_GETRUSAGE = SyscallNumber { value: 98 };
+pub @const $SYS_SYSINFO = SyscallNumber { value: 99 };
+pub @const $SYS_GETUID = SyscallNumber { value: 102 };
+pub @const $SYS_GETGID = SyscallNumber { value: 104 };
+pub @const $SYS_SETUID = SyscallNumber { value: 105 };
+pub @const $SYS_SETGID = SyscallNumber { value: 106 };
+pub @const $SYS_GETEUID = SyscallNumber { value: 107 };
+pub @const $SYS_GETEGID = SyscallNumber { value: 108 };
+pub @const $SYS_GETPPID = SyscallNumber { value: 110 };
+pub @const $SYS_GETPGRP = SyscallNumber { value: 111 };
+pub @const $SYS_GETGROUPS = SyscallNumber { value: 115 };
+pub @const $SYS_SETGROUPS = SyscallNumber { value: 116 };
+pub @const $SYS_GETSID = SyscallNumber { value: 124 };
+pub @const $SYS_SIGALTSTACK = SyscallNumber { value: 131 };
+pub @const $SYS_PERSONALITY = SyscallNumber { value: 135 };
+pub @const $SYS_STATFS = SyscallNumber { value: 137 };
+pub @const $SYS_GETPRIORITY = SyscallNumber { value: 140 };
+pub @const $SYS_SETPRIORITY = SyscallNumber { value: 141 };
+pub @const $SYS_SCHED_SETPARAM = SyscallNumber { value: 142 };
+pub @const $SYS_SCHED_GETPARAM = SyscallNumber { value: 143 };
+pub @const $SYS_SCHED_SETSCHEDULER = SyscallNumber { value: 144 };
+pub @const $SYS_SCHED_GETSCHEDULER = SyscallNumber { value: 145 };
+pub @const $SYS_MLOCK = SyscallNumber { value: 149 };
+pub @const $SYS_MUNLOCK = SyscallNumber { value: 150 };
+pub @const $SYS_MLOCKALL = SyscallNumber { value: 151 };
+pub @const $SYS_MUNLOCKALL = SyscallNumber { value: 152 };
+pub @const $SYS_VHANGUP = SyscallNumber { value: 153 };
+pub @const $SYS_PRCTL = SyscallNumber { value: 157 };
+pub @const $SYS_ADJTIMEX = SyscallNumber { value: 159 };
+pub @const $SYS_SETRLIMIT = SyscallNumber { value: 160 };
+pub @const $SYS_CHROOT = SyscallNumber { value: 161 };
+pub @const $SYS_SYNC = SyscallNumber { value: 162 };
+pub @const $SYS_MOUNT = SyscallNumber { value: 165 };
+pub @const $SYS_UMOUNT2 = SyscallNumber { value: 166 };
+pub @const $SYS_SWAPON = SyscallNumber { value: 167 };
+pub @const $SYS_SWAPOFF = SyscallNumber { value: 168 };
+pub @const $SYS_REBOOT = SyscallNumber { value: 169 };
+pub @const $SYS_SETHOSTNAME = SyscallNumber { value: 170 };
+pub @const $SYS_SETDOMAINNAME = SyscallNumber { value: 171 };
+pub @const $SYS_GETTID = SyscallNumber { value: 186 };
+pub @const $SYS_SETXATTR = SyscallNumber { value: 188 };
+pub @const $SYS_LSETXATTR = SyscallNumber { value: 189 };
+pub @const $SYS_FSETXATTR = SyscallNumber { value: 190 };
+pub @const $SYS_GETXATTR = SyscallNumber { value: 191 };
+pub @const $SYS_LGETXATTR = SyscallNumber { value: 192 };
+pub @const $SYS_FGETXATTR = SyscallNumber { value: 193 };
+pub @const $SYS_LISTXATTR = SyscallNumber { value: 194 };
+pub @const $SYS_LLISTXATTR = SyscallNumber { value: 195 };
+pub @const $SYS_FLISTXATTR = SyscallNumber { value: 196 };
+pub @const $SYS_REMOVEXATTR = SyscallNumber { value: 197 };
+pub @const $SYS_LREMOVEXATTR = SyscallNumber { value: 198 };
+pub @const $SYS_FREMOVEXATTR = SyscallNumber { value: 199 };
+pub @const $SYS_TKILL = SyscallNumber { value: 200 };
+pub @const $SYS_TIME = SyscallNumber { value: 201 };
+pub @const $SYS_FUTEX = SyscallNumber { value: 202 };
+pub @const $SYS_SCHED_SETAFFINITY = SyscallNumber { value: 203 };
+pub @const $SYS_SCHED_GETAFFINITY = SyscallNumber { value: 204 };
+pub @const $SYS_EPOLL_CREATE = SyscallNumber { value: 213 };
+pub @const $SYS_GETDENTS64 = SyscallNumber { value: 217 };
+pub @const $SYS_SET_TID_ADDRESS = SyscallNumber { value: 218 };
+pub @const $SYS_TIMER_CREATE = SyscallNumber { value: 222 };
+pub @const $SYS_TIMER_SETTIME = SyscallNumber { value: 223 };
+pub @const $SYS_TIMER_GETTIME = SyscallNumber { value: 224 };
+pub @const $SYS_TIMER_GETOVERRUN = SyscallNumber { value: 225 };
+pub @const $SYS_TIMER_DELETE = SyscallNumber { value: 226 };
+pub @const $SYS_CLOCK_SETTIME = SyscallNumber { value: 227 };
+pub @const $SYS_CLOCK_GETTIME = SyscallNumber { value: 228 };
+pub @const $SYS_CLOCK_GETRES = SyscallNumber { value: 229 };
+pub @const $SYS_CLOCK_NANOSLEEP = SyscallNumber { value: 230 };
+pub @const $SYS_EXIT_GROUP = SyscallNumber { value: 231 };
+pub @const $SYS_EPOLL_WAIT = SyscallNumber { value: 232 };
+pub @const $SYS_EPOLL_CTL = SyscallNumber { value: 233 };
+pub @const $SYS_TGKILL = SyscallNumber { value: 234 };
+pub @const $SYS_INOTIFY_INIT = SyscallNumber { value: 253 };
+pub @const $SYS_INOTIFY_ADD_WATCH = SyscallNumber { value: 254 };
+pub @const $SYS_INOTIFY_RM_WATCH = SyscallNumber { value: 255 };
+pub @const $SYS_OPENAT = SyscallNumber { value: 257 };
+pub @const $SYS_MKDIRAT = SyscallNumber { value: 258 };
+pub @const $SYS_FCHOWNAT = SyscallNumber { value: 260 };
+pub @const $SYS_NEWFSTATAT = SyscallNumber { value: 262 };
+pub @const $SYS_UNLINKAT = SyscallNumber { value: 263 };
+pub @const $SYS_RENAMEAT = SyscallNumber { value: 264 };
+pub @const $SYS_LINKAT = SyscallNumber { value: 265 };
+pub @const $SYS_SYMLINKAT = SyscallNumber { value: 266 };
+pub @const $SYS_READLINKAT = SyscallNumber { value: 267 };
+pub @const $SYS_FCHMODAT = SyscallNumber { value: 268 };
+pub @const $SYS_FACCESSAT = SyscallNumber { value: 269 };
+pub @const $SYS_PSELECT6 = SyscallNumber { value: 270 };
+pub @const $SYS_PPOLL = SyscallNumber { value: 271 };
+pub @const $SYS_SPLICE = SyscallNumber { value: 275 };
+pub @const $SYS_TEE = SyscallNumber { value: 276 };
+pub @const $SYS_SYNC_FILE_RANGE = SyscallNumber { value: 277 };
+pub @const $SYS_UTIMENSAT = SyscallNumber { value: 280 };
+pub @const $SYS_EPOLL_PWAIT = SyscallNumber { value: 281 };
+pub @const $SYS_SIGNALFD = SyscallNumber { value: 282 };
+pub @const $SYS_TIMERFD_CREATE = SyscallNumber { value: 283 };
+pub @const $SYS_EVENTFD = SyscallNumber { value: 284 };
+pub @const $SYS_FALLOCATE = SyscallNumber { value: 285 };
+pub @const $SYS_TIMERFD_SETTIME = SyscallNumber { value: 286 };
+pub @const $SYS_TIMERFD_GETTIME = SyscallNumber { value: 287 };
+pub @const $SYS_ACCEPT4 = SyscallNumber { value: 288 };
+pub @const $SYS_SIGNALFD4 = SyscallNumber { value: 289 };
+pub @const $SYS_EVENTFD2 = SyscallNumber { value: 290 };
+pub @const $SYS_EPOLL_CREATE1 = SyscallNumber { value: 291 };
+pub @const $SYS_DUP3 = SyscallNumber { value: 292 };
+pub @const $SYS_PIPE2 = SyscallNumber { value: 293 };
+pub @const $SYS_INOTIFY_INIT1 = SyscallNumber { value: 294 };
+pub @const $SYS_PREADV = SyscallNumber { value: 295 };
+pub @const $SYS_PWRITEV = SyscallNumber { value: 296 };
+pub @const $SYS_RECVMMSG = SyscallNumber { value: 299 };
+pub @const $SYS_FANOTIFY_INIT = SyscallNumber { value: 300 };
+pub @const $SYS_PRLIMIT64 = SyscallNumber { value: 302 };
+pub @const $SYS_SYNCFS = SyscallNumber { value: 306 };
+pub @const $SYS_SENDMMSG = SyscallNumber { value: 307 };
+pub @const $SYS_GETCPU = SyscallNumber { value: 309 };
+pub @const $SYS_RENAMEAT2 = SyscallNumber { value: 316 };
+pub @const $SYS_SECCOMP = SyscallNumber { value: 317 };
+pub @const $SYS_GETRANDOM = SyscallNumber { value: 318 };
+pub @const $SYS_MEMFD_CREATE = SyscallNumber { value: 319 };
+pub @const $SYS_BPF = SyscallNumber { value: 321 };
+pub @const $SYS_EXECVEAT = SyscallNumber { value: 322 };
+pub @const $SYS_USERFAULTFD = SyscallNumber { value: 323 };
+pub @const $SYS_COPY_FILE_RANGE = SyscallNumber { value: 326 };
+pub @const $SYS_PREADV2 = SyscallNumber { value: 327 };
+pub @const $SYS_PWRITEV2 = SyscallNumber { value: 328 };
+pub @const $SYS_STATX = SyscallNumber { value: 332 };
+pub @const $SYS_RSEQ = SyscallNumber { value: 334 };
+pub @const $SYS_PIDFD_SEND_SIGNAL = SyscallNumber { value: 424 };
+pub @const $SYS_IO_URING_SETUP = SyscallNumber { value: 425 };
+pub @const $SYS_IO_URING_ENTER = SyscallNumber { value: 426 };
+pub @const $SYS_IO_URING_REGISTER = SyscallNumber { value: 427 };
+pub @const $SYS_OPEN_TREE = SyscallNumber { value: 428 };
+pub @const $SYS_MOVE_MOUNT = SyscallNumber { value: 429 };
+pub @const $SYS_FSOPEN = SyscallNumber { value: 430 };
+pub @const $SYS_FSCONFIG = SyscallNumber { value: 431 };
+pub @const $SYS_FSMOUNT = SyscallNumber { value: 432 };
+pub @const $SYS_FSPICK = SyscallNumber { value: 433 };
+pub @const $SYS_PIDFD_OPEN = SyscallNumber { value: 434 };
+pub @const $SYS_CLONE3 = SyscallNumber { value: 435 };
+pub @const $SYS_CLOSE_RANGE = SyscallNumber { value: 436 };
+pub @const $SYS_OPENAT2 = SyscallNumber { value: 437 };
+pub @const $SYS_PIDFD_GETFD = SyscallNumber { value: 438 };
+pub @const $SYS_FACCESSAT2 = SyscallNumber { value: 439 };
+pub @const $SYS_PROCESS_MADVISE = SyscallNumber { value: 440 };
+pub @const $SYS_EPOLL_PWAIT2 = SyscallNumber { value: 441 };
+pub @const $SYS_MOUNT_SETATTR = SyscallNumber { value: 442 };
+pub @const $SYS_QUOTACTL_FD = SyscallNumber { value: 443 };
+pub @const $SYS_LANDLOCK_CREATE_RULESET = SyscallNumber { value: 444 };
+pub @const $SYS_LANDLOCK_ADD_RULE = SyscallNumber { value: 445 };
+pub @const $SYS_LANDLOCK_RESTRICT_SELF = SyscallNumber { value: 446 };
+pub @const $SYS_MEMFD_SECRET = SyscallNumber { value: 447 };
+pub @const $SYS_MSEAL = SyscallNumber { value: 462 };
+
+# Invoke a raw Linux syscall with all six argument registers.
+pub @func syscall(number: SyscallNumber, a1: isize, a2: isize, a3: isize, a4: isize, a5: isize, a6: isize): isize | core.SyscallError {
+    $raw = c.syscall(number.value, a1, a2, a3, a4, a5, a6);
+    @if (raw < 0) {
+        return core.last_error();
+    }
+    return @as(isize, raw);
+}
+
+# Arity helpers for the common cases.
+pub @func syscall0(number: SyscallNumber): isize | core.SyscallError {
+    return syscall(number, 0, 0, 0, 0, 0, 0);
+}
+
+pub @func syscall1(number: SyscallNumber, a1: isize): isize | core.SyscallError {
+    return syscall(number, a1, 0, 0, 0, 0, 0);
+}
+
+pub @func syscall2(number: SyscallNumber, a1: isize, a2: isize): isize | core.SyscallError {
+    return syscall(number, a1, a2, 0, 0, 0, 0);
+}
+
+pub @func syscall3(number: SyscallNumber, a1: isize, a2: isize, a3: isize): isize | core.SyscallError {
+    return syscall(number, a1, a2, a3, 0, 0, 0);
+}
+
+pub @func syscall4(number: SyscallNumber, a1: isize, a2: isize, a3: isize, a4: isize): isize | core.SyscallError {
+    return syscall(number, a1, a2, a3, a4, 0, 0);
+}
+
+pub @func syscall5(number: SyscallNumber, a1: isize, a2: isize, a3: isize, a4: isize, a5: isize): isize | core.SyscallError {
+    return syscall(number, a1, a2, a3, a4, a5, 0);
+}
 

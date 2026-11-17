@@ -1,0 +1,33 @@
+@const $sys = @import("std/syscall");
+
+pub @func main() {
+    $epoch = sys.time.timegm(sys.time.Tm {
+        tm_sec: 0, tm_min: 0, tm_hour: 0, tm_mday: 1, tm_mon: 0, tm_year: 70,
+        tm_wday: 0, tm_yday: 0, tm_isdst: 0, tm_gmtoff: 0, tm_zone: null,
+    })?;
+    print(epoch);
+
+    $y2k = sys.time.timegm(sys.time.Tm {
+        tm_sec: 0, tm_min: 0, tm_hour: 0, tm_mday: 1, tm_mon: 0, tm_year: 100,
+        tm_wday: 0, tm_yday: 0, tm_isdst: 0, tm_gmtoff: 0, tm_zone: null,
+    })?;
+    print(y2k);
+    print(sys.time.difftime(y2k, epoch) == 946684800.0);
+
+    $local = sys.time.mktime(sys.time.Tm {
+        tm_sec: 0, tm_min: 0, tm_hour: 0, tm_mday: 1, tm_mon: 0, tm_year: 70,
+        tm_wday: 0, tm_yday: 0, tm_isdst: 0, tm_gmtoff: 0, tm_zone: null,
+    })?;
+    $local2 = sys.time.mktime(sys.time.Tm {
+        tm_sec: 0, tm_min: 0, tm_hour: 0, tm_mday: 1, tm_mon: 0, tm_year: 70,
+        tm_wday: 0, tm_yday: 0, tm_isdst: 0, tm_gmtoff: 0, tm_zone: null,
+    })?;
+    print(local == local2);
+
+    sys.time.tzset();
+    print("tzset-ok");
+
+    $zero = sys.time.Timeval { tv_sec: 0, tv_usec: 0 };
+    _ = @isError(sys.time.adjtime(zero));
+    print("adjtime-called");
+}

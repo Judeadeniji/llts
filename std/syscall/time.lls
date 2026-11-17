@@ -103,3 +103,63 @@ pub @func clock_nanosleep(clk_id: i32, flags: i32, req: Timespec): ?Timespec | c
     }
     return null;
 }
+
+# Re-exported calendar aggregates.
+pub @alias Timeval = c.Timeval;
+pub @alias Tm = c.Tm;
+
+# Gradually adjust the system clock by `delta` (privileged: CAP_SYS_TIME),
+# returning the remaining correction from any previous adjustment.
+pub @func adjtime(delta: Timeval): Timeval | core.SyscallError {
+    $value: Timeval = delta;
+    $old = @zeroed(Timeval);
+    @if (c.adjtime(&value, &old) != 0) {
+        return core.last_error();
+    }
+    return old;
+}
+
+# Convert broken-down local time `tm` to seconds since the Unix epoch,
+# normalizing the fields in the process. The input is copied, not mutated.
+pub @func mktime(tm: Tm): i64 | core.SyscallError {
+    $value: Tm = tm;
+    $errno = c.__errno_location();
+    errno.value = 0;
+    $raw = c.mktime(&value);
+    @if (raw == -1) {
+        @if (errno.value != 0) {
+            return core.last_error();
+        }
+    }
+    return raw;
+}
+
+# Convert broken-down UTC time `tm` to seconds since the Unix epoch. The input
+# is copied, not mutated.
+pub @func timegm(tm: Tm): i64 | core.SyscallError {
+    $value: Tm = tm;
+    $errno = c.__errno_location();
+    errno.value = 0;
+    $raw = c.timegm(&value);
+    @if (raw == -1) {
+        @if (errno.value != 0) {
+            return core.last_error();
+        }
+    }
+    return raw;
+}
+
+# Alias for `mktime` (legacy glibc spelling).
+pub @func timelocal(tm: Tm): i64 | core.SyscallError {
+    return mktime(tm);
+}
+
+# Return the difference `t1 - t0` in seconds as a floating-point value.
+pub @func difftime(t1: i64, t0: i64): f64 {
+    return c.difftime(t1, t0);
+}
+
+# Initialize timezone state from the environment.
+pub @func tzset(): void {
+    c.tzset();
+}

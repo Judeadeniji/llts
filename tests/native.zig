@@ -810,6 +810,34 @@ test "native execution: syscall umask, getresuid, getresgid, mremap, getauxval, 
     try expectNativeFileStdout(std.testing.allocator, "tests/fixtures/syscall_misc_ops_main.lls", "umask-ok\nresuid-ok\nresgid-ok\nmremap-ok\nauxval-ok\nftok-ok\n");
 }
 
+test "native execution: syscall preadv2, pwritev2, ioctl, profil, revoke, vhangup" {
+    try expectNativeFileStdout(std.testing.allocator, "tests/fixtures/syscall_io_more_main.lls", "5\nno-tty\n4\n4\n97 98 99 100\n4\nrevoke-called\nvhangup-called\n");
+}
+
+test "native execution: syscall getgroups, getgrouplist, setgroups, initgroups" {
+    try expectNativeFileStdout(std.testing.allocator, "tests/fixtures/syscall_process_groups_main.lls", "1\n1\nsetgroups-called\ninitgroups-called\n");
+}
+
+test "native execution: syscall signal sets, mask, queue, wait, altstack" {
+    try expectNativeFileStdout(std.testing.allocator, "tests/fixtures/syscall_signal_mask_main.lls", "1\n0\n1\n1\n10\n10\ntimeout\n1\nmask-restored\n");
+}
+
+test "native execution: syscall opendir, readdir, rewinddir, seekdir, telldir, dirfd, getdirentries" {
+    try expectNativeFileStdout(std.testing.allocator, "tests/fixtures/syscall_dir_iter_main.lls", "1\n1\n1\n1\n1\n1\n1\n");
+}
+
+test "native execution: syscall program_break, sbrk, brk" {
+    try expectNativeFileStdout(std.testing.allocator, "tests/fixtures/syscall_memory_break_main.lls", "1\n1\n1\n");
+}
+
+test "native execution: syscall timegm, mktime, difftime, tzset, adjtime" {
+    try expectNativeFileStdout(std.testing.allocator, "tests/fixtures/syscall_time_date_main.lls", "0\n946684800\n1\n1\ntzset-ok\nadjtime-called\n");
+}
+
+test "native execution: raw syscall escape hatch" {
+    try expectNativeFileStdout(std.testing.allocator, "tests/fixtures/syscall_raw_main.lls", "1\n1\n1\nraw-close-ok\n");
+}
+
 test "native execution: syscall c extern struct ABI layout, sizeOf, and alignOf" {
     const expected =
         \\16

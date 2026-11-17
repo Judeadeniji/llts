@@ -1,0 +1,10 @@
+@const $sys = @import("std/syscall");
+
+pub @func main() {
+    $cur = sys.memory.program_break();
+    print(cur > 0);
+    $same = sys.memory.sbrk(0)?;
+    print(same == cur);
+    $old = sys.memory.brk(cur)?;
+    print(old == cur);
+}
