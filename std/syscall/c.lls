@@ -190,6 +190,30 @@ pub @extern "c" @struct Sockaddr {
     sa_data: [14]u8;
 }
 
+# A pair of descriptors returned by socketpair().
+pub @extern "c" @struct IntPair {
+    first: i32;
+    second: i32;
+}
+
+# POSIX message header for sendmsg()/recvmsg() (56 bytes on x86-64).
+pub @extern "c" @struct Msghdr {
+    msg_name: ?*SockaddrIn;
+    msg_namelen: u32;
+    msg_iov: *Iovec;
+    msg_iovlen: usize;
+    msg_control: ?*u8;
+    msg_controllen: usize;
+    msg_flags: i32;
+}
+
+# One element of a sendmmsg()/recvmmsg() vector (64 bytes on x86-64).
+pub @extern "c" @struct Mmghdr {
+    msg_hdr: Msghdr;
+    msg_len: u32;
+    __pad: u32;
+}
+
 pub @extern "c" @func exit(status: i32): never;
 pub @extern "c" @func abort(): never;
 
@@ -229,7 +253,7 @@ pub @extern "c" @func fallocate(fd: i32, mode: i32, offset: i64, len: i64): i32;
 pub @extern "c" @func close_range(first: u32, last: u32, flags: u32): i32;
 pub @extern "c" @func closefrom(lowfd: i32): void;
 
-pub @extern "c" @func fcntl(fd: i32, cmd: i32, arg: i64): i64;
+pub @extern "c" @func fcntl(fd: i32, cmd: i32, ...): i64;
 pub @extern "c" @func getdtablesize(): i32;
 
 # Variadic device control. Wrappers pass a typed pointer or scalar exactly as
@@ -558,6 +582,18 @@ pub @extern "c" @func recv(sockfd: i32, buf: *u8, len: usize, flags: i32): isize
 pub @extern "c" @func shutdown(sockfd: i32, how: i32): i32;
 pub @extern "c" @func getsockname(sockfd: i32, addr: *SockaddrIn, addrlen: *u32): i32;
 pub @extern "c" @func getpeername(sockfd: i32, addr: *SockaddrIn, addrlen: *u32): i32;
+pub @extern "c" @func socketpair(domain: i32, socket_type: i32, protocol: i32, sv: *IntPair): i32;
+pub @extern "c" @func accept4(sockfd: i32, addr: ?*SockaddrIn, addrlen: ?*u32, flags: i32): i32;
+pub @extern "c" @func sendto(sockfd: i32, buf: *u8, len: usize, flags: i32, addr: ?*SockaddrIn, addrlen: u32): isize;
+pub @extern "c" @func recvfrom(sockfd: i32, buf: *u8, len: usize, flags: i32, addr: ?*SockaddrIn, addrlen: ?*u32): isize;
+pub @extern "c" @func sendmsg(sockfd: i32, msg: *Msghdr, flags: i32): isize;
+pub @extern "c" @func recvmsg(sockfd: i32, msg: *Msghdr, flags: i32): isize;
+pub @extern "c" @func sendmmsg(sockfd: i32, vec: *Mmghdr, vlen: u32, flags: i32): i32;
+pub @extern "c" @func recvmmsg(sockfd: i32, vec: *Mmghdr, vlen: u32, flags: i32, timeout: ?*Timespec): i32;
+pub @extern "c" @func getsockopt(sockfd: i32, level: i32, name: i32, value: *i32, len: *u32): i32;
+pub @extern "c" @func setsockopt(sockfd: i32, level: i32, name: i32, value: *i32, len: u32): i32;
+pub @extern "c" @func sockatmark(sockfd: i32): i32;
+pub @extern "c" @func isfdtype(fd: i32, fdtype: i32): i32;
 
 pub @extern "c" @func malloc(size: usize): ?*CBuffer;
 pub @extern "c" @func free(p: *CBuffer): void;
