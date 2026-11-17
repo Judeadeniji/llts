@@ -237,6 +237,15 @@ pub fn parseStructInitWithType(self: *Parser, type_expr: *Node) ParseError!*Node
     return finishStructInit(self, type_expr, tok);
 }
 
+/// Intrinsics whose argument is a type rather than a value. Their arguments
+/// must parse in type position so inline types work: `@zeroed({x: i64})`,
+/// `@zeroed(?*T)`, `@zeroed([4]u8)`, `@zeroed(A | B)`. Parsed as an expression,
+/// `{x: i64}` would become a struct initializer instead of a shape type.
+fn takesTypeArgs(callee: *const Node) bool {
+    if (callee.* != .primary) return false;
+    return std.mem.eql(u8, callee.primary.name, "@zeroed");
+}
+
 pub fn finishCall(self: *Parser, callee: *Node) ParseError!*Node {
     _ = try self.consume(.delimiter, "Expected '('", "(");
     if (callee.* == .primary and std.mem.eql(u8, callee.primary.name, "@asm") and
@@ -244,10 +253,12 @@ pub fn finishCall(self: *Parser, callee: *Node) ParseError!*Node {
     {
         return finishExtendedAsmCall(self, callee);
     }
+    const type_args = takesTypeArgs(callee);
     var args: std.ArrayList(*Node) = .empty;
     if (!self.checkDelim(")")) {
         while (true) {
-            try args.append(self.arena, try parseExpression(self));
+            const arg = if (type_args) try types.parseType(self) else try parseExpression(self);
+            try args.append(self.arena, arg);
             if (self.checkDelim(",")) {
                 _ = self.advance();
             } else break;

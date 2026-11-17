@@ -1408,7 +1408,9 @@ pub fn emitAddressOf(self: *Emitter, node: *ast_mod.Node, arg: *ast_mod.Node) ![
                 return err;
             };
             self.writer = old_writer;
-            return std.fmt.allocPrint(a, "blk: {{\n{s}    break :blk @constCast(&({s}));\n}}", .{ buf.items, place });
+            self.counter += 1;
+            const id = self.counter;
+            return std.fmt.allocPrint(a, "lls_addr_blk_{d}: {{\n{s}    break :lls_addr_blk_{d} @constCast(&({s}));\n}}", .{ id, buf.items, id, place });
         },
         else => return self.failAt(node, "native backend only supports '&' on place expressions", .{}),
     }
@@ -2435,11 +2437,11 @@ fn emitZeroed(self: *Emitter, node: *ast_mod.Node, vt: ValType) anyerror![]const
             self.counter += 1;
             const id = self.counter;
             return std.fmt.allocPrint(a,
-                \\blk: {{
+                \\lls_zero_blk_{d}: {{
                 \\    const lls_zero_buf_{d} = try rt.mem.allocArray(ctx, 0, @sizeOf({s}), @alignOf({s}));
-                \\    break :blk @as([*]{s}, @ptrCast(@alignCast(lls_zero_buf_{d}.ptr)))[0..0];
+                \\    break :lls_zero_blk_{d} @as([*]{s}, @ptrCast(@alignCast(lls_zero_buf_{d}.ptr)))[0..0];
                 \\}}
-            , .{ id, elem.zig, elem.zig, elem.zig, id });
+            , .{ id, id, elem.zig, elem.zig, id, elem.zig, id });
         },
         .array => {
             const elem = vt.elem orelse {
@@ -2472,12 +2474,12 @@ fn emitZeroed(self: *Emitter, node: *ast_mod.Node, vt: ValType) anyerror![]const
             const id = self.counter;
             if (!needs_store) {
                 return std.fmt.allocPrint(a,
-                    \\blk: {{
+                    \\lls_zero_blk_{d}: {{
                     \\    var lls_zero_{d}: {s} = undefined;
                     \\    @memset(std.mem.asBytes(&lls_zero_{d}), 0);
-                    \\    break :blk lls_zero_{d};
+                    \\    break :lls_zero_blk_{d} lls_zero_{d};
                     \\}}
-                , .{ id, info.zig_name, id, id });
+                , .{ id, id, info.zig_name, id, id, id });
             }
             var stores: std.ArrayList([]const u8) = .empty;
             for (info.fields) |field| {
@@ -2488,12 +2490,12 @@ fn emitZeroed(self: *Emitter, node: *ast_mod.Node, vt: ValType) anyerror![]const
                 }));
             }
             return std.fmt.allocPrint(a,
-                \\blk: {{
+                \\lls_zero_blk_{d}: {{
                 \\    var lls_zero_{d}: {s} = undefined;
                 \\    @memset(std.mem.asBytes(&lls_zero_{d}), 0);
-                \\{s}    break :blk lls_zero_{d};
+                \\{s}    break :lls_zero_blk_{d} lls_zero_{d};
                 \\}}
-            , .{ id, info.zig_name, id, try std.mem.join(a, "", stores.items), id });
+            , .{ id, id, info.zig_name, id, try std.mem.join(a, "", stores.items), id, id });
         },
         else => return self.failAt(node, "native backend cannot produce a zero value for '{s}'", .{vt.display}),
     }

@@ -392,6 +392,7 @@ pub fn compileStruct(state: *CompilerState, s: *const ast.StructDecl) !void {
         old.offsets.deinit();
         old.types.deinit();
         old.field_irs.deinit(state.allocator);
+        if (old.field_names.len > 0) state.allocator.free(old.field_names);
     }
     try state.structs.put(s.name, .{
         .name = s.name,

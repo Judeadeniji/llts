@@ -179,6 +179,7 @@ pub fn typecheck(state: *CompilerState, env: *typecheck_root.Env, ta: ir.TypeAll
             }
             const t = try denotedType(state, env, ta, arg);
             try checkZeroable(state, t);
+            try ensureZeroLayout(state, t);
             try state.zeroed_results.put(call_node, t);
             return t;
         },
@@ -983,6 +984,18 @@ const ZeroCheck = struct {
     /// Arena for IR parsed from legacy display-only field types.
     ta: ir.TypeAlloc,
 };
+
+/// An inline type (`@zeroed({x: i64})`, `@zeroed(A | B)`) has no declaration
+/// to register its layout, but the emitter needs one to build the zero value.
+fn ensureZeroLayout(state: *CompilerState, t: ir.Type) !void {
+    const disp = try typecheck_root.ownDisplay(state, t);
+    if (disp.len >= 2 and disp[0] == '{' and disp[disp.len - 1] == '}') {
+        try from_ast.ensureShapeLayoutFromDisplay(state, disp);
+    }
+    if (std.mem.indexOf(u8, disp, " | ") != null) {
+        try from_ast.ensureUnionLayoutFromDisplay(state, disp);
+    }
+}
 
 fn checkZeroable(state: *CompilerState, t: ir.Type) !void {
     var arena = std.heap.ArenaAllocator.init(state.allocator);

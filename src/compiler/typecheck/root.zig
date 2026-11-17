@@ -692,6 +692,23 @@ fn requireAssignAt(state: *state_mod.CompilerState, got: ir.Type, expected: ir.T
                 if (from) |node| try recordExprType(state, node, expected);
                 return;
             }
+            // Cross-signedness integers (`i64` index arithmetic into a `u8`
+            // slot, `u32` into `i32`): accepted, but the emitter inserts a
+            // checked cast — an out-of-range value traps at runtime rather
+            // than being silently reinterpreted. Nominal `@type`s, bools and
+            // untyped literals keep their strict rules.
+            if (isPlainInt(got) and isPlainInt(expected)) {
+                compiler_errors.compileWarnAt(
+                    state,
+                    file_path,
+                    line,
+                    col,
+                    "{s}: implicit conversion from '{s}' to '{s}' — checked at runtime (use @as to silence)",
+                    .{ ctx, g, e },
+                );
+                if (from) |node| try recordExprType(state, node, expected);
+                return;
+            }
         }
     }
     const g = try ownDisplay(state, got);
@@ -818,6 +835,16 @@ fn intLiteralFits(node: *ast.Node, width: widths.Width) bool {
     };
 }
 
+/// A concrete integer type (`i64`, `u8`, `usize`, …). Excludes `u1` (bools),
+/// untyped literals and nominal `@type` wrappers, whose conversions stay
+/// strict.
+fn isPlainInt(t: ir.Type) bool {
+    return switch (t) {
+        .i8, .i16, .i32, .i64, .u8, .u16, .u32, .u64, .isize, .usize => true,
+        else => false,
+    };
+}
+
 /// Fold an integer expression made only of literals (`-5`, `2 + 3`, `0xFF`)
 /// so an exact constant can narrow to a smaller width without a cast.
 fn constIntFitsExpr(node: *ast.Node, width: widths.Width) bool {
@@ -898,7 +925,7 @@ pub fn intLiteralFitsU8(node: *ast.Node) bool {
     return intLiteralFits(node, .u8);
 }
 
-/// Integer width to coerce an untyped literal into for `expected`, including `?T`.
+/// Integer width to coerce an untyped literal into for `expected`, including `?T` and unions like `T | error`.
 fn integerAssignTarget(expected: ir.Type) ?ir.Type {
     const pe = ir.peelDefined(expected);
     if (ir.isInteger(pe)) return pe;
@@ -906,16 +933,26 @@ fn integerAssignTarget(expected: ir.Type) ?ir.Type {
         const pp = ir.peelDefined(payload);
         if (ir.isInteger(pp)) return pp;
     }
+    if (pe == .union_) {
+        for (pe.union_) |arm| {
+            if (integerAssignTarget(arm)) |target| return target;
+        }
+    }
     return null;
 }
 
-/// Float width for literal coercion into `expected`, including `?f32`.
+/// Float width for literal coercion into `expected`, including `?f32` and unions.
 fn floatAssignTarget(expected: ir.Type) ?ir.Type {
     const pe = ir.peelDefined(expected);
     if (pe == .f32 or pe == .f64) return pe;
     if (ir.optionalPayload(pe)) |payload| {
         const pp = ir.peelDefined(payload);
         if (pp == .f32 or pp == .f64) return pp;
+    }
+    if (pe == .union_) {
+        for (pe.union_) |arm| {
+            if (floatAssignTarget(arm)) |target| return target;
+        }
     }
     return null;
 }
@@ -1818,9 +1855,14 @@ fn inferUnaryExpr(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, 
         if (ir.optionalPayload(t) != null) {
             return compiler_errors.compileFailFmt(state, "Cannot take the address of an optional; use a non-optional aggregate", .{});
         }
-        if (!ir.isAddressableAggregate(t)) {
+        const is_place = switch (u.arg.*) {
+            .primary => |p| p.kind == .identifier or p.kind == .register,
+            .member, .index => true,
+            else => false,
+        };
+        if (!is_place) {
             const d = try ownDisplay(state, t);
-            return compiler_errors.compileFailFmt(state, "Address-of requires an aggregate value (struct, array, or []T), got '{s}'", .{d});
+            return compiler_errors.compileFailFmt(state, "Address-of requires a place expression (variable, field, or index), got '{s}'", .{d});
         }
         return try ta.ptrType(t);
     }

@@ -220,9 +220,10 @@ pub fn emitPlaceLvalue(self: *Emitter, node: *ast_mod.Node) ![]const u8 {
             const word: []const u8 = switch (obj_t.kind) {
                 .array => "Array",
                 .slice => "Slice",
+                .string => "String",
                 else => return self.failAt(node, "native backend cannot assign into '{s}' yet", .{obj_t.display}),
             };
-            const use: []const u8 = if (obj_t.kind == .slice) "slice" else "arr";
+            const use: []const u8 = if (obj_t.kind == .array) "arr" else "slice";
             const index_node = ix.index orelse return self.failAt(node, "expected index expression", .{});
             const index_code = try expr_mod.emitI64Operand(self, index_node);
             const obj_t_full = try self.valueType(ix.object);
@@ -949,8 +950,9 @@ pub fn emitLocalDeclaration(self: *Emitter, node: *ast_mod.Node, d: *const ast_m
         // use of the name (reads, writes, `&name`) goes through `name.*`.
         const cell = try std.fmt.allocPrint(a, "lls_box_{s}", .{info.zig_name});
         const ptr = try std.fmt.allocPrint(a, "lls_cell_{s}", .{info.zig_name});
+        const box_label = try std.fmt.allocPrint(a, "lls_box_blk_{s}", .{info.zig_name});
         try self.writeIndent();
-        try self.writer.print("const {s}: *{s} = blk: {{\n", .{ info.zig_name, vt.zig });
+        try self.writer.print("const {s}: *{s} = {s}: {{\n", .{ info.zig_name, vt.zig, box_label });
         try self.writeIndent();
         try self.writer.print("    const {s} = try ctx.allocImmortal(@sizeOf({s}), @alignOf({s}));\n", .{ cell, vt.zig, vt.zig });
         try self.writeIndent();
@@ -958,7 +960,7 @@ pub fn emitLocalDeclaration(self: *Emitter, node: *ast_mod.Node, d: *const ast_m
         try self.writeIndent();
         try self.writer.print("    {s}.* = {s};\n", .{ ptr, init_code });
         try self.writeIndent();
-        try self.writer.print("    break :blk {s};\n", .{ptr});
+        try self.writer.print("    break :{s} {s};\n", .{ box_label, ptr });
         try self.writeIndent();
         try self.writer.writeAll("};\n");
         if (!info.read) {

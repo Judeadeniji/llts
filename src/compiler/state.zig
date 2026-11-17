@@ -691,6 +691,7 @@ pub fn deinit(self: *CompilerState) void {
         e.value_ptr.offsets.deinit();
         e.value_ptr.types.deinit();
         e.value_ptr.field_irs.deinit(self.allocator);
+        if (e.value_ptr.field_names.len > 0) self.allocator.free(e.value_ptr.field_names);
     }
     self.structs.deinit();
     self.unions.deinit();
