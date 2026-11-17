@@ -27,13 +27,20 @@ LLTS takes a strict, honest approach to machine-level scalar types. There are no
 
 ## 2. Integer Semantics & Bounds Safety
 
-### No Implicit Conversions
-LLTS never implicitly widens or narrows numeric types. Assigning an `i32` to an `i64` without an explicit conversion is a compile error:
+### Implicit Numeric Conversions
+Assigning between integer widths is allowed, but never silently lossy at runtime:
+
+- **Same signedness, widening** (`i32` → `i64`, `u8` → `u32`, `f32` → `f64`) compiles with a warning.
+- **Same signedness, narrowing** (`i64` → `i32`) compiles with a warning in the default mode and is rejected in strict mode. The emitted cast is range-checked: an out-of-range value traps.
+- **Cross-signedness** (`i64` → `u8`, `u32` → `i32`, e.g. loop indices or lengths into a narrower slot) compiles with a warning and a range-checked cast, so it traps rather than reinterpreting bits.
+- **Bool, nominal `@type` widths, and untyped literals** keep strict rules; convert them with `@as`.
+- An **exact literal that fits** needs no cast, whatever the signedness (`$n: u32 = 4294967295;`).
+
+`@as` is the way to make any of these explicit and silence the warning:
 
 ```lls
 $small: i32 = 100;
-# $bad: i64 = small;        # Compile Error: type mismatch
-$good: i64 = @as(i64, small); # Explicit widening with @as
+$good: i64 = @as(i64, small); # explicit widening, no warning
 ```
 
 ### Checked Arithmetic vs. Wrapping Operators

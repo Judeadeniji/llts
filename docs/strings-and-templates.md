@@ -15,9 +15,9 @@ print(greeting);
 
 - **Immutability:** Strings cannot be mutated in-place.
 - **UTF-8 Clean:** String literals contain UTF-8 encoded bytes.
-- **Length:** Use the built-in `len(str)` function to obtain the length in bytes:
+- **Length:** Use `.len` to obtain the length in bytes:
   ```llts
-  $len = len(greeting); # 13
+  $len = greeting.len; # 13
   ```
 
 ---
@@ -76,7 +76,7 @@ print(query);
    ```
 3. **Preservation of Whitespace:** Interior line indentation is preserved exactly as written.
 4. **Structural Newline Dropping:** Only the single final newline directly preceding the closing `` ``` `` fence is trimmed away so that single-line bodies or trailing text don't accumulate unintended extra line breaks.
-5. **Empty Templates:** An empty body (`` ``` `` followed by newline and immediate closing `` ``` ``) evaluates to an empty string `""` with `len(s) == 0`.
+5. **Empty Templates:** An empty body (`` ``` `` followed by newline and immediate closing `` ``` ``) evaluates to an empty string `""` with `s.len == 0`.
 
 ---
 
@@ -111,20 +111,22 @@ print(report);
 
 ## String Operations
 
-### 1. Element Count: `len(str)`
-The global `len()` function returns the byte count:
+### 1. Element Count: `.len`
+The `.len` property returns the byte count:
 
 ```llts
-$s = "hello";
-print(len(s)); # 5
+$s: string = "hello";
+print(s.len); # 5
 ```
 
-When called on an immutable `@const` string, `len()` is folded by the compiler into a compile-time constant:
+On an immutable `@const` sequence with an explicit type, `.len` is folded by the compiler into a compile-time constant:
 
 ```llts
-@const $NAME = "Antigravity";
-@const $NAME_LEN = len(NAME); # Constant folded to 11
+@const $NAME: string = "Antigravity";
+@const $NAME_LEN = NAME.len; # Constant folded to 11
 ```
+
+For generic code over several sequence types, `std/core.lls` provides `len(T, s)`; it is an ordinary library function, not a builtin.
 
 ### 2. Byte Slicing
 Strings can be sliced to create subviews:

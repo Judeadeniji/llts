@@ -15,11 +15,11 @@ This guide covers the memory layout, type syntax, literal inference, slicing rul
 | Dimension | Sized Arrays (`[N]T`) | Slices (`[]T`) | Strings (`string`) | Tuples (`[T, U, ...]`) |
 |---|---|---|---|---|
 | **Homogeneity** | Homogeneous (all `T`) | Homogeneous (all `T`) | Homogeneous (`u8`/`byte`) | Heterogeneous (`T`, `U`, ...) |
-| **Size Bound** | Fixed at compile time (`N`) | Dynamic at runtime (`len`) | Dynamic at runtime (`len`) | Fixed at compile time ($N$ fields) |
+| **Size Bound** | Fixed at compile time (`N`) | Dynamic at runtime (`.len`) | Dynamic at runtime (`.len`) | Fixed at compile time ($N$ fields) |
 | **Memory Layout** | Inline contiguous stack buffer | 16-byte fat pointer (`*T`, `usize`) | 16-byte fat pointer (`*u8`, `usize`) | Inline contiguous product layout |
 | **Element Read** | `arr[i]` | `slice[i]` | `str[i]` (native) | `tuple.0` or `tuple[0]` |
 | **Element Write** | `arr[i] = v;` | `slice[i] = v;` (in underlying memory) | Immutable | `tuple.0 = v;` |
-| **Length Query** | `len(arr)` (constant-folds) | `len(slice)` | `len(str)` (constant-folds on `@const`) | Fixed tuple arity |
+| **Length Query** | `arr.len` (constant-folds) | `slice.len` | `str.len` (constant-folds on `@const`) | Fixed tuple arity |
 | **Slicable** | Yes (`arr[a..b]` yields `[]T`) | Yes (`slice[a..b]` yields `[]T`) | Yes (`str[a..b]` yields `string`) | No |
 | **Iteration** | `@for (arr) \|val, idx\|` | `@for (slice) \|val, idx\|` | `@for (str) \|byte, idx\|` | Unrolled by member |
 | **Stack Escape** | Returnable by value (if scalar) | Cannot escape frame if pointing to local stack | Returnable by value (borrowed view) | Returnable by value (if scalar) |
@@ -142,9 +142,9 @@ Slices are created by slicing an array, another slice, or a string using range s
 | Range Form | Syntax | Start Index | End Index | Resulting Length |
 |---|---|---|---|---|
 | **Half-Open** | `buf[start..end]` | `start` | `end` (exclusive) | `end - start` |
-| **From Start** | `buf[start..]` | `start` | `len(buf)` | `len(buf) - start` |
+| **From Start** | `buf[start..]` | `start` | `buf.len` | `buf.len - start` |
 | **Up To End** | `buf[..end]` | `0` | `end` (exclusive) | `end` |
-| **Full Window** | `buf[..]` | `0` | `len(buf)` | `len(buf)` |
+| **Full Window** | `buf[..]` | `0` | `buf.len` | `buf.len` |
 
 ```llts
 $arr: [5]i64 = [10, 20, 30, 40, 50];
@@ -160,7 +160,7 @@ $all: []i64  = arr[..];   # elements 10, 20, 30, 40, 50 (len = 5)
 Slice boundaries are strictly checked at runtime:
 1. `0 <= start`
 2. `start <= end`
-3. `end <= len(backing_buffer)`
+3. `end <= backing_buffer.len`
 
 If any invariant is violated, execution halts with a runtime trap:
 ```text
@@ -270,7 +270,7 @@ CREATE TABLE users (
 2. **Closing Fence:** The closing `` ``` `` may be indented to align with the surrounding block. The structural semicolon `;` follows the fence.
 3. **Indentation Preservation:** Interior whitespace and tabs are preserved verbatim (no arbitrary dedenting).
 4. **Final Structural Newline Stripping:** Only the single trailing newline immediately preceding the closing `` ``` `` is stripped, so bodies do not gain unintended extra line breaks.
-5. **Empty Templates:** An empty body evaluates to `""` with `len(s) == 0`.
+5. **Empty Templates:** An empty body evaluates to `""` with `s.len == 0`.
 
 ### 4.3 String Interpolation: `${expr}`
 
@@ -294,14 +294,14 @@ Status: ${@if (attempts >= 3) { break "LOCKED"; } @else { break "ACTIVE"; }}
 
 ### 4.4 String Operations
 
-#### Length (`len`)
+#### Length (`.len`)
 ```llts
-$text = "Hello";
-print(len(text)); # 5
+$text: string = "Hello";
+print(text.len); # 5
 
-# Compile-time evaluation on constants:
-@const $STATIC_STR = "World";
-@const $STATIC_LEN = len(STATIC_STR); # Evaluated at compile-time to 5
+# Compile-time evaluation on typed constants:
+@const $STATIC_STR: string = "World";
+@const $STATIC_LEN = STATIC_STR.len; # Evaluated at compile-time to 5
 ```
 
 #### Slicing

@@ -114,6 +114,7 @@ $opt: ?Conn = @zeroed(?Conn);    # null
 ```
 
 - **Signature:** `@zeroed(Type)`
+- The argument is parsed in type position, so any type works — including inline and anonymous ones: `@zeroed({x: i64})`, `@zeroed({a: i64; b: [2]u8})`, `@zeroed([]u8)`, and `@zeroed(@typeOf(n))`.
 - **Return Type:** the type argument itself.
 - Integers and floats → `0`, booleans → `false`, arrays/tuples/structs → every element and field zeroed, `?T` → `null`, enums → the variant whose value is `0`, slices and strings → the empty value.
 - The check is recursive: a struct is zeroable only when all of its fields are. A field that has no zero value (a non-null `*T`, a function value, a union in v1, an enum with no `0` variant, an uninhabited type) rejects the whole expression, and the diagnostic names the path to that part:
@@ -125,6 +126,7 @@ $opt: ?Conn = @zeroed(?Conn);    # null
 - The element type of a zero-length array is still checked, so generic `[N]T` code cannot pass at `N = 0` and fail at `N = 1`.
 - A zero value, not an allocation and not uninitialized memory: it lives wherever the binding lives. Use a separate in-place operation to zero existing storage.
 - Field defaults and constructors are ignored — `@zeroed` always means zero.
+- Slices and strings zero to their **empty value** (length 0), so `@zeroed([]u8)` has no elements to index; use a sized array (`[N]u8`) or real storage when the elements are written afterwards.
 
 ---
 

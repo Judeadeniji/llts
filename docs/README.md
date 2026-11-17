@@ -20,7 +20,7 @@ Welcome to the documentation for LLTS — a small systems language with a compac
   Checked arithmetic traps, modular wrapping (`+%`, `-%`, `*%`), power (`^`/`**`), bitwise operators & shift ranges (`0..63`), boolean logic, null-coalescing (`??`), pipes (`|>`), and the complete 14-level precedence table.
 
 - [**Strings & Multiline Templates**](strings-and-templates.md)  
-  The `string` immutable byte slice type, character escapes, multiline fenced templates (`` ```...``` ``), string interpolation (`${expr}`), `len()`, string slicing, and concatenation via `@concat`.
+  The `string` immutable byte slice type, character escapes, multiline fenced templates (`` ```...``` ``), string interpolation (`${expr}`), `.len`, string slicing, and concatenation via `@concat`.
 
 - [**Strings, Arrays, Slices & Tuples**](sequences.md)  
   In-depth architectural guide to linear collections: sized arrays (`[N]T`), fat-pointer slices (`[]T`), strings, heterogeneous tuples (`[A, B]`), bounds safety, bidirectional literal propagation, in-place slice mutation, and escape analysis.

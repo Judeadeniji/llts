@@ -1,7 +1,7 @@
 @const $std = @import("std/index");
 
 # Length-prefixed array literal (use len(arr) for bounds)
-$arr = [0, 0, 0, 0, 0];
+$arr = @zeroed([5]i64);
 
 arr[0] = 42;
 arr[1] = 1337;

@@ -386,7 +386,7 @@ The compiler verifies that the piped argument plus any explicit trailing argumen
 The type of the left-hand expression must match the function's first parameter:
 
 ```llts
-@func printLength(s: string) { print(len(s)); }
+@func printLength(s: string) { print(s.len); }
 
 # COMPILE ERROR: Incompatible type for argument 1 of 'printLength' (expected 'string', got 'i64')
 100 |> printLength;
