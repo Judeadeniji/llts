@@ -68,7 +68,12 @@ pub fn sizeOfTypeName(type_name: []const u8) i32 {
 
 /// Size of a named type when enum/struct defs are available.
 pub fn sizeOfNamedType(state: *state_mod.CompilerState, type_name: []const u8) i32 {
+    // Optional values use an 8-byte handle and pointers/function values are
+    // always one word wide; never fall through to the pointee's layout.
+    if (isOptionalTypeName(type_name)) return 8;
     const bare = unwrapTypeName(type_name);
+    if (bare.len > 0 and bare[0] == '*') return 8;
+    if (std.mem.startsWith(u8, bare, "@func(")) return 8;
     if (state.typedefs.get(bare)) |td| return sizeOfNamedType(state, td.underlying);
     if (state.enums.contains(bare)) return 8; // tag-only i64
     if (from_ast.lookupStruct(state, bare)) |sd| return sd.size;
@@ -143,7 +148,12 @@ pub fn alignOfTypeName(type_name: []const u8) i32 {
 
 /// Alignment of a named type when enum/struct defs are available.
 pub fn alignOfNamedType(state: *state_mod.CompilerState, type_name: []const u8) i32 {
+    // Optional values and pointers are single-word handles regardless of the
+    // alignment of their payload/pointee.
+    if (isOptionalTypeName(type_name)) return 8;
     const bare = unwrapTypeName(type_name);
+    if (bare.len > 0 and bare[0] == '*') return 8;
+    if (std.mem.startsWith(u8, bare, "@func(")) return 8;
     if (state.typedefs.get(bare)) |td| return alignOfNamedType(state, td.underlying);
     if (state.enums.contains(bare)) return 8;
     if (from_ast.lookupStruct(state, bare)) |sd| return sd.alignment;
