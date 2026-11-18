@@ -138,7 +138,8 @@ fn printExcerpt(source: []const u8, line: u32, column: u32) void {
     const start = byteOffset(src_line, column);
     const span = highlightSpan(src_line, start);
     const prefix_width = displayWidth(src_line[0..start]);
-    const mark_width = @max(displayWidth(src_line[start .. start + span]), 1);
+    const end = @min(start + span, src_line.len);
+    const mark_width = @max(displayWidth(src_line[start..end]), 1);
 
     out.printStderr("{s}", .{c_gutter});
     var gutter_pad: usize = 0;
@@ -230,7 +231,7 @@ fn byteOffset(src_line: []const u8, column: u32) usize {
 /// expression: a whole quoted string, an identifier-ish name, or a single
 /// character for anything else.
 fn highlightSpan(src_line: []const u8, start: usize) usize {
-    if (start >= src_line.len) return 1;
+    if (start >= src_line.len) return 0;
     const ch = src_line[start];
     if (ch == '"' or ch == '\'') {
         var end = start + 1;
