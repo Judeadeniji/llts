@@ -1,0 +1,157 @@
+@const $sys = @import("std/syscall");
+
+pub @func main() {
+    # socketpair, descriptor typing, out-of-band mark, and options
+    $sp = sys.socket.socketpair(sys.socket.AF_UNIX, sys.socket.SOCK_STREAM, 0)?;
+    print(sp.first >= 0);
+    print(sys.socket.is_fd_type(sp.first, @as(i32, sys.stat.S_IFSOCK))?);
+    print(sys.socket.at_out_of_band_mark(sp.first)? == false);
+    $kind = sys.socket.socket_option(sp.first, sys.socket.SOL_SOCKET, sys.socket.SO_TYPE)?;
+    print(kind);
+
+    sys.socket.set_socket_option(sp.first, sys.socket.SOL_SOCKET, sys.socket.SO_KEEPALIVE, 1)?;
+    print(sys.socket.socket_option(sp.first, sys.socket.SOL_SOCKET, sys.socket.SO_KEEPALIVE)?);
+    print(sys.socket.socket_option(sp.first, sys.socket.SOL_SOCKET, sys.socket.SO_ERROR)?);
+
+    print(sys.socket.send(sp.first, "ab", 0)?);
+    $plain = @zeroed([4]u8);
+    print(sys.socket.recv(sp.second, plain[..], 0)?);
+    print(plain[0], plain[1]);
+
+    # sendmsg/recvmsg with two iovecs
+    $one = @zeroed([2]u8);
+    $two = @zeroed([2]u8);
+    one[0] = 99;
+    one[1] = 100;
+    two[0] = 101;
+    two[1] = 102;
+    $iov: [2]sys.socket.Iovec = [sys.socket.Iovec { iov_base: &one[0], iov_len: 2 }, sys.socket.Iovec { iov_base: &two[0], iov_len: 2 }];
+    print(sys.socket.sendmsg(sp.first, null, iov[..], 0)?);
+
+    $r1 = @zeroed([2]u8);
+    $r2 = @zeroed([2]u8);
+    $riov: [2]sys.socket.Iovec = [sys.socket.Iovec { iov_base: &r1[0], iov_len: 2 }, sys.socket.Iovec { iov_base: &r2[0], iov_len: 2 }];
+    $message = sys.socket.Msghdr {
+        msg_name: null,
+        msg_namelen: 0,
+        msg_iov: &riov[0],
+        msg_iovlen: 2,
+        msg_control: null,
+        msg_controllen: 0,
+        msg_flags: 0,
+    };
+    print(sys.socket.recvmsg(sp.second, &message, 0)?);
+    print(r1[0], r1[1], r2[0], r2[1]);
+
+    sys.io.close(sp.first)?;
+    sys.io.close(sp.second)?;
+
+    # accept4 on a loopback TCP listener
+    $ip = sys.socket.ipv4_address(127, 0, 0, 1);
+    $srv = sys.socket.socket(sys.socket.AF_INET, sys.socket.SOCK_STREAM, 0)?;
+    sys.socket.bind(srv, sys.socket.sockaddr_in(0, ip))?;
+    sys.socket.listen(srv, 1)?;
+    $port = sys.socket.port_from_sockaddr(sys.socket.getsockname(srv)?);
+    $cli = sys.socket.socket(sys.socket.AF_INET, sys.socket.SOCK_STREAM, 0)?;
+    sys.socket.connect(cli, sys.socket.sockaddr_in(port, ip))?;
+    $accepted = sys.socket.accept4(srv, sys.socket.SOCK_CLOEXEC)?;
+    print(accepted.fd > 0);
+    sys.io.close(cli)?;
+    sys.io.close(accepted.fd)?;
+    sys.io.close(srv)?;
+
+    # sendto/recvfrom on loopback UDP
+    $rx = sys.socket.socket(sys.socket.AF_INET, sys.socket.SOCK_DGRAM, 0)?;
+    sys.socket.bind(rx, sys.socket.sockaddr_in(0, ip))?;
+    $rx_port = sys.socket.port_from_sockaddr(sys.socket.getsockname(rx)?);
+    $tx = sys.socket.socket(sys.socket.AF_INET, sys.socket.SOCK_DGRAM, 0)?;
+    print(sys.socket.sendto(tx, "udp", 0, sys.socket.sockaddr_in(rx_port, ip))?);
+    $datagram_buf = @zeroed([8]u8);
+    $datagram = sys.socket.recvfrom(rx, datagram_buf[..], 0)?;
+    print(datagram.size);
+    print(datagram_buf[0], datagram_buf[1], datagram_buf[2]);
+    print(sys.socket.port_from_sockaddr(datagram.address) > 0);
+    sys.io.close(tx)?;
+    sys.io.close(rx)?;
+
+    # sendmmsg/recvmmsg over a datagram socketpair
+    $mp = sys.socket.socketpair(sys.socket.AF_UNIX, sys.socket.SOCK_DGRAM, 0)?;
+    $ma = @zeroed([2]u8);
+    $mb = @zeroed([2]u8);
+    ma[0] = 120;
+    ma[1] = 121;
+    mb[0] = 122;
+    mb[1] = 123;
+    $miov0: [1]sys.socket.Iovec = [sys.socket.Iovec { iov_base: &ma[0], iov_len: 2 }];
+    $miov1: [1]sys.socket.Iovec = [sys.socket.Iovec { iov_base: &mb[0], iov_len: 2 }];
+    $m0 = sys.socket.Mmghdr {
+        msg_hdr: sys.socket.Msghdr {
+            msg_name: null,
+            msg_namelen: 0,
+            msg_iov: &miov0[0],
+            msg_iovlen: 1,
+            msg_control: null,
+            msg_controllen: 0,
+            msg_flags: 0,
+        },
+        msg_len: 0,
+    };
+    $m1 = sys.socket.Mmghdr {
+        msg_hdr: sys.socket.Msghdr {
+            msg_name: null,
+            msg_namelen: 0,
+            msg_iov: &miov1[0],
+            msg_iovlen: 1,
+            msg_control: null,
+            msg_controllen: 0,
+            msg_flags: 0,
+        },
+        msg_len: 0,
+    };
+    $messages: [2]sys.socket.Mmghdr = [m0, m1];
+    print(sys.socket.sendmmsg(mp.first, messages[..], 0)?);
+
+    $ra = @zeroed([2]u8);
+    $rb = @zeroed([2]u8);
+    $riov0: [1]sys.socket.Iovec = [sys.socket.Iovec { iov_base: &ra[0], iov_len: 2 }];
+    $riov1: [1]sys.socket.Iovec = [sys.socket.Iovec { iov_base: &rb[0], iov_len: 2 }];
+    $rm0 = sys.socket.Mmghdr {
+        msg_hdr: sys.socket.Msghdr {
+            msg_name: null,
+            msg_namelen: 0,
+            msg_iov: &riov0[0],
+            msg_iovlen: 1,
+            msg_control: null,
+            msg_controllen: 0,
+            msg_flags: 0,
+        },
+        msg_len: 0,
+    };
+    $rm1 = sys.socket.Mmghdr {
+        msg_hdr: sys.socket.Msghdr {
+            msg_name: null,
+            msg_namelen: 0,
+            msg_iov: &riov1[0],
+            msg_iovlen: 1,
+            msg_control: null,
+            msg_controllen: 0,
+            msg_flags: 0,
+        },
+        msg_len: 0,
+    };
+    $received: [2]sys.socket.Mmghdr = [rm0, rm1];
+    print(sys.socket.recvmmsg(mp.second, received[..], 0, null)?);
+    print(received[0].msg_len);
+    print(received[1].msg_len);
+    print(ra[0], ra[1], rb[0], rb[1]);
+    sys.io.close(mp.first)?;
+    sys.io.close(mp.second)?;
+
+    # TCP-level option
+    $tcp = sys.socket.socket(sys.socket.AF_INET, sys.socket.SOCK_STREAM, 0)?;
+    sys.socket.set_socket_option(tcp, sys.socket.SOL_TCP, sys.socket.TCP_NODELAY, 1)?;
+    print(sys.socket.socket_option(tcp, sys.socket.SOL_TCP, sys.socket.TCP_NODELAY)?);
+    sys.io.close(tcp)?;
+
+    print("socket-extras-ok");
+}

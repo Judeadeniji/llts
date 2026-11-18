@@ -936,6 +936,37 @@ test "native execution: syscall network sockets lifecycle" {
     try expectNativeFileStdout(std.testing.allocator, "tests/fixtures/syscall_socket_main.lls", expected);
 }
 
+test "native execution: syscall socket extras and message vectors" {
+    const expected =
+        \\1
+        \\1
+        \\1
+        \\1
+        \\1
+        \\0
+        \\2
+        \\2
+        \\97 98
+        \\4
+        \\4
+        \\99 100 101 102
+        \\1
+        \\3
+        \\3
+        \\117 100 112
+        \\1
+        \\2
+        \\2
+        \\2
+        \\2
+        \\120 121 122 123
+        \\1
+        \\socket-extras-ok
+        \\
+    ;
+    try expectNativeFileStdout(std.testing.allocator, "tests/fixtures/syscall_socket_extras_main.lls", expected);
+}
+
 test "native execution: @zeroed builds zero values" {
     const allocator = std.testing.allocator;
     const src =

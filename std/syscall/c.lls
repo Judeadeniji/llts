@@ -211,7 +211,6 @@ pub @extern "c" @struct Msghdr {
 pub @extern "c" @struct Mmghdr {
     msg_hdr: Msghdr;
     msg_len: u32;
-    __pad: u32;
 }
 
 pub @extern "c" @func exit(status: i32): never;
