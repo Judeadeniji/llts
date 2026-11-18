@@ -747,6 +747,19 @@ fn parseLiteral(self: *Parser) ParseError!*Node {
     } });
 }
 
+fn isOctal(c: u8) bool {
+    return c >= '0' and c <= '7';
+}
+
+fn hexVal(c: u8) ?u8 {
+    return switch (c) {
+        '0'...'9' => c - '0',
+        'a'...'f' => c - 'a' + 10,
+        'A'...'F' => c - 'A' + 10,
+        else => null,
+    };
+}
+
 /// Cook template-body escapes (same set as `"…"` plus `\$` → `$`).
 fn cookTemplateText(self: *Parser, raw: []const u8) ParseError![]const u8 {
     var buf: std.ArrayList(u8) = .empty;
@@ -755,19 +768,147 @@ fn cookTemplateText(self: *Parser, raw: []const u8) ParseError![]const u8 {
         if (raw[i] == '\\' and i + 1 < raw.len) {
             const esc = raw[i + 1];
             switch (esc) {
-                'n' => try buf.append(self.arena, '\n'),
-                'r' => try buf.append(self.arena, '\r'),
-                't' => try buf.append(self.arena, '\t'),
-                '\\' => try buf.append(self.arena, '\\'),
-                '"' => try buf.append(self.arena, '"'),
-                '\'' => try buf.append(self.arena, '\''),
-                '$' => try buf.append(self.arena, '$'),
+                'a' => {
+                    try buf.append(self.arena, 0x07);
+                    i += 2;
+                },
+                'b' => {
+                    try buf.append(self.arena, 0x08);
+                    i += 2;
+                },
+                'e' => {
+                    try buf.append(self.arena, 0x1B);
+                    i += 2;
+                },
+                'f' => {
+                    try buf.append(self.arena, 0x0C);
+                    i += 2;
+                },
+                'n' => {
+                    try buf.append(self.arena, '\n');
+                    i += 2;
+                },
+                'r' => {
+                    try buf.append(self.arena, '\r');
+                    i += 2;
+                },
+                't' => {
+                    try buf.append(self.arena, '\t');
+                    i += 2;
+                },
+                'v' => {
+                    try buf.append(self.arena, 0x0B);
+                    i += 2;
+                },
+                '\\' => {
+                    try buf.append(self.arena, '\\');
+                    i += 2;
+                },
+                '"' => {
+                    try buf.append(self.arena, '"');
+                    i += 2;
+                },
+                '\'' => {
+                    try buf.append(self.arena, '\'');
+                    i += 2;
+                },
+                '$' => {
+                    try buf.append(self.arena, '$');
+                    i += 2;
+                },
+                'x' => {
+                    if (i + 3 < raw.len) {
+                        const h0 = hexVal(raw[i + 2]);
+                        const h1 = hexVal(raw[i + 3]);
+                        if (h0 != null and h1 != null) {
+                            try buf.append(self.arena, (@as(u8, h0.?) << 4) | h1.?);
+                            i += 4;
+                            continue;
+                        }
+                    }
+                    try buf.append(self.arena, '\\');
+                    try buf.append(self.arena, esc);
+                    i += 2;
+                },
+                'u' => {
+                    if (i + 5 < raw.len) {
+                        var cp: u32 = 0;
+                        var valid = true;
+                        var j: usize = 0;
+                        while (j < 4) : (j += 1) {
+                            if (hexVal(raw[i + 2 + j])) |h| {
+                                cp = (cp << 4) | h;
+                            } else {
+                                valid = false;
+                                break;
+                            }
+                        }
+                        if (valid and !(cp >= 0xD800 and cp <= 0xDFFF)) {
+                            var utf8_buf: [4]u8 = undefined;
+                            if (std.unicode.utf8Encode(@intCast(cp), &utf8_buf)) |len| {
+                                try buf.appendSlice(self.arena, utf8_buf[0..len]);
+                                i += 6;
+                                continue;
+                            } else |_| {}
+                        }
+                    }
+                    try buf.append(self.arena, '\\');
+                    try buf.append(self.arena, esc);
+                    i += 2;
+                },
+                'U' => {
+                    if (i + 9 < raw.len) {
+                        var cp: u32 = 0;
+                        var valid = true;
+                        var j: usize = 0;
+                        while (j < 8) : (j += 1) {
+                            if (hexVal(raw[i + 2 + j])) |h| {
+                                cp = (cp << 4) | h;
+                            } else {
+                                valid = false;
+                                break;
+                            }
+                        }
+                        if (valid and cp <= 0x10FFFF and !(cp >= 0xD800 and cp <= 0xDFFF)) {
+                            var utf8_buf: [4]u8 = undefined;
+                            if (std.unicode.utf8Encode(@intCast(cp), &utf8_buf)) |len| {
+                                try buf.appendSlice(self.arena, utf8_buf[0..len]);
+                                i += 10;
+                                continue;
+                            } else |_| {}
+                        }
+                    }
+                    try buf.append(self.arena, '\\');
+                    try buf.append(self.arena, esc);
+                    i += 2;
+                },
+                '0'...'7' => {
+                    if (esc == '0' and (i + 3 >= raw.len or !isOctal(raw[i + 2]) or !isOctal(raw[i + 3]))) {
+                        try buf.append(self.arena, 0);
+                        i += 2;
+                        continue;
+                    }
+                    if (i + 3 < raw.len and isOctal(raw[i + 2]) and isOctal(raw[i + 3])) {
+                        const d0: u32 = esc - '0';
+                        const d1: u32 = raw[i + 2] - '0';
+                        const d2: u32 = raw[i + 3] - '0';
+                        const val: u32 = (d0 * 64) + (d1 * 8) + d2;
+                        if (val <= 255) {
+                            try buf.append(self.arena, @intCast(val));
+                            i += 4;
+                            continue;
+                        }
+                    }
+                    try buf.append(self.arena, '\\');
+                    try buf.append(self.arena, esc);
+                    i += 2;
+                },
                 else => {
                     try buf.append(self.arena, '\\');
                     try buf.append(self.arena, esc);
+                    i += 2;
                 },
             }
-            i += 2;
             continue;
         }
         try buf.append(self.arena, raw[i]);

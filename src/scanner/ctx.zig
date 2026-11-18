@@ -7,6 +7,7 @@ pub const ScanError = error{
     UnexpectedCharacter,
     UnterminatedString,
     MultilineString,
+    InvalidEscapeSequence,
     UnterminatedTemplate,
     TemplateFence,
     ExpectedType,

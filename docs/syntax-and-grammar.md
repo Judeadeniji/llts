@@ -125,12 +125,21 @@ $greeting = "Hello, World!\n";
 ```
 
 Supported escape sequences:
+- `\a` — Bell (BEL)
+- `\b` — Backspace (BS)
+- `\e` — Escape (ESC)
+- `\f` — Form feed (FF)
 - `\n` — Newline
 - `\r` — Carriage return
 - `\t` — Tab
+- `\v` — Vertical tab (VT)
 - `\\` — Backslash
 - `\"` — Double quote
 - `\'` — Single quote
+- `\NNN` — Octal 6/8-bit character (3 digits, e.g. `\101` for `A`)
+- `\xNN` — Hexadecimal 8-bit character (2 digits)
+- `\uNNNN` — Hexadecimal 16-bit Unicode character UTF-8 encoded (4 digits)
+- `\UNNNNNNNN` — Hexadecimal 32-bit Unicode character UTF-8 encoded (8 digits)
 
 > **Note:** Standard double-quoted strings cannot span multiple lines. For multiline text, use fenced templates.
 

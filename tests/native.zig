@@ -1007,3 +1007,15 @@ test "native compile: @zeroed diagnostic names the offending part" {
         "part 'conn.handle' has type '*Handle', a non-null pointer",
     );
 }
+
+test "native execution: string escape characters" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\pub @func main() {
+        \\    $s = "\a\b\e\f\n\r\t\v\\\"\'\x41\u0042\U00000043\104";
+        \\    print(s.len);
+        \\    print("\x41\u00e9\u4e16\U0001f600");
+        \\}
+    ;
+    try expectNativeStdout(allocator, src, "15\nAé世😀\n");
+}

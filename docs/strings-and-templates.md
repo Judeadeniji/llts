@@ -35,15 +35,23 @@ $single_quoted = 'Hello, LLTS!';
 
 | Escape | Meaning |
 |---|---|
+| `\a` | Bell (BEL, ASCII 7) |
+| `\b` | Backspace (BS, ASCII 8) |
+| `\e` | Escape (ESC, ASCII 27) |
+| `\f` | Form feed (FF, ASCII 12) |
 | `\n` | Line feed / newline (ASCII 10) |
 | `\r` | Carriage return (ASCII 13) |
 | `\t` | Horizontal tab (ASCII 9) |
+| `\v` | Vertical tab (VT, ASCII 11) |
 | `\\` | Literal backslash |
 | `\"` | Literal double quote |
 | `\'` | Literal single quote |
 | `\$` | Literal dollar sign |
 | `\0` | Null byte (ASCII 0) |
-| `\xHH` | 2-digit hexadecimal byte value (e.g. `\x1B` for ESC) |
+| `\NNN` | 3-digit octal character (`\000` to `\377`) |
+| `\xNN` | 2-digit hexadecimal 8-bit character |
+| `\uNNNN` | 4-digit hexadecimal 16-bit Unicode character (UTF-8 encoded) |
+| `\UNNNNNNNN` | 8-digit hexadecimal 32-bit Unicode character (UTF-8 encoded) |
 
 ---
 

@@ -6,6 +6,7 @@ pub const parser = llts.parser;
 pub const ast = llts.ast;
 pub const compiler = llts.compiler;
 pub const pipeline = llts.pipeline;
+pub const collector = llts.collector;
 
 /// Scan source into tokens. Caller must call `deinitScanResult(&result)`.
 pub fn scanSource(allocator: std.mem.Allocator, source: []const u8, filename: ?[]const u8) !scanner.ScanResult {

@@ -367,3 +367,18 @@ test "parser: extern after a function body is still file scope" {
     try std.testing.expect(doc.statements[1].* == .extern_decl);
     try std.testing.expectEqualStrings("getpid", doc.statements[1].extern_decl.name);
 }
+
+test "parser: template with escape characters" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\pub @func main() {
+        \\    $t = ```
+        \\hello\tworld\n\a\b\e\f\v\\\"\'\x41\u0042\U00000043\104
+        \\```;
+        \\}
+    ;
+    var doc = try helpers.parseSource(allocator, src, null);
+    defer doc.deinit();
+
+    try std.testing.expectEqual(@as(usize, 1), doc.statements.len);
+}
