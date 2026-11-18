@@ -240,14 +240,14 @@ which entries below are marked `[!]`.
 ## Sockets (`socket.lls`)
 
 - `[x]` `socket`
-- `[ ]` `socketpair`
+- `[x]` `socketpair`
 - `[x]` `bind`, `connect`, `listen`, `accept`, `shutdown`
-- `[ ]` `accept4`, `sendto`, `recvfrom`
+- `[x]` `accept4`, `sendto`, `recvfrom`
 - `[x]` `send`, `recv`
-- `[ ]` `sendmsg`, `recvmsg`, `sendmmsg`, `recvmmsg` (`msghdr` layout)
+- `[x]` `sendmsg`, `recvmsg`, `sendmmsg`, `recvmmsg` (`msghdr` layout)
 - `[x]` `getsockname`, `getpeername`
-- `[ ]` `getsockopt`, `setsockopt`
-- `[ ]` `sockatmark`, `isfdtype`
+- `[x]` `getsockopt`, `setsockopt`
+- `[x]` `sockatmark`, `isfdtype`
 - `[!]` `getaddrinfo`, `freeaddrinfo`, `getnameinfo`, `gai_strerror`
   (blocker 4; libc resolver, not a direct syscall)
 
