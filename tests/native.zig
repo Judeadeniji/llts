@@ -725,6 +725,20 @@ test "native execution: extern data reads and writes" {
     try expectNativeStdout(allocator, src, "optind\n4\n123\n");
 }
 
+test "native execution: @sizeOf on a struct with an optional field matches the emitted layout" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\@struct Point { x: int; y: int; }
+        \\@struct Box { a: u8; b: ?Point; c: i64; }
+        \\pub @func main() {
+        \\    print(@sizeOf(Box));
+        \\}
+    ;
+    // Zig stores the `?Point` field inline (16-byte payload plus tag, padded to
+    // 8), so the emitted struct is 40 bytes, not the packed handle size.
+    try expectNativeStdout(allocator, src, "40\n");
+}
+
 test "native execution: imported extern data reads and writes" {
     try expectNativeFileStdout(std.testing.allocator, "tests/fixtures/extern_data_main.lls", "41\n42\n");
 }
