@@ -597,6 +597,21 @@ pub const Emitter = struct {
             std.mem.eql(u8, node.call.callee.primary.name, "@sizeOf");
     }
 
+    /// Zig type of a type-valued `@sizeOf` argument the checker recorded, when
+    /// it is a struct the native backend stores as a Zig struct. Native field
+    /// storage follows Zig (a `?T` field carries a tag next to its payload), so
+    /// the packed handle layout's size is not the size that is emitted.
+    pub fn typeArgStructZigType(self: *Emitter, node: *ast_mod.Node) anyerror!?[]const u8 {
+        const t = self.state.type_call_ir_results.get(node) orelse return null;
+        switch (ir.peelDefined(t)) {
+            .struct_, .shape, .tuple => {},
+            else => return null,
+        }
+        const vt = (try self.valTypeFromIR(node, t)) orelse return null;
+        if (vt.kind != .struct_) return null;
+        return vt.zig;
+    }
+
     /// Typecheck's recorded identity for an expression node. `type_of_results`
     /// is a derived cache of this IR, so codegen lowers the IR rather than a
     /// re-derived display string.
