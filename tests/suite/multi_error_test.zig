@@ -21,8 +21,14 @@ const CliResult = struct {
 /// Write `source` to a temp file and run `llts <argv...> <file>`.
 fn runCli(allocator: std.mem.Allocator, source: []const u8, argv: []const []const u8) !CliResult {
     var prng = std.Random.DefaultPrng.init(@intCast(std.time.nanoTimestamp()));
-    var path_buf: [128]u8 = undefined;
-    const path = try std.fmt.bufPrint(&path_buf, "/tmp/llts_multi_{x}.lls", .{prng.random().int(u64)});
+    // Temp files belong in the project-local .tmpdir, never /tmp (see .agents/AGENTS.md).
+    try std.fs.cwd().makePath(".tmpdir");
+    const tmp_dir = try std.fs.cwd().realpathAlloc(allocator, ".tmpdir");
+    defer allocator.free(tmp_dir);
+    const name = try std.fmt.allocPrint(allocator, "llts_multi_{x}.lls", .{prng.random().int(u64)});
+    defer allocator.free(name);
+    const path = try std.fs.path.join(allocator, &.{ tmp_dir, name });
+    defer allocator.free(path);
     {
         const f = try std.fs.createFileAbsolute(path, .{});
         defer f.close();
@@ -249,4 +255,194 @@ test "multi error: --max-errors 0 is unlimited" {
     try std.testing.expectEqual(@as(u8, 1), res.code);
     try expectContains(res.stderr, "Found 3 errors in the same file");
     try expectMissing(res.stderr, "further error");
+}
+
+test "diagnostics: unknown function suggests the closest declared function" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\@func add(a: int, b: int): int { return a + b; }
+        \\pub @func main() { print(ad(1, 2)); }
+    ;
+    var res = try runCli(allocator, src, &.{"run"});
+    defer res.deinit(allocator);
+
+    try std.testing.expectEqual(@as(u8, 1), res.code);
+    try expectContains(res.stderr, "Unknown function 'ad'; did you mean 'add'?");
+    // And not the vague codegen message the typechecker used to fall through to.
+    try expectMissing(res.stderr, "cannot infer the type of this expression");
+}
+
+test "diagnostics: unknown identifier suggests a visible name at the use site" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\pub @func main() {
+        \\    $value: int = 1;
+        \\    print(valeu);
+        \\}
+    ;
+    var res = try runCli(allocator, src, &.{"run"});
+    defer res.deinit(allocator);
+
+    try std.testing.expectEqual(@as(u8, 1), res.code);
+    try expectContains(res.stderr, "Unknown identifier 'valeu'; did you mean 'value'?");
+    try expectMissing(res.stderr, "Cannot assign opaque type 'unknown'");
+}
+
+test "diagnostics: arity and argument errors are both reported with a declaration note" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\@func add(a: int, b: int): int { return a + b; }
+        \\pub @func main() { print(add("x")); }
+    ;
+    var res = try runCli(allocator, src, &.{"run"});
+    defer res.deinit(allocator);
+
+    try std.testing.expectEqual(@as(u8, 1), res.code);
+    try expectContains(res.stderr, "Function 'add' expected at least 2 arguments, got 1");
+    try expectContains(res.stderr, "argument 1 of 'add'");
+    try expectContains(res.stderr, "note: 'add' is declared here");
+    try expectContains(res.stderr, "Found 2 errors in the same file");
+}
+
+test "diagnostics: return mismatch notes the declared return type" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\@func f(): int { return "s"; }
+        \\pub @func main() { print(f()); }
+    ;
+    var res = try runCli(allocator, src, &.{"run"});
+    defer res.deinit(allocator);
+
+    try std.testing.expectEqual(@as(u8, 1), res.code);
+    try expectContains(res.stderr, "note: function 'f' is declared to return 'i64' here");
+}
+
+test "diagnostics: struct field mismatch notes the field type and its declaration" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\pub @struct Point { x: int; y: int; }
+        \\pub @struct Line { a: Point; b: Point; }
+        \\pub @func main() {
+        \\    $l: Line = { a: 5, b: { x: 1, y: 2 } };
+        \\    print(l);
+        \\}
+    ;
+    var res = try runCli(allocator, src, &.{"run"});
+    defer res.deinit(allocator);
+
+    try std.testing.expectEqual(@as(u8, 1), res.code);
+    try expectContains(res.stderr, "Field 'a' of 'Line'");
+    try expectContains(res.stderr, "note: field 'a' is declared with type 'Point' here");
+    try expectContains(res.stderr, "note: type 'Point' is declared here");
+}
+
+test "diagnostics: field assignment mismatch notes the field's declared type" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\pub @struct S { n: int; }
+        \\pub @func main() {
+        \\    $s: S = { n: 1 };
+        \\    s.n = "x";
+        \\    print(s);
+        \\}
+    ;
+    var res = try runCli(allocator, src, &.{"run"});
+    defer res.deinit(allocator);
+
+    try std.testing.expectEqual(@as(u8, 1), res.code);
+    try expectContains(res.stderr, "note: field 'n' is declared with type 'i64' here");
+}
+
+test "diagnostics: a note from an imported module names that file" {
+    const allocator = std.testing.allocator;
+    var prng = std.Random.DefaultPrng.init(@intCast(std.time.nanoTimestamp()));
+    // Temp files belong in the project-local .tmpdir, never /tmp (see .agents/AGENTS.md).
+    try std.fs.cwd().makePath(".tmpdir");
+    const tmp_dir = try std.fs.cwd().realpathAlloc(allocator, ".tmpdir");
+    defer allocator.free(tmp_dir);
+    const mod_name = try std.fmt.allocPrint(allocator, "llts_note_mod_{x}.lls", .{prng.random().int(u64)});
+    defer allocator.free(mod_name);
+    const mod_path = try std.fs.path.join(allocator, &.{ tmp_dir, mod_name });
+    defer allocator.free(mod_path);
+    {
+        const f = try std.fs.createFileAbsolute(mod_path, .{});
+        defer f.close();
+        try f.writeAll("pub @struct Thing { n: int; }\n");
+    }
+    defer std.fs.deleteFileAbsolute(mod_path) catch {};
+
+    const src = try std.fmt.allocPrint(
+        allocator,
+        "@const $m = @import(\"{s}\");\npub @func main() {{\n    $t: m.Thing = {{ n: \"x\" }};\n    print(t);\n}}\n",
+        .{mod_path},
+    );
+    defer allocator.free(src);
+
+    var res = try runCli(allocator, src, &.{"run"});
+    defer res.deinit(allocator);
+
+    try std.testing.expectEqual(@as(u8, 1), res.code);
+    try expectContains(res.stderr, "note: field 'n' is declared with type 'i64' here");
+    try expectContains(res.stderr, "    at ");
+    try expectContains(res.stderr, mod_path);
+}
+
+test "diagnostics: too many arguments are reported with a declaration note" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\@func add(a: int, b: int): int {
+        \\    return a + b;
+        \\}
+        \\pub @func main() {
+        \\    print(add(1, 2, 3));
+        \\}
+    ;
+    var res = try runCli(allocator, src, &.{"run"});
+    defer res.deinit(allocator);
+
+    try std.testing.expectEqual(@as(u8, 1), res.code);
+    try expectContains(res.stderr, "Function 'add' expected at most 2 arguments, got 3");
+    try expectContains(res.stderr, "note: 'add' is declared here");
+}
+
+test "diagnostics: too many method arguments exclude the receiver" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\@struct Counter {
+        \\    val: int;
+        \\    @func add(self: *Counter, by: int) {
+        \\        self.val = self.val + by;
+        \\    }
+        \\}
+        \\pub @func main() {
+        \\    $c = Counter { val: 1 };
+        \\    c.add(1, 2);
+        \\    print(c.val);
+        \\}
+    ;
+    var res = try runCli(allocator, src, &.{"run"});
+    defer res.deinit(allocator);
+
+    try std.testing.expectEqual(@as(u8, 1), res.code);
+    try expectContains(res.stderr, "Function 'Counter::add' expected at most 1 arguments, got 2");
+    try expectContains(res.stderr, "note: 'Counter::add' is declared here");
+}
+
+test "diagnostics: variadic functions still accept extra arguments" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\@func sum(first: int, ...rest: []int): int {
+        \\    $acc = first;
+        \\    @for (rest) |x| { acc = acc + x; }
+        \\    return acc;
+        \\}
+        \\pub @func main() {
+        \\    print(sum(1, 2, 3));
+        \\}
+    ;
+    var res = try runCli(allocator, src, &.{"run"});
+    defer res.deinit(allocator);
+
+    try std.testing.expectEqual(@as(u8, 0), res.code);
+    try expectMissing(res.stderr, "expected at most");
 }

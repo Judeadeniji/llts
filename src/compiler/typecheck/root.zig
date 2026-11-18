@@ -3450,6 +3450,12 @@ fn inferCall(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, call_
                     noteFnDecl(state, name.?, "'{s}' is declared here", .{name.?});
                     arity_failed = true;
                 }
+                const max_user_count = if (named_count > 0) named_count - 1 else 0;
+                if (any_annotated and !variadic and rest == null and c.args.len > max_user_count) {
+                    compiler_errors.compileReportFmt(state, "Function '{s}' expected at most {d} arguments, got {d}", .{ name.?, max_user_count, c.args.len });
+                    noteFnDecl(state, name.?, "'{s}' is declared here", .{name.?});
+                    arity_failed = true;
+                }
                 if (named_count > 0) {
                     const recv = try inferExprRec(state, env, ta, m.receiver);
                     if (recv.ok) {
@@ -3507,6 +3513,11 @@ fn inferCall(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, call_
                     noteFnDecl(state, name.?, "'{s}' is declared here", .{name.?});
                     arity_failed = true;
                 }
+                if (any_annotated and !variadic and rest == null and c.args.len > named_count) {
+                    compiler_errors.compileReportFmt(state, "Function '{s}' expected at most {d} arguments, got {d}", .{ name.?, named_count, c.args.len });
+                    noteFnDecl(state, name.?, "'{s}' is declared here", .{name.?});
+                    arity_failed = true;
+                }
                 const ncheck = @min(c.args.len, named_count);
                 var i: usize = 0;
                 while (i < ncheck) : (i += 1) {
@@ -3558,7 +3569,10 @@ fn inferCall(state: *state_mod.CompilerState, env: *Env, ta: ir.TypeAlloc, call_
         (c.callee.primary.kind == .identifier or c.callee.primary.kind == .register))
     {
         const n = c.callee.primary.name;
-        const known = env.lookup(n) != null or
+        // `__`-prefixed names are compiler builtins (e.g. `__args`), resolved
+        // later; never report them as unknown functions.
+        const known = std.mem.startsWith(u8, n, "__") or
+            env.lookup(n) != null or
             state.native_globals.contains(n) or
             state.functions.contains(n) or
             state.fn_aliases.contains(n) or
@@ -4069,6 +4083,10 @@ fn checkFuncValueCall(
     if (!f.variadic and any_annotated and c.args.len < required_count) {
         const d = try ownDisplay(state, fn_ty);
         return compiler_errors.compileFailFmt(state, "Function value '{s}' expected at least {d} arguments, got {d}", .{ d, required_count, c.args.len });
+    }
+    if (!f.variadic and any_annotated and c.args.len > named_count) {
+        const d = try ownDisplay(state, fn_ty);
+        return compiler_errors.compileFailFmt(state, "Function value '{s}' expected at most {d} arguments, got {d}", .{ d, named_count, c.args.len });
     }
     const ncheck = @min(c.args.len, named_count);
     var i: usize = 0;
