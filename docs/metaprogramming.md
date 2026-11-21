@@ -36,7 +36,8 @@ print(@sizeOf(i64));     # 8
 print(@sizeOf(u8));      # 1
 print(@sizeOf(f32));     # 4
 print(@sizeOf(bool));    # 1
-print(@sizeOf(string));  # 16 (16-byte slice view: ptr + len)
+print(@sizeOf(string));  # 8 (one handle word; the data is stored out of line)
+print(@alignOf(string)); # 8
 
 @struct Vec3 { x: f64; y: f64; z: f64; }
 print(@sizeOf(Vec3));    # 24

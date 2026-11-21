@@ -192,7 +192,7 @@ pub fn alignOfType(state: *state_mod.CompilerState, t: ir.Type) error{ OutOfMemo
             break :blk 8;
         },
         .union_ => if (ir.optionalPayload(t)) |payload| try alignOfType(state, payload) else 8,
-        .array => |arr| try alignOfType(state, arr.elem.*),
+        .array => |arr| if (arr.length == null) 8 else try alignOfType(state, arr.elem.*),
         .enum_, .enum_lit, .str_lit, .c_str, .tuple, .ptr, .func, .error_, .error_set, .error_lit => 8,
         .unknown, .never, .type_ => 1,
     };

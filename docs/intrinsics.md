@@ -89,7 +89,8 @@ Calculates the exact byte size of a type or variable place:
 ```lls
 print(@sizeOf(i64));    # 8
 print(@sizeOf(u8));     # 1
-print(@sizeOf(string)); # 16 (slice view: pointer + length)
+print(@sizeOf(string)); # 8 (one handle word; the data is stored out of line)
+print(@alignOf(string)); # 8
 
 @struct Vec2 { x: f64; y: f64; }
 print(@sizeOf(Vec2));   # 16

@@ -384,6 +384,7 @@ test "layout contract: VM and native agree on ordinary aggregate sizes" {
         \\    print(@sizeOf(Wide), @alignOf(Wide));
         \\    print(@sizeOf(Mixed), @alignOf(Mixed));
         \\    print(@sizeOf([100]Tiny), @alignOf([100]Tiny));
+        \\    print(@sizeOf(string), @alignOf(string));
         \\}
     ;
     const native = try runLlts(allocator, src);
@@ -396,7 +397,7 @@ test "layout contract: VM and native agree on ordinary aggregate sizes" {
     defer allocator.free(vm.stderr);
     try std.testing.expectEqual(@as(u8, 0), vm.code);
 
-    const expected = "1 1\n2 1\n12 4\n24 8\n200 1\n";
+    const expected = "1 1\n2 1\n12 4\n24 8\n200 1\n8 8\n";
     try std.testing.expectEqualStrings(expected, native.stdout);
     try std.testing.expectEqualStrings(expected, vm.stdout);
 }
