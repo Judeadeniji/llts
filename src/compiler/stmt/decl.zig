@@ -386,7 +386,7 @@ pub fn compileStruct(state: *CompilerState, s: *const ast.StructDecl) !void {
         try field_irs.put(state.allocator, field.name, field_ir);
         try field_list.append(state.allocator, .{ .name = field.name, .type_name = disp });
     }
-    const laid = try layout.layoutFieldsWithState(state, state.allocator, field_list.items, s.is_extern);
+    const laid = try layout.layoutFieldsWithState(state, state.allocator, field_list.items);
     if (state.structs.fetchRemove(s.name)) |kv| {
         var old = kv.value;
         old.offsets.deinit();

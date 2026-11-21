@@ -804,3 +804,45 @@ test "pipeline native execution: bool lowers to u1" {
     ;
     try helpers.expectNativeStdout(allocator, src, "1 0 0 0 1\nyes\n1\n");
 }
+
+test "pipeline native execution: ordinary aggregates pad to field alignment" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\@struct One { a: u8; }
+        \\@struct Tiny { a: u8; b: u8; }
+        \\@struct Wide { a: u32; b: u32; c: u32; }
+        \\@struct Mixed { a: u8; b: i64; c: u8; }
+        \\pub @func main() {
+        \\    print(@sizeOf(One), @alignOf(One));
+        \\    print(@sizeOf(Tiny), @alignOf(Tiny));
+        \\    print(@sizeOf(Wide), @alignOf(Wide));
+        \\    print(@sizeOf(Mixed), @alignOf(Mixed));
+        \\}
+    ;
+    // No blanket 8-byte minimum: size is the fields plus only the padding their
+    // own alignments require. Mixed keeps 8-byte alignment from its i64 field.
+    try helpers.expectNativeStdout(allocator, src, "1 1\n2 1\n12 4\n24 8\n");
+}
+
+test "pipeline native execution: arrays of small aggregates carry no blanket padding" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\@struct Tiny { a: u8; b: u8; }
+        \\@struct Outer { t: Tiny; k: u32; }
+        \\pub @func main() {
+        \\    print(@sizeOf(Tiny), @sizeOf([100]Tiny), @alignOf([100]Tiny));
+        \\    print(@sizeOf(Outer), @alignOf(Outer));
+        \\    $arr = @zeroed([100]Tiny);
+        \\    $i = 99;
+        \\    arr[i].a = 7;
+        \\    arr[i].b = 8;
+        \\    print(arr[0].a, arr[i].a, arr[i].b);
+        \\    $o = Outer{ t: Tiny{ a: 1, b: 2 }, k: 3 };
+        \\    print(o.t.a, o.t.b, o.k, @as(u32, o.t.a) + o.k);
+        \\}
+    ;
+    // Under the old 8-byte minimum Tiny was 8 bytes and this array 800; the
+    // footprint is now exactly N * @sizeOf(Tiny). Nested aggregates and array
+    // element access keep working against the packed layout.
+    try helpers.expectNativeStdout(allocator, src, "2 200 1\n8 4\n0 7 8\n1 2 3 4\n");
+}

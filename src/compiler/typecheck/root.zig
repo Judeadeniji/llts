@@ -5356,7 +5356,7 @@ fn checkStructFieldTypes(state: *state_mod.CompilerState, env: *Env, ta: ir.Type
     for (s.fields) |field| {
         try specs.append(ta.allocator, .{ .name = field.name, .type_name = def.types.get(field.name) orelse "int" });
     }
-    const laid = try layout.layoutFieldsWithState(state, state.allocator, specs.items, def.is_extern);
+    const laid = try layout.layoutFieldsWithState(state, state.allocator, specs.items);
     def.offsets.deinit();
     def.offsets = laid.offsets;
     def.size = laid.size;

@@ -284,20 +284,25 @@ pub fn layoutFields(
     allocator: std.mem.Allocator,
     fields: []const FieldSpec,
 ) !LayoutResult {
-    return layoutFieldsWithState(null, allocator, fields, false);
+    return layoutFieldsWithState(null, allocator, fields);
 }
 
-/// Computes struct field offsets and total size according to ABI rules.
-/// When `is_extern` is true, C ABI rules are used:
-/// 1. Fields are placed in strictly declared order.
-/// 2. Each field is aligned to its natural C alignment (e.g. 1 for u8, 4 for i32, 8 for i64).
-/// 3. The struct's total size is padded to a multiple of its maximum field alignment.
-/// When `is_extern` is false, standard LLTS struct rules apply (padded to max(max_align, 8)).
+/// Computes struct field offsets and total size according to the LLTS layout
+/// contract:
+/// 1. Fields are placed in strictly declared order (no reordering).
+/// 2. Each field sits at its natural alignment (1 for u8, 4 for i32/u32, 8 for
+///    i64/pointers/`string`).
+/// 3. The aggregate's size is padded only to a multiple of its widest field's
+///    alignment. There is no blanket 8-byte minimum, so `{ a: u8 }` is 1 byte
+///    and `{ a: u8, b: u8 }` is 2.
+///
+/// `@extern @struct` reaches the same rule, which is the C ABI rule for the
+/// supported field types, so foreign structs keep their C layout. See
+/// `docs/memory-and-safety.md` for the written contract.
 pub fn layoutFieldsWithState(
     state: ?*state_mod.CompilerState,
     allocator: std.mem.Allocator,
     fields: []const FieldSpec,
-    is_extern: bool,
 ) !LayoutResult {
     var offsets = std.StringHashMap(i32).init(allocator);
     errdefer offsets.deinit();
@@ -315,7 +320,7 @@ pub fn layoutFieldsWithState(
         offset += sz;
         if (al > max_align) max_align = al;
     }
-    const struct_align = if (is_extern) max_align else @max(max_align, 8);
+    const struct_align = max_align;
     const size = if (offset == 0) 0 else alignUp(offset, struct_align);
     return .{ .size = size, .alignment = struct_align, .offsets = offsets };
 }

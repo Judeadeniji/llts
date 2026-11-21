@@ -1,6 +1,13 @@
 const std = @import("std");
 
-fn runLlts(allocator: std.mem.Allocator, source: []const u8) !struct { stdout: []u8, stderr: []u8, code: u8 } {
+const RunResult = struct { stdout: []u8, stderr: []u8, code: u8 };
+
+fn runLlts(allocator: std.mem.Allocator, source: []const u8) !RunResult {
+    return runLltsWith(allocator, source, &.{});
+}
+
+/// Run LLTS source through `llts run`, with extra flags (e.g. `--vm`).
+fn runLltsWith(allocator: std.mem.Allocator, source: []const u8, flags: []const []const u8) !RunResult {
     const tmp_path = "/tmp/llts_zig_test.lls";
     {
         const f = try std.fs.createFileAbsolute(tmp_path, .{});
@@ -8,11 +15,14 @@ fn runLlts(allocator: std.mem.Allocator, source: []const u8) !struct { stdout: [
         try f.writeAll(source);
     }
 
-    var child = std.process.Child.init(&.{
-        "zig-out/bin/llts",
-        "run",
-        tmp_path,
-    }, allocator);
+    var args: std.ArrayList([]const u8) = .empty;
+    defer args.deinit(allocator);
+    try args.append(allocator, "zig-out/bin/llts");
+    try args.append(allocator, "run");
+    try args.appendSlice(allocator, flags);
+    try args.append(allocator, tmp_path);
+
+    var child = std.process.Child.init(args.items, allocator);
     child.stdout_behavior = .Pipe;
     child.stderr_behavior = .Pipe;
     try child.spawn();
@@ -359,4 +369,34 @@ test "compiler authority: generated code is deterministic across multiple emits"
     _ = try child2.wait();
 
     try std.testing.expectEqualStrings(stdout1, stdout2);
+}
+
+test "layout contract: VM and native agree on ordinary aggregate sizes" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\@struct One { a: u8; }
+        \\@struct Tiny { a: u8; b: u8; }
+        \\@struct Wide { a: u32; b: u32; c: u32; }
+        \\@struct Mixed { a: u8; b: i64; c: u8; }
+        \\pub @func main() {
+        \\    print(@sizeOf(One), @alignOf(One));
+        \\    print(@sizeOf(Tiny), @alignOf(Tiny));
+        \\    print(@sizeOf(Wide), @alignOf(Wide));
+        \\    print(@sizeOf(Mixed), @alignOf(Mixed));
+        \\    print(@sizeOf([100]Tiny), @alignOf([100]Tiny));
+        \\}
+    ;
+    const native = try runLlts(allocator, src);
+    defer allocator.free(native.stdout);
+    defer allocator.free(native.stderr);
+    try std.testing.expectEqual(@as(u8, 0), native.code);
+
+    const vm = try runLltsWith(allocator, src, &.{"--vm"});
+    defer allocator.free(vm.stdout);
+    defer allocator.free(vm.stderr);
+    try std.testing.expectEqual(@as(u8, 0), vm.code);
+
+    const expected = "1 1\n2 1\n12 4\n24 8\n200 1\n";
+    try std.testing.expectEqualStrings(expected, native.stdout);
+    try std.testing.expectEqualStrings(expected, vm.stdout);
 }

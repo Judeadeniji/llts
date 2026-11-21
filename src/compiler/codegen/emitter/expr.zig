@@ -382,11 +382,6 @@ pub fn emitCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) any
         }
         if (std.mem.eql(u8, intrinsic, "@sizeOf")) {
             if (c.args.len != 1) return self.failAt(node, "@sizeOf expects 1 argument", .{});
-            // Structs are laid out by Zig in native code, so let Zig measure the
-            // emitted type rather than the packed handle layout.
-            if (try self.typeArgStructZigType(c.args[0])) |zig_ty| {
-                return std.fmt.allocPrint(a, "@as(i64, @sizeOf({s}))", .{zig_ty});
-            }
             if (self.state.size_of_results.get(node)) |size| {
                 return std.fmt.allocPrint(a, "@as(i64, {d})", .{size});
             }
