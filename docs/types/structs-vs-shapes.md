@@ -335,8 +335,11 @@ Every distinct argument list is its own nominal struct, with its own methods.
 ### Inline fields and alignment
 
 Structs and shapes use the same value representation: fields are stored inline
-in declaration order, with normal machine alignment. There is no hidden
-indirection or header.
+in declaration order, each at its natural alignment, rounded up to the widest
+field's alignment. There is no hidden indirection, header, or 8-byte minimum, so
+`{ a: u8; b: u8; }` is 2 bytes. See
+[Memory Model & Safety › Aggregate Layout Contract](../memory-and-safety.md#5-aggregate-layout-contract)
+for the full rule.
 
 ```lls
 @type A = { a: u8; b: i64; };
@@ -344,7 +347,7 @@ indirection or header.
 @type C = { a: u8; b: u8; };
 @type D = { xs: [3]i64; };
 
-print(@sizeOf(A), @sizeOf(B), @sizeOf(C), @sizeOf(D)); # 16 16 8 24
+print(@sizeOf(A), @sizeOf(B), @sizeOf(C), @sizeOf(D)); # 16 16 2 24
 ```
 
 The same layout rules apply to `@struct`:

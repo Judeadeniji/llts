@@ -150,6 +150,60 @@ Multiple `defer` and `errdefer` statements in the same scope are executed in **L
 
 ---
 
+## 5. Aggregate Layout Contract
+
+Ordinary aggregates — a `@struct` without `@extern`, and an `@type` shape — share
+one layout rule:
+
+1. **Declaration order.** Fields keep the order they are written in; LLTS does
+   not reorder them to pack tighter.
+2. **Natural field alignment.** A field starts at the first offset that is a
+   multiple of its own alignment: 1 for `u8`/`i8`/`bool`, 2 for `u16`/`i16`,
+   4 for `u32`/`i32`/`f32`, 8 for `u64`/`i64`/`f64`/`usize`/`isize`/pointers and
+   `string`.
+3. **No blanket 8-byte minimum.** The aggregate's alignment is its widest
+   field's alignment, and its size is the end of the last field rounded up to
+   that alignment. Aggregates built from small fields stay small.
+
+```lls
+@struct One { a: u8; }
+@struct Tiny { a: u8; b: u8; }
+@struct Words { a: u32; b: u32; c: u32; }
+@struct Mixed { a: u8; b: i64; c: u8; }
+
+print(@sizeOf(One), @alignOf(One));     # 1 1
+print(@sizeOf(Tiny), @alignOf(Tiny));   # 2 1
+print(@sizeOf(Words), @alignOf(Words)); # 12 4
+print(@sizeOf(Mixed), @alignOf(Mixed)); # 24 8
+```
+
+`Mixed` shows both effects: `b` must be 8-aligned, so seven padding bytes follow
+`a`; `c` lands at offset 16 and the total is rounded up to 24. Nothing is added
+for `One` and `Tiny`, which would both have been 8 bytes under a minimum-size
+rule.
+
+Because the same rule is applied by the bytecode VM and the native backend,
+`@sizeOf` and `@alignOf` return the same values under `--vm` and in compiled
+programs. Arrays multiply the element size exactly: `@sizeOf([100]Tiny)` is 200,
+not 800, so an array of small records costs `N * @sizeOf(T)` with no per-element
+slack.
+
+`@extern @struct` declarations are the exception in intent, not in result: they
+follow the platform C ABI. For the field types LLTS supports, the C ABI rule is
+the same one above (declaration order, natural alignment, no minimum), so extern
+structs such as `Timespec` and `Pollfd` keep their documented C sizes.
+
+`@sizeOf` and `@alignOf` are compiler intrinsics: they are folded to integer
+constants during compilation and never reach the runtime.
+
+One backend note: `@sizeOf` always reports the LLTS layout above. The native
+backend stores an ordinary aggregate in its own Zig struct type, whose internal
+layout is an implementation detail and may be more compact for mixed-width
+fields. That never changes the `@sizeOf`/`@alignOf` constants a program sees, nor
+field access, indexing, or copies, which go through the backend's representation.
+
+---
+
 ## Summary of Safety Invariants
 
 | Invariant | Compiler Behavior |
@@ -158,3 +212,4 @@ Multiple `defer` and `errdefer` statements in the same scope are executed in **L
 | **No Double Free / GC Pauses** | Stack frames rewind automatically on scope exit; heap allocations will belong to the standard library. |
 | **Guaranteed Cleanup** | `defer` statements execute on every exit path; `errdefer` runs on error returns. |
 | **Safe Immutability** | `@const` variables cannot be rebound, have their address borrowed with `&`, or be mutated through slices. |
+| **Predictable Layout** | Aggregates keep declaration order and pack to natural field alignment with no 8-byte minimum; the VM and native backends report identical `@sizeOf`/`@alignOf` values. |
