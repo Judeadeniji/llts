@@ -286,7 +286,7 @@ pub @func main() {
 ```
 
 - `Name(T)` is a type, so it works anywhere a type does: annotations,
-  parameters, returns, struct fields, `@alias`, `@sizeOf`, `@new`.
+  parameters, returns, struct fields, `@alias`, `@sizeOf`, `@zeroed`.
 - `Name(T) { … }` is the object literal form; an annotated `$x: Name(T) = { … }`
   is equivalent.
 - Instances nest (`Name(Other(T))` instantiates the inner type first) and may

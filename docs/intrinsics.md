@@ -292,4 +292,4 @@ $ptr = @new(allocator, StructType);
 ```
 
 - **Backend:** Bytecode VM only.
-- **Native Status:** The native backend **rejects** `@new`. Dynamic heap memory in native LLTS will be provided through standard-library allocator APIs.
+- **Native Status:** The native backend **rejects** `@new`. No standard-library allocator is currently provided; native allocation will be built on the page mappings in `std/syscall/memory` plus new raw-memory primitives.

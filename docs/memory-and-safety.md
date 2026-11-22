@@ -209,7 +209,7 @@ field access, indexing, or copies, which go through the backend's representation
 | Invariant | Compiler Behavior |
 | :--- | :--- |
 | **No Dangling Pointers** | Escape analysis rejects returning pointers or slices to local frame variables. |
-| **No Double Free / GC Pauses** | Stack frames rewind automatically on scope exit; heap allocations will belong to the standard library. |
+| **No Double Free / GC Pauses** | Stack frames rewind automatically on scope exit. There is no implicit heap; long-lived or shared storage must come from an explicit allocator (not yet provided by the standard library) or from OS mappings exposed by `std/syscall/memory`. |
 | **Guaranteed Cleanup** | `defer` statements execute on every exit path; `errdefer` runs on error returns. |
 | **Safe Immutability** | `@const` variables cannot be rebound, have their address borrowed with `&`, or be mutated through slices. |
 | **Predictable Layout** | Aggregates keep declaration order and pack to natural field alignment with no 8-byte minimum; the VM and native backends report identical `@sizeOf`/`@alignOf` values. |

@@ -82,7 +82,7 @@ pub @func main() {
 }
 ```
 
-Native allocation is not currently a core-language operation. A future standard-library API will own allocation policy, growth, resizing, freeing, and failure behavior; it will not require a compiler-known allocator method name or a total capacity known in advance. The bytecode compiler temporarily retains the legacy `@new(allocator, T)` intrinsic for VM compatibility. `defer` and `errdefer` run cleanup on scope exit and on the error path respectively.
+Native allocation is not currently a core-language operation, and the standard library does not yet provide an allocator. This branch ships only `std/core` and `std/syscall`; `std/syscall/memory` exposes `mmap`, `munmap`, `mremap`, and page-size queries. The bytecode compiler retains the legacy `@new(allocator, T)` intrinsic for VM compatibility, and the native backend rejects it. `defer` and `errdefer` run cleanup on scope exit and on the error path respectively.
 
 ## Errors
 

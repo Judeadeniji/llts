@@ -36,17 +36,14 @@ Zig implementation. The TypeScript prototype/reference is [`llts-js`](../llts-js
 - [x] Mutual recursion + call graph cycle detection.
 - [x] Gradual typecheck + `@typeOf`; `--release` strips debug type asserts.
 
-### Standard Library (`std/`) — optional library, not language core
+### Standard Library (`std/`) — in progress, not language core
 
-- Imports use explicit paths (e.g. `@import("std/math")`); no short-name aliases in the compiler.
-- [x] `std/math`: `add`, `sub`, `mul`, `div`, `mod`, `pow`, `sqr`, `min`, `max`, `abs`, `floor`, `ceil`, …
-- [x] `std/string`: `len`, `concat`, `substr`, `indexOf`, `split`, case/trim/replace/…
-- [x] `std/fmt`: Go-compatible formatted I/O (`printf`, `sprintf`, `println`, `errorf`, verbs `%v`, `%+v`, `%#v`, `%T`, `%t`, `%d`, `%b`, `%o`, `%x`, `%X`, `%c`, `%q`, `%f`, `%s`, `%p`).
-- [x] `std/log`: Go-compatible leveled/prefixed standard logging (`Logger`, flags, `print`, `printf`, `println`, `fatal`, `panic`).
-- [x] `std/slog`: Go-compatible structured logging (`LevelDebug`..`LevelError`, `debug`, `info`, `warn`, `err`, `with`, structured key-value attributes).
-- [x] `std/mem`: `alloc` / Arena helpers.
-- [x] `std/io`: `readLine`, `readFile`, `writeFile`, `appendFile`, `deleteFile`, `exists` via host `__*` bindings.
-- [x] `std/syscall`: raw `call` + typed POSIX wrappers (`read`/`write`/`open`/…) and host `SYS_*` / `O_*` constants.
+- Imports use explicit paths (e.g. `@import("std/syscall")`); no short-name aliases in the compiler.
+- Only `std/core` and `std/syscall` exist on this branch. The earlier `std/math`, `std/string`, `std/fmt`, `std/log`, `std/slog`, `std/mem`, and `std/io` modules were removed in `16874e6`; do not treat them as available.
+- [x] `std/core`: generic `len`.
+- [x] `std/syscall`: raw `call` + typed POSIX wrappers (`read`/`write`/`open`/…) and host `SYS_*` / `O_*` constants. Area modules live under `std/syscall/` and are re-exported by the facade.
+- [ ] `std/mem`: allocator and arena helpers. Blocked on raw typed-memory construction; tracked in #36 and #38.
+- [ ] `std/string`, `std/fmt`, `std/io`, `std/math`, `std/log`, `std/slog`: removed with the old standard library; to be rebuilt on the syscall/base layer.
 
 ### Tooling
 
@@ -176,7 +173,7 @@ Discrepancies where current documentation in `docs/` differs from compiler capab
 - [ ] **Anonymous struct initialization from type-function shapes** — object literals can initialize shape types returned from type functions (`$x: Make(i64) = { a: 1 };`). Missing from `docs/types/user-defined.md` and `docs/metaprogramming.md`.
 
 #### Standard Library Clarification
-- [ ] **Document stdlib status** — clarify across `docs/` that `llts-zig` currently does not provide a standard library (`std/*`); standard library implementations will be provided as an optional external library in a future phase.
+- [x] **Document stdlib status** — docs now state that this branch ships only `std/core` and `std/syscall`; the rest of `std/*` was removed and is roadmap work.
 
 ### P1 — Missing Language Features
 
@@ -189,9 +186,9 @@ Discrepancies where current documentation in `docs/` differs from compiler capab
 
 ### P2 — Standard Library
 
-- [x] **String operations** — in `std/string.lls` + native bindings.
-- [x] **Real `std.io`** — stdin / disk via `__*` natives.
-- [x] **Math extras** — `min`, `max`, `abs`, `floor`, `ceil`, etc.
+- [ ] **String operations** — rebuild `std/string` on the syscall/base layer.
+- [ ] **Real `std.io`** — stdin / disk helpers over `std/syscall` and a future allocator.
+- [ ] **Math extras** — `min`, `max`, `abs`, `floor`, `ceil`, etc. as library code.
 
 ### P3 — Safety & Correctness
 
