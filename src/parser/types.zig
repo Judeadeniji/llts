@@ -57,6 +57,20 @@ fn parseTypeOperand(self: *Parser) ParseError!*Node {
         } });
     }
 
+    if (self.checkDelim("**")) {
+        const start = self.peek(0).?;
+        _ = self.advance();
+        const inner = try parseTypeOperand(self);
+        const inner_ptr = try self.create(.{ .pointer_type = .{
+            .elem = inner,
+            .loc = self.locOf(start),
+        } });
+        return self.create(.{ .pointer_type = .{
+            .elem = inner_ptr,
+            .loc = self.locOf(start),
+        } });
+    }
+
     if (self.checkDelim("*")) {
         const start = self.peek(0).?;
         _ = self.advance();

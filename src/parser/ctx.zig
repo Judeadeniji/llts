@@ -56,7 +56,7 @@ pub const Parser = struct {
         if (next.type == .delimiter) return true;
         // `|` type-union / capture; `*` pointer type; `&` shape intersection — scanned as bin_op.
         if (next.type == .bin_op) {
-            return std.mem.eql(u8, value, "|") or std.mem.eql(u8, value, "*") or std.mem.eql(u8, value, "&");
+            return std.mem.eql(u8, value, "|") or std.mem.eql(u8, value, "*") or std.mem.eql(u8, value, "**") or std.mem.eql(u8, value, "&");
         }
         return false;
     }
