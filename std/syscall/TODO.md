@@ -19,8 +19,8 @@ are ABI aliases of the canonical entry on LP64, not additional APIs.
 
 ## Current state
 
-Everything currently public lives in `std/syscall.lls`, with raw externs in
-`std/syscall/c.lls`.
+The public facade lives in `std/syscall.lls`; area modules live under
+`std/syscall/`, and raw externs live in `std/syscall/c.lls`.
 
 - `[x]` `Fd` and `Pid` nominal types.
 - `[x]` enums: `Stdio`, `Access`, `OpenFlag`, `Permission`, `SeekWhence`, `ExitCode`.
@@ -31,10 +31,11 @@ Everything currently public lives in `std/syscall.lls`, with raw externs in
 - `[x]` `open_read`, `open_write`, `open_append`, `create` (plus private
   `open_with`), `close`, `unlink`.
 
-## Planned layout
+## Module layout
 
 Keep related calls together; one module per area rather than one file per call.
-`std/syscall.lls` remains the facade.
+`std/syscall.lls` remains the facade, and existing modules are re-exported by
+it. A few rows below are still planned and do not have a file yet.
 
 | File | Contents |
 |---|---|
@@ -56,10 +57,10 @@ Keep related calls together; one module per area rather than one file per call.
 | `std/syscall/ipc.lls` | System V shared memory, semaphores, message queues |
 | `std/syscall/xattr.lls` | Extended attributes |
 
-Module re-export is not available today: `pub @const $m = @import("./m.lls")`
-inside a module does not expose `m` to importers. Until the compiler supports
-it, an area module is either imported directly by path or its public
-functions are re-declared as thin wrappers in the facade.
+Module re-export works today: the facade binds area modules with
+`pub @const $io = @import("std/syscall/io")` (and likewise for the other
+areas), so importers can write `sys.io.open_read(...)`. Area modules remain
+importable directly by path.
 
 ## Blockers
 
@@ -70,10 +71,9 @@ which entries below are marked `[!]`.
    Native emitter renders as Zig `extern struct` preserving declaration order and C ABI layout.
 2. **[RESOLVED] `@sizeOf` disagrees with the backend.** Compiler layout calculates exact C ABI
    size and alignment, and `@sizeOf` / `@alignOf` match native Zig `extern struct` sizes.
-3. **Function pointers rejected in extern signatures.** `@func(...)` works as a
-   value type, but extern parameters only accept scalars, `c_str`, and pointers,
-   so callbacks (`signal`, `sigaction`, `atexit`, `scandir`, `timer_create`)
-   still need compiler support.
+3. **[RESOLVED] Function pointers in extern signatures.** Added `@func(...)` and
+   `?@func(...)` support in extern signatures and extern structs. Native emitter
+   generates C ABI thunks (`callconv(.c)`) with active runtime context routing.
 4. **No double indirection (`**T`).** Blocks `exec*` argument vectors,
    `getaddrinfo`, `posix_memalign`, and any C API that allocates through an
    out-pointer.
@@ -83,10 +83,11 @@ which entries below are marked `[!]`.
 6. **No pointer arithmetic or pointer casts.** Blocks generic `sockaddr`
    handling, walking `dirent` buffers, and returning borrowed C memory as
    slices.
-7. **No C-to-LLTS string conversion.** An extern can accept `c_str` and string
-   literals, but a `char *` returned by libc can't be turned into a `string`
-   without a runtime helper (`getenv`, `getcwd`, `realpath`, `ttyname`,
-   `readlink`).
+7. **[RESOLVED] C-to-LLTS string conversion and vice versa.** `@as(string, c_str)`
+   / `from_c_str` and `@as(c_str, str)` / `to_c_str` support bidirectional
+   conversions between `string` and `c_str` (including `?string` and `?c_str`),
+   with zero-copy slice construction from `c_str` and frame-allocated
+   NUL-termination for runtime strings.
 8. **Struct arrays in literals.** Array fields can only be initialized from a
    named temporary today; inline `[N]u8{...}` is rejected. This is an
    ergonomics issue once blocker 1 is fixed.
