@@ -1,0 +1,6 @@
+# expect: @fieldType: 'Point' has no field 'z'
+@struct Point { x: i64; y: f64; }
+
+pub @func main() {
+    print(@fieldType(Point, "z"));
+}

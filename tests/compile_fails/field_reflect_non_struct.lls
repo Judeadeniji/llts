@@ -1,0 +1,5 @@
+# expect: @fieldCount expects a struct or shape type, got '[i64, i64]'
+pub @func main() {
+    $t: [i64, i64] = [1, 2];
+    print(@fieldCount(@typeOf(t)));
+}

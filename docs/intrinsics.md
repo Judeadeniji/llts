@@ -15,6 +15,10 @@ Compiler intrinsics are built-in hooks recognized directly by the LLTS compiler 
 | [`@sizeOf`](#sizeof) | 1 | VM & Native | Memory size in bytes of a type or place |
 | [`@zeroed`](#zeroed) | 1 | Native | Zero value construction for a type |
 | [`@nameOf`](#nameof) | 1 | VM & Native | String identifier of a variant or symbol |
+| [`@fieldCount`](#fieldcount) | 1 | VM & Native | Number of fields in a struct or shape |
+| [`@fieldName`](#fieldname) | 2 | VM & Native | Name of a field, by index |
+| [`@fieldType`](#fieldtype) | 2 | VM & Native | Declared type of a field, by name |
+| [`@fieldOffset`](#fieldoffset) | 2 | VM & Native | Byte offset of a field, by name |
 | [`@isError`](#iserror) | 1 | VM & Native | Runtime error inspection |
 | [`@addrOf`](#addrof) | 1 | VM & Native | Raw memory address of an aggregate |
 | [`@concat`](#concat) | 3 | VM & Native | String and byte span concatenation |
@@ -147,6 +151,51 @@ pub @func main() {
 - **Signature:** `@nameOf(declaration_or_variant)`
 - **Return Type:** `string`.
 - **Constraint:** Expects an enum variant, error variant, or named function/variable declaration. Rejects raw literals or bare arithmetic expressions.
+
+---
+
+### Field Reflection
+
+Four intrinsics expose a type's declared fields at compile time. They accept a named `@struct` or a shape type declared with `@type` (`@type Pair = { a: u8; b: i64 };`); tuples, enums, unions, and primitive types are rejected. Type parameters of a generic are resolved again on each instance, so these work inside type functions.
+
+Fields are reported in declaration order, and `@fieldOffset` follows the same layout rules as `@sizeOf` (alignment padding included).
+
+#### `@fieldCount`
+```lls
+@struct Point { x: i64; y: f64; }
+@type Pair = { a: u8; b: bool };
+print(@fieldCount(Point)); # 2
+print(@fieldCount(Pair));  # 2
+```
+- **Signature:** `@fieldCount(T)`
+- **Return Type:** `i64`.
+
+#### `@fieldName`
+```lls
+print(@fieldName(Point, 0)); # "x"
+print(@fieldName(Point, 1)); # "y"
+```
+- **Signature:** `@fieldName(T, index)`
+- **Return Type:** `string`.
+- **Constraint:** `index` must be an integer literal within `0 .. @fieldCount(T)`.
+
+#### `@fieldType`
+```lls
+$v: @fieldType(Point, "y") = 2.5;
+print(v, @typeOf(v)); # 2.5 f64
+```
+- **Signature:** `@fieldType(T, name)`
+- **Return Type:** `type` — usable anywhere a type annotation is accepted.
+- **Constraint:** `name` must be a string literal naming a field of `T`.
+
+#### `@fieldOffset`
+```lls
+print(@fieldOffset(Point, "x")); # 0
+print(@fieldOffset(Point, "y")); # 8
+```
+- **Signature:** `@fieldOffset(T, name)`
+- **Return Type:** `i64` (byte offset from the start of `T`).
+- **Constraint:** `name` must be a string literal naming a field of `T`.
 
 ---
 

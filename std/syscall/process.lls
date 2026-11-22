@@ -362,33 +362,6 @@ pub @func fork(): core.Pid | core.SyscallError {
     return @as(core.Pid, raw);
 }
 
-# Execute program referred to by `path`, replacing current process image.
-# `argv` is the list of argument strings passed to the new program (argv[0] should typically be program name).
-# `envp` is the list of environment strings (format "KEY=VALUE").
-# If execve succeeds, it does not return. If it returns, an error occurred.
-pub @func execve(path: string, argv: []string, envp: []string): core.SyscallError {
-    $c_path = @as(c_str, path);
-    $argc: usize = @as(usize, argv.len);
-    $envc: usize = @as(usize, envp.len);
-    @if (argc >= 255 || envc >= 255) {
-        return core.SyscallError.InvalidArgument;
-    }
-    $c_argv: [256]?c_str = @zeroed([256]?c_str);
-    $i: usize = 0;
-    @for (i < argc) {
-        c_argv[i] = @as(c_str, argv[i]);
-        i += 1;
-    }
-    $c_envp: [256]?c_str = @zeroed([256]?c_str);
-    $j: usize = 0;
-    @for (j < envc) {
-        c_envp[j] = @as(c_str, envp[j]);
-        j += 1;
-    }
-    _ = c.execve(c_path, &c_argv[0], &c_envp[0]);
-    return core.last_error();
-}
-
 # Wait for any child process to terminate.
 pub @func wait(): core.Pid | core.SyscallError {
     $raw = c.wait(null);

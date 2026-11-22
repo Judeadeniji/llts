@@ -1,0 +1,6 @@
+# expect: @fieldName index 2 is out of range for 'Point' (2 fields)
+@struct Point { x: i64; y: f64; }
+
+pub @func main() {
+    print(@fieldName(Point, 2));
+}

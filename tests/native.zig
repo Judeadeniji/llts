@@ -1049,6 +1049,39 @@ test "native compile: @zeroed diagnostic names the offending part" {
     );
 }
 
+test "native execution: compile-time field reflection" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\@struct Point { x: i64; y: f64; }
+        \\@type Pair = { a: u8; b: i64 };
+        \\
+        \\pub @func main() {
+        \\    print(@fieldCount(Point), @fieldName(Point, 0), @fieldName(Point, 1));
+        \\    print(@fieldOffset(Point, "x"), @fieldOffset(Point, "y"));
+        \\    $v: @fieldType(Point, "y") = 2.5;
+        \\    print(v, @typeOf(v));
+        \\    print(@fieldCount(Pair), @fieldName(Pair, 1), @fieldOffset(Pair, "b"));
+        \\}
+    ;
+    try expectNativeStdout(allocator, src, "2 x y\n0 8\n2.5 f64\n2 b 8\n");
+}
+
+test "native execution: field reflection inside type functions" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\@struct P { x: i64; y: bool; }
+        \\@func FieldType(T: type): type { return @fieldType(T, "y"); }
+        \\@func CountOf(T: type): i64 { return @fieldCount(T); }
+        \\
+        \\pub @func main() {
+        \\    $v: FieldType(P) = true;
+        \\    print(@typeOf(v), CountOf(P));
+        \\    print(@fieldOffset(P, "y"));
+        \\}
+    ;
+    try expectNativeStdout(allocator, src, "u1 2\n8\n");
+}
+
 test "native execution: string escape characters" {
     const allocator = std.testing.allocator;
     const src =

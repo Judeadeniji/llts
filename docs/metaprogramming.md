@@ -59,6 +59,28 @@ pub @func main() {
 - Works with enum variants, error members, and declared functions/variables.
 - Rejects raw values and bare arithmetic expressions.
 
+### Field Reflection
+
+`@fieldCount`, `@fieldName`, `@fieldType`, and `@fieldOffset` expose the declared fields of a struct or inline shape at compile time. They fold to constants during type checking, so they cost nothing at runtime and work inside type functions:
+
+```lls
+@struct Point { x: i64; y: f64; }
+
+pub @func main() {
+    print(@fieldCount(Point));         # 2
+    print(@fieldName(Point, 0));       # "x"
+    print(@fieldOffset(Point, "y"));   # 8
+
+    $v: @fieldType(Point, "y") = 2.5;
+    print(v, @typeOf(v));              # 2.5 f64
+}
+```
+
+- Structs and shape types declared with `@type` are supported; tuples, enums, unions, and primitives are rejected.
+- The index for `@fieldName` and the name for `@fieldType`/`@fieldOffset` must be literals.
+- `@fieldType` returns a `type` value and can appear in any type position, including parameters and return types of type functions.
+- Field order is declaration order, and `@fieldOffset` accounts for alignment padding like the real layout.
+
 ---
 
 ## 2. Explicit Type Conversions with `@as`

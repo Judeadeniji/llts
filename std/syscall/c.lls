@@ -684,9 +684,7 @@ pub @extern "c" @func mkdtemp(template: *u8): ?c_str;
 pub @extern "c" @func signal(sig: i32, handler: ?@func(i32): void): ?@func(i32): void;
 
 # Process execution and aligned allocation with double indirection
-pub @extern "c" @func execve(path: c_str, argv: ?*?c_str, envp: ?*?c_str): i32;
 pub @extern "c" @func posix_memalign(memptr: *?*u8, alignment: usize, size: usize): i32;
-pub @extern "c" @func free_raw(ptr: ?*u8): void = "free";
 
 pub @extern "c" @func malloc(size: usize): ?*CBuffer;
 pub @extern "c" @func free(p: *CBuffer): void;
