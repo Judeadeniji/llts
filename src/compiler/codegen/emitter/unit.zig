@@ -69,6 +69,8 @@ pub fn emitEntry(self: *Emitter) !void {
         \\    };
         \\    ctx.setTraceSites(lls_trace_sites[0..]);
         \\    ctx.activate();
+        \\    lls_active_ctx = &ctx;
+        \\    defer lls_active_ctx = null;
         \\    defer ctx.deinit();
         \\    _ = lls_top_level(&ctx) catch |err| lls_finish(err);
         \\
@@ -414,6 +416,66 @@ pub fn emitTrampolines(self: *Emitter) !void {
     }
 }
 
+pub fn emitCCallbackThunks(self: *Emitter) !void {
+    var it = self.c_callbacks_needed.keyIterator();
+    while (it.next()) |fn_name_ptr| {
+        emitCCallbackThunk(self, fn_name_ptr.*) catch |err| switch (err) {
+            error.CompileError => continue,
+            else => |e| return e,
+        };
+    }
+}
+
+fn emitCCallbackThunk(self: *Emitter, fn_name: []const u8) !void {
+    const a = self.arena.allocator();
+    const def = self.state.functions.get(fn_name) orelse return;
+    if (def.node.* != .function_decl) return;
+    const f = &def.node.function_decl;
+    const params = switch (f.params.*) {
+        .params => |p| p.params,
+        else => return,
+    };
+    const ret = try functionReturnType(self, fn_name, def);
+    const zig_fn = try self.fnName(fn_name);
+
+    try self.writer.print("fn lls_c_thunk_{s}(", .{zig_fn});
+    var arg_names: std.ArrayList([]const u8) = .empty;
+    for (params, 0..) |p, i| {
+        var p_vt: ?ValType = null;
+        if (p.type_annotation) |ann| {
+            const p_ir = from_ast.typeFromAst(ann, self.state, self.state.typeAlloc()) catch null;
+            if (p_ir) |pir| p_vt = try self.valTypeOfIR(def.node, pir);
+        }
+        const p_zig = if (p_vt) |pv| pv.zig else "i64";
+        const arg_name = try std.fmt.allocPrint(a, "arg_{d}", .{i});
+        try arg_names.append(a, arg_name);
+        if (i > 0) try self.writer.writeAll(", ");
+        try self.writer.print("{s}: {s}", .{ arg_name, p_zig });
+    }
+    const ret_zig = if (std.mem.eql(u8, ret.zig, "void") or ret.kind == .void)
+        "void"
+    else
+        ret.zig;
+    try self.writer.print(") callconv(.c) {s} {{\n", .{ret_zig});
+    const joined_args = try std.mem.join(a, ", ", arg_names.items);
+    if (std.mem.eql(u8, ret_zig, "void")) {
+        if (joined_args.len == 0) {
+            try self.writer.print("    if (lls_active_ctx) |ctx| {{ _ = {s}(ctx) catch {{}}; }}\n", .{zig_fn});
+        } else {
+            try self.writer.print("    if (lls_active_ctx) |ctx| {{ _ = {s}(ctx, {s}) catch {{}}; }}\n", .{ zig_fn, joined_args });
+        }
+    } else {
+        const fallback = try zeroValue(self, ret);
+        if (joined_args.len == 0) {
+            try self.writer.print("    if (lls_active_ctx) |ctx| {{ return {s}(ctx) catch {s}; }}\n", .{ zig_fn, fallback });
+        } else {
+            try self.writer.print("    if (lls_active_ctx) |ctx| {{ return {s}(ctx, {s}) catch {s}; }}\n", .{ zig_fn, joined_args, fallback });
+        }
+        try self.writer.print("    return {s};\n", .{fallback});
+    }
+    try self.writer.writeAll("}\n\n");
+}
+
 fn emitTrampoline(self: *Emitter, fn_name: []const u8) !void {
     const a = self.arena.allocator();
     const def = self.state.functions.get(fn_name) orelse return;
@@ -450,6 +512,7 @@ fn emitTrampoline(self: *Emitter, fn_name: []const u8) !void {
 }
 
 pub fn emitGlobalDecls(self: *Emitter) !void {
+    try self.writer.writeAll("pub var lls_active_ctx: ?*rt.Context = null;\n\n");
     const a = self.arena.allocator();
     var names: std.ArrayList([]const u8) = .empty;
     var it = self.globals.keyIterator();

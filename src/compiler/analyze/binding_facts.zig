@@ -815,7 +815,11 @@ const Ctx = struct {
                         std.mem.eql(u8, name, "@sizeOf") or
                         std.mem.eql(u8, name, "@alignOf") or
                         std.mem.eql(u8, name, "@zeroed") or
-                        std.mem.eql(u8, name, "@nameOf")) return;
+                        std.mem.eql(u8, name, "@nameOf") or
+                        std.mem.eql(u8, name, "@fieldCount") or
+                        std.mem.eql(u8, name, "@fieldName") or
+                        std.mem.eql(u8, name, "@fieldType") or
+                        std.mem.eql(u8, name, "@fieldOffset")) return;
                     if (std.mem.eql(u8, name, "@as") and c.args.len == 2) {
                         try ctx.walkExpr(c.args[1]);
                         return;

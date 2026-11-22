@@ -933,7 +933,15 @@ pub fn emitLocalDeclaration(self: *Emitter, node: *ast_mod.Node, d: *const ast_m
         try self.scopes.items[self.scopes.items.len - 1].put(d.name, info);
         return;
     }
-    const vt = try self.valTypeFor(node, info.ir_type, info.display);
+    var vt = try self.valTypeFor(node, info.ir_type, info.display);
+    if (vt.kind == .func or (vt.kind == .optional and vt.payload != null and vt.payload.?.kind == .func)) {
+        if (self.valueType(d.value) catch null) |init_vt| {
+            if (std.mem.indexOf(u8, init_vt.zig, "callconv(.c)") != null) {
+                vt = init_vt;
+            }
+        }
+    }
+    info.vt = vt;
     try self.requireValueType(node, vt);
     if (info.zig_name.len == 0) info.zig_name = try self.localName(d.name);
 

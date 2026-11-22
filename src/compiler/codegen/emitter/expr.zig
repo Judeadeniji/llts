@@ -248,7 +248,30 @@ fn emitExternFixedArg(self: *Emitter, node: *ast_mod.Node, arg: *ast_mod.Node, c
             if (externIsBytePtr(payload)) return emitExternBytePtrArg(self, arg);
             return emitExpr(self, arg);
         },
+        .func_ptr, .optional_func_ptr => return emitExternFuncPtrArg(self, node, arg, ct),
     }
+}
+
+fn emitExternFuncPtrArg(self: *Emitter, node: *ast_mod.Node, arg: *ast_mod.Node, ct: state_mod.CType) ![]const u8 {
+    const a = self.arena.allocator();
+    _ = ct;
+    _ = node;
+    if (isNullLiteral(arg)) return "null";
+    if (arg.* == .primary and (arg.primary.kind == .identifier or arg.primary.kind == .register)) {
+        const raw_name = arg.primary.name;
+        const target_fn: ?[]const u8 = if (self.state.functions.contains(raw_name))
+            raw_name
+        else if (self.state.fn_aliases.get(raw_name)) |aliased|
+            aliased
+        else
+            null;
+        if (target_fn) |fn_name| {
+            try self.c_callbacks_needed.put(fn_name, {});
+            const zig_fn = try self.fnName(fn_name);
+            return std.fmt.allocPrint(a, "lls_c_thunk_{s}", .{zig_fn});
+        }
+    }
+    return emitExpr(self, arg);
 }
 
 fn emitExternVararg(self: *Emitter, node: *ast_mod.Node, arg: *ast_mod.Node) ![]const u8 {
@@ -280,11 +303,28 @@ fn emitExternVararg(self: *Emitter, node: *ast_mod.Node, arg: *ast_mod.Node) ![]
         },
         .bool => return std.fmt.allocPrint(a, "@as(i32, @intCast({s}))", .{code}),
         .pointer => return code,
+        .func => {
+            if (arg.* == .primary and (arg.primary.kind == .identifier or arg.primary.kind == .register)) {
+                const raw_name = arg.primary.name;
+                const target_fn: ?[]const u8 = if (self.state.functions.contains(raw_name))
+                    raw_name
+                else if (self.state.fn_aliases.get(raw_name)) |aliased|
+                    aliased
+                else
+                    null;
+                if (target_fn) |fn_name| {
+                    try self.c_callbacks_needed.put(fn_name, {});
+                    const zig_fn = try self.fnName(fn_name);
+                    return std.fmt.allocPrint(a, "lls_c_thunk_{s}", .{zig_fn});
+                }
+            }
+            return code;
+        },
         .optional => {
             const payload = at.payload orelse {
                 return self.failAt(node, "native backend cannot pass optional extern variadic type '{s}'", .{at.display});
             };
-            if (payload.kind == .pointer) return code;
+            if (payload.kind == .pointer or payload.kind == .func) return code;
             return self.failAt(node, "native backend cannot pass optional extern variadic type '{s}'", .{at.display});
         },
         .string, .slice, .array => {
@@ -325,6 +365,11 @@ pub fn emitCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) any
 
     if (self.state.extern_calls.get(node)) |extern_name| {
         return emitExternCall(self, node, c, extern_name);
+    }
+
+    if (try intrinsics_mod.tryTypeCastCall(self.state, c)) |_| {
+        const target = try self.valueType(node);
+        return emitStrongCoercion(self, c.args[0], target);
     }
 
     if (c.callee.* == .primary and std.mem.startsWith(u8, c.callee.primary.name, "@")) {
@@ -412,6 +457,30 @@ pub fn emitCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) any
                 .error_code => std.fmt.allocPrint(a, "({s}).message", .{try errorOperandCode(self, c.args[0])}),
                 .enum_type => |ename| emitNameOfEnum(self, node, ename, c.args[0]),
             };
+        }
+        if (std.mem.eql(u8, intrinsic, "@fieldCount")) {
+            if (c.args.len != 1) return self.failAt(node, "@fieldCount expects 1 argument", .{});
+            const n = self.state.field_count_results.get(node) orelse
+                return self.failAt(node, "native backend cannot determine @fieldCount statically", .{});
+            return std.fmt.allocPrint(a, "@as(i64, {d})", .{n});
+        }
+        if (std.mem.eql(u8, intrinsic, "@fieldName")) {
+            if (c.args.len != 2) return self.failAt(node, "@fieldName expects 2 arguments", .{});
+            const field_name = self.state.field_name_results.get(node) orelse
+                return self.failAt(node, "native backend cannot determine @fieldName statically", .{});
+            return self.zigString(field_name);
+        }
+        if (std.mem.eql(u8, intrinsic, "@fieldOffset")) {
+            if (c.args.len != 2) return self.failAt(node, "@fieldOffset expects 2 arguments", .{});
+            const offset = self.state.field_offset_results.get(node) orelse
+                return self.failAt(node, "native backend cannot determine @fieldOffset statically", .{});
+            return std.fmt.allocPrint(a, "@as(i64, {d})", .{offset});
+        }
+        if (std.mem.eql(u8, intrinsic, "@fieldType")) {
+            if (c.args.len != 2) return self.failAt(node, "@fieldType expects 2 arguments", .{});
+            const disp = self.state.type_call_results.get(node) orelse
+                return self.failAt(node, "native backend cannot resolve @fieldType statically", .{});
+            return self.zigString(disp);
         }
         if (std.mem.eql(u8, intrinsic, "@as")) {
             if (c.args.len != 2) return self.failAt(node, "@as expects 2 arguments", .{});
@@ -639,6 +708,16 @@ pub fn emitCall(self: *Emitter, node: *ast_mod.Node, c: *const ast_mod.Call) any
         }
         const args_joined = try std.mem.join(a, ", ", args_buf.items);
         const callee_expr = try emitExpr(self, c.callee);
+
+        if (std.mem.indexOf(u8, callee_vt.?.zig, "callconv(.c)") != null) {
+            self.counter += 1;
+            const cid = self.counter;
+            const label = try std.fmt.allocPrint(a, "lls_cfptr_{d}", .{cid});
+            if (args_joined.len == 0) {
+                return std.fmt.allocPrint(a, "{s}: {{ const lls_f_{d} = {s}; break :{s} lls_f_{d}(); }}", .{ label, cid, callee_expr, label, cid });
+            }
+            return std.fmt.allocPrint(a, "{s}: {{ const lls_f_{d} = {s}; break :{s} lls_f_{d}({s}); }}", .{ label, cid, callee_expr, label, cid, args_joined });
+        }
         // A field or element that always holds the same closure calls that
         // closure's trampoline directly; the environment still arrives in the
         // aggregate, so no indirect call is needed.
@@ -1538,6 +1617,24 @@ fn emitValueCoercedFrom(self: *Emitter, node: *ast_mod.Node, src_override: ?ValT
         return self.failAt(node, "error-union value must be handled with '?' first", .{});
     }
     if (target.kind == .func) {
+        if (std.mem.indexOf(u8, target.zig, "callconv(.c)") != null) {
+            if (isNullLiteral(node)) return "null";
+            if (node.* == .primary and (node.primary.kind == .identifier or node.primary.kind == .register)) {
+                const raw_name = node.primary.name;
+                const target_fn: ?[]const u8 = if (self.state.functions.contains(raw_name))
+                    raw_name
+                else if (self.state.fn_aliases.get(raw_name)) |aliased|
+                    aliased
+                else
+                    null;
+                if (target_fn) |fn_name| {
+                    try self.c_callbacks_needed.put(fn_name, {});
+                    const zig_fn = try self.fnName(fn_name);
+                    return std.fmt.allocPrint(a, "lls_c_thunk_{s}", .{zig_fn});
+                }
+            }
+            return emitExpr(self, node);
+        }
         if (node.* == .primary and (node.primary.kind == .identifier or node.primary.kind == .register)) {
             const raw_name = node.primary.name;
             const target_fn: ?[]const u8 = if (self.state.functions.contains(raw_name))
@@ -1589,6 +1686,41 @@ fn emitValueCoercedFrom(self: *Emitter, node: *ast_mod.Node, src_override: ?ValT
     if (node.* == .struct_init and target.kind == .struct_) {
         return emitStructLiteral(self, node, &node.struct_init, target);
     }
+
+    // c_str -> string / slice: std.mem.span(...)
+    if ((std.mem.eql(u8, src.clean, "c_str") or (src.kind == .pointer and std.mem.eql(u8, src.clean, "c_str"))) and (target.kind == .string or target.kind == .slice)) {
+        const code = try emitExpr(self, node);
+        return std.fmt.allocPrint(a, "std.mem.span({s})", .{code});
+    }
+
+    // ?c_str -> ?string / ?slice:
+    if (src.kind == .optional and src.payload != null and std.mem.eql(u8, src.payload.?.clean, "c_str") and
+        target.kind == .optional and target.payload != null and (target.payload.?.kind == .string or target.payload.?.kind == .slice))
+    {
+        const code = try emitExpr(self, node);
+        return std.fmt.allocPrint(a, "(if ({s}) |lls_cstr_p| @as(?[]const u8, std.mem.span(lls_cstr_p)) else null)", .{code});
+    }
+
+    // string / slice / byte array -> c_str:
+    if ((src.kind == .string or src.kind == .slice or (src.kind == .array and src.elem != null and std.mem.eql(u8, src.elem.?.zig, "u8"))) and std.mem.eql(u8, target.clean, "c_str")) {
+        if (node.* == .literal and node.literal.literal_type == .string) {
+            return emitExpr(self, node);
+        }
+        const code = try emitExpr(self, node);
+        if (src.kind == .array) {
+            return std.fmt.allocPrint(a, "(try rt.mem.stringToCStr(ctx, &({s})))", .{code});
+        }
+        return std.fmt.allocPrint(a, "(try rt.mem.stringToCStr(ctx, {s}))", .{code});
+    }
+
+    // ?string / ?slice -> ?c_str:
+    if (src.kind == .optional and src.payload != null and (src.payload.?.kind == .string or src.payload.?.kind == .slice) and
+        target.kind == .optional and target.payload != null and std.mem.eql(u8, target.payload.?.clean, "c_str"))
+    {
+        const code = try emitExpr(self, node);
+        return std.fmt.allocPrint(a, "(if ({s}) |lls_str_s| @as(?[*:0]const u8, (try rt.mem.stringToCStr(ctx, lls_str_s))) else null)", .{code});
+    }
+
     const code = try emitExpr(self, node);
 
     // Literals are already polymorphic; the surrounding declaration,
@@ -1615,6 +1747,22 @@ fn emitValueCoercedFrom(self: *Emitter, node: *ast_mod.Node, src_override: ?ValT
 
     if (target.kind == .optional) {
         if (src.kind == .null_value) return "null";
+        if (target.payload != null and std.mem.indexOf(u8, target.payload.?.zig, "callconv(.c)") != null) {
+            if (node.* == .primary and (node.primary.kind == .identifier or node.primary.kind == .register)) {
+                const raw_name = node.primary.name;
+                const target_fn: ?[]const u8 = if (self.state.functions.contains(raw_name))
+                    raw_name
+                else if (self.state.fn_aliases.get(raw_name)) |aliased|
+                    aliased
+                else
+                    null;
+                if (target_fn) |fn_name| {
+                    try self.c_callbacks_needed.put(fn_name, {});
+                    const zig_fn = try self.fnName(fn_name);
+                    return std.fmt.allocPrint(a, "lls_c_thunk_{s}", .{zig_fn});
+                }
+            }
+        }
         if (src.kind == .optional and std.mem.eql(u8, src.zig, target.zig)) return code;
         if (src.kind == .other) {
             return self.failAt(node, "cannot assign '{s}' to '{s}' in native emission", .{ src.display, target.display });

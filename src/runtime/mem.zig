@@ -68,3 +68,16 @@ pub fn concatInto(buf: []u8, a: []const u8, b: []const u8) error{OutOfMemory}![]
     @memcpy(buf[a.len..total], b);
     return buf[0..total];
 }
+
+/// Allocate and NUL-terminate an LLTS string slice in the frame buffer as a C string.
+pub fn stringToCStr(ctx: *Context, src: []const u8) error{OutOfMemory}![*:0]const u8 {
+    const dst = try ctx.allocFrame(src.len + 1, 1);
+    @memcpy(dst[0..src.len], src);
+    dst[src.len] = 0;
+    return dst[0..src.len :0].ptr;
+}
+
+/// Convert a NUL-terminated C string pointer to an LLTS string slice.
+pub fn cstrToString(ptr: [*:0]const u8) []const u8 {
+    return std.mem.span(ptr);
+}

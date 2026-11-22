@@ -27,6 +27,10 @@ pub const Intrinsic = enum {
     alignOf,
     zeroed,
     nameOf,
+    fieldCount,
+    fieldName,
+    fieldType,
+    fieldOffset,
     as,
     new,
     addrOf,
@@ -42,6 +46,10 @@ const intrinsics = std.StaticStringMap(Intrinsic).initComptime(.{
     .{ "@alignOf", .alignOf },
     .{ "@zeroed", .zeroed },
     .{ "@nameOf", .nameOf },
+    .{ "@fieldCount", .fieldCount },
+    .{ "@fieldName", .fieldName },
+    .{ "@fieldType", .fieldType },
+    .{ "@fieldOffset", .fieldOffset },
     .{ "@as", .as },
     // Legacy bytecode/VM compatibility only. The native emitter rejects
     // `@new`; allocation will return as an ordinary standard-library facility.
@@ -69,6 +77,10 @@ pub fn arity(intr: Intrinsic) Arity {
         .alignOf => .{ .exact = 1 },
         .zeroed => .{ .exact = 1 },
         .nameOf => .{ .exact = 1 },
+        .fieldCount => .{ .exact = 1 },
+        .fieldName => .{ .exact = 2 },
+        .fieldType => .{ .exact = 2 },
+        .fieldOffset => .{ .exact = 2 },
         .as => .{ .exact = 2 },
         .new => .{ .range = .{ .min = 2, .max = 3 } },
         .addrOf => .{ .exact = 1 },
@@ -182,6 +194,9 @@ pub fn typecheck(state: *CompilerState, env: *typecheck_root.Env, ta: ir.TypeAll
             try ensureZeroLayout(state, t);
             try state.zeroed_results.put(call_node, t);
             return t;
+        },
+        .fieldCount, .fieldName, .fieldType, .fieldOffset => {
+            return try typecheckFieldIntrinsic(state, env, ta, intr, call_node, c);
         },
         .nameOf => {
             const arg_type = try typecheck_root.inferExpr(state, env, ta, c.args[0]);
@@ -366,6 +381,22 @@ pub fn compile(state: *CompilerState, intr: Intrinsic, node: *ast.Node, c: *cons
                 return compile_errors.compileFailFmt(state, "Internal error: @zeroed missing type", .{});
             };
             try emitZeroValue(state, t);
+        },
+        .fieldCount => {
+            const n = state.field_count_results.get(node) orelse 0;
+            try emit.emitConstant(state, .{ .i64 = n });
+        },
+        .fieldName => {
+            const field_name = state.field_name_results.get(node) orelse "";
+            try emit.emitString(state, field_name);
+        },
+        .fieldType => {
+            const disp = state.type_call_results.get(node) orelse "unknown";
+            try emit.emitString(state, disp);
+        },
+        .fieldOffset => {
+            const off = state.field_offset_results.get(node) orelse 0;
+            try emit.emitConstant(state, .{ .i64 = off });
         },
         .nameOf => {
             const plan = state.name_of_plans.get(node) orelse {
@@ -591,6 +622,153 @@ pub fn isTypeValueNode(state: *CompilerState, env: *typecheck_root.Env, node: *a
 pub fn recordTypeValue(state: *CompilerState, node: *ast.Node, t: ir.Type) !void {
     try state.type_call_results.put(node, try typecheck_root.ownDisplayQualified(state, t));
     try state.type_call_ir_results.put(node, t);
+}
+
+/// One declared field of a struct or shape, resolved for the field-reflection
+/// intrinsics. `offset` is byte offset from the start of the aggregate.
+const FieldDesc = struct {
+    name: []const u8,
+    ty: ir.Type,
+    offset: i32,
+};
+
+/// Declared fields of `t` in source order, or null when `t` is not a struct or
+/// shape. `allocator` owns only the returned slice, not the names or types.
+fn collectFieldDescs(state: *CompilerState, allocator: std.mem.Allocator, t: ir.Type) !?[]FieldDesc {
+    switch (ir.peelDefined(t)) {
+        .struct_ => |name| {
+            const sd = from_ast.lookupStruct(state, name) orelse return null;
+            var list: std.ArrayList(FieldDesc) = .empty;
+            defer list.deinit(allocator);
+            for (sd.field_names) |field_name| {
+                const field_ty = sd.field_irs.get(field_name) orelse ir.TUnknown;
+                try list.append(allocator, .{
+                    .name = field_name,
+                    .ty = field_ty,
+                    .offset = sd.offsets.get(field_name) orelse 0,
+                });
+            }
+            return try list.toOwnedSlice(allocator);
+        },
+        .shape => |shape_fields| {
+            var list: std.ArrayList(FieldDesc) = .empty;
+            defer list.deinit(allocator);
+            var offset: i32 = 0;
+            for (shape_fields) |field| {
+                const size = (try layout.sizeOfType(state, field.ty)) orelse 0;
+                if (size == 0) {
+                    try list.append(allocator, .{ .name = field.name, .ty = field.ty, .offset = offset });
+                    continue;
+                }
+                offset = layout.alignUp(offset, try layout.alignOfType(state, field.ty));
+                try list.append(allocator, .{ .name = field.name, .ty = field.ty, .offset = offset });
+                offset += size;
+            }
+            return try list.toOwnedSlice(allocator);
+        },
+        else => return null,
+    }
+}
+
+/// Integer value of a numeric literal node, including hex/octal/binary forms.
+fn literalIntValue(node: *ast.Node) ?i64 {
+    if (node.* != .literal) return null;
+    const lit = node.literal;
+    return switch (lit.literal_type) {
+        .number => std.fmt.parseInt(i64, lit.value, 10) catch null,
+        .hex => std.fmt.parseInt(i64, lit.value[2..], 16) catch null,
+        .octal => std.fmt.parseInt(i64, lit.value[2..], 8) catch null,
+        .binary => std.fmt.parseInt(i64, lit.value[2..], 2) catch null,
+        else => null,
+    };
+}
+
+fn findField(fields: []const FieldDesc, name: []const u8) ?FieldDesc {
+    for (fields) |field| {
+        if (std.mem.eql(u8, field.name, name)) return field;
+    }
+    return null;
+}
+
+fn typecheckFieldIntrinsic(
+    state: *CompilerState,
+    env: *typecheck_root.Env,
+    ta: ir.TypeAlloc,
+    intr: Intrinsic,
+    call_node: *ast.Node,
+    c: *const ast.Call,
+) !ir.Type {
+    const name = c.callee.primary.name;
+    const arg = c.args[0];
+    if (!isTypeValueNode(state, env, arg)) {
+        // Report an undefined identifier instead of a misleading "expects a type".
+        _ = try typecheck_root.inferExpr(state, env, ta, arg);
+        return compile_errors.compileFailFmt(state, "{s} expects a struct or shape type", .{name});
+    }
+    const t = try denotedType(state, env, ta, arg);
+    // A generic still being resolved is checked again on its instance.
+    if (ir.involvesUnknown(t)) {
+        return switch (intr) {
+            .fieldCount, .fieldOffset => ir.TInt,
+            .fieldName => ir.TString,
+            .fieldType => ir.TType,
+            else => unreachable,
+        };
+    }
+
+    var arena = std.heap.ArenaAllocator.init(state.allocator);
+    defer arena.deinit();
+    const fields = (try collectFieldDescs(state, arena.allocator(), t)) orelse {
+        const disp = try typecheck_root.ownDisplay(state, t);
+        return compile_errors.compileFailFmt(state, "{s} expects a struct or shape type, got '{s}'", .{ name, disp });
+    };
+
+    switch (intr) {
+        .fieldCount => {
+            try state.field_count_results.put(call_node, @intCast(fields.len));
+            return ir.TInt;
+        },
+        .fieldName => {
+            const index = literalIntValue(c.args[1]) orelse
+                return compile_errors.compileFailFmt(state, "@fieldName expects an integer literal field index", .{});
+            if (index < 0 or index >= @as(i64, @intCast(fields.len))) {
+                const disp = try typecheck_root.ownDisplay(state, t);
+                return compile_errors.compileFailFmt(
+                    state,
+                    "@fieldName index {d} is out of range for '{s}' ({d} fields)",
+                    .{ index, disp, fields.len },
+                );
+            }
+            try state.field_name_results.put(call_node, fields[@intCast(index)].name);
+            return ir.TString;
+        },
+        .fieldType => {
+            const field_name = stringLiteralValue(c.args[1]) orelse
+                return compile_errors.compileFailFmt(state, "@fieldType expects a string literal field name", .{});
+            const field = findField(fields, field_name) orelse {
+                const disp = try typecheck_root.ownDisplay(state, t);
+                return compile_errors.compileFailFmt(state, "@fieldType: '{s}' has no field '{s}'", .{ disp, field_name });
+            };
+            try recordTypeValue(state, call_node, field.ty);
+            return ir.TType;
+        },
+        .fieldOffset => {
+            const field_name = stringLiteralValue(c.args[1]) orelse
+                return compile_errors.compileFailFmt(state, "@fieldOffset expects a string literal field name", .{});
+            const field = findField(fields, field_name) orelse {
+                const disp = try typecheck_root.ownDisplay(state, t);
+                return compile_errors.compileFailFmt(state, "@fieldOffset: '{s}' has no field '{s}'", .{ disp, field_name });
+            };
+            try state.field_offset_results.put(call_node, field.offset);
+            return ir.TInt;
+        },
+        else => unreachable,
+    }
+}
+
+fn stringLiteralValue(node: *ast.Node) ?[]const u8 {
+    if (node.* != .literal or node.literal.literal_type != .string) return null;
+    return node.literal.value;
 }
 
 /// The type denoted by a type-valued node (see `isTypeValueNode`).
@@ -903,6 +1081,13 @@ pub fn checkAsCast(state: *CompilerState, src: ir.Type, target: ir.Type, value: 
     if (num_ok) return;
     // Same underlying shape (UUID ↔ ID, Expr ↔ Literal|Add, etc.).
     if (ir.typeEquals(su, tu) or ir.isSubtype(su, tu) or ir.isSubtype(tu, su)) return;
+    // c_str <-> string casts.
+    if ((su == .c_str and isStringyIr(tu)) or (isStringyIr(su) and tu == .c_str)) return;
+    if (ir.optionalPayload(su)) |s_opt| {
+        if (ir.optionalPayload(tu)) |t_opt| {
+            if ((s_opt == .c_str and isStringyIr(t_opt)) or (isStringyIr(s_opt) and t_opt == .c_str)) return;
+        }
+    }
     // Explicit deref via `@as(T, ptr)` — `*T → T`. No implicit pointee load elsewhere
     // (keeps control flow / loads visible at the cast site).
     if (su == .ptr) {

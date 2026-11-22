@@ -161,6 +161,7 @@ pub const Binding = struct {
     /// specialised on a closure argument); its calls go straight to the
     /// closure's trampoline instead of through the fat pointer.
     closure_id: ?u32 = null,
+    vt: ?ValType = null,
 };
 
 pub const Global = struct {
@@ -262,6 +263,7 @@ pub const Emitter = struct {
     switch_targets: std.ArrayList(SwitchContinueTarget) = .empty,
     trace_sites: std.ArrayList(TraceSite) = .empty,
     trampolines_needed: std.StringHashMap(void),
+    c_callbacks_needed: std.StringHashMap(void),
     current_trace_func: ?[]const u8 = null,
     current_trace_file: []const u8 = "",
     cur_ret: ValType = undefined,
@@ -384,7 +386,18 @@ pub const Emitter = struct {
 
         const fields = try a.alloc(StructField, seeds.items.len);
         for (seeds.items, 0..) |seed, i| {
-            const vt = try self.valTypeFor(node, def.field_irs.get(seed.name), seed.display);
+            var vt = try self.valTypeFor(node, def.field_irs.get(seed.name), seed.display);
+            if (def.is_extern) {
+                if (def.field_irs.get(seed.name)) |fir| {
+                    if (fir == .func) {
+                        vt = try self.cFuncValTypeFromIR(node, fir, false);
+                    } else if (ir.optionalPayload(fir)) |payload| {
+                        if (payload == .func) {
+                            vt = try self.cFuncValTypeFromIR(node, payload, true);
+                        }
+                    }
+                }
+            }
             if (vt.kind == .other or vt.kind == .void) {
                 return self.failAt(node, "native backend cannot store field '{s}.{s}' of type '{s}'", .{
                     clean, seed.name, seed.display,
@@ -573,6 +586,7 @@ pub const Emitter = struct {
         self.union_by_key.deinit();
         self.infos.deinit();
         self.trampolines_needed.deinit();
+        self.c_callbacks_needed.deinit();
         self.arena.deinit();
     }
 
@@ -865,8 +879,9 @@ pub const Emitter = struct {
         try unit_mod.emitExternDecls(self);
         try unit_mod.emitClosures(self);
         try unit_mod.emitFunctions(self);
-        try unit_mod.emitTrampolines(self);
         try unit_mod.emitTopLevel(self);
+        try unit_mod.emitTrampolines(self);
+        try unit_mod.emitCCallbackThunks(self);
         try self.emitTraceSiteTable();
         try unit_mod.emitEntry(self);
         try self.emitStructTypeDecls();
@@ -1032,6 +1047,7 @@ pub const Emitter = struct {
             .union_by_key = std.StringHashMap(*UnionType).init(allocator),
             .infos = std.AutoHashMap(*ast_mod.Node, *Binding).init(allocator),
             .trampolines_needed = std.StringHashMap(void).init(allocator),
+            .c_callbacks_needed = std.StringHashMap(void).init(allocator),
         };
     }
 
@@ -1204,6 +1220,13 @@ pub const Emitter = struct {
     pub fn valueType(self: *Emitter, node: *ast_mod.Node) anyerror!ValType {
         if (isTypeOfCall(node)) return try self.valTypeOfIR(node, ir.TString);
         if (isSizeOfCall(node)) return try self.valTypeOfIR(node, ir.TI64);
+        if (node.* == .call) {
+            if (self.state.extern_calls.get(node) orelse self.state.extern_calls.get(node.call.callee)) |ext_name| {
+                if (self.state.externs.get(ext_name)) |ext| {
+                    return try self.externCTypeValType(node, ext.ret);
+                }
+            }
+        }
         if (self.recordedType(node)) |t| {
             if (try self.valTypeFromIR(node, t)) |vt| return vt;
         }
@@ -1232,6 +1255,7 @@ pub const Emitter = struct {
         // binding's storage type.
         if (node.* == .primary and (node.primary.kind == .identifier or node.primary.kind == .register)) {
             if (self.lookupBindingOptional(node.primary.name)) |b| {
+                if (b.vt) |bvt| return bvt;
                 if (b.ir_type != null) return try self.valTypeFor(node, b.ir_type, b.display);
             }
             if (self.globals.get(node.primary.name)) |g| {
@@ -1294,6 +1318,45 @@ pub const Emitter = struct {
         return name;
     }
 
+    pub fn cFuncValTypeFromIR(self: *Emitter, node: *ast_mod.Node, func_ir: ir.Type, is_optional: bool) anyerror!ValType {
+        const a = self.arena.allocator();
+        const f = func_ir.func;
+        var param_zigs: std.ArrayList([]const u8) = .empty;
+        for (f.params) |p| {
+            const p_vt = (try self.valTypeFromIR(node, p)) orelse {
+                return self.failAt(node, "native backend cannot represent function pointer parameter type", .{});
+            };
+            try param_zigs.append(a, p_vt.zig);
+        }
+        const ret_vt = (try self.valTypeFromIR(node, f.ret.*)) orelse {
+            return self.failAt(node, "native backend cannot represent function pointer return type", .{});
+        };
+        const params_str = try std.mem.join(a, ", ", param_zigs.items);
+        if (is_optional) {
+            const inner_p = try a.create(ValType);
+            inner_p.* = .{
+                .display = "@func",
+                .clean = "@func",
+                .kind = .func,
+                .zig = try std.fmt.allocPrint(a, "*const fn ({s}) callconv(.c) {s}", .{ params_str, ret_vt.zig }),
+            };
+            return .{
+                .display = "?@func",
+                .clean = "@func",
+                .kind = .optional,
+                .payload = inner_p,
+                .zig = try std.fmt.allocPrint(a, "?*const fn ({s}) callconv(.c) {s}", .{ params_str, ret_vt.zig }),
+            };
+        } else {
+            return .{
+                .display = "@func",
+                .clean = "@func",
+                .kind = .func,
+                .zig = try std.fmt.allocPrint(a, "*const fn ({s}) callconv(.c) {s}", .{ params_str, ret_vt.zig }),
+            };
+        }
+    }
+
     /// Zig representation of a C type, shared by extern declarations and calls.
     pub fn externCTypeValType(self: *Emitter, node: *ast_mod.Node, ct: state_mod.CType) !ValType {
         const a = self.arena.allocator();
@@ -1335,6 +1398,8 @@ pub const Emitter = struct {
                     .zig = try std.fmt.allocPrint(a, "?{s}", .{inner.zig}),
                 };
             },
+            .func_ptr => |t| return self.cFuncValTypeFromIR(node, t, false),
+            .optional_func_ptr => |t| return self.cFuncValTypeFromIR(node, t, true),
         };
     }
 };

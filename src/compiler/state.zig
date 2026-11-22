@@ -17,6 +17,10 @@ pub const CType = union(enum) {
     ptr: ir.Type,
     /// `?*T`; the stored type is the full `ir.ptr` (not the optional union).
     optional_ptr: ir.Type,
+    /// `@func(...)`; the stored type is `ir.func`.
+    func_ptr: ir.Type,
+    /// `?@func(...)`; the stored type is `ir.func` (not the optional union).
+    optional_func_ptr: ir.Type,
 };
 
 pub const ExternParam = struct {
@@ -50,6 +54,8 @@ pub fn cTypeEquals(a: CType, b: CType) bool {
         .c_str, .optional_c_str => true,
         .ptr => |t| ir.typeEquals(t, b.ptr),
         .optional_ptr => |t| ir.typeEquals(t, b.optional_ptr),
+        .func_ptr => |t| ir.typeEquals(t, b.func_ptr),
+        .optional_func_ptr => |t| ir.typeEquals(t, b.optional_func_ptr),
     };
 }
 
@@ -423,6 +429,12 @@ pub const CompilerState = struct {
     align_of_results: std.AutoHashMap(*ast.Node, i32),
     /// `@nameOf` lowering plan per call node (variant spelling as declared).
     name_of_plans: std.AutoHashMap(*ast.Node, NameOfPlan),
+    /// `@fieldCount(...)` resolved statically at typecheck.
+    field_count_results: std.AutoHashMap(*ast.Node, i32),
+    /// `@fieldName(...)` resolved statically at typecheck (call node → name).
+    field_name_results: std.AutoHashMap(*ast.Node, []const u8),
+    /// `@fieldOffset(...)` resolved statically at typecheck.
+    field_offset_results: std.AutoHashMap(*ast.Node, i32),
     /// `@zeroed(T)` resolved type per call node (checked zeroable at typecheck).
     zeroed_results: std.AutoHashMap(*ast.Node, ir.Type),
     for_is_cond: std.AutoHashMap(*const ast.For, void),
@@ -586,6 +598,9 @@ pub fn create(allocator: std.mem.Allocator) !CompilerState {
         .size_of_results = std.AutoHashMap(*ast.Node, i32).init(allocator),
         .align_of_results = std.AutoHashMap(*ast.Node, i32).init(allocator),
         .name_of_plans = std.AutoHashMap(*ast.Node, NameOfPlan).init(allocator),
+        .field_count_results = std.AutoHashMap(*ast.Node, i32).init(allocator),
+        .field_name_results = std.AutoHashMap(*ast.Node, []const u8).init(allocator),
+        .field_offset_results = std.AutoHashMap(*ast.Node, i32).init(allocator),
         .zeroed_results = std.AutoHashMap(*ast.Node, ir.Type).init(allocator),
         .for_is_cond = std.AutoHashMap(*const ast.For, void).init(allocator),
         .binding_facts = std.AutoHashMap(*ast.Node, BindingFacts).init(allocator),
@@ -753,6 +768,9 @@ pub fn deinit(self: *CompilerState) void {
     self.size_of_results.deinit();
     self.align_of_results.deinit();
     self.name_of_plans.deinit();
+    self.field_count_results.deinit();
+    self.field_name_results.deinit();
+    self.field_offset_results.deinit();
     self.zeroed_results.deinit();
     self.for_is_cond.deinit();
     self.binding_facts.deinit();

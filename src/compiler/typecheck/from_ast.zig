@@ -132,7 +132,10 @@ fn isExternScalar(t: ir.Type) bool {
 }
 
 fn isExternPointee(t: ir.Type) bool {
-    return isExternScalar(t) or t == .c_str or t == .struct_;
+    if (ir.optionalPayload(t)) |payload| {
+        return isExternPointee(payload);
+    }
+    return isExternScalar(t) or t == .c_str or t == .struct_ or t == .func or t == .ptr;
 }
 
 fn isNullTypeNode(node: *const ast.Node) bool {
@@ -181,7 +184,25 @@ pub fn externCTypeToIr(ta: ir.TypeAlloc, ct: state_mod.CType) !ir.Type {
             var arms = [_]ir.Type{ t, ir.TNull };
             break :blk try ta.unionType(&arms);
         },
+        .func_ptr => |t| t,
+        .optional_func_ptr => |t| blk: {
+            var arms = [_]ir.Type{ t, ir.TNull };
+            break :blk try ta.unionType(&arms);
+        },
     };
+}
+
+fn checkExternFuncSignature(
+    state: *state_mod.CompilerState,
+    node: *ast.Node,
+    t: ir.Type,
+    loc: ast.Location,
+) FromAstError!void {
+    const f = t.func;
+    for (f.params) |p| {
+        _ = try ctypeFromIr(state, node, p, .parameter, loc);
+    }
+    _ = try ctypeFromIr(state, node, f.ret.*, .return_type, loc);
 }
 
 fn ctypeFromIr(
@@ -195,30 +216,32 @@ fn ctypeFromIr(
         if (payload == .c_str) return .{ .optional_c_str = {} };
         if (payload == .ptr) {
             const inner = payload.ptr.*;
-            if (inner == .ptr) {
-                return externFail(state, loc, "Pointer-to-pointer extern types are not supported", .{});
-            }
             if (!isExternPointee(inner)) {
                 return externFail(state, loc, "Unsupported C type '{s}' in extern signature", .{externTypeDisplay(state, node, t)});
             }
             return .{ .optional_ptr = payload };
         }
+        if (payload == .func) {
+            try checkExternFuncSignature(state, node, payload, loc);
+            return .{ .optional_func_ptr = payload };
+        }
         return externFail(
             state,
             loc,
-            "Unsupported optional extern type '{s}' (only '?c_str' and '?*T' are supported)",
+            "Unsupported optional extern type '{s}' (only '?c_str', '?*T', and '?@func' are supported)",
             .{externTypeDisplay(state, node, t)},
         );
     }
     if (t == .c_str) return .{ .c_str = {} };
     if (t == .ptr) {
-        if (t.ptr.* == .ptr) {
-            return externFail(state, loc, "Pointer-to-pointer extern types are not supported", .{});
-        }
         if (!isExternPointee(t.ptr.*)) {
             return externFail(state, loc, "Unsupported C type '{s}' in extern signature", .{externTypeDisplay(state, node, t)});
         }
         return .{ .ptr = t };
+    }
+    if (t == .func) {
+        try checkExternFuncSignature(state, node, t, loc);
+        return .{ .func_ptr = t };
     }
     if (t == .void) {
         return switch (role) {
@@ -240,7 +263,7 @@ fn ctypeFromIr(
     return externFail(
         state,
         loc,
-        "Unsupported C type '{s}' in extern signature; allowed types are scalars, 'c_str', '?c_str', '*T', and '?*T'",
+        "Unsupported C type '{s}' in extern signature; allowed types are scalars, 'c_str', '?c_str', '*T', '?*T', and '@func'",
         .{externTypeDisplay(state, node, t)},
     );
 }
@@ -265,7 +288,7 @@ pub fn resolveExternCType(
 }
 
 /// Intrinsics whose result is a `type` value.
-const type_returning_intrinsics = [_][]const u8{"@typeOf"};
+const type_returning_intrinsics = [_][]const u8{ "@typeOf", "@fieldType" };
 
 /// `@typeOf(...)`, any other intrinsic call that yields a `type`, or a call to
 /// a user type function (`Opt(i64)`).

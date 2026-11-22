@@ -319,7 +319,8 @@ fn walkNode(ctx: *Context, node: *ast.Node, worklist: ?*std.ArrayList(usize)) vo
                 // the type argument may be an AST node representing a type.
                 if (c.callee.* == .primary and std.mem.startsWith(u8, c.callee.primary.name, "@")) {
                     const intr = c.callee.primary.name;
-                    if (std.mem.eql(u8, intr, "@as") or std.mem.eql(u8, intr, "@sizeOf") or std.mem.eql(u8, intr, "@alignOf") or std.mem.eql(u8, intr, "@zeroed") or std.mem.eql(u8, intr, "@new")) {
+                    if (std.mem.eql(u8, intr, "@as") or std.mem.eql(u8, intr, "@sizeOf") or std.mem.eql(u8, intr, "@alignOf") or std.mem.eql(u8, intr, "@zeroed") or std.mem.eql(u8, intr, "@new") or
+                        std.mem.eql(u8, intr, "@fieldCount") or std.mem.eql(u8, intr, "@fieldName") or std.mem.eql(u8, intr, "@fieldType") or std.mem.eql(u8, intr, "@fieldOffset")) {
                         walkTypeNode(ctx, arg, worklist);
                         continue;
                     }

@@ -499,6 +499,13 @@ fn asCastAllowed(src: ir.Type, target: ir.Type) bool {
         if (ir.typeEquals(pointee, tu) or ir.isSubtype(pointee, tu) or ir.isSubtype(tu, pointee)) return true;
         if (isStringLike(pointee) and isStringLike(tu)) return true;
     }
+    // c_str <-> string
+    if ((su == .c_str and isStringLike(tu)) or (isStringLike(su) and tu == .c_str)) return true;
+    if (ir.optionalPayload(su)) |s_opt| {
+        if (ir.optionalPayload(tu)) |t_opt| {
+            if ((s_opt == .c_str and isStringLike(t_opt)) or (isStringLike(s_opt) and t_opt == .c_str)) return true;
+        }
+    }
     return false;
 }
 
@@ -3186,6 +3193,8 @@ fn externCTypeToIr(ta: ir.TypeAlloc, ct: state_mod.CType) TypecheckError!ir.Type
         .optional_c_str => try externOptionalType(ta, ir.TCStr),
         .ptr => |t| t,
         .optional_ptr => |t| try externOptionalType(ta, t),
+        .func_ptr => |t| t,
+        .optional_func_ptr => |t| try externOptionalType(ta, t),
     };
 }
 
@@ -3221,6 +3230,8 @@ fn checkExternFixedArg(
             if (isExternBytePtr(t) and isByteSequenceSource(got, arg)) return;
             try requireAssignFrom(state, got, try externOptionalType(ta, t), ctx, arg);
         },
+        .func_ptr => |t| try requireAssignFrom(state, got, t, ctx, arg),
+        .optional_func_ptr => |t| try requireAssignFrom(state, got, try externOptionalType(ta, t), ctx, arg),
     }
 }
 
@@ -3229,10 +3240,10 @@ fn isSupportedExternVararg(got: ir.Type, node: *const ast.Node) bool {
     const p = ir.peelDefined(got);
     return switch (p) {
         .u1, .i8, .i16, .i32, .i64, .u8, .u16, .u32, .u64, .f32, .f64, .isize, .usize => true,
-        .c_str, .ptr, .null, .str_lit, .bool_lit, .int_lit => true,
+        .c_str, .ptr, .func, .null, .str_lit, .bool_lit, .int_lit => true,
         .union_ => if (ir.optionalPayload(p)) |payload| blk: {
             const q = ir.peelDefined(payload);
-            break :blk q == .c_str or q == .ptr;
+            break :blk q == .c_str or q == .ptr or q == .func;
         } else false,
         else => false,
     };

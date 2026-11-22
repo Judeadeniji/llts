@@ -63,6 +63,12 @@ pub fn isConstantExpr(state: *CompilerState, env: *const ConstEnv, node: ?*ast.N
                 if (std.mem.eql(u8, c.callee.primary.name, "@typeOf") or std.mem.eql(u8, c.callee.primary.name, "@import") or std.mem.eql(u8, c.callee.primary.name, "@nameOf")) {
                     break :blk true;
                 }
+                if (std.mem.eql(u8, c.callee.primary.name, "@fieldCount") or
+                    std.mem.eql(u8, c.callee.primary.name, "@fieldName") or
+                    std.mem.eql(u8, c.callee.primary.name, "@fieldOffset"))
+                {
+                    break :blk true;
+                }
                 if (std.mem.eql(u8, c.callee.primary.name, "len") and c.args.len == 1) {
                     break :blk isConstantExpr(state, env, c.args[0]);
                 }
