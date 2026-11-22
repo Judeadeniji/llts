@@ -258,3 +258,12 @@ pub @func psiginfo(info: Siginfo, name: string): void | core.SyscallError {
     defer c.free(buf);
     c.psiginfo(&value, buf);
 }
+
+# Typed function callback for signal delivery.
+pub @alias SignalHandler = @func(i32): void;
+
+# Install `handler` for signal `sig`, returning the previous handler (or null if default).
+pub @func signal(sig: i32, handler: ?SignalHandler): ?SignalHandler | core.SyscallError {
+    $prev = c.signal(sig, handler);
+    return prev;
+}

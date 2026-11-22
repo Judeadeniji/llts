@@ -605,3 +605,51 @@ pub @func flock(fd: core.Fd, operation: i32): void | core.SyscallError {
         return core.last_error();
     }
 }
+
+pub @struct TempFile {
+    fd: core.Fd;
+    path: string;
+}
+
+# Create and open a unique temporary file from `template`. The template must end with 'XXXXXX'.
+# Returns the open file descriptor and the resolved path.
+pub @func mkstemp(template: string): TempFile | core.SyscallError {
+    $buf: [4096]u8 = @zeroed([4096]u8);
+    $len: usize = @as(usize, template.len);
+    @if (len >= 4096) {
+        return core.SyscallError.InvalidArgument;
+    }
+    $i: usize = 0;
+    @for (i < len) {
+        buf[i] = template[i];
+        i += 1;
+    }
+    $fd = c.mkstemp(&buf[0]);
+    @if (fd < 0) {
+        return core.last_error();
+    }
+    return TempFile{
+        fd: @as(core.Fd, fd),
+        path: @as(string, buf[0..len]),
+    };
+}
+
+# Create a unique temporary directory from `template`. The template must end with 'XXXXXX'.
+# Returns the resolved directory path.
+pub @func mkdtemp(template: string): string | core.SyscallError {
+    $buf: [4096]u8 = @zeroed([4096]u8);
+    $len: usize = @as(usize, template.len);
+    @if (len >= 4096) {
+        return core.SyscallError.InvalidArgument;
+    }
+    $i: usize = 0;
+    @for (i < len) {
+        buf[i] = template[i];
+        i += 1;
+    }
+    $res = c.mkdtemp(&buf[0]);
+    @if (res == null) {
+        return core.last_error();
+    }
+    return @as(string, res.?);
+}

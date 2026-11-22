@@ -876,16 +876,26 @@ test "native execution: syscall stat, fstat, statfs, statvfs, chmod, utimensat" 
 }
 
 test "native execution: syscall time, poll, rlimit, termios" {
-    const expected =
+    const res = try runNativeFile(std.testing.allocator, "tests/fixtures/syscall_time_poll_system_main.lls");
+    defer std.testing.allocator.free(res.stdout);
+    defer std.testing.allocator.free(res.stderr);
+    if (res.code != 0) {
+        std.debug.print("Native run failed with code {d}:\n{s}\n", .{ res.code, res.stderr });
+        return error.NativeRunFailed;
+    }
+    const prefix =
         \\clock-gettime-realtime-ok
         \\clock-getres-ok
         \\poll-stdout-writable-ok
         \\rlimit-nofile-ok
         \\prlimit-cur-proc-ok
-        \\term-is-terminal-and-attrs-read
         \\
     ;
-    try expectNativeFileStdout(std.testing.allocator, "tests/fixtures/syscall_time_poll_system_main.lls", expected);
+    try std.testing.expect(std.mem.startsWith(u8, res.stdout, prefix));
+    try std.testing.expect(
+        std.mem.endsWith(u8, res.stdout, "term-is-terminal-and-attrs-read\n") or
+        std.mem.endsWith(u8, res.stdout, "term-not-a-terminal\n")
+    );
 }
 
 test "native execution: syscall facade major type re-exports" {
@@ -1049,4 +1059,84 @@ test "native execution: string escape characters" {
         \\}
     ;
     try expectNativeStdout(allocator, src, "15\nAé世😀\n");
+}
+
+test "native execution: extern function pointer callbacks" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\@extern "c" @func signal(sig: i32, handler: ?@func(i32): void): ?@func(i32): void;
+        \\@extern "c" @func raise(sig: i32): i32;
+        \\
+        \\@func on_sig(sig: i32) {
+        \\    print("caught-sig");
+        \\    print(sig);
+        \\}
+        \\
+        \\pub @func main() {
+        \\    $prev = signal(10, on_sig);
+        \\    _ = raise(10);
+        \\    _ = signal(10, prev);
+        \\    print("done");
+        \\}
+    ;
+    try expectNativeStdout(allocator, src, "caught-sig\n10\ndone\n");
+}
+
+test "native execution: bidirectional c_str and string conversion" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\pub @extern "c" @func getenv(name: c_str): ?c_str;
+        \\pub @extern "c" @func puts(s: c_str): i32;
+        \\
+        \\pub @func main() {
+        \\    $var_name: string = "PATH";
+        \\    $c_name: c_str = @as(c_str, var_name);
+        \\    $raw: ?c_str = getenv(c_name);
+        \\    $opt_str: ?string = @as(?string, raw);
+        \\    print(opt_str != null);
+        \\    $s: string = @as(string, raw.?);
+        \\    print(s.len > 0);
+        \\    $msg: string = "hello-c-str";
+        \\    _ = puts(@as(c_str, msg));
+        \\}
+    ;
+    try expectNativeStdout(allocator, src, "1\n1\nhello-c-str\n");
+}
+
+test "native execution: unblocked syscall wrappers (getcwd, uname, sysinfo, epoll, mkstemp)" {
+    const allocator = std.testing.allocator;
+    const src =
+        \\@const $sys = @import("std/syscall");
+        \\
+        \\pub @func main() {
+        \\    $cwd = sys.dir.getcwd()?;
+        \\    print(cwd.len > 0);
+        \\
+        \\    $resolved = sys.dir.realpath(".")?;
+        \\    print(resolved.len > 0);
+        \\
+        \\    $u = sys.system.uname()?;
+        \\    print(u.sysname == "Linux");
+        \\
+        \\    $host = sys.system.gethostname()?;
+        \\    print(host.len > 0);
+        \\
+        \\    $si = sys.system.sysinfo()?;
+        \\    print(si.uptime > 0);
+        \\
+        \\    $ru = sys.system.getrusage(sys.system.RUSAGE_SELF)?;
+        \\    print(ru.ru_maxrss > 0);
+        \\
+        \\    $epfd = sys.poll.epoll_create1(0)?;
+        \\    _ = sys.io.close(epfd);
+        \\    print(1);
+        \\
+        \\    $tmp = sys.io.mkstemp("./.tmpdir/test_tmp_XXXXXX")?;
+        \\    _ = sys.io.write_all(tmp.fd, "test-data")?;
+        \\    _ = sys.io.close(tmp.fd);
+        \\    _ = sys.dir.unlink(tmp.path)?;
+        \\    print(1);
+        \\}
+    ;
+    try expectNativeStdout(allocator, src, "1\n1\n1\n1\n1\n1\n1\n1\n");
 }

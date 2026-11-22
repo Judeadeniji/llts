@@ -286,3 +286,96 @@ pub @func prlimit(pid: core.Pid, resource: i32, new_limit: ?*Rlimit): Rlimit | c
     }
     return old;
 }
+
+@func c_slice_to_string(buf: []u8): string {
+    $len: usize = 0;
+    @for (buf) |b| {
+        @if (b == 0) { break; }
+        len += 1;
+    }
+    return @as(string, buf[0..len]);
+}
+
+# High-level system information returned by `uname`.
+pub @struct UtsInfo {
+    sysname: string;
+    nodename: string;
+    release: string;
+    version: string;
+    machine: string;
+    domainname: string;
+}
+
+pub @alias Utsname = c.Utsname;
+pub @alias Sysinfo = c.Sysinfo;
+pub @alias RUsage = c.RUsage;
+pub @const $RUSAGE_SELF: i32 = c.RUSAGE_SELF;
+pub @const $RUSAGE_CHILDREN: i32 = c.RUSAGE_CHILDREN;
+
+# Query identification and information about the current operating system and hardware.
+pub @func uname(): UtsInfo | core.SyscallError {
+    $raw = @zeroed(Utsname);
+    @if (c.uname(&raw) != 0) {
+        return core.last_error();
+    }
+    return UtsInfo{
+        sysname: c_slice_to_string(raw.sysname[0..65]),
+        nodename: c_slice_to_string(raw.nodename[0..65]),
+        release: c_slice_to_string(raw.release[0..65]),
+        version: c_slice_to_string(raw.version[0..65]),
+        machine: c_slice_to_string(raw.machine[0..65]),
+        domainname: c_slice_to_string(raw.domainname[0..65]),
+    };
+}
+
+# Return the standard host name for the current machine.
+pub @func gethostname(): string | core.SyscallError {
+    $buf: [256]u8 = @zeroed([256]u8);
+    @if (c.gethostname(&buf[0], 256) != 0) {
+        return core.last_error();
+    }
+    return c_slice_to_string(buf[0..256]);
+}
+
+# Set the host name of the current machine (requires privileged capabilities).
+pub @func sethostname(name: string): void | core.SyscallError {
+    $c_name = @as(c_str, name);
+    @if (c.sethostname(c_name, @as(usize, name.len)) != 0) {
+        return core.last_error();
+    }
+}
+
+# Return the NIS/YP domain name for the current machine.
+pub @func getdomainname(): string | core.SyscallError {
+    $buf: [256]u8 = @zeroed([256]u8);
+    @if (c.getdomainname(&buf[0], 256) != 0) {
+        return core.last_error();
+    }
+    return c_slice_to_string(buf[0..256]);
+}
+
+# Set the NIS/YP domain name for the current machine (requires privileged capabilities).
+pub @func setdomainname(name: string): void | core.SyscallError {
+    $c_name = @as(c_str, name);
+    @if (c.setdomainname(c_name, @as(usize, name.len)) != 0) {
+        return core.last_error();
+    }
+}
+
+# Return system-wide memory, load average, and process statistics.
+pub @func sysinfo(): Sysinfo | core.SyscallError {
+    $info = @zeroed(Sysinfo);
+    @if (c.sysinfo(&info) != 0) {
+        return core.last_error();
+    }
+    return info;
+}
+
+# Return resource usage measures for `who` (`RUSAGE_SELF` or `RUSAGE_CHILDREN`).
+pub @func getrusage(who: i32): RUsage | core.SyscallError {
+    $usage = @zeroed(RUsage);
+    @if (c.getrusage(who, &usage) != 0) {
+        return core.last_error();
+    }
+    return usage;
+}

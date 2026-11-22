@@ -28,7 +28,6 @@ pub @const $ipc = @import("std/syscall/ipc");
 pub @const $socket = @import("std/syscall/socket");
 
 @const $c = @import("std/syscall/c");
-@const $core = @import("std/syscall/core");
 
 # Re-exported primary types for callers using the top-level facade.
 
@@ -71,9 +70,24 @@ pub @alias SockaddrIn = socket.SockaddrIn;
 pub @alias Sockaddr = socket.Sockaddr;
 pub @alias AcceptedSocket = socket.AcceptedSocket;
 
-# ---------------------------------------------------------------------------
+# System and resource information
+pub @alias UtsInfo = system.UtsInfo;
+pub @alias Sysinfo = system.Sysinfo;
+pub @alias RUsage = system.RUsage;
+
+# Epoll event polling
+pub @alias EpollEvent = poll.EpollEvent;
+pub @alias EpollOp = poll.EpollOp;
+
+# C string and LLTS string conversions
+pub @const $from_c_str = core.from_c_str;
+pub @const $to_c_str = core.to_c_str;
+pub @const $opt_from_c_str = core.opt_from_c_str;
+pub @const $opt_to_c_str = core.opt_to_c_str;
+
+
 # Raw Linux syscall escape hatch
-# ---------------------------------------------------------------------------
+
 
 # A nominal Linux x86-64 syscall number. Constants are provided for the entry
 # points this library does not wrap; construct one directly for anything else.

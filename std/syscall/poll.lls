@@ -9,6 +9,7 @@
 # Re-export Pollfd and Timespec aggregates.
 pub @alias Pollfd = c.Pollfd;
 pub @alias Timespec = c.Timespec;
+pub @alias CEpollEvent = c.CEpollEvent;
 
 # Event condition bitmasks matching poll.h
 pub @const $POLLIN: i16 = 1;        # There is data to read
@@ -55,4 +56,77 @@ pub @func poll(fds: []Pollfd, timeout: i32): i32 | core.SyscallError {
         return core.last_error();
     }
     return rc;
+}
+
+# Epoll event condition masks and operations
+pub @const $EPOLL_CTL_ADD: i32 = c.EPOLL_CTL_ADD;
+pub @const $EPOLL_CTL_DEL: i32 = c.EPOLL_CTL_DEL;
+pub @const $EPOLL_CTL_MOD: i32 = c.EPOLL_CTL_MOD;
+pub @const $EPOLLIN: u32 = c.EPOLLIN;
+pub @const $EPOLLOUT: u32 = c.EPOLLOUT;
+pub @const $EPOLLERR: u32 = c.EPOLLERR;
+pub @const $EPOLLHUP: u32 = c.EPOLLHUP;
+
+pub @enum EpollOp {
+    Add = 1,
+    Del = 2,
+    Mod = 3,
+}
+
+# Safe user-facing representation of epoll events with 64-bit user data.
+pub @struct EpollEvent {
+    events: u32;
+    data: u64;
+}
+
+# Open an epoll file descriptor. Flags can be 0 or EPOLL_CLOEXEC (0o2000000).
+pub @func epoll_create1(flags: i32): core.Fd | core.SyscallError {
+    $fd = c.epoll_create1(flags);
+    @if (fd < 0) {
+        return core.last_error();
+    }
+    return @as(core.Fd, fd);
+}
+
+# Control interface for an epoll file descriptor: register, modify, or remove interest in target fd.
+pub @func epoll_ctl(epfd: core.Fd, op: EpollOp, target_fd: core.Fd, event: ?EpollEvent): void | core.SyscallError {
+    $ev_ptr: ?*CEpollEvent = null;
+    $raw_ev = @zeroed(CEpollEvent);
+    @if (event != null) {
+        $ev = event;
+        raw_ev.events = ev.events;
+        raw_ev.data_low = @as(u32, ev.data & 0xFFFFFFFF);
+        raw_ev.data_high = @as(u32, (ev.data >> 32) & 0xFFFFFFFF);
+        ev_ptr = &raw_ev;
+    }
+    @if (c.epoll_ctl(@as(i32, epfd), @as(i32, op), @as(i32, target_fd), ev_ptr) != 0) {
+        return core.last_error();
+    }
+}
+
+# Wait for I/O events on an epoll file descriptor. Returns number of ready events received.
+pub @func epoll_wait(epfd: core.Fd, events: []EpollEvent, timeout_ms: i32): i32 | core.SyscallError {
+    $n = events.len;
+    @if (n == 0) {
+        return 0;
+    }
+    $raw_events: [64]CEpollEvent = @zeroed([64]CEpollEvent);
+    $cap = n;
+    @if (cap > 64) {
+        cap = 64;
+    }
+    $ready = c.epoll_wait(@as(i32, epfd), &raw_events[0], @as(i32, cap), timeout_ms);
+    @if (ready < 0) {
+        return core.last_error();
+    }
+    $i: usize = 0;
+    @for (i < @as(usize, ready)) {
+        $raw = raw_events[i];
+        events[i] = EpollEvent{
+            events: raw.events,
+            data: @as(u64, raw.data_low) | (@as(u64, raw.data_high) << 32),
+        };
+        i += 1;
+    }
+    return ready;
 }

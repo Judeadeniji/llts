@@ -295,3 +295,26 @@ pub @func mkfifoat(dirfd: core.Fd, path: string, mode: u32): void | core.Syscall
         return core.last_error();
     }
 }
+
+# Read the target of a symbolic link at `path`.
+# Returns the target as an LLTS string.
+pub @func readlink(path: string): string | core.SyscallError {
+    $c_path = @as(c_str, path);
+    $buf: [4096]u8 = @zeroed([4096]u8);
+    $n = c.readlink(c_path, &buf[0], 4096);
+    @if (n < 0) {
+        return core.last_error();
+    }
+    return @as(string, buf[0..@as(usize, n)]);
+}
+
+# Read the target of a symbolic link relative to directory descriptor `dirfd`.
+pub @func readlinkat(dirfd: core.Fd, path: string): string | core.SyscallError {
+    $c_path = @as(c_str, path);
+    $buf: [4096]u8 = @zeroed([4096]u8);
+    $n = c.readlinkat(@as(i32, dirfd), c_path, &buf[0], 4096);
+    @if (n < 0) {
+        return core.last_error();
+    }
+    return @as(string, buf[0..@as(usize, n)]);
+}

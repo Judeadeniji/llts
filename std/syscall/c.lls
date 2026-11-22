@@ -594,6 +594,100 @@ pub @extern "c" @func setsockopt(sockfd: i32, level: i32, name: i32, value: *i32
 pub @extern "c" @func sockatmark(sockfd: i32): i32;
 pub @extern "c" @func isfdtype(fd: i32, fdtype: i32): i32;
 
+# System information and resource usage
+pub @extern "c" @struct Utsname {
+    sysname: [65]u8;
+    nodename: [65]u8;
+    release: [65]u8;
+    version: [65]u8;
+    machine: [65]u8;
+    domainname: [65]u8;
+}
+pub @extern "c" @func uname(buf: *Utsname): i32;
+pub @extern "c" @func gethostname(name: *u8, len: usize): i32;
+pub @extern "c" @func sethostname(name: c_str, len: usize): i32;
+pub @extern "c" @func getdomainname(name: *u8, len: usize): i32;
+pub @extern "c" @func setdomainname(name: c_str, len: usize): i32;
+
+pub @extern "c" @struct Sysinfo {
+    uptime: i64;
+    loads: [3]u64;
+    totalram: u64;
+    freeram: u64;
+    sharedram: u64;
+    bufferram: u64;
+    totalswap: u64;
+    freeswap: u64;
+    procs: u16;
+    pad: u16;
+    totalhigh: u64;
+    freehigh: u64;
+    mem_unit: u32;
+    _f: [4]u8;
+}
+pub @extern "c" @func sysinfo(info: *Sysinfo): i32;
+
+pub @extern "c" @struct Timeval {
+    tv_sec: i64;
+    tv_usec: i64;
+}
+pub @extern "c" @struct RUsage {
+    ru_utime: Timeval;
+    ru_stime: Timeval;
+    ru_maxrss: i64;
+    ru_ixrss: i64;
+    ru_idrss: i64;
+    ru_isrss: i64;
+    ru_minflt: i64;
+    ru_majflt: i64;
+    ru_nswap: i64;
+    ru_inblock: i64;
+    ru_oublock: i64;
+    ru_msgsnd: i64;
+    ru_msgrcv: i64;
+    ru_nsignals: i64;
+    ru_nvcsw: i64;
+    ru_nivcsw: i64;
+}
+pub @extern "c" @func getrusage(who: i32, usage: *RUsage): i32;
+pub @const $RUSAGE_SELF: i32 = 0;
+pub @const $RUSAGE_CHILDREN: i32 = -1;
+
+# Epoll event multiplexing
+pub @extern "c" @struct CEpollEvent {
+    events: u32;
+    data_low: u32;
+    data_high: u32;
+}
+pub @extern "c" @func epoll_create1(flags: i32): i32;
+pub @extern "c" @func epoll_ctl(epfd: i32, op: i32, fd: i32, event: ?*CEpollEvent): i32;
+pub @extern "c" @func epoll_wait(epfd: i32, events: *CEpollEvent, maxevents: i32, timeout: i32): i32;
+
+pub @const $EPOLL_CTL_ADD: i32 = 1;
+pub @const $EPOLL_CTL_DEL: i32 = 2;
+pub @const $EPOLL_CTL_MOD: i32 = 3;
+pub @const $EPOLLIN: u32 = 1;
+pub @const $EPOLLOUT: u32 = 4;
+pub @const $EPOLLERR: u32 = 8;
+pub @const $EPOLLHUP: u32 = 16;
+
+# Working directory and path resolution
+pub @extern "c" @func getcwd(buf: *u8, size: usize): ?c_str;
+pub @extern "c" @func realpath(path: c_str, resolved: ?*u8): ?c_str;
+pub @extern "c" @func readlink(path: c_str, buf: *u8, bufsiz: usize): isize;
+pub @extern "c" @func readlinkat(dirfd: i32, path: c_str, buf: *u8, bufsiz: usize): isize;
+pub @extern "c" @func getlogin_r(buf: *u8, bufsize: usize): i32;
+pub @extern "c" @func mkstemp(template: *u8): i32;
+pub @extern "c" @func mkdtemp(template: *u8): ?c_str;
+
+# Signal callback registration
+pub @extern "c" @func signal(sig: i32, handler: ?@func(i32): void): ?@func(i32): void;
+
+# Process execution and aligned allocation with double indirection
+pub @extern "c" @func execve(path: c_str, argv: ?*?c_str, envp: ?*?c_str): i32;
+pub @extern "c" @func posix_memalign(memptr: *?*u8, alignment: usize, size: usize): i32;
+pub @extern "c" @func free_raw(ptr: ?*u8): void = "free";
+
 pub @extern "c" @func malloc(size: usize): ?*CBuffer;
 pub @extern "c" @func free(p: *CBuffer): void;
 

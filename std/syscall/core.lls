@@ -126,6 +126,26 @@ pub @func path_buffer(path: string): *c.CBuffer | SyscallError {
     return buf;
 }
 
+# Convert a NUL-terminated C string to an LLTS string view.
+pub @func from_c_str(s: c_str): string {
+    return @as(string, s);
+}
+
+# Copy an LLTS string into a NUL-terminated C string buffer in the current call frame.
+pub @func to_c_str(s: string): c_str {
+    return @as(c_str, s);
+}
+
+# Convert an optional C string to an optional LLTS string view.
+pub @func opt_from_c_str(s: ?c_str): ?string {
+    return @as(?string, s);
+}
+
+# Convert an optional LLTS string to an optional C string.
+pub @func opt_to_c_str(s: ?string): ?c_str {
+    return @as(?c_str, s);
+}
+
 
 # @comptime type inference should work properly without casting or annotation
 # pub @const $STDIN: Fd = @comptime stdio_fd(Stdio.Stdin);

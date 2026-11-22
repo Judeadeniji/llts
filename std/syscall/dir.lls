@@ -322,3 +322,31 @@ pub @func getumask(): u32 {
     _ = c.umask(mask);
     return mask;
 }
+
+# Return the current working directory as an LLTS string.
+# Returns an error if the path exceeds PATH_CAPACITY (4096 bytes) or on permission error.
+pub @func getcwd(): string | core.SyscallError {
+    $buf: [4096]u8 = @zeroed([4096]u8);
+    $res = c.getcwd(&buf[0], 4096);
+    @if (res == null) {
+        return core.last_error();
+    }
+    return @as(string, res.?);
+}
+
+# Alias for `getcwd` conforming to GNU naming.
+pub @func get_current_dir_name(): string | core.SyscallError {
+    return getcwd();
+}
+
+# Resolve all symbolic links, extra `/`, and `.` or `..` components in `path`.
+# Produces a canonical absolute path.
+pub @func realpath(path: string): string | core.SyscallError {
+    $c_path = @as(c_str, path);
+    $buf: [4096]u8 = @zeroed([4096]u8);
+    $res = c.realpath(c_path, &buf[0]);
+    @if (res == null) {
+        return core.last_error();
+    }
+    return @as(string, res.?);
+}
